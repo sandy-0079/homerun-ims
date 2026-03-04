@@ -26,7 +26,6 @@ const PRICE_TAG_COLORS = {
   "Super Low":{bg:"#F8FAFC",color:"#64748B",border:"#E2E8F0"},
   "No Price":{bg:"#F8FAFC",color:"#94A3B8",border:"#E2E8F0"},
 };
-// T150 renamed to Top N in display; keys unchanged internally
 const TOPN_TAG_COLORS = {
   "T50":{bg:"#DCFCE7",color:"#15803D",border:"#BBF7D0"},
   "T150":{bg:"#D1FAE5",color:"#065F46",border:"#A7F3D0"},
@@ -183,7 +182,6 @@ function runEngine(inv,skuM,mrq,pd,deadStockSet,nsq,p){
   return res;
 }
 
-// Insights helpers
 function getInvSlice(invoiceData,period,recencyWindow){
   const allDates=[...new Set(invoiceData.map(r=>r.date))].sort(),full=allDates.slice(-90);
   if(period==="90D")return invoiceData.filter(r=>full.includes(r.date));
@@ -197,7 +195,6 @@ function aggStats(rows){
   return{skuCount:skus.size,totalOrders,totalQty,avgOrderQty};
 }
 
-// ─── Pill tag size: "sm" (default throughout app)
 const TAG_STYLE = {padding:"1px 6px",borderRadius:3,fontSize:10,fontWeight:600,whiteSpace:"nowrap",lineHeight:"16px",display:"inline-block"};
 
 const TagPill=({value,colorMap})=>{
@@ -210,7 +207,6 @@ const MovTag=({value})=>{
   return <span style={{...TAG_STYLE,background:bg,color,border:`1px solid ${color}33`}}>{value||"—"}</span>;
 };
 
-// Styles
 const S={
   app:{fontFamily:"Inter,sans-serif",background:HR.bg,height:"100vh",color:HR.text,width:"100%",boxSizing:"border-box",overflowX:"hidden",display:"flex",flexDirection:"column"},
   header:{background:HR.white,borderBottom:`2px solid ${HR.yellow}`,padding:"0 16px",display:"flex",alignItems:"center",gap:6,height:44,boxShadow:"0 1px 4px rgba(0,0,0,0.08)",flexShrink:0,flexWrap:"nowrap",overflowX:"auto"},
@@ -224,15 +220,13 @@ const S={
   pageWrap:{flex:1,overflowY:"auto",overflowX:"hidden",padding:"16px 20px"},
 };
 
-// Frozen column widths — Item + Category + Price + TopN
 const COL_ITEM_W  = 150;
 const COL_CAT_W   = 90;
 const COL_PRICE_W = 72;
 const COL_TOPN_W  = 76;
-const FROZEN_TOTAL = COL_ITEM_W + COL_CAT_W + COL_PRICE_W + COL_TOPN_W; // 388px
+const FROZEN_TOTAL = COL_ITEM_W + COL_CAT_W + COL_PRICE_W + COL_TOPN_W;
 
 const frozenTh=(extra={})=>({...S.th,position:"sticky",top:0,zIndex:4,background:HR.surfaceLight,...extra});
-// zIndex 2 so frozen tds sit above scrolling tds (zIndex 0)
 const frozenTd=(left,bg,extra={})=>({...S.td,position:"sticky",left,background:bg,zIndex:2,...extra});
 
 const DSCols=({r,displayDS})=>displayDS.map(ds=>{
@@ -263,11 +257,9 @@ const Section=({title,icon,summary,children,accent="#B8860B"})=>{
   );
 };
 
-// ── Smooth number input — uses local state so typing doesn't fight re-renders
 function NumInput({value,min,max,step=1,onChange,disabled,style={}}){
   const [local,setLocal]=useState(String(value));
   const ref=useRef(null);
-  // Sync external value only when not focused
   useEffect(()=>{if(document.activeElement!==ref.current)setLocal(String(value));},[value]);
   const commit=v=>{
     let n=parseFloat(v);
@@ -278,21 +270,13 @@ function NumInput({value,min,max,step=1,onChange,disabled,style={}}){
     setLocal(String(n));
   };
   return(
-    <input
-      ref={ref}
-      type="number"
-      min={min} max={max} step={step}
-      value={local}
-      disabled={disabled}
-      onChange={e=>setLocal(e.target.value)}
-      onBlur={e=>commit(e.target.value)}
-      onKeyDown={e=>{if(e.key==="Enter")commit(e.target.value);}}
+    <input ref={ref} type="number" min={min} max={max} step={step} value={local} disabled={disabled}
+      onChange={e=>setLocal(e.target.value)} onBlur={e=>commit(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")commit(e.target.value);}}
       style={{...S.input,textAlign:"center",...style,opacity:disabled?0.5:1,cursor:disabled?"not-allowed":"text"}}
     />
   );
 }
 
-// Smooth slider — local state so drag is fluid
 function TierSlider({label,value,min,max,step=1,onChange,color,disabled}){
   const [local,setLocal]=useState(value);
   useEffect(()=>setLocal(value),[value]);
@@ -409,48 +393,33 @@ function InsightsTab({invoiceData,skuMaster,results,params}){
   const sliceForDs=useMemo(()=>dsView==="All"||dsView==="Compare"?slice:slice.filter(r=>r.ds===dsView),[slice,dsView]);
   const st=useMemo(()=>aggStats(sliceForDs),[sliceForDs]);
   const skuCount=useMemo(()=>[...new Set(sliceForDs.map(r=>r.sku))].length,[sliceForDs]);
-
-  // movement distribution for sticky bar
   const movCounts=useMemo(()=>{
     const skus=[...new Set(sliceForDs.map(r=>r.sku))],counts={"Super Fast":0,"Fast":0,"Moderate":0,"Slow":0,"Super Slow":0};
     skus.forEach(s=>{const tag=(dsView&&dsView!=="All"&&dsView!=="Compare")?(results[s]?.stores[dsView]?.mvTag||"Super Slow"):(results[s]?.dc?.mvTag||"Super Slow");if(counts[tag]!==undefined)counts[tag]++;});
     return counts;
   },[sliceForDs,dsView,results]);
-
   const crumbs=[
     {label:"All Categories",onClick:()=>setDrill(null)},
     ...(drill?.type==="category"||drill?.type==="brand"||drill?.type==="sku"?[{label:drill.category||drill.value,onClick:()=>setDrill({type:"category",value:drill.category||drill.value})}]:[]),
     ...(drill?.type==="brand"||drill?.type==="sku"?[{label:drill.brand||drill.value,onClick:()=>setDrill({type:"brand",value:drill.brand||drill.value,category:drill.category})}]:[]),
     ...(drill?.type==="sku"?[{label:drill.skuName||drill.value}]:[]),
   ];
-  if(!invoiceData.length)return <div style={{textAlign:"center",padding:80}}><div style={{fontSize:40,marginBottom:12}}>📊</div><div style={{color:HR.muted,fontSize:14}}>Upload invoice data to see insights</div></div>;
-
+  if(!invoiceData.length)return <div style={{textAlign:"center",padding:80}}><div style={{fontSize:40,marginBottom:12}}>📊</div><div style={{color:HR.muted,fontSize:14}}>No data available</div></div>;
   const movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"];
   const movLabels=Object.keys(movCounts);
   const total=skuCount||1;
-
   return(
     <div>
-      {/* ── Sticky control + summary strip ── */}
       <div style={{position:"sticky",top:-16,zIndex:10,background:HR.bg,marginBottom:12,paddingTop:4,paddingBottom:8,borderBottom:`1px solid ${HR.border}`}}>
-        {/* Row 1: toggles + stats */}
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
-          {/* Period toggle */}
           <div style={{display:"flex",gap:0,border:`1px solid ${HR.border}`,borderRadius:5,overflow:"hidden",flexShrink:0}}>
             {PERIOD_OPTS.map(p=><button key={p.key} onClick={()=>setPeriod(p.key)} style={{padding:"4px 10px",background:period===p.key?HR.yellow:HR.white,color:period===p.key?HR.black:HR.muted,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700,lineHeight:1.4}}>{p.label}</button>)}
           </div>
-          {/* DS toggle */}
           <div style={{display:"flex",gap:0,border:`1px solid ${HR.border}`,borderRadius:5,overflow:"hidden",flexShrink:0}}>
             {DS_VIEW_OPTS.map(d=>{const di=DS_LIST.indexOf(d),col=di>=0?DS_COLORS[di].header:HR.muted,isActive=dsView===d;return <button key={d} onClick={()=>setDsView(d)} style={{padding:"4px 9px",background:isActive?(di>=0?DS_COLORS[di].header:HR.yellow):HR.white,color:isActive?HR.white:col,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700,lineHeight:1.4}}>{d}</button>;})}
           </div>
-          {/* Inline stat pills */}
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginLeft:4}}>
-            {[
-              {label:"SKUs",value:skuCount.toLocaleString(),color:HR.green},
-              {label:"Orders",value:st.totalOrders.toLocaleString(),color:HR.yellowDark},
-              {label:"Qty",value:st.totalQty.toLocaleString(),color:"#0077A8"},
-              {label:"ABQ",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"},
-            ].map(c=>(
+            {[{label:"SKUs",value:skuCount.toLocaleString(),color:HR.green},{label:"Orders",value:st.totalOrders.toLocaleString(),color:HR.yellowDark},{label:"Qty",value:st.totalQty.toLocaleString(),color:"#0077A8"},{label:"ABQ",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"}].map(c=>(
               <div key={c.label} style={{background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:5,padding:"3px 10px",display:"flex",gap:5,alignItems:"baseline"}}>
                 <span style={{fontWeight:800,fontSize:13,color:c.color}}>{c.value}</span>
                 <span style={{fontSize:10,color:HR.muted}}>{c.label}</span>
@@ -458,7 +427,6 @@ function InsightsTab({invoiceData,skuMaster,results,params}){
             ))}
           </div>
         </div>
-        {/* Row 2: movement bar + breadcrumb */}
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
           <div style={{flex:"0 0 260px",minWidth:0}}>
             <div style={{display:"flex",gap:2,height:10,borderRadius:3,overflow:"hidden",border:`1px solid ${HR.border}`}}>
@@ -467,14 +435,11 @@ function InsightsTab({invoiceData,skuMaster,results,params}){
               {movLabels.map((l,i)=>movCounts[l]>0&&<span key={l} style={{fontSize:9,color:movColors[i],fontWeight:700}}>{l.replace("Super ","S.")}: {movCounts[l]}</span>)}
             </div>
           </div>
-          {/* Breadcrumb */}
           <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
             {crumbs.map((c,i)=><span key={i} style={{display:"flex",alignItems:"center",gap:5}}>{i>0&&<span style={{color:HR.muted,fontSize:11}}>›</span>}<span onClick={c.onClick} style={{fontSize:11,color:c.onClick?HR.yellowDark:HR.text,cursor:c.onClick?"pointer":"default",fontWeight:i===crumbs.length-1?700:400,textDecoration:c.onClick?"underline":"none"}}>{c.label}</span></span>)}
           </div>
         </div>
       </div>
-
-      {/* ── Drill content (no repeated StatStrip/MovDistBar inside) ── */}
       {!drill&&<OrgLevel slice={sliceForDs} skuMaster={skuMaster} results={results} categories={categories} dsView={dsView} onDrillCategory={cat=>setDrill({type:"category",value:cat,category:cat})}/>}
       {drill?.type==="category"&&<CategoryLevel slice={sliceForDs} skuMaster={skuMaster} results={results} category={drill.value} dsView={dsView} onDrillBrand={brand=>setDrill({type:"brand",value:brand,brand,category:drill.value})}/>}
       {drill?.type==="brand"&&<BrandLevel slice={sliceForDs} skuMaster={skuMaster} results={results} brand={drill.value} category={drill.category} dsView={dsView} onDrillSku={skuId=>setDrill({type:"sku",value:skuId,skuName:skuMaster[skuId]?.name||skuId,brand:drill.value,category:drill.category})}/>}
@@ -784,8 +749,6 @@ function SimulationTab({invoiceData,results,skuMaster,params}){
   const allDates=useMemo(()=>[...new Set(invoiceData.map(r=>r.date))].sort().slice(-15),[invoiceData]);
   const skuMeta=useMemo(()=>{const m={};Object.values(results||{}).forEach(r=>{m[r.meta.sku]=r.meta;});return m;},[results]);
   const handleDSFilter=ds=>{setDsFilter(ds);setDrill(null);};
-
-  // summary stats for sticky bar (scoped to current dsFilter)
   const inv=dsFilter==="All"?invoiceData:invoiceData.filter(r=>r.ds===dsFilter);
   const winRows=useMemo(()=>inv.filter(r=>allDates.includes(r.date)),[inv,allDates]);
   const oosInst=simData.reduce((s,r)=>s+r.oosInstances,0);
@@ -794,20 +757,15 @@ function SimulationTab({invoiceData,results,skuMaster,params}){
   const totSkus=new Set(winRows.map(r=>r.sku)).size;
   const oosRate=totInst>0?((oosInst/totInst)*100).toFixed(1):"0.0";
   const acc=oosColor(oosRate);
-
-  if(!invoiceData.length||!results)return <div style={{textAlign:"center",padding:80}}><div style={{fontSize:40,marginBottom:12}}>🔬</div><div style={{color:HR.muted,fontSize:14}}>Upload data and run the model first</div></div>;
-
+  if(!invoiceData.length||!results)return <div style={{textAlign:"center",padding:80}}><div style={{fontSize:40,marginBottom:12}}>🔬</div><div style={{color:HR.muted,fontSize:14}}>No data available</div></div>;
   const crumbs=[
     {label:"All Categories",onClick:drill?()=>setDrill(null):null},
     ...(drill?.type==="category"||drill?.type==="brand"||drill?.type==="sku"?[{label:drill.category||drill.value,onClick:drill.type!=="category"?()=>setDrill({type:"category",value:drill.category||drill.value,category:drill.category||drill.value}):null}]:[]),
     ...(drill?.type==="brand"||drill?.type==="sku"?[{label:drill.brand,onClick:drill.type!=="brand"?()=>setDrill({type:"brand",value:drill.brand,brand:drill.brand,category:drill.category}):null}]:[]),
     ...(drill?.type==="sku"?[{label:simData.find(r=>r.skuId===drill.value)?.name||drill.value}]:[]),
   ];
-
   return <div>
-    {/* ── Sticky header ── */}
     <div style={{position:"sticky",top:-16,zIndex:10,background:HR.bg,paddingTop:4,paddingBottom:8,marginBottom:12,borderBottom:`1px solid ${HR.border}`}}>
-      {/* Row 1: title + DS filter + date range */}
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
         <span style={{fontWeight:800,fontSize:14,color:HR.yellowDark,whiteSpace:"nowrap"}}>Simulation — Last 15 Days</span>
         {allDates.length>0&&<span style={{fontSize:10,color:HR.muted,whiteSpace:"nowrap"}}>{allDates[0]} → {allDates[allDates.length-1]}</span>}
@@ -815,9 +773,7 @@ function SimulationTab({invoiceData,results,skuMaster,params}){
           {["All",...DS_LIST].map(ds=>{const di=DS_LIST.indexOf(ds),dc=di>=0?DS_COLORS[di]:null,isActive=dsFilter===ds;return <button key={ds} onClick={()=>handleDSFilter(ds)} style={{padding:"4px 10px",background:isActive?(dc?dc.header:HR.yellow):(dc?dc.bg:HR.white),color:isActive?(dc?HR.white:HR.black):(dc?dc.header:HR.muted),border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700,lineHeight:1.4}}>{ds}</button>;})}
         </div>
       </div>
-      {/* Row 2: OOS summary pills + breadcrumb */}
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-        {/* OOS rate pill */}
         <div style={{background:acc+"18",border:`1px solid ${acc}44`,borderRadius:5,padding:"3px 10px",display:"flex",gap:5,alignItems:"baseline"}}>
           <span style={{fontWeight:800,fontSize:14,color:acc}}>{oosRate}%</span>
           <span style={{fontSize:10,color:acc,fontWeight:600}}>OOS Rate</span>
@@ -832,28 +788,23 @@ function SimulationTab({invoiceData,results,skuMaster,params}){
           <span style={{fontSize:10,color:HR.muted}}>failing SKUs</span>
           <span style={{fontSize:10,color:HR.muted}}>/ {totSkus}</span>
         </div>
-        {/* breadcrumb */}
         <div style={{display:"flex",alignItems:"center",gap:5,marginLeft:4,flexWrap:"wrap"}}>
           {crumbs.map((c,i)=><span key={i} style={{display:"flex",alignItems:"center",gap:5}}>{i>0&&<span style={{color:HR.muted,fontSize:11}}>›</span>}<span onClick={c.onClick||undefined} style={{fontSize:11,color:c.onClick?HR.yellowDark:HR.text,cursor:c.onClick?"pointer":"default",fontWeight:i===crumbs.length-1?700:400,textDecoration:c.onClick?"underline":"none"}}>{c.label}</span></span>)}
         </div>
       </div>
     </div>
-
     {simData.length===0
       ?<div style={{...S2.card,textAlign:"center",padding:40}}><div style={{fontSize:32,marginBottom:10}}>✅</div><div style={{fontWeight:700,color:HR.green,fontSize:14}}>No OOS instances detected</div><div style={{color:HR.muted,fontSize:12,marginTop:4}}>Every order line was fulfilled in the last 15 days.</div></div>
-      :(()=>{
-          return <>
-            {!drill&&<SimOrgLevel simData={simData} allDates={allDates} invoiceData={inv} skuMeta={skuMeta} onDrillCategory={cat=>setDrill({type:"category",value:cat,category:cat})}/>}
-            {drill?.type==="category"&&<SimCategoryLevel simData={simData} allDates={allDates} invoiceData={inv} skuMeta={skuMeta} category={drill.value} onDrillBrand={brand=>setDrill({type:"brand",value:brand,brand,category:drill.value})}/>}
-            {drill?.type==="brand"&&<SimBrandLevel simData={simData} allDates={allDates} invoiceData={inv} skuMeta={skuMeta} category={drill.category} brand={drill.value}/>}
-            {drill?.type==="sku"&&<SimSKULevel simData={simData} allDates={allDates} invoiceData={inv} skuId={drill.value}/>}
-          </>;
-        })()
-    }
+      :(()=>{return <>
+        {!drill&&<SimOrgLevel simData={simData} allDates={allDates} invoiceData={inv} skuMeta={skuMeta} onDrillCategory={cat=>setDrill({type:"category",value:cat,category:cat})}/>}
+        {drill?.type==="category"&&<SimCategoryLevel simData={simData} allDates={allDates} invoiceData={inv} skuMeta={skuMeta} category={drill.value} onDrillBrand={brand=>setDrill({type:"brand",value:brand,brand,category:drill.value})}/>}
+        {drill?.type==="brand"&&<SimBrandLevel simData={simData} allDates={allDates} invoiceData={inv} skuMeta={skuMeta} category={drill.category} brand={drill.value}/>}
+        {drill?.type==="sku"&&<SimSKULevel simData={simData} allDates={allDates} invoiceData={inv} skuId={drill.value}/>}
+      </>;})()} 
   </div>;
 }
 
-// Admin Login Modal
+// ─── Admin Login Modal ────────────────────────────────────────────────────────
 function AdminLoginModal({onClose,onSuccess}){
   const [pw,setPw]=useState(""),[err,setErr]=useState(false);
   const ADMIN_PW=import.meta.env.VITE_ADMIN_PASSWORD||"";
@@ -874,16 +825,9 @@ function AdminLoginModal({onClose,onSuccess}){
   );
 }
 
-const ViewOnlyBanner=()=>(
-  <div style={{background:"#FFF9E0",border:`1px solid ${HR.yellow}`,borderRadius:6,padding:"8px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
-    <span style={{fontSize:14}}>🔒</span>
-    <span style={{fontSize:12,color:HR.yellowDark,fontWeight:600}}>View-only — log in as admin to make changes</span>
-  </div>
-);
-
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App(){
-  const [tab,setTab]=useState("upload"),[pendingTab,setPending]=useState(null);
+  const [tab,setTab]=useState("dashboard"),[pendingTab,setPending]=useState(null);
   const [invoiceData,setInv]=useState([]),[skuMaster,setSKU]=useState({});
   const [minReqQty,setMRQ]=useState({}),[newSKUQty,setNSQ]=useState({});
   const [deadStock,setDead]=useState(new Set()),[priceData,setPrice]=useState({});
@@ -895,29 +839,87 @@ export default function App(){
   const [qaFilterDS,setQaFDS]=useState("All"),[qaFilterMv,setQaFMv]=useState("All"),[qaFilterSp,setQaFSp]=useState("All"),[qaFilterPr,setQaFPr]=useState("All");
   const [isAdmin,setIsAdmin]=useState(()=>localStorage.getItem("adminSession")==="true");
   const [showLoginModal,setShowLoginModal]=useState(false);
+  // NEW: track whether team data was loaded from published file
+  const [teamDataLoaded,setTeamDataLoaded]=useState(false);
+  const [publishStatus,setPublishStatus]=useState(null); // "saving" | "done" | "error"
+
   const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);setQaOpen(false);};
 
   const hasChanges=JSON.stringify(params)!==JSON.stringify(savedParams);
   const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult)].filter(Boolean).length;
 
+  // ── On mount: try loading published team data first, then fall back to localStorage ──
   useEffect(()=>{
     (async()=>{
+      // 1. Try to load published data bundle from /public/team-data.json
+      try{
+        const res=await fetch("/team-data.json?v="+Date.now());
+        if(res.ok){
+          const bundle=await res.json();
+          if(bundle.invoiceData?.length&&bundle.skuMaster){
+            setInv(bundle.invoiceData);
+            setSKU(bundle.skuMaster);
+            if(bundle.minReqQty)setMRQ(bundle.minReqQty);
+            if(bundle.newSKUQty)setNSQ(bundle.newSKUQty);
+            if(bundle.deadStock)setDead(new Set(bundle.deadStock));
+            if(bundle.priceData)setPrice(bundle.priceData);
+            if(bundle.params){const p={...DEFAULT_PARAMS,...bundle.params};setParams(p);setSaved(p);}
+            setLoaded(true);
+            setTeamDataLoaded(true);
+            return; // skip localStorage load
+          }
+        }
+      }catch(e){}
+
+      // 2. Fall back to localStorage (admin's own session)
       try{
         const keys=["invoiceData","skuMaster","minReqQty","newSKUQty","deadStock","priceData","params"];
         const vals=keys.map(k=>LS.get(k));
         const [inv,sku,mrq,nsq,ds,pd,lp]=vals;
-        if(inv)setInv(JSON.parse(inv.value));if(sku)setSKU(JSON.parse(sku.value));if(mrq)setMRQ(JSON.parse(mrq.value));if(nsq)setNSQ(JSON.parse(nsq.value));
-        if(ds)setDead(new Set(JSON.parse(ds.value)));if(pd)setPrice(JSON.parse(pd.value));
+        if(inv)setInv(JSON.parse(inv.value));
+        if(sku)setSKU(JSON.parse(sku.value));
+        if(mrq)setMRQ(JSON.parse(mrq.value));
+        if(nsq)setNSQ(JSON.parse(nsq.value));
+        if(ds)setDead(new Set(JSON.parse(ds.value)));
+        if(pd)setPrice(JSON.parse(pd.value));
         if(lp){const p={...DEFAULT_PARAMS,...JSON.parse(lp.value)};setParams(p);setSaved(p);}
         if(inv&&sku)setLoaded(true);
       }catch(e){}
     })();
   },[]);
+
   useEffect(()=>{if(dataLoaded)triggerModel(invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params);},[dataLoaded]);
 
   const triggerModel=(inv,sku,mrq,nsq,ds,pd,p)=>{
     setLoading(true);
     setTimeout(()=>{try{const res=runEngine(inv,sku,mrq,pd,ds,nsq,p);setResults(res);setTab("dashboard");}catch(err){console.error(err);alert("Model error: "+err.message);}setLoading(false);},50);
+  };
+
+  // ── Publish: export all data as a JSON file for admin to place in /public ──
+  const handlePublish=()=>{
+    setPublishStatus("saving");
+    try{
+      const bundle={
+        invoiceData,
+        skuMaster,
+        minReqQty,
+        newSKUQty,
+        deadStock:[...deadStock],
+        priceData,
+        params,
+        publishedAt:new Date().toISOString(),
+      };
+      const blob=new Blob([JSON.stringify(bundle)],{type:"application/json"});
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);
+      a.download="team-data.json";
+      a.click();
+      setPublishStatus("done");
+      setTimeout(()=>setPublishStatus(null),8000);
+    }catch(e){
+      setPublishStatus("error");
+      setTimeout(()=>setPublishStatus(null),5000);
+    }
   };
 
   const handleInvoice=useCallback(async(e)=>{
@@ -991,8 +993,10 @@ export default function App(){
   const rw2=params.recencyWt||RECENCY_WT_DEFAULT,dcM=params.dcMult||DC_MULT_DEFAULT;
   const movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"],priceColors=["#B91C1C","#C2410C","#A16207","#475569","#64748B"];
 
-  const LK=!isAdmin;
-  const NAV_TABS=[["dashboard","Dashboard"],["insights","Insights"],["simulation","Simulation"],["output","Min/Max Output"],["upload","Upload Data"],["logic","Logic Tweaker"]];
+  // Nav tabs — non-admins only see 4 tabs
+  const ADMIN_TABS=[["dashboard","Dashboard"],["insights","Insights"],["simulation","Simulation"],["output","Min/Max Output"],["upload","Upload Data"],["logic","Logic Tweaker"]];
+  const PUBLIC_TABS=[["dashboard","Dashboard"],["insights","Insights"],["simulation","Simulation"],["output","Min/Max Output"]];
+  const NAV_TABS=isAdmin?ADMIN_TABS:PUBLIC_TABS;
 
   return(
     <div style={S.app}>
@@ -1000,6 +1004,7 @@ export default function App(){
       <div style={S.header}>
         <HomeRunLogo/>
         <div style={{fontSize:10,color:HR.muted,marginLeft:4}}>{dateRange}</div>
+        {teamDataLoaded&&<span style={{fontSize:9,color:HR.green,background:"#DCFCE7",border:"1px solid #BBF7D0",borderRadius:3,padding:"1px 6px",fontWeight:600}}>Team Data</span>}
         <div style={{flex:1}}/>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}
         {isAdmin&&<button onClick={()=>setQaOpen(o=>!o)} style={{...S.btn(qaOpen),fontSize:11}}>🔬 QA</button>}
@@ -1078,12 +1083,12 @@ export default function App(){
 
       <div style={S.pageWrap}>
 
-        {/* UPLOAD TAB */}
-        {tab==="upload"&&(
+        {/* UPLOAD TAB — admin only */}
+        {tab==="upload"&&isAdmin&&(
           <div style={{maxWidth:680}}>
             <h2 style={{color:HR.yellowDark,marginBottom:4,fontSize:16}}>Upload Data</h2>
             <p style={{color:HR.muted,fontSize:13,marginBottom:14}}>Upload CSVs to power the model. Invoice data stored as rolling 90-day window.</p>
-            {!isAdmin&&<ViewOnlyBanner/>}
+
             {[
               {label:"Invoice Dump",desc:"Columns: Invoice Date, SKU, Line Item Location Name, Quantity",handler:handleInvoice,count:`${invoiceData.length.toLocaleString()} rows`,key:"invoiceData",required:true,hasData:invoiceData.length>0},
               {label:"SKU Master",desc:"Columns: Name, SKU, Category, Brand, Status, Inventorised At",handler:handleSKU,count:`${Object.keys(skuMaster).length.toLocaleString()} SKUs`,key:"skuMaster",required:true,hasData:Object.keys(skuMaster).length>0},
@@ -1096,21 +1101,43 @@ export default function App(){
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                   <div>
                     <div style={{fontWeight:700,color:HR.text,marginBottom:2,fontSize:13}}>{item.label} {item.required&&<span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>}</div>
-                    <div style={{fontSize:11,color:HR.muted,marginBottom:isAdmin?10:0}}>{item.desc}</div>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:10}}>{item.desc}</div>
                   </div>
                   <div style={{fontSize:11,color:HR.green,whiteSpace:"nowrap",marginLeft:12,fontWeight:600}}>{item.count}</div>
                 </div>
-                {isAdmin&&(
-                  <div style={{display:"flex",gap:6}}>
-                    <label style={{background:HR.green,color:HR.white,padding:"6px 14px",borderRadius:5,cursor:"pointer",fontSize:12,fontWeight:600}}>
-                      Choose CSV <input type="file" accept=".csv" onChange={item.handler} style={{display:"none"}}/>
-                    </label>
-                    {item.hasData&&<button onClick={()=>clearData(item.key)} style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"6px 12px",borderRadius:5,cursor:"pointer",fontSize:12}}>🗑 Delete</button>}
-                  </div>
-                )}
+                <div style={{display:"flex",gap:6}}>
+                  <label style={{background:HR.green,color:HR.white,padding:"6px 14px",borderRadius:5,cursor:"pointer",fontSize:12,fontWeight:600}}>
+                    Choose CSV <input type="file" accept=".csv" onChange={item.handler} style={{display:"none"}}/>
+                  </label>
+                  {item.hasData&&<button onClick={()=>clearData(item.key)} style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"6px 12px",borderRadius:5,cursor:"pointer",fontSize:12}}>🗑 Delete</button>}
+                </div>
               </div>
             ))}
-            {isAdmin&&dataLoaded&&<button onClick={()=>applyAndRun(params)} style={{...S.runBtn,marginTop:6}}>▶ Re-run Model</button>}
+
+            {dataLoaded&&<button onClick={()=>applyAndRun(params)} style={{...S.runBtn,marginTop:6}}>▶ Re-run Model</button>}
+
+            {/* ── Publish to Team ── */}
+            {dataLoaded&&results&&(
+              <div style={{...S.card,marginTop:20,borderColor:HR.yellow,background:"#FFFBEA"}}>
+                <div style={{fontWeight:700,color:HR.yellowDark,fontSize:14,marginBottom:4}}>📤 Publish to Team</div>
+                <div style={{fontSize:12,color:HR.textSoft,marginBottom:12}}>
+                  Downloads a <code style={{color:HR.yellowDark}}>team-data.json</code> file bundling all current data. Place it in your project's <code style={{color:HR.yellowDark}}>public/</code> folder, then push to GitHub — your team will see it automatically.
+                </div>
+                <button onClick={handlePublish} style={{background:HR.yellow,color:HR.black,border:"none",padding:"9px 24px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:13}}>
+                  ⬇ Download team-data.json
+                </button>
+                {publishStatus==="done"&&(
+                  <div style={{marginTop:12,background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:6,padding:"10px 14px",fontSize:12,color:"#15803D"}}>
+                    <div style={{fontWeight:700,marginBottom:4}}>✅ File downloaded! Next steps:</div>
+                    <div>1. Move <code>team-data.json</code> into your project's <code>public/</code> folder</div>
+                    <div style={{marginTop:3}}>2. In terminal: <code style={{background:"#E0F7E9",padding:"1px 5px",borderRadius:3}}>git add . && git commit -m "Publish team data" && git push</code></div>
+                    <div style={{marginTop:3}}>3. Vercel deploys in ~2 min — your team sees the new data 🎉</div>
+                  </div>
+                )}
+                {publishStatus==="error"&&<div style={{marginTop:10,color:"#B91C1C",fontSize:12}}>❌ Something went wrong. Try again.</div>}
+              </div>
+            )}
+
             {missing.length>0&&(
               <div style={{...S.card,marginTop:20,border:`1px solid ${HR.yellow}`}}>
                 <div style={{fontWeight:700,color:HR.yellowDark,marginBottom:3,fontSize:13}}>⚠ {missing.length} SKUs in Invoice not Active in SKU Master</div>
@@ -1128,7 +1155,14 @@ export default function App(){
         {/* DASHBOARD TAB */}
         {tab==="dashboard"&&(
           !dataLoaded?(
-            <div style={{textAlign:"center",padding:60}}><div style={{fontSize:36,marginBottom:10}}>⚡</div><div style={{color:HR.muted,fontSize:14,marginBottom:14}}>No data loaded yet</div><button onClick={()=>setTab("upload")} style={{...S.runBtn,width:"auto",padding:"7px 20px"}}>Upload Data →</button></div>
+            <div style={{textAlign:"center",padding:60}}>
+              <div style={{fontSize:36,marginBottom:10}}>⚡</div>
+              <div style={{color:HR.muted,fontSize:14,marginBottom:6}}>No data loaded yet</div>
+              {isAdmin
+                ?<button onClick={()=>setTab("upload")} style={{...S.runBtn,width:"auto",padding:"7px 20px"}}>Upload Data →</button>
+                :<div style={{color:HR.muted,fontSize:12}}>Data is being prepared. Check back soon.</div>
+              }
+            </div>
           ):(
             <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
               <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:10}}>
@@ -1147,7 +1181,6 @@ export default function App(){
                 <table style={S.table}>
                   <thead style={{position:"sticky",top:0,zIndex:4}}>
                     <tr style={{background:HR.surfaceLight}}>
-                      {/* Frozen headers row 1 */}
                       <th style={{...frozenTh({zIndex:6}),left:0,minWidth:COL_ITEM_W,maxWidth:COL_ITEM_W}} rowSpan={2}>Item</th>
                       <th style={{...frozenTh({zIndex:6}),left:COL_ITEM_W,minWidth:COL_CAT_W,maxWidth:COL_CAT_W}} rowSpan={2}>Category</th>
                       <th style={{...frozenTh({zIndex:6}),left:COL_ITEM_W+COL_CAT_W,minWidth:COL_PRICE_W}} rowSpan={2}>Price</th>
@@ -1173,7 +1206,6 @@ export default function App(){
                     {filtered.slice(0,500).map((r,i)=>{
                       const isDead=deadStock.has(r.meta.sku),rowBg=i%2===0?HR.white:HR.surfaceLight;
                       return <tr key={r.meta.sku} style={{background:rowBg,opacity:isDead?0.6:1}}>
-                        {/* Frozen cells */}
                         <td style={{...frozenTd(0,rowBg),minWidth:COL_ITEM_W,maxWidth:COL_ITEM_W}}>
                           <div style={{color:HR.text,fontWeight:400,fontSize:10,lineHeight:1.3,whiteSpace:"normal"}}>{r.meta.name||r.meta.sku}</div>
                           <div style={{fontSize:9,marginTop:1,display:"flex",gap:4,alignItems:"center"}}>
@@ -1199,15 +1231,12 @@ export default function App(){
           )
         )}
 
-        {tab==="simulation"&&<SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params}/>}        {tab==="insights"&&(
-          <div>
-            <InsightsTab invoiceData={invoiceData} skuMaster={skuMaster} results={results||{}} params={params}/>
-          </div>
-        )}
+        {tab==="simulation"&&<SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params}/>}
+        {tab==="insights"&&<InsightsTab invoiceData={invoiceData} skuMaster={skuMaster} results={results||{}} params={params}/>}
 
         {/* OUTPUT TAB */}
         {tab==="output"&&(
-          !results?<div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>Upload data first.</div>:(
+          !results?<div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>No data available.</div>:(
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
                 <h2 style={{color:HR.yellowDark,margin:0,fontSize:16}}>Min/Max Output — All DS Req</h2>
@@ -1248,11 +1277,10 @@ export default function App(){
           )
         )}
 
-        {/* LOGIC TWEAKER TAB */}
-        {tab==="logic"&&(
+        {/* LOGIC TWEAKER TAB — admin only */}
+        {tab==="logic"&&isAdmin&&(
           <div style={{maxWidth:620}}>
-            {LK&&<ViewOnlyBanner/>}
-            {!LK&&hasChanges&&(
+            {hasChanges&&(
               <div style={{background:"#FFFBEA",border:`1px solid ${HR.yellow}`,borderRadius:8,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
                 <div><span style={{color:HR.yellowDark,fontWeight:700,fontSize:13}}>⚠ {changedCount} unsaved change{changedCount!==1?"s":""}</span><span style={{color:HR.muted,fontSize:12,marginLeft:6}}>Re-run the model to apply</span></div>
                 <div style={{display:"flex",gap:6}}>
@@ -1262,15 +1290,14 @@ export default function App(){
               </div>
             )}
             <h2 style={{color:HR.yellowDark,marginBottom:4,fontSize:16}}>Logic Tweaker</h2>
-            <p style={{color:HR.muted,fontSize:13,marginBottom:16}}>Click any section to expand and adjust parameters.{LK?" Log in as admin to edit.":""}</p>
+            <p style={{color:HR.muted,fontSize:13,marginBottom:16}}>Click any section to expand and adjust parameters.</p>
 
-            {/* Analysis Period */}
             <Section title="Analysis Period" icon="📅" accent="#0077A8" summary={`Overall: ${params.overallPeriod}d · Recency: ${params.recencyWindow}d · Long: ${params.overallPeriod-params.recencyWindow}d`}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:16}}>
                 {[{label:"Overall Period (days)",key:"overallPeriod",min:15,max:90},{label:"Recency Window (days)",key:"recencyWindow",min:7,max:null}].map(({label,key,min,max})=>{
                   const maxVal=key==="recencyWindow"?Math.max(min,(params.overallPeriod||90)-1):max;
                   return <div key={key}><div style={{fontSize:11,color:HR.muted,marginBottom:4}}>{label}</div>
-                    <NumInput value={params[key]} min={min} max={maxVal} step={1} disabled={LK} onChange={v=>saveParams({...params,[key]:v})} style={{width:"100%",boxSizing:"border-box",color:HR.yellowDark,fontWeight:700}}/>
+                    <NumInput value={params[key]} min={min} max={maxVal} step={1} onChange={v=>saveParams({...params,[key]:v})} style={{width:"100%",boxSizing:"border-box",color:HR.yellowDark,fontWeight:700}}/>
                   </div>;
                 })}
                 <div><div style={{fontSize:11,color:HR.muted,marginBottom:4}}>Long Period (auto)</div><div style={{...S.input,textAlign:"center",color:HR.muted,fontWeight:700,opacity:0.7}}>{params.overallPeriod-params.recencyWindow} days</div></div>
@@ -1279,104 +1306,88 @@ export default function App(){
               <table style={S.table}>
                 <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Movement Tag</th><th style={{...S.th,textAlign:"center"}}>Weight</th><th style={{...S.th,color:HR.muted,fontSize:10,fontWeight:400}}>Blend formula</th></tr></thead>
                 <tbody>{["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{const wt=rw2[tier]||1,color=MOV_COLORS[tier];return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}><MovTag value={tier}/></td>
-                  <td style={{...S.td,textAlign:"center"}}>
-                    <NumInput value={wt} min={0.5} max={5} step={0.25} disabled={LK} onChange={v=>saveParams({...params,recencyWt:{...rw2,[tier]:v}})} style={{width:72,color,fontWeight:700}}/>
-                  </td><td style={{...S.td,fontSize:10,color:HR.muted}}>{`(Long + Recent × ${wt}) ÷ ${1+wt}`}</td></tr>;})}
+                  <td style={{...S.td,textAlign:"center"}}><NumInput value={wt} min={0.5} max={5} step={0.25} onChange={v=>saveParams({...params,recencyWt:{...rw2,[tier]:v}})} style={{width:72,color,fontWeight:700}}/></td>
+                  <td style={{...S.td,fontSize:10,color:HR.muted}}>{`(Long + Recent × ${wt}) ÷ ${1+wt}`}</td></tr>;})}
                 </tbody>
               </table>
             </Section>
 
-            {/* DS Level Logic */}
             <Section title="DS Level Logic" icon="🏪" accent={HR.yellowDark} summary={`Mov: ${mi.join("/")} · Price: ₹${pt.join("/₹")} · Spike: ${params.spikeMultiplier}× · Brands: ${Object.keys(bb).length}`}>
-
               <Section title="Base Min Days" icon="📦" accent={HR.yellowDark} summary={`SF:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Super Fast"]} F:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Fast"]} M:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Moderate"]} Sl:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Slow"]} SS:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Super Slow"]}`}>
                 <div style={{...S.card,padding:0,overflow:"hidden"}}>
                   <table style={S.table}>
                     <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Movement Tag</th><th style={{...S.th,textAlign:"center"}}>Base Min Days</th></tr></thead>
                     <tbody>{["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{const bmd=params.baseMinDays||BASE_MIN_DAYS_DEFAULT,color=MOV_COLORS[tier];return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}><MovTag value={tier}/></td><td style={{...S.td,textAlign:"center"}}>
-                      <NumInput value={bmd[tier]??3} min={1} max={30} step={1} disabled={LK} onChange={v=>saveParams({...params,baseMinDays:{...(params.baseMinDays||BASE_MIN_DAYS_DEFAULT),[tier]:v}})} style={{width:72,color,fontWeight:700}}/>
+                      <NumInput value={bmd[tier]??3} min={1} max={30} step={1} onChange={v=>saveParams({...params,baseMinDays:{...(params.baseMinDays||BASE_MIN_DAYS_DEFAULT),[tier]:v}})} style={{width:72,color,fontWeight:700}}/>
                     </td></tr>;})}
                     </tbody>
                   </table>
                 </div>
               </Section>
-
               <Section title="Movement Tag Boundaries" icon="🏃" accent={HR.yellowDark} summary={`≤${mi[0]}d / ≤${mi[1]}d / ≤${mi[2]}d / ≤${mi[3]}d`}>
-                {[0,1,2,3].map(i=>{const labels=["Super Fast | Fast","Fast | Moderate","Moderate | Slow","Slow | Super Slow"],lo=i===0?1:mi[i-1]+1,hi=i===3?30:mi[i+1]-1;return <TierSlider key={i} label={labels[i]} value={mi[i]} min={lo} max={hi} color={movColors[i+1]} disabled={LK} onChange={v=>{const next=[...mi];next[i]=v;saveParams({...params,movIntervals:next});}}/>;})}</Section>
-
+                {[0,1,2,3].map(i=>{const labels=["Super Fast | Fast","Fast | Moderate","Moderate | Slow","Slow | Super Slow"],lo=i===0?1:mi[i-1]+1,hi=i===3?30:mi[i+1]-1;return <TierSlider key={i} label={labels[i]} value={mi[i]} min={lo} max={hi} color={movColors[i+1]} onChange={v=>{const next=[...mi];next[i]=v;saveParams({...params,movIntervals:next});}}/>;})}</Section>
               <Section title="Price Tag Boundaries" icon="💰" accent={HR.yellowDark} summary={`₹${pt[0]} / ₹${pt[1]} / ₹${pt[2]} / ₹${pt[3]}`}>
-                {[0,1,2,3].map(i=>{const labels=["Premium | High","High | Medium","Medium | Low","Low | Super Low"],lo=i===3?1:pt[i+1]+1,hi=i===0?50000:pt[i-1]-1;return <TierSlider key={i} label={labels[i]} value={pt[i]} min={lo} max={hi} color={priceColors[i]} disabled={LK} onChange={v=>{const next=[...pt];next[i]=v;saveParams({...params,priceTiers:next});}}/>;})}</Section>
-
+                {[0,1,2,3].map(i=>{const labels=["Premium | High","High | Medium","Medium | Low","Low | Super Low"],lo=i===3?1:pt[i+1]+1,hi=i===0?50000:pt[i-1]-1;return <TierSlider key={i} label={labels[i]} value={pt[i]} min={lo} max={hi} color={priceColors[i]} onChange={v=>{const next=[...pt];next[i]=v;saveParams({...params,priceTiers:next});}}/>;})}</Section>
               <Section title="Spike Parameters" icon="⚡" accent={HR.yellowDark} summary={`${params.spikeMultiplier}× · Frequent ≥${params.spikePctFrequent}% · Once ≥${params.spikePctOnce}%`}>
                 {[{key:"spikeMultiplier",label:"Spike Definition",desc:"Day qty > X × daily avg = spike day",min:1,max:20,step:1},{key:"spikePctFrequent",label:"Frequent Spike Threshold (%)",desc:"Spike days ≥ X% of period = Frequent",min:1,max:50,step:1},{key:"spikePctOnce",label:"Once-in-a-while Threshold (%)",desc:"Spike days ≥ X% of period = Once in a while",min:1,max:20,step:1}].map(pm=>(
-                  <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px",opacity:LK?0.6:1}}>
+                  <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18,minWidth:32,textAlign:"right"}}>{params[pm.key]}</div></div>
                     <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
-                    <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step} disabled={LK} onChange={v=>saveParams({...params,[pm.key]:v})}/>
+                    <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step} onChange={v=>saveParams({...params,[pm.key]:v})}/>
                   </div>
                 ))}
               </Section>
-
               <Section title="Max Days Buffer & ABQ" icon="📊" accent={HR.yellowDark} summary={`Buffer: +${params.maxDaysBuffer}d · ABQ mult: ${params.abqMaxMultiplier}×`}>
                 {[{key:"maxDaysBuffer",label:"Max Days Buffer",desc:"Max Days = Min Days + X.",min:1,max:10,step:1},{key:"abqMaxMultiplier",label:"ABQ Max Multiplier",desc:"Max = CEILING(Min × X) for Slow items.",min:1,max:3,step:0.1}].map(pm=>(
-                  <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px",opacity:LK?0.6:1}}>
+                  <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18,minWidth:32,textAlign:"right"}}>{params[pm.key]}</div></div>
                     <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
-                    <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step} disabled={LK} onChange={v=>saveParams({...params,[pm.key]:v})}/>
+                    <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step} onChange={v=>saveParams({...params,[pm.key]:v})}/>
                   </div>
                 ))}
               </Section>
-
               <Section title="Brand Buffer Days" icon="🏷️" accent={HR.yellowDark} summary={`${Object.keys(bb).length} brand${Object.keys(bb).length!==1?"s":""} configured`}>
                 <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:10}}>
                   <table style={S.table}>
-                    <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Brand</th><th style={{...S.th,textAlign:"center"}}>Buffer Days</th>{!LK&&<th style={{...S.th,textAlign:"center"}}>Remove</th>}</tr></thead>
+                    <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Brand</th><th style={{...S.th,textAlign:"center"}}>Buffer Days</th><th style={{...S.th,textAlign:"center"}}>Remove</th></tr></thead>
                     <tbody>{Object.entries(bb).map(([brand,days],i)=>(
                       <tr key={brand} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
                         <td style={{...S.td,fontWeight:600,fontSize:11}}>{brand}</td>
-                        <td style={{...S.td,textAlign:"center"}}>
-                          <NumInput value={days} min={1} max={30} step={1} disabled={LK} onChange={v=>saveParams({...params,brandBuffer:{...bb,[brand]:v}})} style={{width:64,color:HR.yellowDark,fontWeight:700}}/>
-                        </td>
-                        {!LK&&<td style={{...S.td,textAlign:"center"}}><button onClick={()=>{const next={...bb};delete next[brand];saveParams({...params,brandBuffer:next});}} style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"3px 8px",borderRadius:4,cursor:"pointer",fontSize:11}}>✕</button></td>}
+                        <td style={{...S.td,textAlign:"center"}}><NumInput value={days} min={1} max={30} step={1} onChange={v=>saveParams({...params,brandBuffer:{...bb,[brand]:v}})} style={{width:64,color:HR.yellowDark,fontWeight:700}}/></td>
+                        <td style={{...S.td,textAlign:"center"}}><button onClick={()=>{const next={...bb};delete next[brand];saveParams({...params,brandBuffer:next});}} style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"3px 8px",borderRadius:4,cursor:"pointer",fontSize:11}}>✕</button></td>
                       </tr>
                     ))}</tbody>
                   </table>
                 </div>
-                {!LK&&(
-                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                    <input placeholder="Brand name..." value={newBrand} onChange={e=>setNewBrand(e.target.value)} style={{...S.input,flex:1}}/>
-                    <NumInput value={newBrandDays} min={1} max={30} step={1} onChange={v=>setNBD(v)} style={{width:70}}/>
-                    <button onClick={()=>{const b=newBrand.trim();if(!b)return;saveParams({...params,brandBuffer:{...bb,[b]:newBrandDays}});setNewBrand("");setNBD(1);}} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12,whiteSpace:"nowrap"}}>+ Add</button>
-                  </div>
-                )}
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <input placeholder="Brand name..." value={newBrand} onChange={e=>setNewBrand(e.target.value)} style={{...S.input,flex:1}}/>
+                  <NumInput value={newBrandDays} min={1} max={30} step={1} onChange={v=>setNBD(v)} style={{width:70}}/>
+                  <button onClick={()=>{const b=newBrand.trim();if(!b)return;saveParams({...params,brandBuffer:{...bb,[b]:newBrandDays}});setNewBrand("");setNBD(1);}} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12,whiteSpace:"nowrap"}}>+ Add</button>
+                </div>
               </Section>
-
               <Section title="New Dark Store Logic" icon="🆕" accent={HR.yellowDark} summary={`${(params.newDSList||[]).join(", ")||"None"} · Top ${params.newDSFloorTopN} SKUs`}>
-                <div style={{...S.card,marginBottom:10,padding:"12px 14px",opacity:LK?0.6:1}}>
+                <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>Floor applies to Top N SKUs</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params.newDSFloorTopN}</div></div>
-                  <TierSlider label="" value={params.newDSFloorTopN} min={50} max={250} step={50} disabled={LK} onChange={v=>saveParams({...params,newDSFloorTopN:v})}/>
+                  <TierSlider label="" value={params.newDSFloorTopN} min={50} max={250} step={50} onChange={v=>saveParams({...params,newDSFloorTopN:v})}/>
                 </div>
                 <div style={{...S.card,padding:"12px 14px"}}>
                   <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Stores designated as New DS</div>
                   <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-                    {(params.newDSList||[]).map(ds=><span key={ds} style={{background:"#FFFBEA",color:HR.yellowDark,border:`1px solid ${HR.yellow}`,padding:"3px 10px",borderRadius:5,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{ds}{!LK&&<button onClick={()=>saveParams({...params,newDSList:(params.newDSList||[]).filter(d=>d!==ds)})} style={{background:"none",border:"none",color:HR.yellowDark,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>×</button>}</span>)}
+                    {(params.newDSList||[]).map(ds=><span key={ds} style={{background:"#FFFBEA",color:HR.yellowDark,border:`1px solid ${HR.yellow}`,padding:"3px 10px",borderRadius:5,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{ds}<button onClick={()=>saveParams({...params,newDSList:(params.newDSList||[]).filter(d=>d!==ds)})} style={{background:"none",border:"none",color:HR.yellowDark,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>×</button></span>)}
                     {(params.newDSList||[]).length===0&&<span style={{color:HR.muted,fontSize:12}}>No stores assigned</span>}
                   </div>
-                  {!LK&&(
-                    <div style={{display:"flex",gap:6}}>
-                      <select id="newDSSelect" style={S.input}>{DS_LIST.filter(d=>!(params.newDSList||[]).includes(d)).map(d=><option key={d}>{d}</option>)}</select>
-                      <button onClick={()=>{const sel=document.getElementById("newDSSelect").value;if(sel&&!(params.newDSList||[]).includes(sel))saveParams({...params,newDSList:[...(params.newDSList||[]),sel]});}} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12}}>+ Add</button>
-                    </div>
-                  )}
+                  <div style={{display:"flex",gap:6}}>
+                    <select id="newDSSelect" style={S.input}>{DS_LIST.filter(d=>!(params.newDSList||[]).includes(d)).map(d=><option key={d}>{d}</option>)}</select>
+                    <button onClick={()=>{const sel=document.getElementById("newDSSelect").value;if(sel&&!(params.newDSList||[]).includes(sel))saveParams({...params,newDSList:[...(params.newDSList||[]),sel]});}} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12}}>+ Add</button>
+                  </div>
                 </div>
               </Section>
             </Section>
 
-            {/* DC Level Logic */}
             <Section title="DC Level Logic" icon="🏭" accent="#0077A8" summary={`Active DS: ${params.activeDSCount} · DC mults: SF ${(params.dcMult||DC_MULT_DEFAULT)["Super Fast"].min}–${(params.dcMult||DC_MULT_DEFAULT)["Super Fast"].max}`}>
-              <div style={{...S.card,padding:"12px 14px",marginBottom:14,opacity:LK?0.6:1}}>
+              <div style={{...S.card,padding:"12px 14px",marginBottom:14}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>Active DS Count</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params.activeDSCount}</div></div>
-                <TierSlider label="" value={params.activeDSCount} min={1} max={10} step={1} color="#0077A8" disabled={LK} onChange={v=>saveParams({...params,activeDSCount:v})}/>
+                <TierSlider label="" value={params.activeDSCount} min={1} max={10} step={1} color="#0077A8" onChange={v=>saveParams({...params,activeDSCount:v})}/>
               </div>
               <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Dead Stock DC Multiplier</div>
               <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:14}}>
@@ -1384,7 +1395,7 @@ export default function App(){
                   <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Condition</th><th style={{...S.th,textAlign:"center"}}>Min Mult</th><th style={{...S.th,textAlign:"center"}}>Max Mult</th></tr></thead>
                   <tbody><tr style={{background:HR.white}}><td style={S.td}><span style={{...TAG_STYLE,background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}}>Dead Stock</span></td>
                     {["min","max"].map(field=><td key={field} style={{...S.td,textAlign:"center"}}>
-                      <NumInput value={(params.dcDeadMult||DC_DEAD_MULT_DEFAULT)[field]} min={0} max={1} step={0.05} disabled={LK} onChange={v=>saveParams({...params,dcDeadMult:{...(params.dcDeadMult||DC_DEAD_MULT_DEFAULT),[field]:v}})} style={{width:72,color:"#B91C1C",fontWeight:700}}/>
+                      <NumInput value={(params.dcDeadMult||DC_DEAD_MULT_DEFAULT)[field]} min={0} max={1} step={0.05} onChange={v=>saveParams({...params,dcDeadMult:{...(params.dcDeadMult||DC_DEAD_MULT_DEFAULT),[field]:v}})} style={{width:72,color:"#B91C1C",fontWeight:700}}/>
                     </td>)}
                   </tr></tbody>
                 </table>
@@ -1396,15 +1407,15 @@ export default function App(){
                   <tbody>{["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{
                     const d=dcM[tier]||DC_MULT_DEFAULT[tier],color=MOV_COLORS[tier];
                     return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}><MovTag value={tier}/></td>
-                      <td style={{...S.td,textAlign:"center"}}><NumInput value={d.min} min={0} max={1} step={0.05} disabled={LK} onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,min:v}}})} style={{width:72,color,fontWeight:700}}/></td>
-                      <td style={{...S.td,textAlign:"center"}}><NumInput value={d.max} min={0} max={1} step={0.05} disabled={LK} onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,max:v}}})} style={{width:72,color,fontWeight:700}}/></td>
+                      <td style={{...S.td,textAlign:"center"}}><NumInput value={d.min} min={0} max={1} step={0.05} onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,min:v}}})} style={{width:72,color,fontWeight:700}}/></td>
+                      <td style={{...S.td,textAlign:"center"}}><NumInput value={d.max} min={0} max={1} step={0.05} onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,max:v}}})} style={{width:72,color,fontWeight:700}}/></td>
                     </tr>;
                   })}</tbody>
                 </table>
               </div>
             </Section>
 
-            {!LK&&hasChanges&&<button onClick={()=>applyAndRun(params)} style={{...S.runBtn,marginTop:14}}>▶ Apply & Re-run Model</button>}
+            {hasChanges&&<button onClick={()=>applyAndRun(params)} style={{...S.runBtn,marginTop:14}}>▶ Apply & Re-run Model</button>}
           </div>
         )}
       </div>
