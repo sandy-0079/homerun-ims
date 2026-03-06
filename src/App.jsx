@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { loadFromSupabase, saveToSupabase } from "./supabase";
 
 const ROLLING_DAYS = 90;
 const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
@@ -224,7 +225,8 @@ const COL_ITEM_W  = 150;
 const COL_CAT_W   = 90;
 const COL_PRICE_W = 72;
 const COL_TOPN_W  = 76;
-const FROZEN_TOTAL = COL_ITEM_W + COL_CAT_W + COL_PRICE_W + COL_TOPN_W;
+const COL_LOGIC_W = 90;
+const FROZEN_TOTAL = COL_ITEM_W + COL_CAT_W + COL_PRICE_W + COL_TOPN_W + COL_LOGIC_W;
 
 const frozenTh=(extra={})=>({...S.th,position:"sticky",top:0,zIndex:4,background:HR.surfaceLight,...extra});
 const frozenTd=(left,bg,extra={})=>({...S.td,position:"sticky",left,background:bg,zIndex:2,...extra});
@@ -325,7 +327,6 @@ const HomeRunLogo=()=>(
   </div>
 );
 
-// ─── Insights ────────────────────────────────────────────────────────────────
 const StatStrip=({items})=>(
   <div style={{display:"grid",gridTemplateColumns:`repeat(${items.length},1fr)`,gap:10,marginBottom:16}}>
     {items.map(c=>(
@@ -362,7 +363,7 @@ const SingleFreqChart=({freq,ds,compact=false})=>{
     <div style={{background:HR.surface,borderRadius:8,padding:compact?8:14,border:`1px solid ${color}44`}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:compact?4:8}}>
         <span style={{fontSize:compact?10:12,fontWeight:700,color}}>{ds}</span>
-        {!compact&&<span style={{fontSize:10,color:HR.muted}}>{totalOrders} orders · ABQ {abq}</span>}
+        {!compact&&<span style={{fontSize:10,color:HR.muted}}>{totalOrders} instances · ABQ {abq}</span>}
       </div>
       <div style={{overflowX:"auto"}}>
         <svg width={svgW} height={svgH} style={{display:"block"}}>
@@ -419,7 +420,7 @@ function InsightsTab({invoiceData,skuMaster,results,params}){
             {DS_VIEW_OPTS.map(d=>{const di=DS_LIST.indexOf(d),col=di>=0?DS_COLORS[di].header:HR.muted,isActive=dsView===d;return <button key={d} onClick={()=>setDsView(d)} style={{padding:"4px 9px",background:isActive?(di>=0?DS_COLORS[di].header:HR.yellow):HR.white,color:isActive?HR.white:col,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700,lineHeight:1.4}}>{d}</button>;})}
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginLeft:4}}>
-            {[{label:"SKUs",value:skuCount.toLocaleString(),color:HR.green},{label:"Orders",value:st.totalOrders.toLocaleString(),color:HR.yellowDark},{label:"Qty",value:st.totalQty.toLocaleString(),color:"#0077A8"},{label:"ABQ",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"}].map(c=>(
+            {[{label:"SKUs",value:skuCount.toLocaleString(),color:HR.green},{label:"Instances",value:st.totalOrders.toLocaleString(),color:HR.yellowDark},{label:"Qty",value:st.totalQty.toLocaleString(),color:"#0077A8"},{label:"ABQ",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"}].map(c=>(
               <div key={c.label} style={{background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:5,padding:"3px 10px",display:"flex",gap:5,alignItems:"baseline"}}>
                 <span style={{fontWeight:800,fontSize:13,color:c.color}}>{c.value}</span>
                 <span style={{fontSize:10,color:HR.muted}}>{c.label}</span>
@@ -451,17 +452,17 @@ function OrgLevel({slice,skuMaster,results,categories,dsView,onDrillCategory}){
   return <div>
     <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:8}}>Drill into a Category</div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-      {categories.map(cat=>{const catRows=slice.filter(r=>(skuMaster[r.sku]?.category||"Unknown")===cat),cs=aggStats(catRows);return <div key={cat} onClick={()=>onDrillCategory(cat)} style={{...S.card,cursor:"pointer",borderColor:HR.border}} onMouseEnter={e=>e.currentTarget.style.borderColor=HR.yellow} onMouseLeave={e=>e.currentTarget.style.borderColor=HR.border}><div style={{fontWeight:700,color:HR.text,fontSize:12,marginBottom:4}}>{cat}</div><div style={{fontSize:10,color:HR.muted}}>{cs.skuCount} SKUs · {cs.totalOrders.toLocaleString()} orders</div><div style={{fontSize:10,color:HR.muted}}>Qty: {cs.totalQty.toLocaleString()} · ABQ: {cs.avgOrderQty.toFixed(1)}</div><div style={{fontSize:10,color:HR.yellowDark,marginTop:4,fontWeight:600}}>Drill in →</div></div>;})}
+      {categories.map(cat=>{const catRows=slice.filter(r=>(skuMaster[r.sku]?.category||"Unknown")===cat),cs=aggStats(catRows);return <div key={cat} onClick={()=>onDrillCategory(cat)} style={{...S.card,cursor:"pointer",borderColor:HR.border}} onMouseEnter={e=>e.currentTarget.style.borderColor=HR.yellow} onMouseLeave={e=>e.currentTarget.style.borderColor=HR.border}><div style={{fontWeight:700,color:HR.text,fontSize:12,marginBottom:4}}>{cat}</div><div style={{fontSize:10,color:HR.muted}}>{cs.skuCount} SKUs · {cs.totalOrders.toLocaleString()} instances</div><div style={{fontSize:10,color:HR.muted}}>Qty: {cs.totalQty.toLocaleString()} · ABQ: {cs.avgOrderQty.toFixed(1)}</div><div style={{fontSize:10,color:HR.yellowDark,marginTop:4,fontWeight:600}}>Drill in →</div></div>;})}
     </div>
   </div>;
 }
 function CategoryLevel({slice,skuMaster,results,category,dsView,onDrillBrand}){
   const catRows=slice.filter(r=>(skuMaster[r.sku]?.category||"Unknown")===category),st=aggStats(catRows),brands=[...new Set(catRows.map(r=>skuMaster[r.sku]?.brand||"Unknown"))].sort();
   return <div>
-    <StatStrip items={[{label:"Unique SKUs",value:st.skuCount,color:HR.green},{label:"Total Orders",value:st.totalOrders.toLocaleString(),color:HR.yellowDark},{label:"Total Qty",value:st.totalQty.toLocaleString(),color:"#0077A8"},{label:"Avg Order Qty",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"}]}/>
+    <StatStrip items={[{label:"Unique SKUs",value:st.skuCount,color:HR.green},{label:"Total Instances",value:st.totalOrders.toLocaleString(),color:HR.yellowDark},{label:"Total Qty",value:st.totalQty.toLocaleString(),color:"#0077A8"},{label:"Avg Order Qty",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"}]}/>
     <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:8}}>Drill into a Brand</div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-      {brands.map(brand=>{const bRows=catRows.filter(r=>(skuMaster[r.sku]?.brand||"Unknown")===brand),bs=aggStats(bRows);return <div key={brand} onClick={()=>onDrillBrand(brand)} style={{...S.card,cursor:"pointer",borderColor:HR.border}} onMouseEnter={e=>e.currentTarget.style.borderColor=HR.yellow} onMouseLeave={e=>e.currentTarget.style.borderColor=HR.border}><div style={{fontWeight:700,color:HR.text,fontSize:12,marginBottom:4}}>{brand}</div><div style={{fontSize:10,color:HR.muted}}>{bs.skuCount} SKUs · {bs.totalOrders.toLocaleString()} orders</div><div style={{fontSize:10,color:HR.muted}}>Qty: {bs.totalQty.toLocaleString()} · ABQ: {bs.avgOrderQty.toFixed(1)}</div><div style={{fontSize:10,color:HR.yellowDark,marginTop:4,fontWeight:600}}>Drill in →</div></div>;})}
+      {brands.map(brand=>{const bRows=catRows.filter(r=>(skuMaster[r.sku]?.brand||"Unknown")===brand),bs=aggStats(bRows);return <div key={brand} onClick={()=>onDrillBrand(brand)} style={{...S.card,cursor:"pointer",borderColor:HR.border}} onMouseEnter={e=>e.currentTarget.style.borderColor=HR.yellow} onMouseLeave={e=>e.currentTarget.style.borderColor=HR.border}><div style={{fontWeight:700,color:HR.text,fontSize:12,marginBottom:4}}>{brand}</div><div style={{fontSize:10,color:HR.muted}}>{bs.skuCount} SKUs · {bs.totalOrders.toLocaleString()} instances</div><div style={{fontSize:10,color:HR.muted}}>Qty: {bs.totalQty.toLocaleString()} · ABQ: {bs.avgOrderQty.toFixed(1)}</div><div style={{fontSize:10,color:HR.yellowDark,marginTop:4,fontWeight:600}}>Drill in →</div></div>;})}
     </div>
   </div>;
 }
@@ -469,7 +470,7 @@ function BrandLevel({slice,skuMaster,results,brand,category,dsView,onDrillSku}){
   const bRows=slice.filter(r=>(skuMaster[r.sku]?.brand||"Unknown")===brand&&(skuMaster[r.sku]?.category||"Unknown")===category),st=aggStats(bRows);
   const skus=[...new Set(bRows.map(r=>r.sku))].sort((a,b)=>{const qa=bRows.filter(r=>r.sku===a).reduce((s,r)=>s+r.qty,0),qb=bRows.filter(r=>r.sku===b).reduce((s,r)=>s+r.qty,0);return qb-qa;});
   return <div>
-    <StatStrip items={[{label:"SKUs",value:st.skuCount,color:HR.green},{label:"Total Orders",value:st.totalOrders.toLocaleString(),color:HR.yellowDark},{label:"Total Qty",value:st.totalQty.toLocaleString(),color:"#0077A8"},{label:"Avg Order Qty",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"}]}/>
+    <StatStrip items={[{label:"SKUs",value:st.skuCount,color:HR.green},{label:"Total Instances",value:st.totalOrders.toLocaleString(),color:HR.yellowDark},{label:"Total Qty",value:st.totalQty.toLocaleString(),color:"#0077A8"},{label:"Avg Order Qty",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"}]}/>
     <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:8}}>SKUs — click to see ordering behaviour</div>
     <div style={{...S.card,padding:0,overflow:"auto",maxHeight:"50vh"}}>
       <table style={S.table}>
@@ -491,7 +492,7 @@ function SKULevel({slice,skuMaster,results,skuId,dsView}){
       <div><h3 style={{color:HR.yellowDark,margin:0,fontSize:14}}>{meta.name||skuId}</h3><div style={{fontSize:11,color:HR.muted,marginTop:2}}>{skuId} · {meta.category} · {meta.brand}</div></div>
       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{res&&<TagPill value={res.meta.priceTag} colorMap={PRICE_TAG_COLORS}/>}{res&&<TagPill value={res.meta.t150Tag} colorMap={TOPN_TAG_COLORS}/>}</div>
     </div>
-    <StatStrip items={[{label:"Total Orders",value:st.totalOrders,color:HR.yellowDark},{label:"Total Qty Sold",value:st.totalQty,color:"#0077A8"},{label:"Avg Order Qty (ABQ)",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"},{label:"Active Days",value:[...new Set(skuRows.map(r=>r.date))].length,color:HR.green}]}/>
+    <StatStrip items={[{label:"Total Instances",value:st.totalOrders,color:HR.yellowDark},{label:"Total Qty Sold",value:st.totalQty,color:"#0077A8"},{label:"Avg Order Qty (ABQ)",value:st.avgOrderQty.toFixed(1),color:"#7A3DBF"},{label:"Active Days",value:[...new Set(skuRows.map(r=>r.date))].length,color:HR.green}]}/>
     {res&&<div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6,marginBottom:16}}>
       {DS_LIST.map((ds,di)=>{const s=res.stores[ds]||{min:0,max:0,mvTag:"—",dailyAvg:0},dc=DS_COLORS[di];return <div key={ds} style={{background:dc.bg,borderRadius:8,padding:"8px 10px",border:`1px solid ${dc.header}44`}}><div style={{fontSize:10,fontWeight:700,color:dc.header,marginBottom:3}}>{ds}</div><div style={{fontSize:10,color:HR.muted}}>Min <span style={{color:dc.text,fontWeight:700}}>{s.min}</span> · Max <span style={{color:dc.text,fontWeight:700}}>{s.max}</span></div><div style={{marginTop:3}}><MovTag value={s.mvTag}/></div><div style={{fontSize:9,color:HR.muted,marginTop:2}}>Daily avg: {s.dailyAvg>0?s.dailyAvg.toFixed(2):"—"}</div></div>;})}
     </div>}
@@ -501,310 +502,1055 @@ function SKULevel({slice,skuMaster,results,skuId,dsView}){
   </div>;
 }
 
-// ─── Simulation ───────────────────────────────────────────────────────────────
-const S2={
-  card:{background:"#FFFFFF",borderRadius:8,padding:16,border:"1px solid #E0E0D0",boxShadow:"0 1px 3px rgba(0,0,0,0.05)"},
-  tbl:{width:"100%",borderCollapse:"collapse",fontSize:11},
-  th:{padding:"8px 10px",textAlign:"left",color:"#888870",background:"#F0F0E8",fontWeight:600,whiteSpace:"nowrap",fontSize:10},
-  td:{padding:"6px 10px",borderTop:"1px solid #E0E0D0",verticalAlign:"middle"},
-};
-const MovTag2=({v})=>{const c=MOV_COLORS[v]||"#64748b";return <span style={{...TAG_STYLE,background:c+"18",color:c,border:`1px solid ${c}33`}}>{v||"—"}</span>;};
-const PriceTag2=({v})=>{const c=PRICE_TAG_COLORS[v]||{bg:"#F1F5F9",color:"#64748B",border:"#CBD5E1"};return <span style={{...TAG_STYLE,background:c.bg,color:c.color,border:`1px solid ${c.border}`}}>{v||"—"}</span>;};
-const DSBadge=({ds})=>{const di=DS_LIST.indexOf(ds),dc=DS_COLORS[di>=0?di:0];return <span style={{...TAG_STYLE,background:dc.bg,color:dc.header,border:`1px solid ${dc.header}55`}}>{ds}</span>;};
-const oosColor=pct=>parseFloat(pct)>=30?"#B91C1C":parseFloat(pct)>=15?"#C05A00":parseFloat(pct)>=5?"#A16207":HR.green;
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b), m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function fmtInr(val) {
+  const abs = Math.abs(val);
+  if (abs >= 100000) return `₹${(val / 100000).toFixed(1)}L`;
+  if (abs >= 1000)   return `₹${(val / 1000).toFixed(1)}K`;
+  return `₹${val}`;
+}
+const oosColor = pct =>
+  parseFloat(pct) >= 30 ? "#B91C1C" :
+  parseFloat(pct) >= 15 ? "#C05A00" :
+  parseFloat(pct) >= 5  ? "#A16207" : HR.green;
 
-const DayStrip2=({orderLog,allDates})=>{
-  const byDate={};
-  orderLog.forEach(o=>{if(!byDate[o.date])byDate[o.date]={oos:0,ok:0};if(o.oos)byDate[o.date].oos++;else byDate[o.date].ok++;});
-  return <div style={{display:"flex",gap:2}}>
-    {allDates.map(date=>{
-      const d=byDate[date],bg=!d?HR.border:d.oos>0&&d.ok===0?"#B91C1C":d.oos>0&&d.ok>0?"#F59E0B":"#16a34a";
-      return <div key={date} title={date} style={{width:8,height:14,borderRadius:2,background:bg}}/>;
-    })}
-  </div>;
-};
-
-function OrderTable({r}){
-  const days=[];let cur=null;
-  r.orderLog.forEach(o=>{if(!cur||cur.date!==o.date){cur={date:o.date,orders:[]};days.push(cur);}cur.orders.push(o);});
-  const di=DS_LIST.indexOf(r.dsId),dc=DS_COLORS[di>=0?di:0];
-  return <div style={{padding:"12px 16px",background:"#FFFBEA",borderTop:`2px solid ${HR.yellow}`}}>
-    <div style={{fontSize:11,fontWeight:700,color:HR.yellowDark,marginBottom:8}}>Order-by-order — {r.name} @ {r.dsId}</div>
-    <div style={{overflowX:"auto"}}>
-      <table style={{...S2.tbl,fontSize:10}}>
-        <thead><tr style={{background:"#FFF9E0"}}>{["Date","Order #","Stock Before","Order Qty","Fulfilled","Short Qty","Stock After","Replenished?","Status"].map(h=><th key={h} style={{...S2.th,fontSize:9,background:"#FFF9E0"}}>{h}</th>)}</tr></thead>
-        <tbody>
-          {days.map(day=>[
-            <tr key={day.date+"_hdr"}><td colSpan={9} style={{padding:"4px 10px",background:dc.bg,borderTop:`1px solid ${dc.header}33`,fontWeight:700,fontSize:10,color:dc.header}}>{day.date}</td></tr>,
-            ...day.orders.map((o,oi)=>(
-              <tr key={day.date+"_"+oi} style={{background:o.oos?"#FEE2E2":o.replenished&&oi===day.orders.length-1?"#F0FDF4":HR.white}}>
-                <td style={{...S2.td,color:HR.muted,fontSize:9}}>{day.date}</td>
-                <td style={{...S2.td,textAlign:"center",color:HR.muted}}>{oi+1}</td>
-                <td style={{...S2.td,textAlign:"center"}}>{o.stockBefore}</td>
-                <td style={{...S2.td,textAlign:"center",fontWeight:700}}>{o.qty}</td>
-                <td style={{...S2.td,textAlign:"center",color:"#15803D",fontWeight:o.fulfilled>0?700:400}}>{o.fulfilled||"—"}</td>
-                <td style={{...S2.td,textAlign:"center",color:"#B91C1C",fontWeight:700}}>{o.shortQty>0?o.shortQty:"—"}</td>
-                <td style={{...S2.td,textAlign:"center",color:o.stockAfter===0?"#B91C1C":HR.text,fontWeight:o.stockAfter===0?700:400}}>{o.stockAfter}</td>
-                <td style={{...S2.td,textAlign:"center"}}>{o.replenished&&oi===day.orders.length-1?<span style={{color:"#16a34a",fontWeight:700}}>↑ Max</span>:"—"}</td>
-                <td style={{...S2.td,textAlign:"center"}}>{o.oos?<span style={{...TAG_STYLE,background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}}>OOS</span>:<span style={{...TAG_STYLE,background:"#DCFCE7",color:"#15803D",border:"1px solid #BBF7D0"}}>OK</span>}</td>
-              </tr>
-            ))
-          ])}
-        </tbody>
-      </table>
-    </div>
-  </div>;
+function parseOverrideCSV(text) {
+  try {
+    const rows = parseCSV(text);
+    const overrides = {};
+    rows.forEach(r => {
+      const sku = (r["SKU"] || "").trim();
+      const ds  = (r["DS"]  || "").trim();
+      if (!sku || !ds) return;
+      const rawMin = r["New Min"] !== undefined ? r["New Min"].trim() : "";
+      const rawMax = r["New Max"] !== undefined ? r["New Max"].trim() : "";
+      const parsedMin = rawMin === "" ? null : parseFloat(rawMin);
+      const parsedMax = rawMax === "" ? null : parseFloat(rawMax);
+      if (parsedMin === null && parsedMax === null) return;
+      if (!overrides[sku]) overrides[sku] = {};
+      overrides[sku][ds] = {
+        min: (parsedMin !== null && !isNaN(parsedMin)) ? parsedMin : null,
+        max: (parsedMax !== null && !isNaN(parsedMax)) ? parsedMax : null,
+      };
+    });
+    return overrides;
+  } catch { return {}; }
 }
 
-function SimSKUTable({rows,allDates,skuOrdMap}){
-  const [expSKU,setExpSKU]=useState(null),[expDS,setExpDS]=useState(null);
-  const bySKU=useMemo(()=>{
-    const m={};
-    rows.forEach(r=>{if(!m[r.skuId])m[r.skuId]={skuId:r.skuId,name:r.name,category:r.category,brand:r.brand,priceTag:r.priceTag,dsRows:[]};m[r.skuId].dsRows.push(r);});
-    Object.values(m).forEach(s=>s.dsRows.sort((a,b)=>b.oosInstances-a.oosInstances));
-    return Object.values(m).sort((a,b)=>{const aOos=a.dsRows.reduce((s,r)=>s+r.oosInstances,0),bOos=b.dsRows.reduce((s,r)=>s+r.oosInstances,0);return bOos-aOos;});
-  },[rows]);
-  const toggleSKU=id=>{setExpSKU(p=>p===id?null:id);setExpDS(null);};
-  const toggleDS=key=>setExpDS(p=>p===key?null:key);
-  return <div style={{...S2.card,padding:0,overflow:"auto",maxHeight:"72vh"}}>
-    <table style={S2.tbl}>
-      <thead style={{position:"sticky",top:0,zIndex:2}}>
-        <tr style={{background:HR.surfaceLight}}>
-          <th style={{...S2.th,minWidth:200}}>SKU</th><th style={S2.th}>Category</th><th style={S2.th}>Movement</th><th style={S2.th}>Price</th>
-          <th style={{...S2.th,textAlign:"center"}}>Failing DS</th><th style={{...S2.th,textAlign:"center"}}>OOS Instances</th>
-          <th style={{...S2.th,textAlign:"center"}}>Total Instances</th><th style={{...S2.th,textAlign:"center"}}>OOS Rate</th><th style={{...S2.th,width:28}}/>
-        </tr>
-      </thead>
-      <tbody>
-        {bySKU.map((sku,i)=>{
-          const isOpen=expSKU===sku.skuId,oosInst=sku.dsRows.reduce((s,r)=>s+r.oosInstances,0),totInst=sku.dsRows.reduce((s,r)=>s+r.totalInstances,0);
-          const pct=totInst>0?((oosInst/totInst)*100).toFixed(1):"0.0",acc=oosColor(pct),rowBg=isOpen?"#FFFBEA":i%2===0?HR.white:HR.surfaceLight;
-          return[
-            <tr key={sku.skuId} style={{background:rowBg,cursor:"pointer"}} onClick={()=>toggleSKU(sku.skuId)} onMouseEnter={e=>e.currentTarget.style.background="#FFFBEA"} onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
-              <td style={S2.td}><div style={{fontWeight:700,color:HR.text,fontSize:11}}>{sku.name}</div><div style={{fontSize:9,color:HR.muted,marginTop:1}}>{sku.skuId}</div></td>
-              <td style={{...S2.td,color:HR.muted,fontSize:10,whiteSpace:"nowrap"}}>{sku.category}</td>
-              <td style={S2.td}><MovTag2 v={sku.dsRows[0]?.mvTag}/></td>
-              <td style={S2.td}><PriceTag2 v={sku.priceTag}/></td>
-              <td style={{...S2.td,textAlign:"center"}}><div style={{display:"flex",gap:3,justifyContent:"center",flexWrap:"wrap"}}>{sku.dsRows.map(r=><DSBadge key={r.dsId} ds={r.dsId}/>)}</div></td>
-              <td style={{...S2.td,textAlign:"center",color:"#B91C1C",fontWeight:700}}>{oosInst}</td>
-              <td style={{...S2.td,textAlign:"center",color:HR.muted}}>{totInst}</td>
-              <td style={{...S2.td,textAlign:"center"}}><span style={{background:acc+"18",color:acc,border:`1px solid ${acc}33`,padding:"2px 10px",borderRadius:4,fontSize:12,fontWeight:800}}>{pct}%</span></td>
-              <td style={{...S2.td,textAlign:"center",color:HR.muted,fontSize:12,fontWeight:700,userSelect:"none"}}>{isOpen?"▲":"▶"}</td>
-            </tr>,
-            isOpen&&sku.dsRows.map(r=>{
-              const dsKey=`${r.skuId}||${r.dsId}`,isDSOpen=expDS===dsKey;
-              const di=DS_LIST.indexOf(r.dsId),dc=DS_COLORS[di>=0?di:0];
-              const dsOosPct=r.totalInstances>0?((r.oosInstances/r.totalInstances)*100).toFixed(1):"0.0",dsAcc=oosColor(dsOosPct);
-              return[
-                <tr key={dsKey} style={{background:isDSOpen?"#EDF9FF":dc.bg,cursor:"pointer",borderLeft:`3px solid ${dc.header}`}} onClick={e=>{e.stopPropagation();toggleDS(dsKey);}} onMouseEnter={e=>e.currentTarget.style.background="#EDF9FF"} onMouseLeave={e=>e.currentTarget.style.background=isDSOpen?"#EDF9FF":dc.bg}>
-                  <td style={{...S2.td,paddingLeft:28}}><div style={{display:"flex",alignItems:"center",gap:6}}><DSBadge ds={r.dsId}/><span style={{fontSize:9,color:HR.muted}}>Min {r.minQty} · Max {r.maxQty}</span></div></td>
-                  <td style={S2.td}/><td style={S2.td}><MovTag2 v={r.mvTag}/></td><td style={S2.td}/>
-                  <td style={{...S2.td,textAlign:"center"}}><DayStrip2 orderLog={r.orderLog} allDates={allDates}/></td>
-                  <td style={{...S2.td,textAlign:"center",color:"#B91C1C",fontWeight:700}}>{r.oosInstances}</td>
-                  <td style={{...S2.td,textAlign:"center",color:HR.muted}}>{r.totalInstances}</td>
-                  <td style={{...S2.td,textAlign:"center"}}><span style={{background:dsAcc+"18",color:dsAcc,border:`1px solid ${dsAcc}33`,padding:"2px 10px",borderRadius:4,fontSize:12,fontWeight:800}}>{dsOosPct}%</span></td>
-                  <td style={{...S2.td,textAlign:"center",color:HR.muted,fontSize:11,fontWeight:700,userSelect:"none"}}>{isDSOpen?"▲":"▼"}</td>
-                </tr>,
-                isDSOpen&&<tr key={dsKey+"_ord"}><td colSpan={9} style={{padding:0,borderTop:`2px solid ${HR.yellow}`}}><OrderTable r={r}/></td></tr>
-              ];
-            })
-          ];
-        })}
-      </tbody>
-    </table>
-  </div>;
-}
-
-function RankTable({rows,nameLabel,nameKey,onClick}){
-  const [sort,setSort]=useState({col:"oosInstances",dir:"desc"});
-  const toggle=col=>setSort(s=>({col,dir:s.col===col&&s.dir==="desc"?"asc":"desc"}));
-  const arrow=col=>sort.col===col?(sort.dir==="desc"?" ▼":" ▲"):" ↕";
-  const sorted=useMemo(()=>{
-    const enriched=rows.map(r=>({...r,pctSkus:r.totalOrderedSkus>0?(r.failSkus/r.totalOrderedSkus)*100:0,oosRate:r.totalInstances>0?(r.oosInstances/r.totalInstances)*100:0}));
-    const{col,dir}=sort;
-    enriched.sort((a,b)=>{const av=col===nameKey?a[nameKey]:a[col],bv=col===nameKey?b[nameKey]:b[col];if(typeof av==="string")return dir==="desc"?bv.localeCompare(av):av.localeCompare(bv);return dir==="desc"?bv-av:av-bv;});
-    return enriched;
-  },[rows,sort,nameKey]);
-  const thS=col=>({...S2.th,textAlign:col===nameKey?"left":"center",cursor:"pointer",userSelect:"none",color:sort.col===col?HR.yellowDark:HR.muted,background:sort.col===col?"#FFFBEA":HR.surfaceLight});
-  return <div style={{...S2.card,padding:0,overflow:"hidden"}}>
-    <table style={S2.tbl}>
-      <thead><tr>
-        <th style={thS(nameKey)} onClick={()=>toggle(nameKey)}>{nameLabel}{arrow(nameKey)}</th>
-        <th style={thS("failSkus")} onClick={()=>toggle("failSkus")}>Failing SKUs{arrow("failSkus")}</th>
-        <th style={thS("pctSkus")} onClick={()=>toggle("pctSkus")}>% of SKUs{arrow("pctSkus")}</th>
-        <th style={thS("oosInstances")} onClick={()=>toggle("oosInstances")}>OOS Instances{arrow("oosInstances")}</th>
-        <th style={thS("totalInstances")} onClick={()=>toggle("totalInstances")}>Total Instances{arrow("totalInstances")}</th>
-        <th style={thS("oosRate")} onClick={()=>toggle("oosRate")}>OOS Rate{arrow("oosRate")}</th>
-      </tr></thead>
-      <tbody>
-        {sorted.map((r,i)=>{
-          const oosRate=r.oosRate.toFixed(1),pctSkus=r.pctSkus.toFixed(1),acc=oosColor(oosRate);
-          return <tr key={r[nameKey]} style={{background:i%2===0?HR.white:HR.surfaceLight,cursor:"pointer"}} onClick={()=>onClick(r[nameKey])} onMouseEnter={e=>e.currentTarget.style.background="#FFFBEA"} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?HR.white:HR.surfaceLight}>
-            <td style={{...S2.td,fontWeight:700,color:HR.text,fontSize:11}}>{r[nameKey]} <span style={{fontSize:10,color:HR.yellowDark}}>→</span></td>
-            <td style={{...S2.td,textAlign:"center",color:"#B91C1C",fontWeight:700}}>{r.failSkus}</td>
-            <td style={{...S2.td,textAlign:"center",color:HR.muted,fontWeight:600}}>{pctSkus}%</td>
-            <td style={{...S2.td,textAlign:"center",color:"#B91C1C",fontWeight:700}}>{r.oosInstances}</td>
-            <td style={{...S2.td,textAlign:"center",color:HR.muted}}>{r.totalInstances}</td>
-            <td style={{...S2.td,textAlign:"center"}}><span style={{background:acc+"18",color:acc,border:`1px solid ${acc}33`,padding:"2px 10px",borderRadius:4,fontSize:12,fontWeight:800}}>{oosRate}%</span></td>
-          </tr>;
-        })}
-      </tbody>
-    </table>
-  </div>;
-}
-
-function SimSummaryCards({oosInstances,totalInstances,failSkus,totalOrderedSkus}){
-  const oosRate=totalInstances>0?((oosInstances/totalInstances)*100).toFixed(1):"0.0",pctSkus=totalOrderedSkus>0?((failSkus/totalOrderedSkus)*100).toFixed(1):"0.0",acc=oosColor(oosRate);
-  return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
-    <div style={{...S2.card,borderLeft:`4px solid ${acc}`}}><div style={{fontSize:32,fontWeight:900,color:acc}}>{oosRate}%</div><div style={{fontSize:12,color:acc,fontWeight:700,marginTop:2}}>OOS Rate — north star metric</div><div style={{fontSize:11,color:HR.muted,marginTop:3}}>{oosInstances} OOS instances out of {totalInstances} total</div></div>
-    <div style={{...S2.card,borderLeft:"4px solid #C05A00"}}><div style={{fontSize:32,fontWeight:900,color:"#B91C1C"}}>{failSkus}<span style={{fontSize:14,opacity:0.5,marginLeft:4}}>/ {totalOrderedSkus}</span></div><div style={{fontSize:12,color:"#C05A00",fontWeight:700,marginTop:2}}>{pctSkus}% of SKUs with at least one OOS</div><div style={{fontSize:11,color:HR.muted,marginTop:3}}>SKUs ordered in the 15-day window</div></div>
-  </div>;
-}
-
-function buildSimData(invoiceData,results){
-  if(!invoiceData.length||!results)return[];
-  const allDates=[...new Set(invoiceData.map(r=>r.date))].sort(),simDates=allDates.slice(-15);
-  if(!simDates.length)return[];
-  const out=[];
-  Object.entries(results).forEach(([skuId,res])=>{
-    DS_LIST.forEach(dsId=>{
-      const maxQty=res.stores[dsId]?.max||0,minQty=res.stores[dsId]?.min||0;
-      if(!maxQty)return;
-      const lines=invoiceData.filter(r=>r.sku===skuId&&r.ds===dsId&&simDates.includes(r.date));
-      if(!lines.length)return;
-      let stock=maxQty,oosInstances=0;
-      const finalLog=[];
-      simDates.forEach(date=>{
-        const dayLines=lines.filter(l=>l.date===date);
-        dayLines.forEach((line,li)=>{
-          const stockBefore=stock,fulfilled=Math.min(line.qty,stock),shortQty=line.qty-fulfilled,oos=shortQty>0;
-          if(oos)oosInstances++;
-          stock=Math.max(0,stock-line.qty);
-          const isLastOfDay=li===dayLines.length-1,replenished=isLastOfDay&&stock<=minQty;
-          finalLog.push({date:line.date,qty:line.qty,stockBefore,fulfilled,shortQty,oos,stockAfter:stock,replenished});
-          if(replenished)stock=maxQty;
+function runSim(invoiceData, results, overrides) {
+  if (!invoiceData.length || !results) return [];
+  const allDates = [...new Set(invoiceData.map(r => r.date))].sort();
+  const simDates = allDates.slice(-15);
+  if (!simDates.length) return [];
+  const out = [];
+  Object.entries(results).forEach(([skuId, res]) => {
+    DS_LIST.forEach(dsId => {
+      const toolMin = res.stores[dsId]?.min || 0;
+      const toolMax = res.stores[dsId]?.max || 0;
+      if (!toolMax) return;
+      const ov = overrides[skuId]?.[dsId];
+      const useMin = (ov?.min !== null && ov?.min !== undefined) ? ov.min : toolMin;
+      const useMax = (ov?.max !== null && ov?.max !== undefined) ? ov.max : toolMax;
+      const isOverridden = ov !== undefined && (ov.min !== null || ov.max !== null);
+      const simLines = invoiceData.filter(r => r.sku === skuId && r.ds === dsId && simDates.includes(r.date));
+      let stock = useMax, oosInstances = 0;
+      const shortQtys = [], orderLog = [];
+      simDates.forEach(date => {
+        const dayLines = simLines.filter(l => l.date === date);
+        dayLines.forEach((line, li) => {
+          const stockBefore = stock;
+          const fulfilled   = Math.min(line.qty, stock);
+          const shortQty    = line.qty - fulfilled;
+          const oos         = shortQty > 0;
+          if (oos) { oosInstances++; shortQtys.push(shortQty); }
+          stock = Math.max(0, stock - line.qty);
+          const isLastOfDay  = li === dayLines.length - 1;
+          const replenished  = isLastOfDay && stock <= useMin;
+          orderLog.push({ date: line.date, qty: line.qty, stockBefore, fulfilled, shortQty, oos, stockAfter: stock, replenished });
+          if (replenished) stock = useMax;
         });
       });
-      if(oosInstances>0)out.push({skuId,dsId,name:res.meta.name||skuId,category:res.meta.category||"Unknown",brand:res.meta.brand||"Unknown",mvTag:res.stores[dsId]?.mvTag||"—",priceTag:res.meta.priceTag||"—",minQty,maxQty,oosInstances,totalInstances:lines.length,orderLog:finalLog});
+      if (oosInstances > 0 || isOverridden) {
+        out.push({
+          skuId, dsId,
+          name:      res.meta.name      || skuId,
+          category:  res.meta.category  || "Unknown",
+          brand:     res.meta.brand     || "Unknown",
+          priceTag:  res.meta.priceTag  || "—",
+          mvTag:     res.stores[dsId]?.mvTag || "—",
+          toolMin, toolMax, useMin, useMax, isOverridden,
+          oosInstances,
+          totalInstances: simLines.length,
+          medianShort: Math.ceil(median(shortQtys)),
+          maxShort: shortQtys.length ? Math.max(...shortQtys) : 0,
+          orderLog,
+        });
+      }
     });
   });
-  out.sort((a,b)=>b.oosInstances-a.oosInstances);
+  out.sort((a, b) => b.oosInstances - a.oosInstances);
   return out;
 }
 
-function buildGroupRows(simData,windowRows,groupFn){
-  const ordMap={},failMap={};
-  windowRows.forEach(r=>{const g=groupFn(r,"ord");if(!g)return;if(!ordMap[g])ordMap[g]={skus:new Set(),instances:0};ordMap[g].skus.add(r.sku);ordMap[g].instances++;});
-  simData.forEach(r=>{const g=groupFn(r,"fail");if(!g)return;if(!failMap[g])failMap[g]={skus:new Set(),oosInstances:0,totalInstances:0};failMap[g].skus.add(r.skuId);failMap[g].oosInstances+=r.oosInstances;failMap[g].totalInstances+=r.totalInstances;});
-  return[...new Set([...Object.keys(ordMap),...Object.keys(failMap)])].map(g=>{const o=ordMap[g]||{skus:new Set(),instances:0},f=failMap[g]||{skus:new Set(),oosInstances:0,totalInstances:0};return{name:g,failSkus:f.skus.size,totalOrderedSkus:o.skus.size,oosInstances:f.oosInstances,totalInstances:f.totalInstances||o.instances};}).filter(r=>r.oosInstances>0).sort((a,b)=>b.oosInstances-a.oosInstances);
-}
-function buildSKUOrdMap(windowRows){const m={};windowRows.forEach(r=>{if(!m[r.sku])m[r.sku]={total:0};m[r.sku].total++;});return m;}
-
-function ProblematicSKUs({simData,allDates}){
-  const [topN,setTopN]=useState(10);
-  const bySKU=useMemo(()=>{const m={};simData.forEach(r=>{if(!m[r.skuId])m[r.skuId]={skuId:r.skuId,name:r.name,category:r.category,brand:r.brand,priceTag:r.priceTag,mvTag:r.mvTag,oosInstances:0,totalInstances:0};m[r.skuId].oosInstances+=r.oosInstances;m[r.skuId].totalInstances+=r.totalInstances;});return Object.values(m).sort((a,b)=>b.oosInstances-a.oosInstances);},[simData]);
-  const visible=topN==="All"?bySKU:bySKU.slice(0,topN);
-  if(!bySKU.length)return null;
-  const skuOrdMap=useMemo(()=>{const m={};simData.forEach(r=>{if(!m[r.skuId])m[r.skuId]={ordPairs:0};m[r.skuId].ordPairs+=r.totalInstances;});return m;},[simData]);
-  const visibleSkuIds=new Set(visible.map(s=>s.skuId)),visibleRows=simData.filter(r=>visibleSkuIds.has(r.skuId));
-  return <div style={{marginTop:24}}>
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:6}}>
-      <div style={{fontSize:12,fontWeight:700,color:HR.text}}>🚨 Problematic SKUs <span style={{fontSize:10,color:HR.muted,fontWeight:400,marginLeft:6}}>sorted by OOS Instances · click to expand</span></div>
-      <div style={{display:"flex",gap:0,border:`1px solid ${HR.border}`,borderRadius:4,overflow:"hidden"}}>
-        {[10,20,"All"].map(n=><button key={n} onClick={()=>setTopN(n)} style={{padding:"4px 10px",fontSize:10,fontWeight:700,border:"none",cursor:"pointer",background:topN===n?HR.yellow:HR.white,color:topN===n?HR.black:HR.muted,borderRight:`1px solid ${HR.border}`}}>Top {n}</button>)}
-      </div>
-    </div>
-    <SimSKUTable rows={visibleRows} allDates={allDates} skuOrdMap={skuOrdMap}/>
-    {topN!=="All"&&bySKU.length>topN&&<div style={{fontSize:10,color:HR.muted,textAlign:"center",marginTop:6}}>Showing {topN} of {bySKU.length} problematic SKUs</div>}
-  </div>;
+function calcInvValueDelta(simRows, priceData) {
+  return Math.round(
+    simRows.filter(r => r.isOverridden)
+      .reduce((sum, r) => sum + (r.useMax - r.toolMax) * (priceData?.[r.skuId] || 0), 0)
+  );
 }
 
-function SimOrgLevel({simData,allDates,invoiceData,skuMeta,onDrillCategory}){
-  const win=invoiceData.filter(r=>allDates.includes(r.date)),oosInst=simData.reduce((s,r)=>s+r.oosInstances,0),failSkus=new Set(simData.map(r=>r.skuId)).size,totSkus=new Set(win.map(r=>r.sku)).size;
-  const rows=buildGroupRows(simData,win,(r,m)=>m==="ord"?(r.category||"Unknown"):(r.category||"Unknown"));
-  return <div><SimSummaryCards oosInstances={oosInst} totalInstances={win.length} failSkus={failSkus} totalOrderedSkus={totSkus}/><div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:8}}>Categories</div><RankTable rows={rows} nameLabel="Category" nameKey="name" onClick={onDrillCategory}/><ProblematicSKUs simData={simData} allDates={allDates}/></div>;
-}
-function SimCategoryLevel({simData,allDates,invoiceData,skuMeta,category,onDrillBrand}){
-  const scope=simData.filter(r=>(r.category||"Unknown")===category),win=invoiceData.filter(r=>allDates.includes(r.date)&&(skuMeta[r.sku]?.category||"Unknown")===category);
-  const oosInst=scope.reduce((s,r)=>s+r.oosInstances,0),failSkus=new Set(scope.map(r=>r.skuId)).size,totSkus=new Set(win.map(r=>r.sku)).size;
-  const rows=buildGroupRows(scope,win,(r,m)=>m==="ord"?(skuMeta[r.sku]?.brand||"Unknown"):(r.brand||"Unknown"));
-  return <div><SimSummaryCards oosInstances={oosInst} totalInstances={win.length} failSkus={failSkus} totalOrderedSkus={totSkus}/><div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:8}}>Brands in <span style={{color:HR.yellowDark}}>{category}</span></div><RankTable rows={rows} nameLabel="Brand" nameKey="name" onClick={onDrillBrand}/></div>;
-}
-function SimBrandLevel({simData,allDates,invoiceData,skuMeta,category,brand}){
-  const scope=simData.filter(r=>(r.category||"Unknown")===category&&(r.brand||"Unknown")===brand),win=invoiceData.filter(r=>allDates.includes(r.date)&&(skuMeta[r.sku]?.category||"Unknown")===category&&(skuMeta[r.sku]?.brand||"Unknown")===brand);
-  const oosInst=scope.reduce((s,r)=>s+r.oosInstances,0),failSkus=new Set(scope.map(r=>r.skuId)).size,totSkus=new Set(win.map(r=>r.sku)).size,skuOrdMap=buildSKUOrdMap(win);
-  return <div><SimSummaryCards oosInstances={oosInst} totalInstances={win.length} failSkus={failSkus} totalOrderedSkus={totSkus}/><div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:8}}>Failing SKUs — <span style={{color:HR.yellowDark}}>{brand}</span><span style={{color:HR.muted,fontWeight:400}}> · {category}</span></div><SimSKUTable rows={scope} allDates={allDates} skuOrdMap={skuOrdMap}/></div>;
-}
-function SimSKULevel({simData,allDates,invoiceData,skuId}){
-  const rows=simData.filter(r=>r.skuId===skuId);
-  if(!rows.length)return <div style={{color:HR.muted,padding:32,textAlign:"center"}}>No OOS data.</div>;
-  const win=invoiceData.filter(r=>allDates.includes(r.date)&&r.sku===skuId),skuOrdMap=buildSKUOrdMap(win),m=rows[0];
-  return <div><div style={{marginBottom:12}}><div style={{fontWeight:800,fontSize:16,color:HR.text}}>{m.name}</div><div style={{fontSize:11,color:HR.muted,marginTop:2}}>{skuId} · {m.category} · {m.brand}</div></div><SimSKUTable rows={rows} allDates={allDates} skuOrdMap={skuOrdMap}/></div>;
-}
-
-function SimulationTab({invoiceData,results,skuMaster,params}){
-  const [drill,setDrill]=useState(null),[dsFilter,setDsFilter]=useState("All");
-  const simDataFull=useMemo(()=>buildSimData(invoiceData,results),[invoiceData,results]);
-  const simData=useMemo(()=>dsFilter==="All"?simDataFull:simDataFull.filter(r=>r.dsId===dsFilter),[simDataFull,dsFilter]);
-  const allDates=useMemo(()=>[...new Set(invoiceData.map(r=>r.date))].sort().slice(-15),[invoiceData]);
-  const skuMeta=useMemo(()=>{const m={};Object.values(results||{}).forEach(r=>{m[r.meta.sku]=r.meta;});return m;},[results]);
-  const handleDSFilter=ds=>{setDsFilter(ds);setDrill(null);};
-  const inv=dsFilter==="All"?invoiceData:invoiceData.filter(r=>r.ds===dsFilter);
-  const winRows=useMemo(()=>inv.filter(r=>allDates.includes(r.date)),[inv,allDates]);
-  const oosInst=simData.reduce((s,r)=>s+r.oosInstances,0);
-  const totInst=winRows.length;
-  const failSkus=new Set(simData.map(r=>r.skuId)).size;
-  const totSkus=new Set(winRows.map(r=>r.sku)).size;
-  const oosRate=totInst>0?((oosInst/totInst)*100).toFixed(1):"0.0";
-  const acc=oosColor(oosRate);
-  if(!invoiceData.length||!results)return <div style={{textAlign:"center",padding:80}}><div style={{fontSize:40,marginBottom:12}}>🔬</div><div style={{color:HR.muted,fontSize:14}}>No data available</div></div>;
-  const crumbs=[
-    {label:"All Categories",onClick:drill?()=>setDrill(null):null},
-    ...(drill?.type==="category"||drill?.type==="brand"||drill?.type==="sku"?[{label:drill.category||drill.value,onClick:drill.type!=="category"?()=>setDrill({type:"category",value:drill.category||drill.value,category:drill.category||drill.value}):null}]:[]),
-    ...(drill?.type==="brand"||drill?.type==="sku"?[{label:drill.brand,onClick:drill.type!=="brand"?()=>setDrill({type:"brand",value:drill.brand,brand:drill.brand,category:drill.category}):null}]:[]),
-    ...(drill?.type==="sku"?[{label:simData.find(r=>r.skuId===drill.value)?.name||drill.value}]:[]),
+function downloadWhatIfCSV(toolRows) {
+  const rows = toolRows.filter(r => r.oosInstances > 0).map(r => ({
+    "Item Name":    r.name,
+    "Category":     r.category,
+    "Brand":        r.brand,
+    "SKU":          r.skuId,
+    "DS":           r.dsId,
+    "Tool Min":     r.useMin,
+    "Tool Max":     r.useMax,
+    "OOS Instances":r.oosInstances,
+    "Median Short": r.medianShort,
+    "Max Short":    r.maxShort,
+    "New Min":      "",
+    "New Max":      "",
+  }));
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const instructionRow = headers.map((h, i) =>
+    i === 0 ? '"[Add new rows below for any SKU+DS — fill SKU, DS, New Min, New Max. Other fields optional.]"' : ""
+  ).join(",");
+  const csvLines = [
+    headers.join(","),
+    instructionRow,
+    ...rows.map(r => headers.map(h => {
+      const v = r[h];
+      return typeof v === "string" && v.includes(",") ? `"${v}"` : (v ?? "");
+    }).join(","))
   ];
-  return <div>
-    <div style={{position:"sticky",top:-16,zIndex:10,background:HR.bg,paddingTop:4,paddingBottom:8,marginBottom:12,borderBottom:`1px solid ${HR.border}`}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
-        <span style={{fontWeight:800,fontSize:14,color:HR.yellowDark,whiteSpace:"nowrap"}}>Simulation — Last 15 Days</span>
-        {allDates.length>0&&<span style={{fontSize:10,color:HR.muted,whiteSpace:"nowrap"}}>{allDates[0]} → {allDates[allDates.length-1]}</span>}
-        <div style={{display:"flex",gap:0,border:`1px solid ${HR.border}`,borderRadius:5,overflow:"hidden",flexShrink:0}}>
-          {["All",...DS_LIST].map(ds=>{const di=DS_LIST.indexOf(ds),dc=di>=0?DS_COLORS[di]:null,isActive=dsFilter===ds;return <button key={ds} onClick={()=>handleDSFilter(ds)} style={{padding:"4px 10px",background:isActive?(dc?dc.header:HR.yellow):(dc?dc.bg:HR.white),color:isActive?(dc?HR.white:HR.black):(dc?dc.header:HR.muted),border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700,lineHeight:1.4}}>{ds}</button>;})}
-        </div>
-      </div>
-      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-        <div style={{background:acc+"18",border:`1px solid ${acc}44`,borderRadius:5,padding:"3px 10px",display:"flex",gap:5,alignItems:"baseline"}}>
-          <span style={{fontWeight:800,fontSize:14,color:acc}}>{oosRate}%</span>
-          <span style={{fontSize:10,color:acc,fontWeight:600}}>OOS Rate</span>
-        </div>
-        <div style={{background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:5,padding:"3px 10px",display:"flex",gap:5,alignItems:"baseline"}}>
-          <span style={{fontWeight:800,fontSize:13,color:"#B91C1C"}}>{oosInst}</span>
-          <span style={{fontSize:10,color:HR.muted}}>OOS instances</span>
-          <span style={{fontSize:10,color:HR.muted}}>/ {totInst} total</span>
-        </div>
-        <div style={{background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:5,padding:"3px 10px",display:"flex",gap:5,alignItems:"baseline"}}>
-          <span style={{fontWeight:800,fontSize:13,color:"#B91C1C"}}>{failSkus}</span>
-          <span style={{fontSize:10,color:HR.muted}}>failing SKUs</span>
-          <span style={{fontSize:10,color:HR.muted}}>/ {totSkus}</span>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:5,marginLeft:4,flexWrap:"wrap"}}>
-          {crumbs.map((c,i)=><span key={i} style={{display:"flex",alignItems:"center",gap:5}}>{i>0&&<span style={{color:HR.muted,fontSize:11}}>›</span>}<span onClick={c.onClick||undefined} style={{fontSize:11,color:c.onClick?HR.yellowDark:HR.text,cursor:c.onClick?"pointer":"default",fontWeight:i===crumbs.length-1?700:400,textDecoration:c.onClick?"underline":"none"}}>{c.label}</span></span>)}
-        </div>
-      </div>
-    </div>
-    {simData.length===0
-      ?<div style={{...S2.card,textAlign:"center",padding:40}}><div style={{fontSize:32,marginBottom:10}}>✅</div><div style={{fontWeight:700,color:HR.green,fontSize:14}}>No OOS instances detected</div><div style={{color:HR.muted,fontSize:12,marginTop:4}}>Every order line was fulfilled in the last 15 days.</div></div>
-      :(()=>{return <>
-        {!drill&&<SimOrgLevel simData={simData} allDates={allDates} invoiceData={inv} skuMeta={skuMeta} onDrillCategory={cat=>setDrill({type:"category",value:cat,category:cat})}/>}
-        {drill?.type==="category"&&<SimCategoryLevel simData={simData} allDates={allDates} invoiceData={inv} skuMeta={skuMeta} category={drill.value} onDrillBrand={brand=>setDrill({type:"brand",value:brand,brand,category:drill.value})}/>}
-        {drill?.type==="brand"&&<SimBrandLevel simData={simData} allDates={allDates} invoiceData={inv} skuMeta={skuMeta} category={drill.category} brand={drill.value}/>}
-        {drill?.type==="sku"&&<SimSKULevel simData={simData} allDates={allDates} invoiceData={inv} skuId={drill.value}/>}
-      </>;})()} 
-  </div>;
+  const blob = new Blob([csvLines.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "WhatIf_Sim_Input.csv";
+  a.click();
 }
 
-// ─── Admin Login Modal ────────────────────────────────────────────────────────
+const TAG_SIM = { padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, whiteSpace: "nowrap", lineHeight: "16px", display: "inline-block" };
+const MovTag2 = ({ v }) => {
+  const c = MOV_COLORS[v] || "#64748b";
+  return <span style={{ ...TAG_SIM, background: c + "18", color: c, border: `1px solid ${c}33` }}>{v || "—"}</span>;
+};
+const DSBadgeSim = ({ ds }) => {
+  const di = DS_LIST.indexOf(ds), dc = DS_COLORS[di >= 0 ? di : 0];
+  return <span style={{ ...TAG_SIM, background: dc.bg, color: dc.header, border: `1px solid ${dc.header}55` }}>{ds}</span>;
+};
+
+function SimSummaryCards({ toolRows, ovrRows, ovrRowsFull, totInst, totSkus, hasOverrides, priceData }) {
+  const toolOos  = toolRows.reduce((s, r) => s + r.oosInstances, 0);
+  const ovrOos   = ovrRows.reduce((s,  r) => s + r.oosInstances, 0);
+  const toolFail = new Set(toolRows.filter(r => r.oosInstances > 0).map(r => r.skuId)).size;
+  const ovrFail  = new Set(ovrRows.filter(r  => r.oosInstances > 0).map(r => r.skuId)).size;
+  const toolRate = totInst > 0 ? ((toolOos / totInst) * 100).toFixed(1) : "0.0";
+  const ovrRate  = totInst > 0 ? ((ovrOos  / totInst) * 100).toFixed(1) : "0.0";
+  const tAcc = oosColor(toolRate), oAcc = oosColor(ovrRate);
+  const rateDelta = (parseFloat(ovrRate) - parseFloat(toolRate)).toFixed(1);
+  const invDelta = calcInvValueDelta(ovrRowsFull, priceData);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: hasOverrides ? "1fr 1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginBottom: 16 }}>
+      <div style={{ background: "#FFF", borderRadius: 8, padding: "12px 14px", border: `1px solid ${tAcc}44`, borderLeft: `4px solid ${tAcc}` }}>
+        <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, marginBottom: 2 }}>OOS RATE {hasOverrides ? "(TOOL)" : ""}</div>
+        <div style={{ fontSize: 28, fontWeight: 900, color: tAcc }}>{toolRate}%</div>
+        <div style={{ fontSize: 10, color: HR.muted, marginTop: 2 }}>{toolOos} OOS / {totInst} total</div>
+      </div>
+      <div style={{ background: "#FFF", borderRadius: 8, padding: "12px 14px", border: "1px solid #C05A0044", borderLeft: "4px solid #C05A00" }}>
+        <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, marginBottom: 2 }}>FAILING SKUs {hasOverrides ? "(TOOL)" : ""}</div>
+        <div style={{ fontSize: 28, fontWeight: 900, color: "#B91C1C" }}>
+          {toolFail}<span style={{ fontSize: 13, opacity: 0.5, marginLeft: 4 }}>/ {totSkus}</span>
+        </div>
+        <div style={{ fontSize: 10, color: HR.muted, marginTop: 2 }}>
+          {totSkus > 0 ? ((toolFail / totSkus) * 100).toFixed(1) : "0.0"}% of ordered SKUs
+        </div>
+      </div>
+      {hasOverrides && (
+        <>
+          <div style={{ background: "#FFFBEA", borderRadius: 8, padding: "12px 14px", border: `2px solid ${HR.yellow}`, borderLeft: `4px solid ${oAcc}` }}>
+            <div style={{ fontSize: 9, color: HR.yellowDark, fontWeight: 700, marginBottom: 2 }}>✏ OOS RATE (OVERRIDE)</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: oAcc }}>{ovrRate}%</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+              <span style={{ fontSize: 10, color: HR.muted }}>{ovrOos} OOS / {totInst} total</span>
+              {rateDelta !== "0.0" && (
+                <span style={{ fontSize: 11, fontWeight: 800, color: parseFloat(rateDelta) < 0 ? HR.green : "#B91C1C" }}>
+                  {parseFloat(rateDelta) > 0 ? "+" : ""}{rateDelta}%
+                </span>
+              )}
+            </div>
+          </div>
+          <div style={{ background: "#FFFBEA", borderRadius: 8, padding: "12px 14px", border: `2px solid ${HR.yellow}`, borderLeft: `4px solid ${invDelta >= 0 ? "#C05A00" : HR.green}` }}>
+            <div style={{ fontSize: 9, color: HR.yellowDark, fontWeight: 700, marginBottom: 2 }}>✏ INV VALUE DELTA (OVERRIDE)</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: invDelta >= 0 ? "#C05A00" : HR.green }}>
+              {invDelta >= 0 ? "+" : ""}{fmtInr(invDelta)}
+            </div>
+            <div style={{ fontSize: 10, color: HR.muted, marginTop: 2 }}>
+              {invDelta >= 0 ? "additional inventory cost" : "inventory cost saving"}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function buildGroupRows(toolRows, ovrRows, winRows, groupFn, priceData) {
+  const ordMap = {};
+  winRows.forEach(r => {
+    const g = groupFn(r, "ord");
+    if (!g) return;
+    if (!ordMap[g]) ordMap[g] = { skus: new Set(), instances: 0 };
+    ordMap[g].skus.add(r.sku);
+    ordMap[g].instances++;
+  });
+  const toolMap = {};
+  toolRows.filter(r => r.oosInstances > 0).forEach(r => {
+    const g = groupFn(r, "fail");
+    if (!g) return;
+    if (!toolMap[g]) toolMap[g] = { skus: new Set(), oosInstances: 0, totalInstances: 0 };
+    toolMap[g].skus.add(r.skuId);
+    toolMap[g].oosInstances  += r.oosInstances;
+    toolMap[g].totalInstances += r.totalInstances;
+  });
+  const ovrMap = {};
+  ovrRows.forEach(r => {
+    const g = groupFn(r, "fail");
+    if (!g) return;
+    if (!ovrMap[g]) ovrMap[g] = { skus: new Set(), oosInstances: 0, invDelta: 0 };
+    if (r.oosInstances > 0) ovrMap[g].skus.add(r.skuId);
+    ovrMap[g].oosInstances += r.oosInstances;
+    if (r.isOverridden) ovrMap[g].invDelta += (r.useMax - r.toolMax) * (priceData?.[r.skuId] || 0);
+  });
+  const allKeys = new Set([...Object.keys(ordMap), ...Object.keys(toolMap)]);
+  return [...allKeys].map(g => {
+    const o  = ordMap[g]  || { skus: new Set(), instances: 0 };
+    const t  = toolMap[g] || { skus: new Set(), oosInstances: 0, totalInstances: 0 };
+    const ov = ovrMap[g]  || { skus: new Set(), oosInstances: 0, invDelta: 0 };
+    return {
+      name: g, failSkus: t.skus.size, ovrFailSkus: ov.skus.size,
+      totalOrderedSkus: o.skus.size, toolOos: t.oosInstances, ovrOos: ov.oosInstances,
+      totalInstances: t.totalInstances || o.instances, invDelta: Math.round(ov.invDelta),
+    };
+  }).filter(r => r.toolOos > 0 || r.ovrOos > 0).sort((a, b) => b.toolOos - a.toolOos);
+}
+
+function RankTable({ rows, nameLabel, nameKey, onClick, hasOverrides }) {
+  const [sort, setSort] = useState({ col: "toolOos", dir: "desc" });
+  const toggle = col => setSort(s => ({ col, dir: s.col === col && s.dir === "desc" ? "asc" : "desc" }));
+  const arrow  = col => sort.col === col ? (sort.dir === "desc" ? " ▼" : " ▲") : " ↕";
+  const sorted = useMemo(() => {
+    const { col, dir } = sort;
+    return [...rows].sort((a, b) => {
+      const av = a[col], bv = b[col];
+      if (typeof av === "string") return dir === "desc" ? bv.localeCompare(av) : av.localeCompare(bv);
+      return dir === "desc" ? bv - av : av - bv;
+    });
+  }, [rows, sort]);
+  const thS = col => ({
+    padding: "8px 10px", textAlign: col === nameKey ? "left" : "center",
+    color: sort.col === col ? HR.yellowDark : HR.muted,
+    background: sort.col === col ? "#FFFBEA" : HR.surfaceLight,
+    fontWeight: 600, whiteSpace: "nowrap", fontSize: 10, cursor: "pointer", userSelect: "none",
+  });
+  const td = { padding: "6px 10px", borderTop: "1px solid #E0E0D0", verticalAlign: "middle" };
+  const ovBg = "#FFFDE7";
+  return (
+    <div style={{ background: "#FFF", borderRadius: 8, border: "1px solid #E0E0D0", overflow: "hidden", marginBottom: 16 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+        <thead>
+          <tr>
+            <th style={thS(nameKey)}        onClick={() => toggle(nameKey)}>{nameLabel}{arrow(nameKey)}</th>
+            <th style={thS("failSkus")}     onClick={() => toggle("failSkus")}>Failing SKUs (Tool){arrow("failSkus")}</th>
+            <th style={thS("totalOrderedSkus")} onClick={() => toggle("totalOrderedSkus")}>% of SKUs{arrow("totalOrderedSkus")}</th>
+            <th style={thS("toolOos")}      onClick={() => toggle("toolOos")}>OOS Inst (Tool){arrow("toolOos")}</th>
+            {hasOverrides && <th style={{ ...thS("ovrOos"), background: "#FFFBEA" }} onClick={() => toggle("ovrOos")}>OOS Inst (Ovr){arrow("ovrOos")}</th>}
+            <th style={thS("totalInstances")} onClick={() => toggle("totalInstances")}>Total Inst{arrow("totalInstances")}</th>
+            <th style={thS("toolRate")}     onClick={() => toggle("toolRate")}>OOS Rate (Tool){arrow("toolRate")}</th>
+            {hasOverrides && <th style={{ ...thS("ovrRate"), background: "#FFFBEA" }} onClick={() => toggle("ovrRate")}>OOS Rate (Ovr){arrow("ovrRate")}</th>}
+            {hasOverrides && <th style={{ ...thS("invDelta"), background: "#FFFBEA" }} onClick={() => toggle("invDelta")}>Inv Value Δ{arrow("invDelta")}</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r, i) => {
+            const toolRate = r.totalInstances > 0 ? ((r.toolOos / r.totalInstances) * 100).toFixed(1) : "0.0";
+            const ovrRate  = r.totalInstances > 0 ? ((r.ovrOos  / r.totalInstances) * 100).toFixed(1) : "0.0";
+            const pctSkus  = r.totalOrderedSkus > 0 ? ((r.failSkus / r.totalOrderedSkus) * 100).toFixed(1) : "0.0";
+            const tAcc = oosColor(toolRate), oAcc = oosColor(ovrRate);
+            const oosDelta  = r.ovrOos - r.toolOos;
+            const rateDelta = (parseFloat(ovrRate) - parseFloat(toolRate)).toFixed(1);
+            const bg = i % 2 === 0 ? HR.white : HR.surfaceLight;
+            return (
+              <tr key={r[nameKey]} style={{ background: bg, cursor: "pointer" }}
+                onClick={() => onClick(r[nameKey])}
+                onMouseEnter={e => e.currentTarget.style.background = "#FFFBEA"}
+                onMouseLeave={e  => e.currentTarget.style.background = bg}>
+                <td style={{ ...td, fontWeight: 700, color: HR.text }}>{r[nameKey]} <span style={{ fontSize: 10, color: HR.yellowDark }}>→</span></td>
+                <td style={{ ...td, textAlign: "center", color: "#B91C1C", fontWeight: 700 }}>{r.failSkus}</td>
+                <td style={{ ...td, textAlign: "center", color: HR.muted, fontWeight: 600 }}>{pctSkus}%</td>
+                <td style={{ ...td, textAlign: "center", color: "#B91C1C", fontWeight: 700 }}>{r.toolOos}</td>
+                {hasOverrides && (
+                  <td style={{ ...td, textAlign: "center", background: ovBg }}>
+                    <span style={{ fontWeight: 700, color: "#B91C1C" }}>{r.ovrOos}</span>
+                    {oosDelta !== 0 && <span style={{ fontSize: 9, color: oosDelta < 0 ? HR.green : "#B91C1C", marginLeft: 4, fontWeight: 700 }}>{oosDelta > 0 ? "+" : ""}{oosDelta}</span>}
+                  </td>
+                )}
+                <td style={{ ...td, textAlign: "center", color: HR.muted }}>{r.totalInstances}</td>
+                <td style={{ ...td, textAlign: "center" }}>
+                  <span style={{ background: tAcc + "18", color: tAcc, border: `1px solid ${tAcc}33`, padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800 }}>{toolRate}%</span>
+                </td>
+                {hasOverrides && (
+                  <td style={{ ...td, textAlign: "center", background: ovBg }}>
+                    <span style={{ background: oAcc + "18", color: oAcc, border: `1px solid ${oAcc}33`, padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800 }}>{ovrRate}%</span>
+                    {rateDelta !== "0.0" && <span style={{ fontSize: 9, color: parseFloat(rateDelta) < 0 ? HR.green : "#B91C1C", marginLeft: 4, fontWeight: 700 }}>{parseFloat(rateDelta) > 0 ? "+" : ""}{rateDelta}%</span>}
+                  </td>
+                )}
+                {hasOverrides && (
+                  <td style={{ ...td, textAlign: "center", background: ovBg }}>
+                    <span style={{ fontWeight: 700, fontSize: 11, color: r.invDelta >= 0 ? "#C05A00" : HR.green }}>{r.invDelta >= 0 ? "+" : ""}{fmtInr(r.invDelta)}</span>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const DayStrip2 = ({ orderLog, allDates }) => {
+  const byDate = {};
+  orderLog.forEach(o => {
+    if (!byDate[o.date]) byDate[o.date] = { oos: 0, ok: 0 };
+    if (o.oos) byDate[o.date].oos++; else byDate[o.date].ok++;
+  });
+  return (
+    <div style={{ display: "flex", gap: 2 }}>
+      {allDates.map(date => {
+        const d = byDate[date];
+        const bg = !d ? HR.border : d.oos > 0 && d.ok === 0 ? "#B91C1C" : d.oos > 0 ? "#F59E0B" : "#16a34a";
+        return <div key={date} title={date} style={{ width: 8, height: 14, borderRadius: 2, background: bg }} />;
+      })}
+    </div>
+  );
+};
+
+function OrderTable({ r }) {
+  const days = [];
+  let cur = null;
+  r.orderLog.forEach(o => {
+    if (!cur || cur.date !== o.date) { cur = { date: o.date, orders: [] }; days.push(cur); }
+    cur.orders.push(o);
+  });
+  const di = DS_LIST.indexOf(r.dsId), dc = DS_COLORS[di >= 0 ? di : 0];
+  return (
+    <div style={{ padding: "12px 16px", background: "#FFFBEA", borderTop: `2px solid ${HR.yellow}` }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: HR.yellowDark, marginBottom: 8 }}>Order-by-order — {r.name} @ {r.dsId}</div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+          <thead>
+            <tr style={{ background: "#FFF9E0" }}>
+              {["Date","Order #","Stock Before","Order Qty","Fulfilled","Short Qty","Stock After","Replenished?","Status"].map(h =>
+                <th key={h} style={{ padding: "6px 8px", textAlign: "left", color: HR.muted, fontWeight: 600, fontSize: 9, whiteSpace: "nowrap" }}>{h}</th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {days.map(day => [
+              <tr key={day.date + "_hdr"}>
+                <td colSpan={9} style={{ padding: "4px 10px", background: dc.bg, borderTop: `1px solid ${dc.header}33`, fontWeight: 700, fontSize: 10, color: dc.header }}>{day.date}</td>
+              </tr>,
+              ...day.orders.map((o, oi) => (
+                <tr key={day.date + "_" + oi} style={{ background: o.oos ? "#FEE2E2" : o.replenished && oi === day.orders.length - 1 ? "#F0FDF4" : HR.white }}>
+                  <td style={{ padding: "4px 8px", borderTop: "1px solid #E0E0D0", color: HR.muted, fontSize: 9 }}>{day.date}</td>
+                  <td style={{ padding: "4px 8px", borderTop: "1px solid #E0E0D0", textAlign: "center", color: HR.muted }}>{oi + 1}</td>
+                  <td style={{ padding: "4px 8px", borderTop: "1px solid #E0E0D0", textAlign: "center" }}>{o.stockBefore}</td>
+                  <td style={{ padding: "4px 8px", borderTop: "1px solid #E0E0D0", textAlign: "center", fontWeight: 700 }}>{o.qty}</td>
+                  <td style={{ padding: "4px 8px", borderTop: "1px solid #E0E0D0", textAlign: "center", color: "#15803D", fontWeight: o.fulfilled > 0 ? 700 : 400 }}>{o.fulfilled || "—"}</td>
+                  <td style={{ padding: "4px 8px", borderTop: "1px solid #E0E0D0", textAlign: "center", color: "#B91C1C", fontWeight: 700 }}>{o.shortQty > 0 ? o.shortQty : "—"}</td>
+                  <td style={{ padding: "4px 8px", borderTop: "1px solid #E0E0D0", textAlign: "center", color: o.stockAfter === 0 ? "#B91C1C" : HR.text, fontWeight: o.stockAfter === 0 ? 700 : 400 }}>{o.stockAfter}</td>
+                  <td style={{ padding: "4px 8px", borderTop: "1px solid #E0E0D0", textAlign: "center" }}>
+                    {o.replenished && oi === day.orders.length - 1 ? <span style={{ color: "#16a34a", fontWeight: 700 }}>↑ Max</span> : "—"}
+                  </td>
+                  <td style={{ padding: "4px 8px", borderTop: "1px solid #E0E0D0", textAlign: "center" }}>
+                    {o.oos
+                      ? <span style={{ ...TAG_SIM, background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA" }}>OOS</span>
+                      : <span style={{ ...TAG_SIM, background: "#DCFCE7", color: "#15803D", border: "1px solid #BBF7D0" }}>OK</span>}
+                  </td>
+                </tr>
+              ))
+            ])}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function SimSKUTable({ toolRows, ovrRows, allDates, hasOverrides, priceData }) {
+  const [expSKU, setExpSKU] = useState(null);
+  const [expDS,  setExpDS]  = useState(null);
+  const ovBg = "#FFFDE7";
+  const ovrMap = useMemo(() => {
+    const m = {};
+    ovrRows.forEach(r => { m[`${r.skuId}||${r.dsId}`] = r; });
+    return m;
+  }, [ovrRows]);
+  const bySKU = useMemo(() => {
+    const m = {};
+    toolRows.forEach(r => {
+      if (!m[r.skuId]) m[r.skuId] = { skuId: r.skuId, name: r.name, category: r.category, brand: r.brand, priceTag: r.priceTag, mvTag: r.mvTag, dsRows: [] };
+      const ovrRow = ovrMap[`${r.skuId}||${r.dsId}`] || r;
+      m[r.skuId].dsRows.push({ tool: r, ovr: ovrRow });
+    });
+    Object.values(m).forEach(s => s.dsRows.sort((a, b) => b.tool.oosInstances - a.tool.oosInstances));
+    return Object.values(m).sort((a, b) => {
+      const aT = a.dsRows.reduce((s, p) => s + p.tool.oosInstances, 0);
+      const bT = b.dsRows.reduce((s, p) => s + p.tool.oosInstances, 0);
+      return bT - aT;
+    });
+  }, [toolRows, ovrMap]);
+  const th = (extra = {}) => ({ padding: "8px 10px", textAlign: "left", color: HR.muted, background: HR.surfaceLight, fontWeight: 600, whiteSpace: "nowrap", fontSize: 10, ...extra });
+  const td = (extra = {}) => ({ padding: "6px 10px", borderTop: "1px solid #E0E0D0", verticalAlign: "middle", ...extra });
+  return (
+    <div style={{ background: "#FFF", borderRadius: 8, border: "1px solid #E0E0D0", overflow: "auto", maxHeight: "72vh" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+        <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
+          <tr style={{ background: HR.surfaceLight }}>
+            <th style={th({ minWidth: 200 })}>SKU</th>
+            <th style={th()}>Category</th>
+            <th style={th()}>Movement</th>
+            <th style={th()}>Price</th>
+            <th style={th({ textAlign: "center" })}>Failing DS{hasOverrides ? " (Tool)" : ""}</th>
+            {hasOverrides && <th style={th({ textAlign: "center", background: ovBg })}>Failing DS (Ovr)</th>}
+            <th style={th({ textAlign: "center" })}>OOS Inst{hasOverrides ? " (Tool)" : ""}</th>
+            {hasOverrides && <th style={th({ textAlign: "center", background: ovBg })}>OOS Inst (Ovr)</th>}
+            <th style={th({ textAlign: "center" })}>Total Inst</th>
+            <th style={th({ textAlign: "center" })}>OOS Rate{hasOverrides ? " (Tool)" : ""}</th>
+            {hasOverrides && <th style={th({ textAlign: "center", background: ovBg })}>OOS Rate (Ovr)</th>}
+            {hasOverrides && <th style={th({ textAlign: "center", background: ovBg })}>Inv Value Δ</th>}
+            <th style={th({ width: 28 })} />
+          </tr>
+        </thead>
+        <tbody>
+          {bySKU.map((sku, i) => {
+            const isOpen = expSKU === sku.skuId;
+            const toolOos = sku.dsRows.reduce((s, p) => s + p.tool.oosInstances, 0);
+            const ovrOos  = sku.dsRows.reduce((s, p) => s + p.ovr.oosInstances,  0);
+            const totInst = sku.dsRows.reduce((s, p) => s + p.tool.totalInstances, 0);
+            const toolRate = totInst > 0 ? ((toolOos / totInst) * 100).toFixed(1) : "0.0";
+            const ovrRate  = totInst > 0 ? ((ovrOos  / totInst) * 100).toFixed(1) : "0.0";
+            const tAcc = oosColor(toolRate), oAcc = oosColor(ovrRate);
+            const hasAnyOverride = sku.dsRows.some(p => p.ovr.isOverridden);
+            const skuInvDelta = Math.round(sku.dsRows.filter(p => p.ovr.isOverridden).reduce((s, p) => s + (p.ovr.useMax - p.ovr.toolMax) * (priceData?.[sku.skuId] || 0), 0));
+            const toolFailDS = sku.dsRows.filter(p => p.tool.oosInstances > 0).map(p => p.tool.dsId);
+            const ovrFailDS  = sku.dsRows.filter(p => p.ovr.oosInstances  > 0).map(p => p.ovr.dsId);
+            const rowBg = isOpen ? "#FFFBEA" : hasAnyOverride ? ovBg : i % 2 === 0 ? HR.white : HR.surfaceLight;
+            return [
+              <tr key={sku.skuId}
+                style={{ background: rowBg, cursor: "pointer", borderLeft: hasAnyOverride ? `3px solid ${HR.yellow}` : "3px solid transparent" }}
+                onClick={() => { setExpSKU(p => p === sku.skuId ? null : sku.skuId); setExpDS(null); }}
+                onMouseEnter={e => e.currentTarget.style.background = "#FFFBEA"}
+                onMouseLeave={e  => e.currentTarget.style.background = rowBg}>
+                <td style={td()}>
+                  <div style={{ fontWeight: 700, color: HR.text, fontSize: 11 }}>{sku.name}</div>
+                  <div style={{ fontSize: 9, color: HR.muted, marginTop: 1 }}>{sku.skuId}</div>
+                  {hasAnyOverride && <span style={{ ...TAG_SIM, background: "#FFFBEA", color: HR.yellowDark, border: `1px solid ${HR.yellow}`, marginTop: 2 }}>overridden</span>}
+                </td>
+                <td style={{ ...td(), color: HR.muted, fontSize: 10 }}>{sku.category}</td>
+                <td style={td()}><MovTag2 v={sku.mvTag} /></td>
+                <td style={td()}>{(() => { const c = PRICE_TAG_COLORS[sku.priceTag] || { bg: "#F1F5F9", color: "#64748B", border: "#CBD5E1" }; return <span style={{ ...TAG_SIM, background: c.bg, color: c.color, border: `1px solid ${c.border}` }}>{sku.priceTag || "—"}</span>; })()}</td>
+                <td style={{ ...td(), textAlign: "center" }}>
+                  <div style={{ display: "flex", gap: 3, justifyContent: "center", flexWrap: "wrap" }}>
+                    {toolFailDS.length ? toolFailDS.map(ds => <DSBadgeSim key={ds} ds={ds} />) : <span style={{ color: HR.muted, fontSize: 10 }}>—</span>}
+                  </div>
+                </td>
+                {hasOverrides && (
+                  <td style={{ ...td(), textAlign: "center", background: ovBg }}>
+                    <div style={{ display: "flex", gap: 3, justifyContent: "center", flexWrap: "wrap" }}>
+                      {ovrFailDS.length ? ovrFailDS.map(ds => <DSBadgeSim key={ds} ds={ds} />) : <span style={{ color: HR.green, fontSize: 10, fontWeight: 700 }}>None ✓</span>}
+                    </div>
+                  </td>
+                )}
+                <td style={{ ...td(), textAlign: "center", color: "#B91C1C", fontWeight: 700 }}>{toolOos}</td>
+                {hasOverrides && (
+                  <td style={{ ...td(), textAlign: "center", background: ovBg }}>
+                    <span style={{ fontWeight: 700, color: "#B91C1C" }}>{ovrOos}</span>
+                    {ovrOos !== toolOos && <span style={{ fontSize: 9, color: ovrOos < toolOos ? HR.green : "#B91C1C", marginLeft: 4, fontWeight: 700 }}>{ovrOos - toolOos > 0 ? "+" : ""}{ovrOos - toolOos}</span>}
+                  </td>
+                )}
+                <td style={{ ...td(), textAlign: "center", color: HR.muted }}>{totInst}</td>
+                <td style={{ ...td(), textAlign: "center" }}>
+                  <span style={{ background: tAcc + "18", color: tAcc, border: `1px solid ${tAcc}33`, padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800 }}>{toolRate}%</span>
+                </td>
+                {hasOverrides && (
+                  <td style={{ ...td(), textAlign: "center", background: ovBg }}>
+                    <span style={{ background: oAcc + "18", color: oAcc, border: `1px solid ${oAcc}33`, padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800 }}>{ovrRate}%</span>
+                    {ovrRate !== toolRate && <span style={{ fontSize: 9, color: parseFloat(ovrRate) < parseFloat(toolRate) ? HR.green : "#B91C1C", marginLeft: 4, fontWeight: 700 }}>{(parseFloat(ovrRate) - parseFloat(toolRate)) > 0 ? "+" : ""}{(parseFloat(ovrRate) - parseFloat(toolRate)).toFixed(1)}%</span>}
+                  </td>
+                )}
+                {hasOverrides && (
+                  <td style={{ ...td(), textAlign: "center", background: ovBg }}>
+                    <span style={{ fontWeight: 700, color: skuInvDelta >= 0 ? "#C05A00" : HR.green, fontSize: 11 }}>{skuInvDelta >= 0 ? "+" : ""}{fmtInr(skuInvDelta)}</span>
+                  </td>
+                )}
+                <td style={{ ...td(), textAlign: "center", color: HR.muted, fontSize: 12, fontWeight: 700, userSelect: "none" }}>{isOpen ? "▲" : "▶"}</td>
+              </tr>,
+              isOpen && sku.dsRows.map(({ tool: r, ovr: ovrR }) => {
+                const dsKey    = `${r.skuId}||${r.dsId}`;
+                const isDSOpen = expDS === dsKey;
+                const di = DS_LIST.indexOf(r.dsId), dc = DS_COLORS[di >= 0 ? di : 0];
+                const dsToolRate = r.totalInstances  > 0 ? ((r.oosInstances  / r.totalInstances) * 100).toFixed(1) : "0.0";
+                const dsOvrRate  = ovrR.totalInstances > 0 ? ((ovrR.oosInstances / ovrR.totalInstances) * 100).toFixed(1) : "0.0";
+                const dsTAcc = oosColor(dsToolRate), dsOAcc = oosColor(dsOvrRate);
+                const isOvr = ovrR.isOverridden;
+                const dsInvDelta = isOvr ? Math.round((ovrR.useMax - ovrR.toolMax) * (priceData?.[r.skuId] || 0)) : 0;
+                const dsBg = isDSOpen ? "#EDF9FF" : isOvr ? ovBg : dc.bg;
+                return [
+                  <tr key={dsKey}
+                    style={{ background: dsBg, cursor: "pointer", borderLeft: isOvr ? `3px solid ${HR.yellow}` : `3px solid ${dc.header}` }}
+                    onClick={e => { e.stopPropagation(); setExpDS(p => p === dsKey ? null : dsKey); }}
+                    onMouseEnter={e => e.currentTarget.style.background = "#EDF9FF"}
+                    onMouseLeave={e  => e.currentTarget.style.background = dsBg}>
+                    <td style={{ ...td(), paddingLeft: 28 }} colSpan={4}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <DSBadgeSim ds={r.dsId} />
+                        {isOvr ? (
+                          <>
+                            <span style={{ fontSize: 9, color: HR.muted }}>Min/Max: {r.toolMin}/{r.toolMax}</span>
+                            <span style={{ fontSize: 9, color: HR.yellowDark, fontWeight: 700 }}>→ {ovrR.useMin}/{ovrR.useMax}</span>
+                            <span style={{ ...TAG_SIM, background: "#FFFBEA", color: HR.yellowDark, border: `1px solid ${HR.yellow}`, fontSize: 9 }}>✏ overridden</span>
+                          </>
+                        ) : (
+                          <span style={{ fontSize: 9, color: HR.muted }}>Min {r.useMin} · Max {r.useMax}</span>
+                        )}
+                      </div>
+                    </td>
+                    <td style={{ ...td(), textAlign: "center" }} colSpan={hasOverrides ? 2 : 1}>
+                      <DayStrip2 orderLog={r.orderLog} allDates={allDates} />
+                    </td>
+                    <td style={{ ...td(), textAlign: "center", color: "#B91C1C", fontWeight: 700 }}>{r.oosInstances}</td>
+                    {hasOverrides && (
+                      <td style={{ ...td(), textAlign: "center", background: ovBg }}>
+                        <span style={{ fontWeight: 700, color: "#B91C1C" }}>{ovrR.oosInstances}</span>
+                        {ovrR.oosInstances !== r.oosInstances && <span style={{ fontSize: 9, color: ovrR.oosInstances < r.oosInstances ? HR.green : "#B91C1C", marginLeft: 4, fontWeight: 700 }}>{ovrR.oosInstances - r.oosInstances > 0 ? "+" : ""}{ovrR.oosInstances - r.oosInstances}</span>}
+                      </td>
+                    )}
+                    <td style={{ ...td(), textAlign: "center", color: HR.muted }}>{r.totalInstances}</td>
+                    <td style={{ ...td(), textAlign: "center" }}>
+                      <span style={{ background: dsTAcc + "18", color: dsTAcc, border: `1px solid ${dsTAcc}33`, padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800 }}>{dsToolRate}%</span>
+                    </td>
+                    {hasOverrides && (
+                      <td style={{ ...td(), textAlign: "center", background: ovBg }}>
+                        <span style={{ background: dsOAcc + "18", color: dsOAcc, border: `1px solid ${dsOAcc}33`, padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 800 }}>{dsOvrRate}%</span>
+                        {dsOvrRate !== dsToolRate && <span style={{ fontSize: 9, color: parseFloat(dsOvrRate) < parseFloat(dsToolRate) ? HR.green : "#B91C1C", marginLeft: 4, fontWeight: 700 }}>{(parseFloat(dsOvrRate) - parseFloat(dsToolRate)) > 0 ? "+" : ""}{(parseFloat(dsOvrRate) - parseFloat(dsToolRate)).toFixed(1)}%</span>}
+                      </td>
+                    )}
+                    {hasOverrides && (
+                      <td style={{ ...td(), textAlign: "center", background: ovBg }}>
+                        {isOvr ? <span style={{ fontWeight: 700, color: dsInvDelta >= 0 ? "#C05A00" : HR.green, fontSize: 11 }}>{dsInvDelta >= 0 ? "+" : ""}{fmtInr(dsInvDelta)}</span> : <span style={{ color: HR.muted }}>—</span>}
+                      </td>
+                    )}
+                    <td style={{ ...td(), textAlign: "center", color: HR.muted, fontSize: 11, fontWeight: 700, userSelect: "none" }}>{isDSOpen ? "▲" : "▼"}</td>
+                  </tr>,
+                  isDSOpen && (
+                    <tr key={dsKey + "_ord"}>
+                      <td colSpan={hasOverrides ? 12 : 9} style={{ padding: 0, borderTop: `2px solid ${HR.yellow}` }}>
+                        <OrderTable r={r} />
+                      </td>
+                    </tr>
+                  )
+                ];
+              })
+            ];
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ProblematicSKUs({ toolRows, ovrRows, allDates, hasOverrides, priceData }) {
+  const [topN, setTopN] = useState(10);
+  const bySKU = useMemo(() => {
+    const m = {};
+    toolRows.forEach(r => {
+      if (!m[r.skuId]) m[r.skuId] = { skuId: r.skuId, name: r.name, toolOos: 0 };
+      m[r.skuId].toolOos += r.oosInstances;
+    });
+    return Object.values(m).filter(s => s.toolOos > 0).sort((a, b) => b.toolOos - a.toolOos);
+  }, [toolRows]);
+  if (!bySKU.length) return null;
+  const visible    = topN === "All" ? bySKU : bySKU.slice(0, topN);
+  const visibleIds = new Set(visible.map(s => s.skuId));
+  const visTool    = toolRows.filter(r => visibleIds.has(r.skuId) && r.oosInstances > 0);
+  const visOvr     = ovrRows.filter(r  => visibleIds.has(r.skuId));
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: HR.text }}>
+          🚨 Problematic SKUs
+          <span style={{ fontSize: 10, color: HR.muted, fontWeight: 400, marginLeft: 6 }}>sorted by OOS Instances · click to expand</span>
+        </div>
+        <div style={{ display: "flex", gap: 0, border: `1px solid ${HR.border}`, borderRadius: 4, overflow: "hidden" }}>
+          {[10, 20, "All"].map(n => (
+            <button key={n} onClick={() => setTopN(n)}
+              style={{ padding: "4px 10px", fontSize: 10, fontWeight: 700, border: "none", cursor: "pointer", background: topN === n ? HR.yellow : HR.white, color: topN === n ? HR.black : HR.muted, borderRight: `1px solid ${HR.border}` }}>
+              Top {n}
+            </button>
+          ))}
+        </div>
+      </div>
+      <SimSKUTable toolRows={visTool} ovrRows={visOvr} allDates={[]} hasOverrides={hasOverrides} priceData={priceData} />
+      {topN !== "All" && bySKU.length > topN && (
+        <div style={{ fontSize: 10, color: HR.muted, textAlign: "center", marginTop: 6 }}>Showing {topN} of {bySKU.length} problematic SKUs</div>
+      )}
+    </div>
+  );
+}
+
+function OverriddenSKUsSection({ ovrRowsFull, priceData, results }) {
+  const manualRows = useMemo(() => ovrRowsFull.filter(r => r.isOverridden), [ovrRowsFull]);
+  if (!manualRows.length) return null;
+  const ovBg = "#FFFDE7";
+  const totalDelta = manualRows.reduce((sum, r) => sum + (r.useMax - r.toolMax) * (priceData?.[r.skuId] || 0), 0);
+  const th = (extra = {}) => ({ padding: "8px 10px", textAlign: "left", color: HR.muted, background: HR.surfaceLight, fontWeight: 600, whiteSpace: "nowrap", fontSize: 10, ...extra });
+  const td = (extra = {}) => ({ padding: "6px 10px", borderTop: "1px solid #E0E0D0", verticalAlign: "middle", ...extra });
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: HR.yellowDark }}>✏ Overridden SKUs</div>
+        {totalDelta !== 0 && (
+          <div style={{ fontSize: 12, fontWeight: 700, color: totalDelta >= 0 ? "#C05A00" : HR.green, background: "#FFFBEA", border: `1px solid ${HR.yellow}`, borderRadius: 4, padding: "3px 10px" }}>
+            Total Inv Delta: {totalDelta >= 0 ? "+" : ""}{fmtInr(Math.round(totalDelta))}
+          </div>
+        )}
+      </div>
+      <div style={{ background: "#FFF", borderRadius: 8, border: "1px solid #E0E0D0", overflow: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead>
+            <tr style={{ background: HR.surfaceLight }}>
+              <th style={th({ minWidth: 200 })}>SKU</th><th style={th()}>Category</th><th style={th()}>Brand</th>
+              <th style={th()}>Movement</th><th style={th()}>Price</th><th style={th({ textAlign: "center" })}>DS</th>
+              <th style={th({ textAlign: "center" })}>Tool Min</th><th style={th({ textAlign: "center" })}>Tool Max</th>
+              <th style={th({ textAlign: "center", background: ovBg })}>Override Min</th>
+              <th style={th({ textAlign: "center", background: ovBg })}>Override Max</th>
+              <th style={th({ textAlign: "center", background: ovBg })}>Inv Delta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {manualRows.map((r, i) => {
+              const price = priceData?.[r.skuId] || 0;
+              const delta = Math.round((r.useMax - r.toolMax) * price);
+              const di = DS_LIST.indexOf(r.dsId), dc = DS_COLORS[di >= 0 ? di : 0];
+              const mvColor = MOV_COLORS[r.mvTag] || "#64748b";
+              const priceC  = PRICE_TAG_COLORS[r.priceTag] || { bg: "#F1F5F9", color: "#64748B", border: "#CBD5E1" };
+              return (
+                <tr key={`${r.skuId}||${r.dsId}`} style={{ background: i % 2 === 0 ? HR.white : HR.surfaceLight }}>
+                  <td style={td()}><div style={{ fontWeight: 700, color: HR.text, fontSize: 11 }}>{r.name}</div><div style={{ fontSize: 9, color: HR.muted }}>{r.skuId}</div></td>
+                  <td style={{ ...td(), color: HR.muted, fontSize: 10 }}>{r.category}</td>
+                  <td style={{ ...td(), color: HR.muted, fontSize: 10 }}>{r.brand}</td>
+                  <td style={td()}><span style={{ ...TAG_SIM, background: mvColor + "18", color: mvColor, border: `1px solid ${mvColor}33` }}>{r.mvTag}</span></td>
+                  <td style={td()}><span style={{ ...TAG_SIM, background: priceC.bg, color: priceC.color, border: `1px solid ${priceC.border}` }}>{r.priceTag}</span></td>
+                  <td style={{ ...td(), textAlign: "center" }}><DSBadgeSim ds={r.dsId} /></td>
+                  <td style={{ ...td(), textAlign: "center", color: HR.muted }}>{r.toolMin}</td>
+                  <td style={{ ...td(), textAlign: "center", color: HR.muted }}>{r.toolMax}</td>
+                  <td style={{ ...td(), textAlign: "center", background: ovBg, fontWeight: 700, color: HR.yellowDark }}>{r.useMin}</td>
+                  <td style={{ ...td(), textAlign: "center", background: ovBg, fontWeight: 700, color: HR.yellowDark }}>{r.useMax}</td>
+                  <td style={{ ...td(), textAlign: "center", background: ovBg }}>
+                    {price > 0 ? <span style={{ fontWeight: 700, color: delta >= 0 ? "#C05A00" : HR.green }}>{delta >= 0 ? "+" : ""}{fmtInr(delta)}</span> : <span style={{ color: HR.muted }}>—</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function WhatIfUploadPanel({ onUpload, hasOverrides, onReset, overrideCount }) {
+  const fileRef = useRef(null);
+  const handleFile = async file => {
+    if (!file) return;
+    const text = await file.text();
+    const overrides = parseOverrideCSV(text);
+    const count = Object.values(overrides).reduce((s, ds) => s + Object.keys(ds).length, 0);
+    if (!count) { alert("No valid overrides found. Make sure 'New Min' or 'New Max' columns are filled."); return; }
+    onUpload(overrides, count);
+  };
+  return (
+    <div style={{ background: HR.surface, border: `1px dashed ${hasOverrides ? HR.yellow : HR.border}`, borderRadius: 8, padding: "14px 18px", marginBottom: 14 }}>
+      <div style={{ fontWeight: 700, color: HR.text, fontSize: 13, marginBottom: 4 }}>🔬 What-If Simulation</div>
+      <div style={{ fontSize: 12, color: HR.muted, marginBottom: 10 }}>
+        Download the OOS CSV, fill in your custom <strong>New Min / New Max</strong> for any SKU×DS rows, then re-upload to compare Tool vs Override side-by-side.
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <button onClick={() => fileRef.current?.click()}
+          style={{ background: HR.yellow, color: HR.black, border: "none", padding: "7px 16px", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+          ⬆ Upload Edited CSV
+        </button>
+        <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }}
+          onChange={e => { handleFile(e.target.files[0]); e.target.value = ""; }} />
+        {hasOverrides && (
+          <>
+            <button onClick={onReset}
+              style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+              ↩ Reset to Tool Logic
+            </button>
+            <span style={{ fontSize: 11, color: HR.yellowDark, fontWeight: 700, background: "#FFFBEA", border: `1px solid ${HR.yellow}`, padding: "3px 10px", borderRadius: 4 }}>
+              {overrideCount} override{overrideCount !== 1 ? "s" : ""} active
+            </span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SimOrgLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, hasOverrides, priceData, totInst, totSkus, onDrillCategory }) {
+  const groupRows = buildGroupRows(toolRows, ovrRows, winRows, (r, mode) => mode === "ord" ? (skuMeta[r.sku]?.category || "Unknown") : (r.category || "Unknown"), priceData);
+  return (
+    <div>
+      <SimSummaryCards toolRows={toolRows} ovrRows={ovrRows} ovrRowsFull={ovrRowsFull} totInst={totInst} totSkus={totSkus} hasOverrides={hasOverrides} priceData={priceData} />
+      <div style={{ fontSize: 12, fontWeight: 700, color: HR.text, marginBottom: 8 }}>Categories</div>
+      <RankTable rows={groupRows} nameLabel="Category" nameKey="name" onClick={onDrillCategory} hasOverrides={hasOverrides} />
+      <ProblematicSKUs toolRows={toolRows} ovrRows={ovrRows} allDates={[]} hasOverrides={hasOverrides} priceData={priceData} />
+      <OverriddenSKUsSection ovrRowsFull={ovrRowsFull} priceData={priceData} />
+    </div>
+  );
+}
+
+function SimCategoryLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, category, hasOverrides, priceData, totInst, totSkus, allDates, onDrillBrand }) {
+  const tScope = toolRows.filter(r => (r.category || "Unknown") === category);
+  const oScope = ovrRows.filter(r  => (r.category || "Unknown") === category);
+  const wScope = winRows.filter(r  => (skuMeta[r.sku]?.category || "Unknown") === category);
+  const oScopeFull = ovrRowsFull.filter(r => (r.category || "Unknown") === category);
+  const groupRows = buildGroupRows(tScope, oScope, wScope, (r, mode) => mode === "ord" ? (skuMeta[r.sku]?.brand || "Unknown") : (r.brand || "Unknown"), priceData);
+  return (
+    <div>
+      <SimSummaryCards toolRows={tScope} ovrRows={oScope} ovrRowsFull={oScopeFull} totInst={wScope.length} totSkus={new Set(wScope.map(r => r.sku)).size} hasOverrides={hasOverrides} priceData={priceData} />
+      <div style={{ fontSize: 12, fontWeight: 700, color: HR.text, marginBottom: 8 }}>Brands in <span style={{ color: HR.yellowDark }}>{category}</span></div>
+      <RankTable rows={groupRows} nameLabel="Brand" nameKey="name" onClick={onDrillBrand} hasOverrides={hasOverrides} />
+    </div>
+  );
+}
+
+function SimBrandLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, category, brand, hasOverrides, priceData, allDates }) {
+  const tScope = toolRows.filter(r => (r.category || "Unknown") === category && (r.brand || "Unknown") === brand);
+  const oScope = ovrRows.filter(r  => (r.category || "Unknown") === category && (r.brand || "Unknown") === brand);
+  const wScope = winRows.filter(r  => (skuMeta[r.sku]?.category || "Unknown") === category && (skuMeta[r.sku]?.brand || "Unknown") === brand);
+  const oScopeFull = ovrRowsFull.filter(r => (r.category || "Unknown") === category && (r.brand || "Unknown") === brand);
+  return (
+    <div>
+      <SimSummaryCards toolRows={tScope} ovrRows={oScope} ovrRowsFull={oScopeFull} totInst={wScope.length} totSkus={new Set(wScope.map(r => r.sku)).size} hasOverrides={hasOverrides} priceData={priceData} />
+      <div style={{ fontSize: 12, fontWeight: 700, color: HR.text, marginBottom: 8 }}>Failing SKUs — <span style={{ color: HR.yellowDark }}>{brand}</span><span style={{ color: HR.muted, fontWeight: 400 }}> · {category}</span></div>
+      <SimSKUTable toolRows={tScope} ovrRows={oScope} allDates={allDates} hasOverrides={hasOverrides} priceData={priceData} />
+    </div>
+  );
+}
+
+function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onApplyToCore }) {
+  const [drill, setDrill] = useState(null);
+  const [dsFilter, setDsFilter] = useState("All");
+  const [overrides, setOverrides] = useState({});
+  const [overrideCount, setOverrideCount] = useState(0);
+  const [showApplyConfirm, setShowApplyConfirm] = useState(false);
+  const hasOverrides = overrideCount > 0;
+
+  const handleApplyToCore = () => {
+    const payload = {};
+    Object.entries(overrides).forEach(([sku, dsList]) => {
+      Object.entries(dsList).forEach(([ds, ov]) => {
+        const toolMin = results[sku]?.stores[ds]?.min ?? 0;
+        const toolMax = results[sku]?.stores[ds]?.max ?? 0;
+        if (!payload[sku]) payload[sku] = {};
+        payload[sku][ds] = {
+          min: ov.min !== null ? ov.min : toolMin,
+          max: ov.max !== null ? ov.max : toolMax,
+          toolMin, toolMax,
+          appliedAt: new Date().toISOString(),
+          skuName: results[sku]?.meta?.name || sku,
+          category: results[sku]?.meta?.category || "",
+          brand: results[sku]?.meta?.brand || "",
+          mvTag: results[sku]?.stores[ds]?.mvTag || "—",
+          priceTag: results[sku]?.meta?.priceTag || "—",
+        };
+      });
+    });
+    onApplyToCore(payload);
+    setOverrides({});
+    setOverrideCount(0);
+    setDrill(null);
+    setShowApplyConfirm(false);
+  };
+
+  const allDates = useMemo(() => [...new Set(invoiceData.map(r => r.date))].sort().slice(-15), [invoiceData]);
+  const skuMeta  = useMemo(() => {
+    const m = {};
+    Object.values(results || {}).forEach(r => { m[r.meta.sku] = r.meta; });
+    return m;
+  }, [results]);
+
+  const toolRowsFull = useMemo(() => runSim(invoiceData, results, {}),        [invoiceData, results]);
+  const ovrRowsFull  = useMemo(() => runSim(invoiceData, results, overrides), [invoiceData, results, overrides]);
+  const toolRows = useMemo(() => toolRowsFull.filter(r => r.oosInstances > 0), [toolRowsFull]);
+  const ovrRows  = useMemo(() => {
+    const toolKeys = new Set(toolRows.map(r => `${r.skuId}||${r.dsId}`));
+    return ovrRowsFull.filter(r => r.oosInstances > 0 || toolKeys.has(`${r.skuId}||${r.dsId}`));
+  }, [toolRows, ovrRowsFull]);
+
+  const toolRowsView = useMemo(() => dsFilter === "All" ? toolRows : toolRows.filter(r => r.dsId === dsFilter), [toolRows, dsFilter]);
+  const ovrRowsView  = useMemo(() => dsFilter === "All" ? ovrRows  : ovrRows.filter(r  => r.dsId === dsFilter), [ovrRows, dsFilter]);
+
+  const inv     = useMemo(() => dsFilter === "All" ? invoiceData : invoiceData.filter(r => r.ds === dsFilter), [invoiceData, dsFilter]);
+  const winRows = useMemo(() => inv.filter(r => allDates.includes(r.date)), [inv, allDates]);
+  const totInst = winRows.length;
+  const totSkus = useMemo(() => new Set(winRows.map(r => r.sku)).size, [winRows]);
+
+  const toolOos  = toolRowsView.reduce((s, r) => s + r.oosInstances, 0);
+  const ovrOos   = ovrRowsView.reduce((s,  r) => s + r.oosInstances, 0);
+  const toolRate = totInst > 0 ? ((toolOos / totInst) * 100).toFixed(1) : "0.0";
+  const ovrRate  = totInst > 0 ? ((ovrOos  / totInst) * 100).toFixed(1) : "0.0";
+  const tAcc = oosColor(toolRate), oAcc = oosColor(ovrRate);
+  const failSkus = new Set(toolRowsView.filter(r => r.oosInstances > 0).map(r => r.skuId)).size;
+
+  const handleDSFilter = ds => { setDsFilter(ds); setDrill(null); };
+  const handleUpload   = (ov, cnt) => { setOverrides(ov); setOverrideCount(cnt); setDrill(null); };
+  const handleReset    = () => { setOverrides({}); setOverrideCount(0); setDrill(null); };
+
+  if (!invoiceData.length || !results) return (
+    <div style={{ textAlign: "center", padding: 80 }}>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>🔬</div>
+      <div style={{ color: HR.muted, fontSize: 14 }}>No data available</div>
+    </div>
+  );
+
+  const crumbs = [
+    { label: "All Categories", onClick: drill ? () => setDrill(null) : null },
+    ...(drill?.type === "category" || drill?.type === "brand"
+      ? [{ label: drill.category || drill.value, onClick: drill.type !== "category" ? () => setDrill({ type: "category", value: drill.category, category: drill.category }) : null }]
+      : []),
+    ...(drill?.type === "brand" ? [{ label: drill.brand }] : []),
+  ];
+
+  return (
+    <div>
+      <div style={{ position: "sticky", top: -16, zIndex: 10, background: HR.bg, paddingTop: 4, paddingBottom: 8, marginBottom: 12, borderBottom: `1px solid ${HR.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+          <span style={{ fontWeight: 800, fontSize: 14, color: HR.yellowDark, whiteSpace: "nowrap" }}>OOS Simulation — Last 15 Days</span>
+          {allDates.length > 0 && <span style={{ fontSize: 10, color: HR.muted }}>{allDates[0]} → {allDates[allDates.length - 1]}</span>}
+          {hasOverrides && <span style={{ fontSize: 10, fontWeight: 700, color: HR.yellowDark, background: "#FFFBEA", border: `1px solid ${HR.yellow}`, borderRadius: 4, padding: "2px 8px" }}>✏ What-If Mode — {overrideCount} overrides</span>}
+          <div style={{ display: "flex", gap: 0, border: `1px solid ${HR.border}`, borderRadius: 5, overflow: "hidden", flexShrink: 0 }}>
+            {["All", ...DS_LIST].map(ds => {
+              const di = DS_LIST.indexOf(ds), dc = di >= 0 ? DS_COLORS[di] : null, isActive = dsFilter === ds;
+              return (
+                <button key={ds} onClick={() => handleDSFilter(ds)}
+                  style={{ padding: "4px 10px", background: isActive ? (dc ? dc.header : HR.yellow) : (dc ? dc.bg : HR.white), color: isActive ? (dc ? HR.white : HR.black) : (dc ? dc.header : HR.muted), border: "none", borderRight: `1px solid ${HR.border}`, cursor: "pointer", fontSize: 11, fontWeight: 700, lineHeight: 1.4 }}>
+                  {ds}
+                </button>
+              );
+            })}
+          </div>
+          {showApplyConfirm && (
+            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+              <div style={{ background: HR.white, padding: 28, borderRadius: 10, border: `2px solid ${HR.yellow}`, maxWidth: 400, width: "90%", boxShadow: "0 8px 32px rgba(0,0,0,0.15)" }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: HR.yellowDark, marginBottom: 8 }}>⚠ Apply Overrides to Core?</div>
+                <div style={{ fontSize: 13, color: HR.text, marginBottom: 6 }}>This will update Min/Max values for <strong>{overrideCount} override{overrideCount !== 1 ? "s" : ""}</strong> across the entire tool.</div>
+                <div style={{ fontSize: 12, color: HR.muted, marginBottom: 20 }}>Dashboard, Output, and all tabs will reflect the new values. The simulation sandbox will reset. This cannot be undone except from the Overrides tab.</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={handleApplyToCore} style={{ flex: 1, background: HR.yellow, color: HR.black, border: "none", padding: "10px", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>✓ Apply to Core</button>
+                  <button onClick={() => setShowApplyConfirm(false)} style={{ flex: 1, background: HR.white, color: HR.muted, border: `1px solid ${HR.border}`, padding: "10px", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {hasOverrides && (
+            <button onClick={() => setShowApplyConfirm(true)}
+              style={{ background: HR.yellowDark, color: HR.white, border: "none", padding: "5px 14px", borderRadius: 5, cursor: "pointer", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>
+              ✓ Apply Overrides to Core
+            </button>
+          )}
+          <button onClick={() => downloadWhatIfCSV(toolRowsFull.filter(r => r.oosInstances > 0))}
+            style={{ background: HR.green, color: HR.white, border: "none", padding: "5px 14px", borderRadius: 5, cursor: "pointer", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>
+            ⬇ Download What-If CSV
+          </button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ background: tAcc + "18", border: `1px solid ${tAcc}44`, borderRadius: 5, padding: "3px 10px", display: "flex", gap: 5, alignItems: "baseline" }}>
+            <span style={{ fontWeight: 800, fontSize: 14, color: tAcc }}>{toolRate}%</span>
+            <span style={{ fontSize: 10, color: tAcc, fontWeight: 600 }}>OOS {hasOverrides ? "(Tool)" : ""}</span>
+          </div>
+          {hasOverrides && (
+            <div style={{ background: oAcc + "18", border: `2px solid ${HR.yellow}`, borderRadius: 5, padding: "3px 10px", display: "flex", gap: 5, alignItems: "baseline" }}>
+              <span style={{ fontWeight: 800, fontSize: 14, color: oAcc }}>{ovrRate}%</span>
+              <span style={{ fontSize: 10, color: HR.yellowDark, fontWeight: 700 }}>OOS (Override)</span>
+              {toolRate !== ovrRate && <span style={{ fontSize: 11, fontWeight: 800, color: parseFloat(ovrRate) < parseFloat(toolRate) ? HR.green : "#B91C1C" }}>{(parseFloat(ovrRate) - parseFloat(toolRate)) > 0 ? "+" : ""}{(parseFloat(ovrRate) - parseFloat(toolRate)).toFixed(1)}%</span>}
+            </div>
+          )}
+          <div style={{ background: HR.surface, border: `1px solid ${HR.border}`, borderRadius: 5, padding: "3px 10px", display: "flex", gap: 5, alignItems: "baseline" }}>
+            <span style={{ fontWeight: 800, fontSize: 13, color: "#B91C1C" }}>{failSkus}</span>
+            <span style={{ fontSize: 10, color: HR.muted }}>failing SKUs / {totSkus}</span>
+          </div>
+          {crumbs.map((c, i) => (
+            <span key={i} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              {i > 0 && <span style={{ color: HR.muted, fontSize: 11 }}>›</span>}
+              <span onClick={c.onClick || undefined} style={{ fontSize: 11, color: c.onClick ? HR.yellowDark : HR.text, cursor: c.onClick ? "pointer" : "default", fontWeight: i === crumbs.length - 1 ? 700 : 400, textDecoration: c.onClick ? "underline" : "none" }}>{c.label}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <WhatIfUploadPanel onUpload={handleUpload} hasOverrides={hasOverrides} onReset={handleReset} overrideCount={overrideCount} />
+
+      {toolRowsView.filter(r => r.oosInstances > 0).length === 0 && !hasOverrides ? (
+        <div style={{ background: "#FFF", borderRadius: 8, padding: 40, textAlign: "center", border: "1px solid #E0E0D0" }}>
+          <div style={{ fontSize: 32, marginBottom: 10 }}>✅</div>
+          <div style={{ fontWeight: 700, color: HR.green, fontSize: 14 }}>No OOS instances detected</div>
+          <div style={{ color: HR.muted, fontSize: 12, marginTop: 4 }}>Every order line was fulfilled in the last 15 days.</div>
+        </div>
+      ) : (
+        <>
+          {!drill && <SimOrgLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} hasOverrides={hasOverrides} priceData={priceData} totInst={totInst} totSkus={totSkus} onDrillCategory={cat => setDrill({ type: "category", value: cat, category: cat })} />}
+          {drill?.type === "category" && <SimCategoryLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.value} hasOverrides={hasOverrides} priceData={priceData} totInst={totInst} totSkus={totSkus} allDates={allDates} onDrillBrand={brand => setDrill({ type: "brand", value: brand, brand, category: drill.value })} />}
+          {drill?.type === "brand" && <SimBrandLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.category} brand={drill.value} hasOverrides={hasOverrides} priceData={priceData} allDates={allDates} />}
+        </>
+      )}
+    </div>
+  );
+}
+
+function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results }) {
+  const [search, setSearch] = useState("");
+  const [filterCat, setFilterCat] = useState("All");
+  const [filterDS, setFilterDS] = useState("All");
+
+  const allRows = useMemo(() => {
+    const rows = [];
+    Object.entries(coreOverrides).forEach(([sku, dsList]) => {
+      Object.entries(dsList).forEach(([ds, ov]) => { rows.push({ sku, ds, ...ov }); });
+    });
+    return rows;
+  }, [coreOverrides]);
+
+  const categories = useMemo(() => ["All", ...new Set(allRows.map(r => r.category || "Unknown"))].sort(), [allRows]);
+  const filtered = useMemo(() => allRows.filter(r => {
+    if (filterCat !== "All" && (r.category || "Unknown") !== filterCat) return false;
+    if (filterDS !== "All" && r.ds !== filterDS) return false;
+    if (search && !r.sku.toLowerCase().includes(search.toLowerCase()) && !(r.skuName || "").toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  }), [allRows, filterCat, filterDS, search]);
+
+  const overriddenSKUs = [...new Set(allRows.map(r => r.sku))];
+  const toolMinVal = Math.round(overriddenSKUs.reduce((t, sku) => { const p = priceData[sku] || 0; return t + DS_LIST.reduce((s, ds) => s + (coreOverrides[sku]?.[ds]?.toolMin || 0) * p, 0); }, 0));
+  const toolMaxVal = Math.round(overriddenSKUs.reduce((t, sku) => { const p = priceData[sku] || 0; return t + DS_LIST.reduce((s, ds) => s + (coreOverrides[sku]?.[ds]?.toolMax || 0) * p, 0); }, 0));
+  const ovrMinVal  = Math.round(overriddenSKUs.reduce((t, sku) => { const p = priceData[sku] || 0; return t + DS_LIST.reduce((s, ds) => { const ov = coreOverrides[sku]?.[ds]; return s + (ov ? Math.max(ov.toolMin, ov.min) : 0) * p; }, 0); }, 0));
+  const ovrMaxVal  = Math.round(overriddenSKUs.reduce((t, sku) => { const p = priceData[sku] || 0; return t + DS_LIST.reduce((s, ds) => { const ov = coreOverrides[sku]?.[ds]; return s + (ov ? Math.max(ov.toolMax, ov.max) : 0) * p; }, 0); }, 0));
+  const deltaMin = ovrMinVal - toolMinVal, deltaMax = ovrMaxVal - toolMaxVal;
+
+  const removeOverride = (sku, ds) => {
+    const updated = { ...coreOverrides };
+    if (updated[sku]) {
+      updated[sku] = { ...updated[sku] };
+      delete updated[sku][ds];
+      if (Object.keys(updated[sku]).length === 0) delete updated[sku];
+    }
+    saveCoreOverrides(updated);
+  };
+
+  const th = (extra = {}) => ({ padding: "8px 10px", textAlign: "left", color: HR.muted, background: HR.surfaceLight, fontWeight: 600, whiteSpace: "nowrap", fontSize: 10, ...extra });
+  const td = (extra = {}) => ({ padding: "6px 10px", borderTop: "1px solid #E0E0D0", verticalAlign: "middle", fontSize: 11, ...extra });
+
+  if (!allRows.length) return (
+    <div style={{ textAlign: "center", padding: 80 }}>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+      <div style={{ color: HR.muted, fontSize: 14 }}>No active overrides. Use the OOS Simulation tab to apply overrides to core.</div>
+    </div>
+  );
+
+  return (
+    <div style={{ maxWidth: 1100 }}>
+      <h2 style={{ color: HR.yellowDark, marginBottom: 4, fontSize: 16 }}>Active Core Overrides</h2>
+      <p style={{ color: HR.muted, fontSize: 13, marginBottom: 16 }}>These overrides are baked into the core logic. Remove individual rows to revert to tool logic for that SKU×DS.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 20 }}>
+        {[
+          { label: "Tool Min Inv Value", value: fmtInr(toolMinVal), sub: `${overriddenSKUs.length} overridden SKUs`, color: "#0077A8" },
+          { label: "Override Min Inv Value", value: fmtInr(ovrMinVal), sub: `Delta: ${deltaMin >= 0 ? "+" : ""}${fmtInr(deltaMin)}`, color: deltaMin >= 0 ? "#C05A00" : HR.green, subColor: deltaMin >= 0 ? "#C05A00" : HR.green },
+          { label: "Tool Max Inv Value", value: fmtInr(toolMaxVal), sub: `${overriddenSKUs.length} overridden SKUs`, color: "#7A3DBF" },
+          { label: "Override Max Inv Value", value: fmtInr(ovrMaxVal), sub: `Delta: ${deltaMax >= 0 ? "+" : ""}${fmtInr(deltaMax)}`, color: deltaMax >= 0 ? "#C05A00" : HR.green, subColor: deltaMax >= 0 ? "#C05A00" : HR.green },
+        ].map(c => (
+          <div key={c.label} style={{ ...S.card, borderLeft: `3px solid ${c.color}`, padding: "10px 14px" }}>
+            <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, marginBottom: 2 }}>{c.label.toUpperCase()}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: c.color }}>{c.value}</div>
+            <div style={{ fontSize: 10, color: c.subColor || HR.muted, marginTop: 2, fontWeight: c.subColor ? 700 : 400 }}>{c.sub}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <input placeholder="Search SKU or item name..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.input, width: 220 }} />
+        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={S.input}>{categories.map(c => <option key={c}>{c}</option>)}</select>
+        <select value={filterDS} onChange={e => setFilterDS(e.target.value)} style={S.input}><option value="All">All Stores</option>{DS_LIST.map(d => <option key={d}>{d}</option>)}</select>
+        <span style={{ fontSize: 11, color: HR.muted, alignSelf: "center" }}>{filtered.length} override{filtered.length !== 1 ? "s" : ""}</span>
+      </div>
+      <div style={{ ...S.card, padding: 0, overflow: "auto", maxHeight: "60vh" }}>
+        <table style={{ ...S.table, minWidth: 900 }}>
+          <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
+            <tr style={{ background: HR.surfaceLight }}>
+              <th style={th({ minWidth: 180 })}>Item</th><th style={th()}>Category</th><th style={th()}>Brand</th>
+              <th style={th()}>Movement</th><th style={th()}>Price</th><th style={th({ textAlign: "center" })}>DS</th>
+              <th style={th({ textAlign: "center" })}>Tool Min</th><th style={th({ textAlign: "center" })}>Tool Max</th>
+              <th style={th({ textAlign: "center", background: "#FFFBEA" })}>Override Min</th>
+              <th style={th({ textAlign: "center", background: "#FFFBEA" })}>Override Max</th>
+              <th style={th({ textAlign: "center", background: "#FFFBEA" })}>Min Delta</th>
+              <th style={th({ textAlign: "center", background: "#FFFBEA" })}>Max Delta</th>
+              <th style={th()}>Applied At</th><th style={th()} />
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((r, i) => {
+              const p = priceData[r.sku] || 0;
+              const finalMin = Math.max(r.toolMin, r.min), finalMax = Math.max(r.toolMax, r.max);
+              const deltaMinRow = Math.round((finalMin - r.toolMin) * p), deltaMaxRow = Math.round((finalMax - r.toolMax) * p);
+              const di = DS_LIST.indexOf(r.ds), dc = DS_COLORS[di >= 0 ? di : 0];
+              const mvColor = MOV_COLORS[r.mvTag] || "#64748b";
+              const priceC  = PRICE_TAG_COLORS[r.priceTag] || { bg: "#F1F5F9", color: "#64748B", border: "#CBD5E1" };
+              return (
+                <tr key={`${r.sku}||${r.ds}`} style={{ background: i % 2 === 0 ? HR.white : HR.surfaceLight }}>
+                  <td style={td()}><div style={{ fontWeight: 700, color: HR.text }}>{r.skuName || r.sku}</div><div style={{ fontSize: 9, color: HR.muted }}>{r.sku}</div></td>
+                  <td style={{ ...td(), color: HR.muted }}>{r.category || "—"}</td>
+                  <td style={{ ...td(), color: HR.muted }}>{r.brand || "—"}</td>
+                  <td style={td()}><span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: mvColor + "18", color: mvColor, border: `1px solid ${mvColor}33` }}>{r.mvTag || "—"}</span></td>
+                  <td style={td()}><span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: priceC.bg, color: priceC.color, border: `1px solid ${priceC.border}` }}>{r.priceTag || "—"}</span></td>
+                  <td style={{ ...td(), textAlign: "center" }}><span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 10, fontWeight: 600, background: dc.bg, color: dc.header, border: `1px solid ${dc.header}55` }}>{r.ds}</span></td>
+                  <td style={{ ...td(), textAlign: "center", color: HR.muted }}>{r.toolMin}</td>
+                  <td style={{ ...td(), textAlign: "center", color: HR.muted }}>{r.toolMax}</td>
+                  <td style={{ ...td(), textAlign: "center", background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark }}>{finalMin}</td>
+                  <td style={{ ...td(), textAlign: "center", background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark }}>{finalMax}</td>
+                  <td style={{ ...td(), textAlign: "center", background: "#FFFDE7" }}><span style={{ fontWeight: 700, fontSize: 11, color: deltaMinRow >= 0 ? "#C05A00" : HR.green }}>{deltaMinRow >= 0 ? "+" : ""}{fmtInr(deltaMinRow)}</span></td>
+                  <td style={{ ...td(), textAlign: "center", background: "#FFFDE7" }}><span style={{ fontWeight: 700, fontSize: 11, color: deltaMaxRow >= 0 ? "#C05A00" : HR.green }}>{deltaMaxRow >= 0 ? "+" : ""}{fmtInr(deltaMaxRow)}</span></td>
+                  <td style={{ ...td(), color: HR.muted, fontSize: 10 }}>{r.appliedAt ? new Date(r.appliedAt).toLocaleDateString() : "—"}</td>
+                  <td style={td()}><button onClick={() => removeOverride(r.sku, r.ds)} style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", padding: "3px 10px", borderRadius: 4, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Remove</button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {filtered.length === 0 && <div style={{ padding: 28, textAlign: "center", color: HR.muted, fontSize: 12 }}>No overrides match the current filters.</div>}
+      </div>
+    </div>
+  );
+}
+
 function AdminLoginModal({onClose,onSuccess}){
   const [pw,setPw]=useState(""),[err,setErr]=useState(false);
   const ADMIN_PW=import.meta.env.VITE_ADMIN_PASSWORD||"";
@@ -825,6 +1571,127 @@ function AdminLoginModal({onClose,onSuccess}){
   );
 }
 
+function ImpactPreviewPanel({ params, savedParams, invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData, hasChanges }) {
+  const [status, setStatus] = useState("idle");
+  const [diff,   setDiff]   = useState(null);
+  const prevParamsRef = useRef(null);
+
+  useEffect(() => {
+    if (!hasChanges) { setStatus("idle"); setDiff(null); }
+  }, [hasChanges]);
+
+  useEffect(() => {
+    if (prevParamsRef.current && JSON.stringify(prevParamsRef.current) !== JSON.stringify(params)) {
+      setStatus("idle"); setDiff(null);
+    }
+    prevParamsRef.current = params;
+  }, [params]);
+
+  const run = useCallback(() => {
+    setStatus("running");
+    setTimeout(() => {
+      try {
+        const baseRes = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, savedParams);
+        const newRes  = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, params);
+        let skusImpacted = 0;
+        let baseInvMin = 0, newInvMin = 0, baseInvMax = 0, newInvMax = 0;
+        const byMov = {};
+        Object.entries(newRes).forEach(([sku, nr]) => {
+          const br = baseRes[sku];
+          if (!br) return;
+          const p = priceData[sku] || 0;
+          let skuChanged = false;
+          DS_LIST.forEach(ds => {
+            const bs = br.stores[ds] || { min: 0, max: 0 };
+            const ns = nr.stores[ds] || { min: 0, max: 0 };
+            baseInvMin += bs.min * p; baseInvMax += bs.max * p;
+            newInvMin  += ns.min * p; newInvMax  += ns.max * p;
+            if (bs.min !== ns.min || bs.max !== ns.max) skuChanged = true;
+          });
+          baseInvMin += (br.dc?.min || 0) * p; baseInvMax += (br.dc?.max || 0) * p;
+          newInvMin  += (nr.dc?.min || 0) * p; newInvMax  += (nr.dc?.max || 0) * p;
+          if (skuChanged) {
+            skusImpacted++;
+            const mvTag = nr.dc?.mvTag || "Super Slow";
+            if (!byMov[mvTag]) byMov[mvTag] = { skus: 0, deltaMin: 0, deltaMax: 0 };
+            byMov[mvTag].skus++;
+            DS_LIST.forEach(ds => {
+              const bs = br.stores[ds] || { min: 0, max: 0 };
+              const ns = nr.stores[ds] || { min: 0, max: 0 };
+              byMov[mvTag].deltaMin += (ns.min - bs.min) * p;
+              byMov[mvTag].deltaMax += (ns.max - bs.max) * p;
+            });
+          }
+        });
+        setDiff({ skusImpacted, totalSKUs: Object.keys(newRes).length, deltaMin: Math.round(newInvMin - baseInvMin), deltaMax: Math.round(newInvMax - baseInvMax), byMov });
+        setStatus("done");
+      } catch (err) { console.error(err); setStatus("error"); }
+    }, 60);
+  }, [params, savedParams, invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData]);
+
+  const MOV_ORDER = ["Super Fast", "Fast", "Moderate", "Slow", "Super Slow"];
+  const noData = !invoiceData.length;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontWeight: 700, color: HR.text, fontSize: 13 }}>🔍 Impact Preview</span>
+        {status === "done" && <button onClick={() => { setStatus("idle"); setDiff(null); }} style={{ background: "none", border: `1px solid ${HR.border}`, borderRadius: 4, padding: "2px 8px", cursor: "pointer", fontSize: 10, color: HR.muted }}>↩ Reset</button>}
+      </div>
+      {noData && <div style={{ background: HR.surfaceLight, borderRadius: 6, padding: "14px 12px", textAlign: "center", border: `1px solid ${HR.border}` }}><div style={{ fontSize: 20, marginBottom: 4 }}>📂</div><div style={{ fontSize: 11, color: HR.muted }}>Upload data to enable preview</div></div>}
+      {!noData && !hasChanges && status !== "done" && <div style={{ background: HR.surfaceLight, borderRadius: 6, padding: "14px 12px", textAlign: "center", border: `1px solid ${HR.border}` }}><div style={{ fontSize: 20, marginBottom: 4 }}>✅</div><div style={{ fontSize: 11, color: HR.muted }}>No unsaved changes.<br/>Tweak a parameter to preview its impact.</div></div>}
+      {!noData && hasChanges && status === "idle" && (
+        <div style={{ background: HR.surfaceLight, borderRadius: 6, padding: "14px 12px", border: `1px solid ${HR.border}` }}>
+          <div style={{ fontSize: 11, color: HR.muted, marginBottom: 10, lineHeight: 1.5 }}>Runs a shadow model against your saved results — no live data is touched until you hit <strong>Apply & Re-run</strong>.</div>
+          <button onClick={run} style={{ background: HR.yellow, color: HR.black, border: "none", padding: "7px 18px", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 12, width: "100%" }}>▶ Run Preview</button>
+        </div>
+      )}
+      {status === "running" && <div style={{ background: HR.surfaceLight, borderRadius: 6, padding: "20px 12px", textAlign: "center", border: `1px solid ${HR.border}` }}><div style={{ fontSize: 24, marginBottom: 6 }}>⚡</div><div style={{ fontSize: 11, color: HR.muted }}>Running shadow model…</div></div>}
+      {status === "error" && <div style={{ background: "#FEE2E2", borderRadius: 6, padding: "12px", border: "1px solid #FECACA" }}><div style={{ fontSize: 11, color: "#B91C1C", marginBottom: 8 }}>❌ Preview failed. Check console for details.</div><button onClick={() => setStatus("idle")} style={{ background: HR.white, border: `1px solid ${HR.border}`, borderRadius: 4, padding: "4px 10px", cursor: "pointer", fontSize: 11, color: HR.muted }}>Retry</button></div>}
+      {status === "done" && diff && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {[
+            { label: "SKUs Affected", value: `${diff.skusImpacted}`, sub: `of ${diff.totalSKUs} · ${diff.totalSKUs > 0 ? ((diff.skusImpacted / diff.totalSKUs) * 100).toFixed(1) : 0}%`, color: diff.skusImpacted > 0 ? HR.yellowDark : HR.green, icon: "📦" },
+            { label: "Inv Value Min Δ", value: `${diff.deltaMin >= 0 ? "+" : ""}${fmtInr(diff.deltaMin)}`, sub: diff.deltaMin === 0 ? "No change" : diff.deltaMin > 0 ? "↑ increase" : "↓ saving", color: diff.deltaMin > 0 ? "#C05A00" : diff.deltaMin < 0 ? HR.green : HR.muted, icon: "📉" },
+            { label: "Inv Value Max Δ", value: `${diff.deltaMax >= 0 ? "+" : ""}${fmtInr(diff.deltaMax)}`, sub: diff.deltaMax === 0 ? "No change" : diff.deltaMax > 0 ? "↑ increase" : "↓ saving", color: diff.deltaMax > 0 ? "#C05A00" : diff.deltaMax < 0 ? HR.green : HR.muted, icon: "📈" },
+          ].map(c => (
+            <div key={c.label} style={{ background: HR.white, borderRadius: 6, padding: "10px 12px", border: `1px solid ${HR.border}`, borderLeft: `3px solid ${c.color}` }}>
+              <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, textTransform: "uppercase", marginBottom: 2 }}>{c.icon} {c.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: c.color, lineHeight: 1.2 }}>{c.value}</div>
+              <div style={{ fontSize: 10, color: HR.muted, marginTop: 2 }}>{c.sub}</div>
+            </div>
+          ))}
+          {diff.skusImpacted === 0 && <div style={{ fontSize: 11, color: HR.green, fontWeight: 600, background: "#DCFCE7", border: "1px solid #BBF7D0", borderRadius: 6, padding: "8px 12px" }}>✅ No Min/Max values change with these parameters.</div>}
+          {Object.keys(diff.byMov).length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: HR.muted, textTransform: "uppercase", marginBottom: 5, marginTop: 4 }}>By Movement Tag</div>
+              <div style={{ background: HR.white, borderRadius: 6, border: `1px solid ${HR.border}`, overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+                  <thead><tr style={{ background: HR.surfaceLight }}><th style={{ padding: "5px 8px", textAlign: "left", color: HR.muted, fontWeight: 600 }}>Tag</th><th style={{ padding: "5px 8px", textAlign: "center", color: HR.muted, fontWeight: 600 }}>SKUs</th><th style={{ padding: "5px 8px", textAlign: "center", color: HR.muted, fontWeight: 600 }}>Min Δ</th><th style={{ padding: "5px 8px", textAlign: "center", color: HR.muted, fontWeight: 600 }}>Max Δ</th></tr></thead>
+                  <tbody>
+                    {MOV_ORDER.filter(t => diff.byMov[t]).map((tier, i) => {
+                      const row = diff.byMov[tier], c = MOV_COLORS[tier] || "#64748b";
+                      return (
+                        <tr key={tier} style={{ background: i % 2 === 0 ? HR.white : HR.surfaceLight }}>
+                          <td style={{ padding: "4px 8px", borderTop: `1px solid ${HR.border}` }}><span style={{ padding: "1px 5px", borderRadius: 3, fontSize: 9, fontWeight: 600, background: c + "18", color: c, border: `1px solid ${c}33` }}>{tier}</span></td>
+                          <td style={{ padding: "4px 8px", borderTop: `1px solid ${HR.border}`, textAlign: "center", fontWeight: 700, color: HR.yellowDark }}>{row.skus}</td>
+                          <td style={{ padding: "4px 8px", borderTop: `1px solid ${HR.border}`, textAlign: "center", fontWeight: 700, fontSize: 10, color: row.deltaMin > 0 ? "#C05A00" : row.deltaMin < 0 ? HR.green : HR.muted }}>{row.deltaMin >= 0 ? "+" : ""}{fmtInr(Math.round(row.deltaMin))}</td>
+                          <td style={{ padding: "4px 8px", borderTop: `1px solid ${HR.border}`, textAlign: "center", fontWeight: 700, fontSize: 10, color: row.deltaMax > 0 ? "#C05A00" : row.deltaMax < 0 ? HR.green : HR.muted }}>{row.deltaMax >= 0 ? "+" : ""}{fmtInr(Math.round(row.deltaMax))}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          <div style={{ fontSize: 10, color: HR.muted, background: HR.surfaceLight, borderRadius: 5, padding: "7px 10px", lineHeight: 1.5 }}>Happy with the impact? Hit <strong style={{ color: HR.yellowDark }}>Apply & Re-run</strong> below to commit.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App(){
   const [tab,setTab]=useState("dashboard"),[pendingTab,setPending]=useState(null);
@@ -839,50 +1706,92 @@ export default function App(){
   const [qaFilterDS,setQaFDS]=useState("All"),[qaFilterMv,setQaFMv]=useState("All"),[qaFilterSp,setQaFSp]=useState("All"),[qaFilterPr,setQaFPr]=useState("All");
   const [isAdmin,setIsAdmin]=useState(()=>localStorage.getItem("adminSession")==="true");
   const [showLoginModal,setShowLoginModal]=useState(false);
-  // NEW: track whether team data was loaded from published file
-  const [teamDataLoaded,setTeamDataLoaded]=useState(false);
-  const [publishStatus,setPublishStatus]=useState(null); // "saving" | "done" | "error"
+  const [publishStatus,setPublishStatus]=useState(null);
+  const [coreOverrides,setCoreOverrides]=useState({});
+  const [syncStatus,setSyncStatus]=useState("idle"); // "idle" | "saving" | "saved" | "error"
+
+  // ── Supabase: load params + overrides on mount ──────────────────────────────
+  useEffect(()=>{
+    (async()=>{
+      // Load params from Supabase
+      const sbParams = await loadFromSupabase("params","global");
+      if(sbParams){
+        const p={...DEFAULT_PARAMS,...sbParams};
+        setParams(p);setSaved(p);
+        LS.set("params",JSON.stringify(p));
+      } else {
+        // Fallback to localStorage
+        const lp=LS.get("params");
+        if(lp){const p={...DEFAULT_PARAMS,...JSON.parse(lp.value)};setParams(p);setSaved(p);}
+      }
+
+      // Load overrides from Supabase
+      const sbOverrides = await loadFromSupabase("overrides","global");
+      if(sbOverrides){
+        setCoreOverrides(sbOverrides);
+        LS.set("coreOverrides",JSON.stringify(sbOverrides));
+      } else {
+        // Fallback to localStorage
+        try{const v=localStorage.getItem("coreOverrides");if(v)setCoreOverrides(JSON.parse(v));}catch{}
+      }
+    })();
+  },[]);
+
+  // ── saveCoreOverrides: writes to both Supabase + localStorage ───────────────
+  const saveCoreOverrides = useCallback(async(ov)=>{
+    setCoreOverrides(ov);
+    LS.set("coreOverrides",JSON.stringify(ov));
+    setSyncStatus("saving");
+    const ok = await saveToSupabase("overrides","global",ov);
+    setSyncStatus(ok?"saved":"error");
+    setTimeout(()=>setSyncStatus("idle"),3000);
+  },[]);
 
   const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);setQaOpen(false);};
 
   const hasChanges=JSON.stringify(params)!==JSON.stringify(savedParams);
   const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult)].filter(Boolean).length;
 
-  // ── On mount: try loading published team data first, then fall back to localStorage ──
+  // ── Load team data (invoice, SKU master etc.) ───────────────────────────────
   useEffect(()=>{
     (async()=>{
-      // 1. Try to load published data bundle from /public/team-data.json
+      // Try Supabase team_data first
+      const sbData = await loadFromSupabase("team_data","global");
+      if(sbData?.invoiceData?.length&&sbData?.skuMaster){
+        setInv(sbData.invoiceData);setSKU(sbData.skuMaster);
+        if(sbData.minReqQty)setMRQ(sbData.minReqQty);
+        if(sbData.newSKUQty)setNSQ(sbData.newSKUQty);
+        if(sbData.deadStock)setDead(new Set(sbData.deadStock));
+        if(sbData.priceData)setPrice(sbData.priceData);
+        setLoaded(true);
+        return;
+      }
+      // Fallback: try public/team-data.json
       try{
         const res=await fetch("/team-data.json?v="+Date.now());
         if(res.ok){
           const bundle=await res.json();
           if(bundle.invoiceData?.length&&bundle.skuMaster){
-            setInv(bundle.invoiceData);
-            setSKU(bundle.skuMaster);
+            setInv(bundle.invoiceData);setSKU(bundle.skuMaster);
             if(bundle.minReqQty)setMRQ(bundle.minReqQty);
             if(bundle.newSKUQty)setNSQ(bundle.newSKUQty);
             if(bundle.deadStock)setDead(new Set(bundle.deadStock));
             if(bundle.priceData)setPrice(bundle.priceData);
-            if(bundle.params){const p={...DEFAULT_PARAMS,...bundle.params};setParams(p);setSaved(p);}
-            setLoaded(true);
-            setTeamDataLoaded(true);
-            return; // skip localStorage load
+            setLoaded(true);return;
           }
         }
       }catch(e){}
-
-      // 2. Fall back to localStorage (admin's own session)
+      // Fallback: localStorage
       try{
-        const keys=["invoiceData","skuMaster","minReqQty","newSKUQty","deadStock","priceData","params"];
+        const keys=["invoiceData","skuMaster","minReqQty","newSKUQty","deadStock","priceData"];
         const vals=keys.map(k=>LS.get(k));
-        const [inv,sku,mrq,nsq,ds,pd,lp]=vals;
+        const [inv,sku,mrq,nsq,ds,pd]=vals;
         if(inv)setInv(JSON.parse(inv.value));
         if(sku)setSKU(JSON.parse(sku.value));
         if(mrq)setMRQ(JSON.parse(mrq.value));
         if(nsq)setNSQ(JSON.parse(nsq.value));
         if(ds)setDead(new Set(JSON.parse(ds.value)));
         if(pd)setPrice(JSON.parse(pd.value));
-        if(lp){const p={...DEFAULT_PARAMS,...JSON.parse(lp.value)};setParams(p);setSaved(p);}
         if(inv&&sku)setLoaded(true);
       }catch(e){}
     })();
@@ -895,31 +1804,23 @@ export default function App(){
     setTimeout(()=>{try{const res=runEngine(inv,sku,mrq,pd,ds,nsq,p);setResults(res);setTab("dashboard");}catch(err){console.error(err);alert("Model error: "+err.message);}setLoading(false);},50);
   };
 
-  // ── Publish: export all data as a JSON file for admin to place in /public ──
-  const handlePublish=()=>{
+  // ── Publish: saves team data to Supabase (+ downloads JSON as backup) ───────
+  const handlePublish=async()=>{
     setPublishStatus("saving");
     try{
-      const bundle={
-        invoiceData,
-        skuMaster,
-        minReqQty,
-        newSKUQty,
-        deadStock:[...deadStock],
-        priceData,
-        params,
-        publishedAt:new Date().toISOString(),
-      };
+      const bundle={invoiceData,skuMaster,minReqQty,newSKUQty,deadStock:[...deadStock],priceData,publishedAt:new Date().toISOString()};
+      // Save to Supabase
+      const ok = await saveToSupabase("team_data","global",bundle);
+      if(ok){
+        setPublishStatus("done");
+        setTimeout(()=>setPublishStatus(null),8000);
+      } else {
+        throw new Error("Supabase save failed");
+      }
+      // Also download JSON as backup
       const blob=new Blob([JSON.stringify(bundle)],{type:"application/json"});
-      const a=document.createElement("a");
-      a.href=URL.createObjectURL(blob);
-      a.download="team-data.json";
-      a.click();
-      setPublishStatus("done");
-      setTimeout(()=>setPublishStatus(null),8000);
-    }catch(e){
-      setPublishStatus("error");
-      setTimeout(()=>setPublishStatus(null),5000);
-    }
+      const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="team-data.json";a.click();
+    }catch(e){setPublishStatus("error");setTimeout(()=>setPublishStatus(null),5000);}
   };
 
   const handleInvoice=useCallback(async(e)=>{
@@ -959,11 +1860,40 @@ export default function App(){
   },[]);
 
   const saveParams=p=>setParams(p);
-  const applyAndRun=async(p)=>{
-    const np=p||params;setParams(np);setSaved(np);
-    LS.set("params",JSON.stringify(np));
-    if(dataLoaded)triggerModel(invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,np);
+
+  const applyAndRun = async (p) => {
+    const np = p || params;
+    setParams(np);
+    setSaved(np);
+    // Save params to Supabase + localStorage
+    LS.set("params", JSON.stringify(np));
+    setSyncStatus("saving");
+    const ok = await saveToSupabase("params","global",np);
+    setSyncStatus(ok?"saved":"error");
+    setTimeout(()=>setSyncStatus("idle"),3000);
+    if (dataLoaded) {
+      setLoading(true);
+      setTimeout(() => {
+        try {
+          const raw = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, np);
+          const merged = { ...raw };
+          Object.entries(coreOverrides).forEach(([sku, dsList]) => {
+            if (!merged[sku]) return;
+            const newStores = { ...merged[sku].stores };
+            Object.entries(dsList).forEach(([ds, ov]) => {
+              if (!newStores[ds]) return;
+              newStores[ds] = { ...newStores[ds], min: Math.max(newStores[ds].min, ov.min), max: Math.max(newStores[ds].max, ov.max) };
+            });
+            merged[sku] = { ...merged[sku], stores: newStores };
+          });
+          setResults(merged);
+          setTab("dashboard");
+        } catch (err) { console.error(err); alert("Model error: " + err.message); }
+        setLoading(false);
+      }, 50);
+    }
   };
+
   const handleTabClick=t=>{if(tab==="logic"&&hasChanges&&isAdmin)setPending(t);else setTab(t);};
   const runQA=()=>{if(!results||!qaText.trim()){alert("Upload data and run model first.");return;}const rows=parseQACSV(qaText);if(!rows.length){alert("Could not parse CSV.");return;}setQaDiffs(buildDiff(rows,results));setQaFDS("All");setQaFMv("All");setQaFSp("All");setQaFPr("All");};
 
@@ -993,18 +1923,27 @@ export default function App(){
   const rw2=params.recencyWt||RECENCY_WT_DEFAULT,dcM=params.dcMult||DC_MULT_DEFAULT;
   const movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"],priceColors=["#B91C1C","#C2410C","#A16207","#475569","#64748B"];
 
-  // Nav tabs — non-admins only see 4 tabs
-  const ADMIN_TABS=[["dashboard","Dashboard"],["insights","Insights"],["simulation","Simulation"],["output","Min/Max Output"],["upload","Upload Data"],["logic","Logic Tweaker"]];
-  const PUBLIC_TABS=[["dashboard","Dashboard"],["insights","Insights"],["simulation","Simulation"],["output","Min/Max Output"]];
+  const ADMIN_TABS=[["dashboard","Dashboard"],["insights","Insights"],["simulation","OOS Simulation"],["output","Min/Max Output"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Overrides"]];
+  const PUBLIC_TABS=[["dashboard","Dashboard"],["insights","Insights"],["simulation","OOS Simulation"],["output","Min/Max Output"]];
   const NAV_TABS=isAdmin?ADMIN_TABS:PUBLIC_TABS;
+
+  // Sync status indicator
+  const SyncBadge = () => {
+    if(syncStatus==="idle") return null;
+    const cfg = {
+      saving:{bg:"#FFFBEA",color:HR.yellowDark,text:"Syncing…"},
+      saved: {bg:"#DCFCE7",color:"#15803D",text:"✓ Saved to cloud"},
+      error: {bg:"#FEE2E2",color:"#B91C1C",text:"⚠ Sync failed"},
+    }[syncStatus];
+    return <span style={{fontSize:10,fontWeight:700,background:cfg.bg,color:cfg.color,border:`1px solid ${cfg.color}33`,borderRadius:4,padding:"2px 8px"}}>{cfg.text}</span>;
+  };
 
   return(
     <div style={S.app}>
-      {/* Header */}
       <div style={S.header}>
         <HomeRunLogo/>
         <div style={{fontSize:10,color:HR.muted,marginLeft:4}}>{dateRange}</div>
-        {teamDataLoaded&&<span style={{fontSize:9,color:HR.green,background:"#DCFCE7",border:"1px solid #BBF7D0",borderRadius:3,padding:"1px 6px",fontWeight:600}}>Team Data</span>}
+        <SyncBadge/>
         <div style={{flex:1}}/>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}
         {isAdmin&&<button onClick={()=>setQaOpen(o=>!o)} style={{...S.btn(qaOpen),fontSize:11}}>🔬 QA</button>}
@@ -1040,7 +1979,6 @@ export default function App(){
         </div>
       )}
 
-      {/* QA Panel */}
       {isAdmin&&qaOpen&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:900,display:"flex",flexDirection:"column",padding:20,gap:12,overflow:"auto"}}>
           <div style={{background:HR.white,borderRadius:10,padding:20,flex:1,overflow:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
@@ -1083,12 +2021,10 @@ export default function App(){
 
       <div style={S.pageWrap}>
 
-        {/* UPLOAD TAB — admin only */}
         {tab==="upload"&&isAdmin&&(
           <div style={{maxWidth:680}}>
             <h2 style={{color:HR.yellowDark,marginBottom:4,fontSize:16}}>Upload Data</h2>
             <p style={{color:HR.muted,fontSize:13,marginBottom:14}}>Upload CSVs to power the model. Invoice data stored as rolling 90-day window.</p>
-
             {[
               {label:"Invoice Dump",desc:"Columns: Invoice Date, SKU, Line Item Location Name, Quantity",handler:handleInvoice,count:`${invoiceData.length.toLocaleString()} rows`,key:"invoiceData",required:true,hasData:invoiceData.length>0},
               {label:"SKU Master",desc:"Columns: Name, SKU, Category, Brand, Status, Inventorised At",handler:handleSKU,count:`${Object.keys(skuMaster).length.toLocaleString()} SKUs`,key:"skuMaster",required:true,hasData:Object.keys(skuMaster).length>0},
@@ -1113,31 +2049,25 @@ export default function App(){
                 </div>
               </div>
             ))}
-
             {dataLoaded&&<button onClick={()=>applyAndRun(params)} style={{...S.runBtn,marginTop:6}}>▶ Re-run Model</button>}
-
-            {/* ── Publish to Team ── */}
             {dataLoaded&&results&&(
               <div style={{...S.card,marginTop:20,borderColor:HR.yellow,background:"#FFFBEA"}}>
                 <div style={{fontWeight:700,color:HR.yellowDark,fontSize:14,marginBottom:4}}>📤 Publish to Team</div>
                 <div style={{fontSize:12,color:HR.textSoft,marginBottom:12}}>
-                  Downloads a <code style={{color:HR.yellowDark}}>team-data.json</code> file bundling all current data. Place it in your project's <code style={{color:HR.yellowDark}}>public/</code> folder, then push to GitHub — your team will see it automatically.
+                  Saves all current data to the cloud. Your team will see it instantly on their next page load — no GitHub push needed.
                 </div>
                 <button onClick={handlePublish} style={{background:HR.yellow,color:HR.black,border:"none",padding:"9px 24px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:13}}>
-                  ⬇ Download team-data.json
+                  {publishStatus==="saving"?"Saving…":"☁ Publish to Team"}
                 </button>
                 {publishStatus==="done"&&(
                   <div style={{marginTop:12,background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:6,padding:"10px 14px",fontSize:12,color:"#15803D"}}>
-                    <div style={{fontWeight:700,marginBottom:4}}>✅ File downloaded! Next steps:</div>
-                    <div>1. Move <code>team-data.json</code> into your project's <code>public/</code> folder</div>
-                    <div style={{marginTop:3}}>2. In terminal: <code style={{background:"#E0F7E9",padding:"1px 5px",borderRadius:3}}>git add . && git commit -m "Publish team data" && git push</code></div>
-                    <div style={{marginTop:3}}>3. Vercel deploys in ~2 min — your team sees the new data 🎉</div>
+                    <div style={{fontWeight:700,marginBottom:4}}>✅ Published! Your team sees the new data instantly.</div>
+                    <div style={{color:HR.muted}}>A backup JSON was also downloaded to your computer.</div>
                   </div>
                 )}
-                {publishStatus==="error"&&<div style={{marginTop:10,color:"#B91C1C",fontSize:12}}>❌ Something went wrong. Try again.</div>}
+                {publishStatus==="error"&&<div style={{marginTop:10,color:"#B91C1C",fontSize:12}}>❌ Something went wrong. Check your connection and try again.</div>}
               </div>
             )}
-
             {missing.length>0&&(
               <div style={{...S.card,marginTop:20,border:`1px solid ${HR.yellow}`}}>
                 <div style={{fontWeight:700,color:HR.yellowDark,marginBottom:3,fontSize:13}}>⚠ {missing.length} SKUs in Invoice not Active in SKU Master</div>
@@ -1152,7 +2082,6 @@ export default function App(){
           </div>
         )}
 
-        {/* DASHBOARD TAB */}
         {tab==="dashboard"&&(
           !dataLoaded?(
             <div style={{textAlign:"center",padding:60}}>
@@ -1165,11 +2094,33 @@ export default function App(){
             </div>
           ):(
             <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:10}}>
-                {[{label:"Active SKUs",value:activeMaster.length,color:HR.green},{label:"Active SKUs Sold",value:uniqueSold,color:HR.yellowDark},{label:"Zero Sale SKUs",value:zeroSale,color:"#C05A00"},{label:"Dead Stock SKUs",value:deadStock.size,color:"#B91C1C"}].map(c=>(
-                  <div key={c.label} style={{...S.card,borderLeft:`3px solid ${c.color}`,padding:"8px 12px"}}><div style={{fontSize:22,fontWeight:800,color:c.color}}>{c.value.toLocaleString()}</div><div style={{fontSize:10,color:HR.muted,marginTop:2}}>{c.label}</div></div>
-                ))}
-              </div>
+              {(()=>{
+                const invMin = results ? Math.round(Object.entries(results).reduce((tot,[sku,r]) => {
+                  const p = priceData[sku] || 0;
+                  return tot + DS_LIST.reduce((s,ds) => s + (r.stores[ds]?.min || 0) * p, 0) + (r.dc.min || 0) * p;
+                }, 0)) : 0;
+                const invMax = results ? Math.round(Object.entries(results).reduce((tot,[sku,r]) => {
+                  const p = priceData[sku] || 0;
+                  return tot + DS_LIST.reduce((s,ds) => s + (r.stores[ds]?.max || 0) * p, 0) + (r.dc.max || 0) * p;
+                }, 0)) : 0;
+                return (
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:8,marginBottom:10}}>
+                    {[
+                      {label:"Active SKUs",value:activeMaster.length,color:HR.green},
+                      {label:"Active SKUs Sold",value:uniqueSold,color:HR.yellowDark},
+                      {label:"Zero Sale SKUs",value:zeroSale,color:"#C05A00"},
+                      {label:"Dead Stock SKUs",value:deadStock.size,color:"#B91C1C"},
+                      {label:"Inv Value Min",value:fmtInr(invMin),color:"#0077A8"},
+                      {label:"Inv Value Max",value:fmtInr(invMax),color:"#7A3DBF"},
+                    ].map(c => (
+                      <div key={c.label} style={{...S.card,borderLeft:`3px solid ${c.color}`,padding:"8px 12px"}}>
+                        <div style={{fontSize:22,fontWeight:800,color:c.color}}>{typeof c.value === "number" ? c.value.toLocaleString() : c.value}</div>
+                        <div style={{fontSize:10,color:HR.muted,marginTop:2}}>{c.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
                 <input placeholder="Search SKU or name..." value={search} onChange={e=>setSearch(e.target.value)} style={{...S.input,width:180}}/>
                 <select value={filterDS} onChange={e=>setFilterDS(e.target.value)} style={S.input}><option value="All">All Stores</option>{DS_LIST.map(d=><option key={d}>{d}</option>)}</select>
@@ -1184,7 +2135,8 @@ export default function App(){
                       <th style={{...frozenTh({zIndex:6}),left:0,minWidth:COL_ITEM_W,maxWidth:COL_ITEM_W}} rowSpan={2}>Item</th>
                       <th style={{...frozenTh({zIndex:6}),left:COL_ITEM_W,minWidth:COL_CAT_W,maxWidth:COL_CAT_W}} rowSpan={2}>Category</th>
                       <th style={{...frozenTh({zIndex:6}),left:COL_ITEM_W+COL_CAT_W,minWidth:COL_PRICE_W}} rowSpan={2}>Price</th>
-                      <th style={{...frozenTh({zIndex:6}),left:COL_ITEM_W+COL_CAT_W+COL_PRICE_W,minWidth:COL_TOPN_W,boxShadow:"2px 0 6px rgba(0,0,0,0.10)"}} rowSpan={2}>Top N</th>
+                      <th style={{...frozenTh({zIndex:6}),left:COL_ITEM_W+COL_CAT_W+COL_PRICE_W,minWidth:COL_TOPN_W}} rowSpan={2}>Top N</th>
+                      <th style={{...frozenTh({zIndex:6}),left:COL_ITEM_W+COL_CAT_W+COL_PRICE_W+COL_TOPN_W,minWidth:COL_LOGIC_W,boxShadow:"2px 0 6px rgba(0,0,0,0.10)"}} rowSpan={2}>Logic Applied</th>
                       {displayDS.map(ds=>{const di=DS_LIST.indexOf(ds),dc=DS_COLORS[di>=0?di:0];return <th key={ds} style={{...S.th,textAlign:"center",background:dc.bg,color:dc.header,borderLeft:`2px solid ${dc.header}44`}} colSpan={5}>{ds}</th>;})}
                       <th style={{...S.th,textAlign:"center",background:DC_COLOR.bg,color:DC_COLOR.header,borderLeft:`2px solid ${DC_COLOR.header}44`}} colSpan={4}>DC</th>
                     </tr>
@@ -1215,7 +2167,13 @@ export default function App(){
                         </td>
                         <td style={{...frozenTd(COL_ITEM_W,rowBg),minWidth:COL_CAT_W,maxWidth:COL_CAT_W,color:HR.muted,fontSize:10}}>{r.meta.category}</td>
                         <td style={{...frozenTd(COL_ITEM_W+COL_CAT_W,rowBg),minWidth:COL_PRICE_W}}><TagPill value={r.meta.priceTag} colorMap={PRICE_TAG_COLORS}/></td>
-                        <td style={{...frozenTd(COL_ITEM_W+COL_CAT_W+COL_PRICE_W,rowBg),minWidth:COL_TOPN_W,boxShadow:"2px 0 4px rgba(0,0,0,0.06)"}}><TagPill value={r.meta.t150Tag} colorMap={TOPN_TAG_COLORS}/></td>
+                        <td style={{...frozenTd(COL_ITEM_W+COL_CAT_W+COL_PRICE_W,rowBg),minWidth:COL_TOPN_W}}><TagPill value={r.meta.t150Tag} colorMap={TOPN_TAG_COLORS}/></td>
+                        <td style={{...frozenTd(COL_ITEM_W+COL_CAT_W+COL_PRICE_W+COL_TOPN_W,rowBg),minWidth:COL_LOGIC_W,boxShadow:"2px 0 4px rgba(0,0,0,0.06)"}}>
+                          {coreOverrides[r.meta.sku]
+                            ? <span style={{padding:"1px 6px",borderRadius:3,fontSize:10,fontWeight:600,background:"#FFFBEA",color:HR.yellowDark,border:`1px solid ${HR.yellow}`,whiteSpace:"nowrap"}}>Manual Override</span>
+                            : <span style={{padding:"1px 6px",borderRadius:3,fontSize:10,fontWeight:600,background:"#DCFCE7",color:"#15803D",border:"1px solid #BBF7D0",whiteSpace:"nowrap"}}>Tool</span>
+                          }
+                        </td>
                         <DSCols r={r} displayDS={displayDS}/>
                         <td style={{...S.td,textAlign:"center",background:DC_COLOR.bg,borderLeft:`1px solid ${DC_COLOR.header}22`}}><MovTag value={r.dc.mvTag}/></td>
                         <td style={{...S.td,textAlign:"center",color:DC_COLOR.text,fontSize:10,background:DC_COLOR.bg}}>{r.dc.nonZeroDays||"—"}</td>
@@ -1231,19 +2189,23 @@ export default function App(){
           )
         )}
 
-        {tab==="simulation"&&<SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params}/>}
+        {tab==="simulation"&&<SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}}/>}
         {tab==="insights"&&<InsightsTab invoiceData={invoiceData} skuMaster={skuMaster} results={results||{}} params={params}/>}
 
-        {/* OUTPUT TAB */}
         {tab==="output"&&(
           !results?<div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>No data available.</div>:(
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
                 <h2 style={{color:HR.yellowDark,margin:0,fontSize:16}}>Min/Max Output — All DS Req</h2>
                 <button onClick={()=>{
-                  const hdr=["Item Name","SKU","Category","Price Tag",...DS_LIST.flatMap(d=>[`${d} Min`,`${d} Max`]),"DC Min","DC Max"].join(",");
-                  const rows=Object.values(results).map(r=>[`"${r.meta.name}"`,r.meta.sku,r.meta.category,r.meta.priceTag,...DS_LIST.flatMap(d=>{const s=r.stores[d]||{min:0,max:0};return[s.min,s.max];}),r.dc.min,r.dc.max].join(","));
-                  const blob=new Blob([[hdr,...rows].join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="IMS_Output.csv";a.click();
+                  const hdr=["Item Name","SKU","Category","Price Tag","Logic Applied",...DS_LIST.flatMap(d=>[`${d} Min`,`${d} Max`]),"DC Min","DC Max"].join(",");
+                  const rows=Object.values(results).map(r=>{
+                    const isOverridden=!!coreOverrides[r.meta.sku];
+                    const logicApplied=isOverridden?"Manual Override":"Tool";
+                    return[`"${r.meta.name}"`,r.meta.sku,r.meta.category,r.meta.priceTag,logicApplied,...DS_LIST.flatMap(d=>{const s=r.stores[d]||{min:0,max:0};const ov=coreOverrides[r.meta.sku]?.[d];const min=ov?Math.max(s.min,ov.min):s.min;const max=ov?Math.max(s.max,ov.max):s.max;return[min,max];}),r.dc.min,r.dc.max].join(",");
+                  });
+                  const blob=new Blob([[hdr,...rows].join("\n")],{type:"text/csv"});
+                  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="IMS_Output.csv";a.click();
                 }} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:"pointer",fontWeight:700,fontSize:12}}>⬇ Export CSV</button>
               </div>
               <div style={{...S.card,padding:0,overflow:"auto",maxHeight:"70vh"}}>
@@ -1277,148 +2239,172 @@ export default function App(){
           )
         )}
 
-        {/* LOGIC TWEAKER TAB — admin only */}
+        {tab==="overrides"&&isAdmin&&<OverridesTab coreOverrides={coreOverrides} saveCoreOverrides={saveCoreOverrides} priceData={priceData} results={results}/>}
+
         {tab==="logic"&&isAdmin&&(
-          <div style={{maxWidth:620}}>
-            {hasChanges&&(
-              <div style={{background:"#FFFBEA",border:`1px solid ${HR.yellow}`,borderRadius:8,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-                <div><span style={{color:HR.yellowDark,fontWeight:700,fontSize:13}}>⚠ {changedCount} unsaved change{changedCount!==1?"s":""}</span><span style={{color:HR.muted,fontSize:12,marginLeft:6}}>Re-run the model to apply</span></div>
-                <div style={{display:"flex",gap:6}}>
-                  <button onClick={()=>setParams(savedParams)} style={{background:HR.white,color:HR.muted,border:`1px solid ${HR.border}`,padding:"6px 12px",borderRadius:5,cursor:"pointer",fontSize:12,fontWeight:600}}>↩ Reset</button>
-                  <button onClick={()=>applyAndRun(params)} style={{background:HR.yellow,color:HR.black,border:"none",padding:"6px 16px",borderRadius:5,cursor:"pointer",fontSize:12,fontWeight:700}}>▶ Apply & Re-run</button>
+          <div style={{display:"flex",gap:24,alignItems:"flex-start"}}>
+            <div style={{flex:"0 0 620px",minWidth:0}}>
+              {hasChanges&&(
+                <div style={{background:"#FFFBEA",border:`1px solid ${HR.yellow}`,borderRadius:8,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                  <div><span style={{color:HR.yellowDark,fontWeight:700,fontSize:13}}>⚠ {changedCount} unsaved change{changedCount!==1?"s":""}</span><span style={{color:HR.muted,fontSize:12,marginLeft:6}}>Re-run the model to apply</span></div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>setParams(savedParams)} style={{background:HR.white,color:HR.muted,border:`1px solid ${HR.border}`,padding:"6px 12px",borderRadius:5,cursor:"pointer",fontSize:12,fontWeight:600}}>↩ Reset</button>
+                    <button onClick={()=>applyAndRun(params)} style={{background:HR.yellow,color:HR.black,border:"none",padding:"6px 16px",borderRadius:5,cursor:"pointer",fontSize:12,fontWeight:700}}>▶ Apply & Re-run</button>
+                  </div>
                 </div>
-              </div>
-            )}
-            <h2 style={{color:HR.yellowDark,marginBottom:4,fontSize:16}}>Logic Tweaker</h2>
-            <p style={{color:HR.muted,fontSize:13,marginBottom:16}}>Click any section to expand and adjust parameters.</p>
+              )}
+              <h2 style={{color:HR.yellowDark,marginBottom:4,fontSize:16}}>Logic Tweaker</h2>
+              <p style={{color:HR.muted,fontSize:13,marginBottom:16}}>Click any section to expand and adjust parameters.</p>
 
-            <Section title="Analysis Period" icon="📅" accent="#0077A8" summary={`Overall: ${params.overallPeriod}d · Recency: ${params.recencyWindow}d · Long: ${params.overallPeriod-params.recencyWindow}d`}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:16}}>
-                {[{label:"Overall Period (days)",key:"overallPeriod",min:15,max:90},{label:"Recency Window (days)",key:"recencyWindow",min:7,max:null}].map(({label,key,min,max})=>{
-                  const maxVal=key==="recencyWindow"?Math.max(min,(params.overallPeriod||90)-1):max;
-                  return <div key={key}><div style={{fontSize:11,color:HR.muted,marginBottom:4}}>{label}</div>
-                    <NumInput value={params[key]} min={min} max={maxVal} step={1} onChange={v=>saveParams({...params,[key]:v})} style={{width:"100%",boxSizing:"border-box",color:HR.yellowDark,fontWeight:700}}/>
-                  </div>;
-                })}
-                <div><div style={{fontSize:11,color:HR.muted,marginBottom:4}}>Long Period (auto)</div><div style={{...S.input,textAlign:"center",color:HR.muted,fontWeight:700,opacity:0.7}}>{params.overallPeriod-params.recencyWindow} days</div></div>
-              </div>
-              <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:8}}>Recency Weights by Movement Tag</div>
-              <table style={S.table}>
-                <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Movement Tag</th><th style={{...S.th,textAlign:"center"}}>Weight</th><th style={{...S.th,color:HR.muted,fontSize:10,fontWeight:400}}>Blend formula</th></tr></thead>
-                <tbody>{["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{const wt=rw2[tier]||1,color=MOV_COLORS[tier];return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}><MovTag value={tier}/></td>
-                  <td style={{...S.td,textAlign:"center"}}><NumInput value={wt} min={0.5} max={5} step={0.25} onChange={v=>saveParams({...params,recencyWt:{...rw2,[tier]:v}})} style={{width:72,color,fontWeight:700}}/></td>
-                  <td style={{...S.td,fontSize:10,color:HR.muted}}>{`(Long + Recent × ${wt}) ÷ ${1+wt}`}</td></tr>;})}
-                </tbody>
-              </table>
-            </Section>
+              <Section title="Analysis Period" icon="📅" accent="#0077A8" summary={`Overall: ${params.overallPeriod}d · Recency: ${params.recencyWindow}d · Long: ${params.overallPeriod-params.recencyWindow}d`}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:16}}>
+                  {[{label:"Overall Period (days)",key:"overallPeriod",min:15,max:90},{label:"Recency Window (days)",key:"recencyWindow",min:7,max:null}].map(({label,key,min,max})=>{
+                    const maxVal=key==="recencyWindow"?Math.max(min,(params.overallPeriod||90)-1):max;
+                    return <div key={key}><div style={{fontSize:11,color:HR.muted,marginBottom:4}}>{label}</div>
+                      <NumInput value={params[key]} min={min} max={maxVal} step={1} onChange={v=>saveParams({...params,[key]:v})} style={{width:"100%",boxSizing:"border-box",color:HR.yellowDark,fontWeight:700}}/>
+                    </div>;
+                  })}
+                  <div><div style={{fontSize:11,color:HR.muted,marginBottom:4}}>Long Period (auto)</div><div style={{...S.input,textAlign:"center",color:HR.muted,fontWeight:700,opacity:0.7}}>{params.overallPeriod-params.recencyWindow} days</div></div>
+                </div>
+                <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:8}}>Recency Weights by Movement Tag</div>
+                <table style={S.table}>
+                  <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Movement Tag</th><th style={{...S.th,textAlign:"center"}}>Weight</th><th style={{...S.th,color:HR.muted,fontSize:10,fontWeight:400}}>Blend formula</th></tr></thead>
+                  <tbody>{["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{const wt=rw2[tier]||1,color=MOV_COLORS[tier];return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}><MovTag value={tier}/></td>
+                    <td style={{...S.td,textAlign:"center"}}><NumInput value={wt} min={0.5} max={5} step={0.25} onChange={v=>saveParams({...params,recencyWt:{...rw2,[tier]:v}})} style={{width:72,color,fontWeight:700}}/></td>
+                    <td style={{...S.td,fontSize:10,color:HR.muted}}>{`(Long + Recent × ${wt}) ÷ ${1+wt}`}</td></tr>;})}
+                  </tbody>
+                </table>
+              </Section>
 
-            <Section title="DS Level Logic" icon="🏪" accent={HR.yellowDark} summary={`Mov: ${mi.join("/")} · Price: ₹${pt.join("/₹")} · Spike: ${params.spikeMultiplier}× · Brands: ${Object.keys(bb).length}`}>
-              <Section title="Base Min Days" icon="📦" accent={HR.yellowDark} summary={`SF:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Super Fast"]} F:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Fast"]} M:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Moderate"]} Sl:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Slow"]} SS:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Super Slow"]}`}>
+              <Section title="DS Level Logic" icon="🏪" accent={HR.yellowDark} summary={`Mov: ${mi.join("/")} · Price: ₹${pt.join("/₹")} · Spike: ${params.spikeMultiplier}× · Brands: ${Object.keys(bb).length}`}>
+                <Section title="Base Min Days" icon="📦" accent={HR.yellowDark} summary={`SF:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Super Fast"]} F:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Fast"]} M:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Moderate"]} Sl:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Slow"]} SS:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Super Slow"]}`}>
+                  <div style={{...S.card,padding:0,overflow:"hidden"}}>
+                    <table style={S.table}>
+                      <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Movement Tag</th><th style={{...S.th,textAlign:"center"}}>Base Min Days</th></tr></thead>
+                      <tbody>{["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{const bmd=params.baseMinDays||BASE_MIN_DAYS_DEFAULT,color=MOV_COLORS[tier];return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}><MovTag value={tier}/></td><td style={{...S.td,textAlign:"center"}}>
+                        <NumInput value={bmd[tier]??3} min={1} max={30} step={1} onChange={v=>saveParams({...params,baseMinDays:{...(params.baseMinDays||BASE_MIN_DAYS_DEFAULT),[tier]:v}})} style={{width:72,color,fontWeight:700}}/>
+                      </td></tr>;})}
+                      </tbody>
+                    </table>
+                  </div>
+                </Section>
+                <Section title="Movement Tag Boundaries" icon="🏃" accent={HR.yellowDark} summary={`≤${mi[0]}d / ≤${mi[1]}d / ≤${mi[2]}d / ≤${mi[3]}d`}>
+                  {[0,1,2,3].map(i=>{const labels=["Super Fast | Fast","Fast | Moderate","Moderate | Slow","Slow | Super Slow"],lo=i===0?1:mi[i-1]+1,hi=i===3?30:mi[i+1]-1;return <TierSlider key={i} label={labels[i]} value={mi[i]} min={lo} max={hi} color={movColors[i+1]} onChange={v=>{const next=[...mi];next[i]=v;saveParams({...params,movIntervals:next});}}/>;})}</Section>
+                <Section title="Price Tag Boundaries" icon="💰" accent={HR.yellowDark} summary={`₹${pt[0]} / ₹${pt[1]} / ₹${pt[2]} / ₹${pt[3]}`}>
+                  {[0,1,2,3].map(i=>{const labels=["Premium | High","High | Medium","Medium | Low","Low | Super Low"],lo=i===3?1:pt[i+1]+1,hi=i===0?50000:pt[i-1]-1;return <TierSlider key={i} label={labels[i]} value={pt[i]} min={lo} max={hi} color={priceColors[i]} onChange={v=>{const next=[...pt];next[i]=v;saveParams({...params,priceTiers:next});}}/>;})}</Section>
+                <Section title="Spike Parameters" icon="⚡" accent={HR.yellowDark} summary={`${params.spikeMultiplier}× · Frequent ≥${params.spikePctFrequent}% · Once ≥${params.spikePctOnce}%`}>
+                  {[{key:"spikeMultiplier",label:"Spike Definition",desc:"Day qty > X × daily avg = spike day",min:1,max:20,step:1},{key:"spikePctFrequent",label:"Frequent Spike Threshold (%)",desc:"Spike days ≥ X% of period = Frequent",min:1,max:50,step:1},{key:"spikePctOnce",label:"Once-in-a-while Threshold (%)",desc:"Spike days ≥ X% of period = Once in a while",min:1,max:20,step:1}].map(pm=>(
+                    <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18,minWidth:32,textAlign:"right"}}>{params[pm.key]}</div></div>
+                      <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
+                      <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step} onChange={v=>saveParams({...params,[pm.key]:v})}/>
+                    </div>
+                  ))}
+                </Section>
+                <Section title="Max Days Buffer & ABQ" icon="📊" accent={HR.yellowDark} summary={`Buffer: +${params.maxDaysBuffer}d · ABQ mult: ${params.abqMaxMultiplier}×`}>
+                  {[{key:"maxDaysBuffer",label:"Max Days Buffer",desc:"Max Days = Min Days + X.",min:1,max:10,step:1},{key:"abqMaxMultiplier",label:"ABQ Max Multiplier",desc:"Max = CEILING(Min × X) for Slow items.",min:1,max:3,step:0.1}].map(pm=>(
+                    <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18,minWidth:32,textAlign:"right"}}>{params[pm.key]}</div></div>
+                      <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
+                      <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step} onChange={v=>saveParams({...params,[pm.key]:v})}/>
+                    </div>
+                  ))}
+                </Section>
+
+                <Section title="Brand Buffer Days" icon="🏷️" accent={HR.yellowDark} summary={`${Object.keys(bb).length} brand${Object.keys(bb).length!==1?"s":""} configured`}>
+                  <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:10}}>
+                    <table style={S.table}>
+                      <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Brand</th><th style={{...S.th,textAlign:"center"}}>Buffer Days</th><th style={{...S.th,textAlign:"center"}}>Remove</th></tr></thead>
+                      <tbody>{Object.entries(bb).map(([brand,days],i)=>(
+                        <tr key={brand} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                          <td style={{...S.td,fontWeight:600,fontSize:11}}>{brand}</td>
+                          <td style={{...S.td,textAlign:"center"}}><NumInput value={days} min={1} max={30} step={1} onChange={v=>saveParams({...params,brandBuffer:{...bb,[brand]:v}})} style={{width:64,color:HR.yellowDark,fontWeight:700}}/></td>
+                          <td style={{...S.td,textAlign:"center"}}><button onClick={()=>{const next={...bb};delete next[brand];saveParams({...params,brandBuffer:next});}} style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"3px 8px",borderRadius:4,cursor:"pointer",fontSize:11}}>✕</button></td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <input placeholder="Brand name..." value={newBrand} onChange={e=>setNewBrand(e.target.value)} style={{...S.input,flex:1}}/>
+                    <NumInput value={newBrandDays} min={1} max={30} step={1} onChange={v=>setNBD(v)} style={{width:70}}/>
+                    <button onClick={()=>{const b=newBrand.trim();if(!b)return;saveParams({...params,brandBuffer:{...bb,[b]:newBrandDays}});setNewBrand("");setNBD(1);}} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12,whiteSpace:"nowrap"}}>+ Add</button>
+                  </div>
+                </Section>
+
+                <Section title="New Dark Store Logic" icon="🆕" accent={HR.yellowDark} summary={`${(params.newDSList||[]).join(", ")||"None"} · Top ${params.newDSFloorTopN} SKUs`}>
+                  <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>Floor applies to Top N SKUs</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params.newDSFloorTopN}</div></div>
+                    <TierSlider label="" value={params.newDSFloorTopN} min={50} max={250} step={50} onChange={v=>saveParams({...params,newDSFloorTopN:v})}/>
+                  </div>
+                  <div style={{...S.card,padding:"12px 14px"}}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Stores designated as New DS</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+                      {(params.newDSList||[]).map(ds=><span key={ds} style={{background:"#FFFBEA",color:HR.yellowDark,border:`1px solid ${HR.yellow}`,padding:"3px 10px",borderRadius:5,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{ds}<button onClick={()=>saveParams({...params,newDSList:(params.newDSList||[]).filter(d=>d!==ds)})} style={{background:"none",border:"none",color:HR.yellowDark,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>×</button></span>)}
+                      {(params.newDSList||[]).length===0&&<span style={{color:HR.muted,fontSize:12}}>No stores assigned</span>}
+                    </div>
+                    <div style={{display:"flex",gap:6}}>
+                      <select id="newDSSelect" style={S.input}>{DS_LIST.filter(d=>!(params.newDSList||[]).includes(d)).map(d=><option key={d}>{d}</option>)}</select>
+                      <button onClick={()=>{const sel=document.getElementById("newDSSelect").value;if(sel&&!(params.newDSList||[]).includes(sel))saveParams({...params,newDSList:[...(params.newDSList||[]),sel]});}} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12}}>+ Add</button>
+                    </div>
+                  </div>
+                </Section>
+              </Section>
+
+              <Section title="DC Level Logic" icon="🏭" accent="#0077A8" summary={`Active DS: ${params.activeDSCount} · DC mults: SF ${(params.dcMult||DC_MULT_DEFAULT)["Super Fast"].min}–${(params.dcMult||DC_MULT_DEFAULT)["Super Fast"].max}`}>
+                <div style={{...S.card,padding:"12px 14px",marginBottom:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>Active DS Count</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params.activeDSCount}</div></div>
+                  <TierSlider label="" value={params.activeDSCount} min={1} max={10} step={1} color="#0077A8" onChange={v=>saveParams({...params,activeDSCount:v})}/>
+                </div>
+                <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Dead Stock DC Multiplier</div>
+                <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:14}}>
+                  <table style={S.table}>
+                    <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Condition</th><th style={{...S.th,textAlign:"center"}}>Min Mult</th><th style={{...S.th,textAlign:"center"}}>Max Mult</th></tr></thead>
+                    <tbody><tr style={{background:HR.white}}><td style={S.td}><span style={{...TAG_STYLE,background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}}>Dead Stock</span></td>
+                      {["min","max"].map(field=><td key={field} style={{...S.td,textAlign:"center"}}>
+                        <NumInput value={(params.dcDeadMult||DC_DEAD_MULT_DEFAULT)[field]} min={0} max={1} step={0.05} onChange={v=>saveParams({...params,dcDeadMult:{...(params.dcDeadMult||DC_DEAD_MULT_DEFAULT),[field]:v}})} style={{width:72,color:"#B91C1C",fontWeight:700}}/>
+                      </td>)}
+                    </tr></tbody>
+                  </table>
+                </div>
+                <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>DC Multipliers</div>
                 <div style={{...S.card,padding:0,overflow:"hidden"}}>
                   <table style={S.table}>
-                    <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Movement Tag</th><th style={{...S.th,textAlign:"center"}}>Base Min Days</th></tr></thead>
-                    <tbody>{["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{const bmd=params.baseMinDays||BASE_MIN_DAYS_DEFAULT,color=MOV_COLORS[tier];return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}><MovTag value={tier}/></td><td style={{...S.td,textAlign:"center"}}>
-                      <NumInput value={bmd[tier]??3} min={1} max={30} step={1} onChange={v=>saveParams({...params,baseMinDays:{...(params.baseMinDays||BASE_MIN_DAYS_DEFAULT),[tier]:v}})} style={{width:72,color,fontWeight:700}}/>
-                    </td></tr>;})}
-                    </tbody>
+                    <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Movement Tag</th><th style={{...S.th,textAlign:"center"}}>Min Mult</th><th style={{...S.th,textAlign:"center"}}>Max Mult</th></tr></thead>
+                    <tbody>{["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{
+                      const d=dcM[tier]||DC_MULT_DEFAULT[tier],color=MOV_COLORS[tier];
+                      return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}><MovTag value={tier}/></td>
+                        <td style={{...S.td,textAlign:"center"}}><NumInput value={d.min} min={0} max={1} step={0.05} onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,min:v}}})} style={{width:72,color,fontWeight:700}}/></td>
+                        <td style={{...S.td,textAlign:"center"}}><NumInput value={d.max} min={0} max={1} step={0.05} onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,max:v}}})} style={{width:72,color,fontWeight:700}}/></td>
+                      </tr>;
+                    })}</tbody>
                   </table>
                 </div>
               </Section>
-              <Section title="Movement Tag Boundaries" icon="🏃" accent={HR.yellowDark} summary={`≤${mi[0]}d / ≤${mi[1]}d / ≤${mi[2]}d / ≤${mi[3]}d`}>
-                {[0,1,2,3].map(i=>{const labels=["Super Fast | Fast","Fast | Moderate","Moderate | Slow","Slow | Super Slow"],lo=i===0?1:mi[i-1]+1,hi=i===3?30:mi[i+1]-1;return <TierSlider key={i} label={labels[i]} value={mi[i]} min={lo} max={hi} color={movColors[i+1]} onChange={v=>{const next=[...mi];next[i]=v;saveParams({...params,movIntervals:next});}}/>;})}</Section>
-              <Section title="Price Tag Boundaries" icon="💰" accent={HR.yellowDark} summary={`₹${pt[0]} / ₹${pt[1]} / ₹${pt[2]} / ₹${pt[3]}`}>
-                {[0,1,2,3].map(i=>{const labels=["Premium | High","High | Medium","Medium | Low","Low | Super Low"],lo=i===3?1:pt[i+1]+1,hi=i===0?50000:pt[i-1]-1;return <TierSlider key={i} label={labels[i]} value={pt[i]} min={lo} max={hi} color={priceColors[i]} onChange={v=>{const next=[...pt];next[i]=v;saveParams({...params,priceTiers:next});}}/>;})}</Section>
-              <Section title="Spike Parameters" icon="⚡" accent={HR.yellowDark} summary={`${params.spikeMultiplier}× · Frequent ≥${params.spikePctFrequent}% · Once ≥${params.spikePctOnce}%`}>
-                {[{key:"spikeMultiplier",label:"Spike Definition",desc:"Day qty > X × daily avg = spike day",min:1,max:20,step:1},{key:"spikePctFrequent",label:"Frequent Spike Threshold (%)",desc:"Spike days ≥ X% of period = Frequent",min:1,max:50,step:1},{key:"spikePctOnce",label:"Once-in-a-while Threshold (%)",desc:"Spike days ≥ X% of period = Once in a while",min:1,max:20,step:1}].map(pm=>(
-                  <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18,minWidth:32,textAlign:"right"}}>{params[pm.key]}</div></div>
-                    <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
-                    <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step} onChange={v=>saveParams({...params,[pm.key]:v})}/>
-                  </div>
-                ))}
-              </Section>
-              <Section title="Max Days Buffer & ABQ" icon="📊" accent={HR.yellowDark} summary={`Buffer: +${params.maxDaysBuffer}d · ABQ mult: ${params.abqMaxMultiplier}×`}>
-                {[{key:"maxDaysBuffer",label:"Max Days Buffer",desc:"Max Days = Min Days + X.",min:1,max:10,step:1},{key:"abqMaxMultiplier",label:"ABQ Max Multiplier",desc:"Max = CEILING(Min × X) for Slow items.",min:1,max:3,step:0.1}].map(pm=>(
-                  <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18,minWidth:32,textAlign:"right"}}>{params[pm.key]}</div></div>
-                    <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
-                    <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step} onChange={v=>saveParams({...params,[pm.key]:v})}/>
-                  </div>
-                ))}
-              </Section>
-              <Section title="Brand Buffer Days" icon="🏷️" accent={HR.yellowDark} summary={`${Object.keys(bb).length} brand${Object.keys(bb).length!==1?"s":""} configured`}>
-                <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:10}}>
-                  <table style={S.table}>
-                    <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Brand</th><th style={{...S.th,textAlign:"center"}}>Buffer Days</th><th style={{...S.th,textAlign:"center"}}>Remove</th></tr></thead>
-                    <tbody>{Object.entries(bb).map(([brand,days],i)=>(
-                      <tr key={brand} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                        <td style={{...S.td,fontWeight:600,fontSize:11}}>{brand}</td>
-                        <td style={{...S.td,textAlign:"center"}}><NumInput value={days} min={1} max={30} step={1} onChange={v=>saveParams({...params,brandBuffer:{...bb,[brand]:v}})} style={{width:64,color:HR.yellowDark,fontWeight:700}}/></td>
-                        <td style={{...S.td,textAlign:"center"}}><button onClick={()=>{const next={...bb};delete next[brand];saveParams({...params,brandBuffer:next});}} style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"3px 8px",borderRadius:4,cursor:"pointer",fontSize:11}}>✕</button></td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-                <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  <input placeholder="Brand name..." value={newBrand} onChange={e=>setNewBrand(e.target.value)} style={{...S.input,flex:1}}/>
-                  <NumInput value={newBrandDays} min={1} max={30} step={1} onChange={v=>setNBD(v)} style={{width:70}}/>
-                  <button onClick={()=>{const b=newBrand.trim();if(!b)return;saveParams({...params,brandBuffer:{...bb,[b]:newBrandDays}});setNewBrand("");setNBD(1);}} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12,whiteSpace:"nowrap"}}>+ Add</button>
-                </div>
-              </Section>
-              <Section title="New Dark Store Logic" icon="🆕" accent={HR.yellowDark} summary={`${(params.newDSList||[]).join(", ")||"None"} · Top ${params.newDSFloorTopN} SKUs`}>
-                <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>Floor applies to Top N SKUs</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params.newDSFloorTopN}</div></div>
-                  <TierSlider label="" value={params.newDSFloorTopN} min={50} max={250} step={50} onChange={v=>saveParams({...params,newDSFloorTopN:v})}/>
-                </div>
-                <div style={{...S.card,padding:"12px 14px"}}>
-                  <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Stores designated as New DS</div>
-                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-                    {(params.newDSList||[]).map(ds=><span key={ds} style={{background:"#FFFBEA",color:HR.yellowDark,border:`1px solid ${HR.yellow}`,padding:"3px 10px",borderRadius:5,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{ds}<button onClick={()=>saveParams({...params,newDSList:(params.newDSList||[]).filter(d=>d!==ds)})} style={{background:"none",border:"none",color:HR.yellowDark,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>×</button></span>)}
-                    {(params.newDSList||[]).length===0&&<span style={{color:HR.muted,fontSize:12}}>No stores assigned</span>}
-                  </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <select id="newDSSelect" style={S.input}>{DS_LIST.filter(d=>!(params.newDSList||[]).includes(d)).map(d=><option key={d}>{d}</option>)}</select>
-                    <button onClick={()=>{const sel=document.getElementById("newDSSelect").value;if(sel&&!(params.newDSList||[]).includes(sel))saveParams({...params,newDSList:[...(params.newDSList||[]),sel]});}} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12}}>+ Add</button>
-                  </div>
-                </div>
-              </Section>
-            </Section>
 
-            <Section title="DC Level Logic" icon="🏭" accent="#0077A8" summary={`Active DS: ${params.activeDSCount} · DC mults: SF ${(params.dcMult||DC_MULT_DEFAULT)["Super Fast"].min}–${(params.dcMult||DC_MULT_DEFAULT)["Super Fast"].max}`}>
-              <div style={{...S.card,padding:"12px 14px",marginBottom:14}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}><div style={{fontWeight:600,color:HR.text,fontSize:12}}>Active DS Count</div><div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params.activeDSCount}</div></div>
-                <TierSlider label="" value={params.activeDSCount} min={1} max={10} step={1} color="#0077A8" onChange={v=>saveParams({...params,activeDSCount:v})}/>
-              </div>
-              <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Dead Stock DC Multiplier</div>
-              <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:14}}>
-                <table style={S.table}>
-                  <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Condition</th><th style={{...S.th,textAlign:"center"}}>Min Mult</th><th style={{...S.th,textAlign:"center"}}>Max Mult</th></tr></thead>
-                  <tbody><tr style={{background:HR.white}}><td style={S.td}><span style={{...TAG_STYLE,background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}}>Dead Stock</span></td>
-                    {["min","max"].map(field=><td key={field} style={{...S.td,textAlign:"center"}}>
-                      <NumInput value={(params.dcDeadMult||DC_DEAD_MULT_DEFAULT)[field]} min={0} max={1} step={0.05} onChange={v=>saveParams({...params,dcDeadMult:{...(params.dcDeadMult||DC_DEAD_MULT_DEFAULT),[field]:v}})} style={{width:72,color:"#B91C1C",fontWeight:700}}/>
-                    </td>)}
-                  </tr></tbody>
-                </table>
-              </div>
-              <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>DC Multipliers</div>
-              <div style={{...S.card,padding:0,overflow:"hidden"}}>
-                <table style={S.table}>
-                  <thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>Movement Tag</th><th style={{...S.th,textAlign:"center"}}>Min Mult</th><th style={{...S.th,textAlign:"center"}}>Max Mult</th></tr></thead>
-                  <tbody>{["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{
-                    const d=dcM[tier]||DC_MULT_DEFAULT[tier],color=MOV_COLORS[tier];
-                    return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}><MovTag value={tier}/></td>
-                      <td style={{...S.td,textAlign:"center"}}><NumInput value={d.min} min={0} max={1} step={0.05} onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,min:v}}})} style={{width:72,color,fontWeight:700}}/></td>
-                      <td style={{...S.td,textAlign:"center"}}><NumInput value={d.max} min={0} max={1} step={0.05} onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,max:v}}})} style={{width:72,color,fontWeight:700}}/></td>
-                    </tr>;
-                  })}</tbody>
-                </table>
-              </div>
-            </Section>
+              {hasChanges&&<button onClick={()=>applyAndRun(params)} style={{...S.runBtn,marginTop:14}}>▶ Apply & Re-run Model</button>}
 
-            {hasChanges&&<button onClick={()=>applyAndRun(params)} style={{...S.runBtn,marginTop:14}}>▶ Apply & Re-run Model</button>}
+            </div>{/* end left column */}
+
+            {/* ── RIGHT COLUMN — sticky impact preview ── */}
+            <div style={{flex:"0 0 320px",position:"sticky",top:0,alignSelf:"flex-start",maxHeight:"calc(100vh - 60px)",overflowY:"auto"}}>
+              <div style={{background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`,padding:"14px 16px",boxShadow:"0 1px 4px rgba(0,0,0,0.06)"}}>
+                <ImpactPreviewPanel
+                  params={params}
+                  savedParams={savedParams}
+                  invoiceData={invoiceData}
+                  skuMaster={skuMaster}
+                  minReqQty={minReqQty}
+                  newSKUQty={newSKUQty}
+                  deadStock={deadStock}
+                  priceData={priceData}
+                  hasChanges={hasChanges}
+                />
+              </div>
+            </div>
+
           </div>
-        )}
-      </div>
+        )}{/* end logic tab */}
+      </div>{/* end pageWrap */}
     </div>
   );
 }
