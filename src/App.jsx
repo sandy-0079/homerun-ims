@@ -1261,12 +1261,28 @@ function SimBrandLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, categ
 }
 
 function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onApplyToCore }) {
-  const [drill, setDrill] = useState(null);
+ const [drill, setDrill] = useState(null);
   const [dsFilter, setDsFilter] = useState("All");
   const [overrides, setOverrides] = useState({});
   const [overrideCount, setOverrideCount] = useState(0);
   const [showApplyConfirm, setShowApplyConfirm] = useState(false);
+  const [showApplyPwModal, setShowApplyPwModal] = useState(false);
+  const [applyPw, setApplyPw] = useState("");
+  const [applyPwErr, setApplyPwErr] = useState(false);
+  const ADMIN_PW = import.meta.env.VITE_ADMIN_PASSWORD || "";
   const hasOverrides = overrideCount > 0;
+
+  const handleApplyPwSubmit = () => {
+    if (applyPw === ADMIN_PW && ADMIN_PW !== "") {
+      setShowApplyPwModal(false);
+      setApplyPw("");
+      setApplyPwErr(false);
+      setShowApplyConfirm(true);
+    } else {
+      setApplyPwErr(true);
+      setApplyPw("");
+    }
+  };
 
   const handleApplyToCore = () => {
     const payload = {};
@@ -1362,6 +1378,28 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
               );
             })}
           </div>
+           {showApplyPwModal && (
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}}>
+              <div style={{background:HR.white,padding:28,borderRadius:10,border:`2px solid ${HR.yellow}`,maxWidth:360,width:"90%",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
+                <div style={{fontSize:16,fontWeight:800,color:HR.yellowDark,marginBottom:4}}>🔐 Admin Password Required</div>
+                <div style={{fontSize:12,color:HR.muted,marginBottom:16}}>Applying overrides to core affects all users. Enter the admin password to continue.</div>
+                <input
+                  type="password"
+                  value={applyPw}
+                  autoFocus
+                  onChange={e=>{setApplyPw(e.target.value);setApplyPwErr(false);}}
+                  onKeyDown={e=>e.key==="Enter"&&handleApplyPwSubmit()}
+                  placeholder="Password"
+                  style={{...S.input,width:"100%",boxSizing:"border-box",marginBottom:applyPwErr?6:14,borderColor:applyPwErr?"#B91C1C":HR.border}}
+                />
+                {applyPwErr && <div style={{fontSize:11,color:"#B91C1C",marginBottom:10}}>Incorrect password. Try again.</div>}
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={handleApplyPwSubmit} style={{flex:1,background:HR.yellow,color:HR.black,border:"none",padding:"9px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:13}}>Continue</button>
+                  <button onClick={()=>{setShowApplyPwModal(false);setApplyPw("");setApplyPwErr(false);}} style={{flex:1,background:HR.white,color:HR.muted,border:`1px solid ${HR.border}`,padding:"9px",borderRadius:6,cursor:"pointer",fontWeight:600,fontSize:13}}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
           {showApplyConfirm && (
             <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
               <div style={{ background: HR.white, padding: 28, borderRadius: 10, border: `2px solid ${HR.yellow}`, maxWidth: 400, width: "90%", boxShadow: "0 8px 32px rgba(0,0,0,0.15)" }}>
@@ -1376,10 +1414,10 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
             </div>
           )}
           {hasOverrides && (
-            <button onClick={() => setShowApplyConfirm(true)}
-              style={{ background: HR.yellowDark, color: HR.white, border: "none", padding: "5px 14px", borderRadius: 5, cursor: "pointer", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>
-              ✓ Apply Overrides to Core
-            </button>
+            <button onClick={() => setShowApplyPwModal(true)}
+            style={{ background: HR.yellowDark, color: HR.white, border: "none", padding: "5px 14px", borderRadius: 5, cursor: "pointer", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>
+            ✓ Apply Overrides to Core
+          </button>
           )}
           <button onClick={() => downloadWhatIfCSV(toolRowsFull.filter(r => r.oosInstances > 0))}
             style={{ background: HR.green, color: HR.white, border: "none", padding: "5px 14px", borderRadius: 5, cursor: "pointer", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>
