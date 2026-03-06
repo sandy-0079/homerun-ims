@@ -1835,11 +1835,31 @@ export default function App(){
     })();
   },[]);
 
-  useEffect(()=>{if(dataLoaded)triggerModel(invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params);},[dataLoaded]);
+  useEffect(()=>{if(dataLoaded)triggerModel(invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params);},[dataLoaded,coreOverrides]);
 
   const triggerModel=(inv,sku,mrq,nsq,ds,pd,p)=>{
     setLoading(true);
-    setTimeout(()=>{try{const res=runEngine(inv,sku,mrq,pd,ds,nsq,p);setResults(res);setTab("dashboard");}catch(err){console.error(err);alert("Model error: "+err.message);}setLoading(false);},50);
+    setTimeout(()=>{
+      try{
+        const raw=runEngine(inv,sku,mrq,pd,ds,nsq,p);
+        const merged={...raw};
+        Object.entries(coreOverrides).forEach(([skuId,dsList])=>{
+          if(!merged[skuId])return;
+          const newStores={...merged[skuId].stores};
+          Object.entries(dsList).forEach(([dsId,ov])=>{
+            if(!newStores[dsId])return;
+            newStores[dsId]={...newStores[dsId],
+              min:Math.max(newStores[dsId].min,ov.min),
+              max:Math.max(newStores[dsId].max,ov.max)
+            };
+          });
+          merged[skuId]={...merged[skuId],stores:newStores};
+        });
+        setResults(merged);
+        setTab("dashboard");
+      }catch(err){console.error(err);alert("Model error: "+err.message);}
+      setLoading(false);
+    },50);
   };
 
   // ── Publish: saves team data to Supabase (+ downloads JSON as backup) ───────
