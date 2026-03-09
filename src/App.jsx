@@ -2636,44 +2636,55 @@ export default function App(){
     (async()=>{
       // Try Supabase team_data first
       const sbData = await loadFromSupabase("team_data","global");
-      if(sbData?.invoiceData?.length&&sbData?.skuMaster){
+if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   setInv(sbData.invoiceData);setSKU(sbData.skuMaster);
   if(sbData.minReqQty)setMRQ(sbData.minReqQty);
   if(sbData.newSKUQty)setNSQ(sbData.newSKUQty);
   if(sbData.deadStock)setDead(new Set(sbData.deadStock));
   if(sbData.priceData)setPrice(sbData.priceData);
   setLoaded(true);
+
+  // Load params first, then run engine with correct params
+  const sbParams = await loadFromSupabase("params","global");
+  const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
+  setParams(activeParams);setSaved(activeParams);
+
   setTimeout(()=>{
     try{
-      const raw=runEngine(sbData.invoiceData,sbData.skuMaster,sbData.minReqQty||{},sbData.priceData||{},new Set(sbData.deadStock||[]),sbData.newSKUQty||{},savedParams);
+      const raw=runEngine(sbData.invoiceData,sbData.skuMaster,sbData.minReqQty||{},sbData.priceData||{},new Set(sbData.deadStock||[]),sbData.newSKUQty||{},activeParams);
       setResults(raw);
     }catch(err){console.error("Auto-run error:",err);}
   },100);
   return;
-      }
+}
       // Fallback: try public/team-data.json
       try{
-        const res=await fetch("/team-data.json?v="+Date.now());
-        if(res.ok){
-          const bundle=await res.json();
-          if(bundle.invoiceData?.length&&bundle.skuMaster){
-  setInv(bundle.invoiceData);setSKU(bundle.skuMaster);
-  if(bundle.minReqQty)setMRQ(bundle.minReqQty);
-  if(bundle.newSKUQty)setNSQ(bundle.newSKUQty);
-  if(bundle.deadStock)setDead(new Set(bundle.deadStock));
-  if(bundle.priceData)setPrice(bundle.priceData);
-  setLoaded(true);
-  // Auto-run model for all users on load
-  setTimeout(()=>{
-    try{
-      const raw=runEngine(bundle.invoiceData,bundle.skuMaster,bundle.minReqQty||{},bundle.priceData||{},new Set(bundle.deadStock||[]),bundle.newSKUQty||{},savedParams);
-      setResults(raw);
-    }catch(err){console.error("Auto-run error:",err);}
-  },100);
-  return;
-          }
-        }
-      }catch(e){}
+  const res=await fetch("/team-data.json?v="+Date.now());
+  if(res.ok){
+    const bundle=await res.json();
+    if(bundle.invoiceData?.length&&bundle.skuMaster){
+      setInv(bundle.invoiceData);setSKU(bundle.skuMaster);
+      if(bundle.minReqQty)setMRQ(bundle.minReqQty);
+      if(bundle.newSKUQty)setNSQ(bundle.newSKUQty);
+      if(bundle.deadStock)setDead(new Set(bundle.deadStock));
+      if(bundle.priceData)setPrice(bundle.priceData);
+      setLoaded(true);
+
+      // Load params first, then run engine with correct params
+      const sbParams = await loadFromSupabase("params","global");
+      const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
+      setParams(activeParams);setSaved(activeParams);
+
+      setTimeout(()=>{
+        try{
+          const raw=runEngine(bundle.invoiceData,bundle.skuMaster,bundle.minReqQty||{},bundle.priceData||{},new Set(bundle.deadStock||[]),bundle.newSKUQty||{},activeParams);
+          setResults(raw);
+        }catch(err){console.error("Auto-run error:",err);}
+      },100);
+      return;
+    }
+  }
+}catch(e){}
       // Fallback: localStorage
       try{
         const keys=["invoiceData","skuMaster","minReqQty","newSKUQty","deadStock","priceData"];
