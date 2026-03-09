@@ -140,7 +140,7 @@ function runEngine(inv,skuM,mrq,pd,deadStockSet,nsq,p){
       tags90[k]={mvTag:getMovTag(s90.nonZeroDays,op,intervals),spTag:getSpikeTag(s90.spikeDays,op,p.spikePctFrequent,p.spikePctOnce),dailyAvg:s90.dailyAvg,abq:s90.abq};
     });
   });
-  const allSKUs=[...new Set(invSliced.map(r=>r.sku))],activeDSCount=p.activeDSCount||4,res={};
+  const allSKUs=[...new Set([...invSliced.map(r=>r.sku),...Object.keys(skuM)])],activeDSCount=p.activeDSCount||4,res={};
   allSKUs.forEach(skuId=>{
     const meta=skuM[skuId]||{sku:skuId,name:skuId,category:"Unknown",brand:"",status:"Active",inventorisedAt:"DS"};
     const prTag=getPriceTag(pd[skuId]||0,priceTiers),t150Tag=t150[skuId]||"No",isDead=deadStockSet.has(skuId);
@@ -2551,6 +2551,7 @@ export default function App(){
   const [minReqQty,setMRQ]=useState({}),[newSKUQty,setNSQ]=useState({});
   const [deadStock,setDead]=useState(new Set()),[priceData,setPrice]=useState({});
   const [results,setResults]=useState(null),[loading,setLoading]=useState(false),[dataLoaded,setLoaded]=useState(false);
+  const allUploaded=invoiceData.length>0&&Object.keys(skuMaster).length>0&&Object.keys(priceData).length>0&&Object.keys(minReqQty).length>0&&Object.keys(newSKUQty).length>0&&deadStock.size>0;
   const [filterDS,setFilterDS]=useState("All");
   const [filterCat,setFilterCat]=useState("");
   const [filterMov,setFilterMov]=useState("All");
@@ -2674,7 +2675,6 @@ export default function App(){
     })();
   },[]);
 
-  useEffect(()=>{if(dataLoaded)triggerModel(invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params);},[dataLoaded,coreOverrides]);
 
   const triggerModel=(inv,sku,mrq,nsq,ds,pd,p)=>{
     setLoading(true);
@@ -2723,12 +2723,11 @@ export default function App(){
   const handleInvoice=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;setLoading(true);
     const rows=parseCSV(await file.text());
-    const newE=rows.map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0)})).filter(r=>r.date&&r.sku&&r.qty>0);
+    const newE=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0)})).filter(r=>r.date&&r.sku&&r.qty>0);
     const all=[...invoiceData,...newE],dates=[...new Set(all.map(r=>r.date))].sort();
     const cutoff=dates.length>ROLLING_DAYS?dates[dates.length-ROLLING_DAYS]:dates[0],filtered=all.filter(r=>r.date>=cutoff);
     setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
-    const hasSku=Object.keys(skuMaster).length>0;setLoaded(hasSku);
-    if(hasSku)triggerModel(filtered,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params);else setLoading(false);
+    setLoading(false);
     e.target.value="";
   },[invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params]);
 
@@ -2737,8 +2736,7 @@ export default function App(){
     const rows=parseCSV(await file.text());const master={};
     rows.forEach(r=>{const s=r["SKU"]||"";if(s)master[s]={sku:s,name:r["Name"]||"",category:r["Category"]||r["Category Name"]||"",brand:r["Brand"]||"",status:r["Status"]||"Active",inventorisedAt:r["Inventorised At"]||"DS"};});
     setSKU(master);LS.set("skuMaster",JSON.stringify(master));
-    const hasInv=invoiceData.length>0;setLoaded(hasInv);
-    if(hasInv)triggerModel(invoiceData,master,minReqQty,newSKUQty,deadStock,priceData,params);else setLoading(false);
+    setLoading(false);
     e.target.value="";
   },[invoiceData,minReqQty,newSKUQty,deadStock,priceData,params]);
 
@@ -2791,7 +2789,12 @@ export default function App(){
     }
   };
 
-  const handleTabClick=t=>{if(tab==="logic"&&hasChanges&&isAdmin)setPending(t);else setTab(t);};
+  const handleTabClick=t=>{
+  if(tab==="logic"&&hasChanges&&isAdmin){setPending(t);return;}
+  setTab(t);
+  setScrollTop(0);
+  setOutputScrollTop(0);
+};
   const runQA=()=>{if(!results||!qaText.trim()){alert("Upload data and run model first.");return;}const rows=parseQACSV(qaText);if(!rows.length){alert("Could not parse CSV.");return;}setQaDiffs(buildDiff(rows,results));setQaFDS("All");setQaFMv("All");setQaFSp("All");setQaFPr("All");};
 
   const soldSKUs=new Set(invoiceData.map(r=>r.sku));
@@ -3035,9 +3038,9 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
           const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=filename;a.click();
         };
         const templates={
-          invoiceData:{file:"Invoice_Dump_Template.csv",headers:["Invoice Date","SKU","Line Item Location Name","Quantity"],rows:[["2026-01-01","SKU001","DS01 Warehouse",5],["2026-01-02","SKU002","DS02 Warehouse",3]]},
-          skuMaster:  {file:"SKU_Master_Template.csv",  headers:["Name","SKU","Category","Brand","Status","Inventorised At"],rows:[["Product Name A","SKU001","Paints","Asian Paints","Active","DS"],["Product Name B","SKU002","Adhesives","MYK Laticrete","Active","DS"]]},
-          priceData:  {file:"Avg_Price_Template.csv",   headers:["sku","average_price"],rows:[["SKU001",250],["SKU002",1800]]},
+          invoiceData:{file:"Invoice_Dump_Template.csv",headers:["Invoice Date","Invoice Number","Invoice Status","PurchaseOrder","Item Name","SKU","Category Name","Quantity","Line Item Location Name"],rows:[["2026-01-01","INV001","Confirmed","PO001","Product Name A","SKU001","Paints",5,"DS01 Warehouse"],["2026-01-02","INV002","Confirmed","PO002","Product Name B","SKU002","Adhesives",3,"DS02 Warehouse"]]},
+          skuMaster:  {file:"SKU_Master_Template.csv",  headers:["Name","Inventorised At","SKU","Category","Status","Brand"],rows:[["Product Name A","DS","SKU001","Paints","Active","Asian Paints"],["Product Name B","DS","SKU002","Adhesives","Active","MYK Laticrete"]]},
+          priceData:{file:"Avg_Price_Template.csv",headers:["item_id","item_name","unit","is_combo_product","quantity_purchased","amount","average_price","location_name","sku"],rows:[["ITEM001","Product Name A","PCS","No",100,25000,250,"DS01 Warehouse","SKU001"],["ITEM002","Product Name B","PCS","No",10,18000,1800,"DS02 Warehouse","SKU002"]]},
           minReqQty:  {file:"New_DS_Floor_Template.csv",headers:["SKU","Qty"],rows:[["SKU001",10],["SKU002",5]]},
           newSKUQty:  {file:"New_SKU_Floor_Template.csv",headers:["SKU","DS01","DS02","DS03","DS04","DS05"],rows:[["SKU001",3,2,0,5,0],["SKU002",0,1,2,0,3]]},
           deadStock:  {file:"Dead_Stock_Template.csv",  headers:["Dead Stock"],rows:[["SKU001"],["SKU002"]]},
@@ -3046,9 +3049,9 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
           {label:"Invoice Dump L90D",desc:"Columns: Invoice Date, SKU, Line Item Location Name, Quantity",handler:handleInvoice,count:`${invoiceData.length.toLocaleString()} rows`,key:"invoiceData",required:true,hasData:invoiceData.length>0},
           {label:"SKU Master",desc:"Columns: Name, SKU, Category, Brand, Status, Inventorised At",handler:handleSKU,count:`${Object.keys(skuMaster).length.toLocaleString()} SKUs`,key:"skuMaster",required:true,hasData:Object.keys(skuMaster).length>0},
           {label:"Average Purchase Price of SKU",desc:"Columns: sku, average_price",handler:handlePrice,count:`${Object.keys(priceData).length.toLocaleString()} SKUs`,key:"priceData",required:true,hasData:Object.keys(priceData).length>0},
-          {label:"Newly Launched Dark Store Floor Qty",desc:"Columns: SKU, Qty",handler:handleMRQ,count:`${Object.keys(minReqQty).length.toLocaleString()} SKUs`,key:"minReqQty",required:false,hasData:Object.keys(minReqQty).length>0},
-          {label:"Newly Launched SKU Floor Qty - DS Level",desc:"Per-store manual floor qtys. Columns: SKU, DS01–DS05",handler:handleNSQ,count:`${Object.keys(newSKUQty).length.toLocaleString()} SKUs`,key:"newSKUQty",required:false,hasData:Object.keys(newSKUQty).length>0},
-          {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,count:`${deadStock.size.toLocaleString()} SKUs`,key:"deadStock",required:false,hasData:deadStock.size>0},
+          {label:"Newly Launched Dark Store Floor Qty",desc:"Columns: SKU, Qty",handler:handleMRQ,count:`${Object.keys(minReqQty).length.toLocaleString()} SKUs`,key:"minReqQty",required:true,hasData:Object.keys(minReqQty).length>0},
+          {label:"Newly Launched SKU Floor Qty - DS Level",desc:"Per-store manual floor qtys. Columns: SKU, DS01–DS05",handler:handleNSQ,count:`${Object.keys(newSKUQty).length.toLocaleString()} SKUs`,key:"newSKUQty",required:true,hasData:Object.keys(newSKUQty).length>0},
+          {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,count:`${deadStock.size.toLocaleString()} SKUs`,key:"deadStock",required:true,hasData:deadStock.size>0},
         ];
         return(
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
@@ -3121,11 +3124,11 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
       </div>
 
       {/* Re-run Model */}
-      {dataLoaded&&(
-        <button onClick={()=>applyAndRun(params)} style={{...S.runBtn,margin:0}}>
-          ▶ Re-run Model
-        </button>
-      )}
+      {allUploaded&&(
+  <button onClick={()=>{setLoaded(true);applyAndRun(params);}} style={{...S.runBtn,margin:0}}>
+    ▶ Re-run Model
+  </button>
+)}
 
       {/* Publish to Team */}
       {dataLoaded&&results&&(
@@ -3269,7 +3272,8 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
 
               {/* ── Table ── */}
               <div style={{...S.card,padding:0,overflow:"auto",flex:1,minHeight:0}}
-  onScroll={e => setScrollTop(e.currentTarget.scrollTop)}>
+  onScroll={e => setScrollTop(e.currentTarget.scrollTop)}
+ref={el => { if(el && scrollTop === 0) el.scrollTop = 0; }}>
                 <table style={{...S.table,fontSize:10,tableLayout:"fixed"}}>
                   <colgroup>
   <col style={{width:150}}/>
@@ -3435,7 +3439,8 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
               </div>
 
               {/* ── Table — fills remaining height, no blank space ── */}
-              <div style={{...S.card,padding:0,overflow:"auto",flex:1,minHeight:0,width:"100%",boxSizing:"border-box"}} onScroll={e => setOutputScrollTop(e.currentTarget.scrollTop)}>
+              <div style={{...S.card,padding:0,overflow:"auto",flex:1,minHeight:0,width:"100%",boxSizing:"border-box"}} onScroll={e => setOutputScrollTop(e.currentTarget.scrollTop)}
+ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                 <table style={{...S.table}}>
                   <thead style={{position:"sticky",top:0,zIndex:4}}>
                     <tr style={{background:HR.surfaceLight}}>
