@@ -1151,6 +1151,8 @@ function SimSummaryCards({ toolRows, ovrRows, ovrRowsFull, totInst, totSkus, has
 }
 
 function buildGroupRows(toolRows, ovrRows, winRows, groupFn, priceData) {
+  // ── Step 1: Total instances per group from ALL sim-window rows (winRows)
+  //    This is the same pool that produces the header's "6000 total" figure.
   const ordMap = {};
   winRows.forEach(r => {
     const g = groupFn(r, "ord");
@@ -1159,15 +1161,18 @@ function buildGroupRows(toolRows, ovrRows, winRows, groupFn, priceData) {
     ordMap[g].skus.add(r.sku);
     ordMap[g].instances++;
   });
+
+  // ── Step 2: OOS counts from toolRows (OOS-only SKUs — correct, unchanged)
   const toolMap = {};
   toolRows.filter(r => r.oosInstances > 0).forEach(r => {
     const g = groupFn(r, "fail");
     if (!g) return;
-    if (!toolMap[g]) toolMap[g] = { skus: new Set(), oosInstances: 0, totalInstances: 0 };
+    if (!toolMap[g]) toolMap[g] = { skus: new Set(), oosInstances: 0 };
     toolMap[g].skus.add(r.skuId);
-    toolMap[g].oosInstances  += r.oosInstances;
-    toolMap[g].totalInstances += r.totalInstances;
+    toolMap[g].oosInstances += r.oosInstances;
   });
+
+  // ── Step 3: Override OOS counts (unchanged)
   const ovrMap = {};
   ovrRows.forEach(r => {
     const g = groupFn(r, "fail");
@@ -1175,19 +1180,33 @@ function buildGroupRows(toolRows, ovrRows, winRows, groupFn, priceData) {
     if (!ovrMap[g]) ovrMap[g] = { skus: new Set(), oosInstances: 0, invDelta: 0 };
     if (r.oosInstances > 0) ovrMap[g].skus.add(r.skuId);
     ovrMap[g].oosInstances += r.oosInstances;
-    if (r.isOverridden) ovrMap[g].invDelta += (r.useMax - r.toolMax) * (priceData?.[r.skuId] || 0);
+    if (r.isOverridden)
+      ovrMap[g].invDelta += (r.useMax - r.toolMax) * (priceData?.[r.skuId] || 0);
   });
-  const allKeys = new Set([...Object.keys(ordMap), ...Object.keys(toolMap)]);
+
+  // ── Step 4: Union of ALL groups that appear in winRows (so zero-OOS
+  //    categories/brands are included and their full instance count shows).
+  const allKeys = new Set(Object.keys(ordMap));
+  // Also include any OOS groups not in winRows (edge case safety)
+  Object.keys(toolMap).forEach(k => allKeys.add(k));
+
   return [...allKeys].map(g => {
     const o  = ordMap[g]  || { skus: new Set(), instances: 0 };
-    const t  = toolMap[g] || { skus: new Set(), oosInstances: 0, totalInstances: 0 };
+    const t  = toolMap[g] || { skus: new Set(), oosInstances: 0 };
     const ov = ovrMap[g]  || { skus: new Set(), oosInstances: 0, invDelta: 0 };
     return {
-      name: g, failSkus: t.skus.size, ovrFailSkus: ov.skus.size,
-      totalOrderedSkus: o.skus.size, toolOos: t.oosInstances, ovrOos: ov.oosInstances,
-      totalInstances: t.totalInstances || o.instances, invDelta: Math.round(ov.invDelta),
+      name:             g,
+      failSkus:         t.skus.size,
+      ovrFailSkus:      ov.skus.size,
+      totalOrderedSkus: o.skus.size,
+      toolOos:          t.oosInstances,
+      ovrOos:           ov.oosInstances,
+      // ← Key fix: totalInstances now comes from ALL winRows for this group
+      totalInstances:   o.instances,
+      invDelta:         Math.round(ov.invDelta),
     };
-  }).filter(r => r.toolOos > 0 || r.ovrOos > 0).sort((a, b) => b.toolOos - a.toolOos);
+  // ← No longer filtering out zero-OOS rows; keep all for rate comparison
+  }).sort((a, b) => b.toolOos - a.toolOos);
 }
 
 function RankTable({ rows, nameLabel, nameKey, onClick, hasOverrides }) {
@@ -1343,7 +1362,7 @@ function OrderTable({ r }) {
   );
 }
 
-function SimSKUTable({ toolRows, ovrRows, allDates, hasOverrides, priceData }) {
+function SimSKUTable({ toolRows, ovrRows, allDates, hasOverrides, priceData, toolRowsFull, winRows }) {
   const [expSKU, setExpSKU] = useState(null);
   const [expDS,  setExpDS]  = useState(null);
   const ovBg = "#FFFDE7";
@@ -1352,7 +1371,24 @@ function SimSKUTable({ toolRows, ovrRows, allDates, hasOverrides, priceData }) {
     ovrRows.forEach(r => { m[`${r.skuId}||${r.dsId}`] = r; });
     return m;
   }, [ovrRows]);
-  const bySKU = useMemo(() => {
+  const fullInstMap = useMemo(() => {
+  const m = {};
+  (winRows || []).forEach(r => {
+    if (!m[r.sku]) m[r.sku] = 0;
+    m[r.sku]++;
+  });
+  return m;
+}, [winRows]);
+const winRowsBySkuDs = useMemo(() => {
+  const m = {};
+  (winRows || []).forEach(r => {
+    const k = `${r.sku}||${r.ds}`;
+    if (!m[k]) m[k] = 0;
+    m[k]++;
+  });
+  return m;
+}, [winRows]);
+const bySKU = useMemo(() => {
     const m = {};
     toolRows.forEach(r => {
       if (!m[r.skuId]) m[r.skuId] = { skuId: r.skuId, name: r.name, category: r.category, brand: r.brand, priceTag: r.priceTag, mvTag: r.mvTag, dsRows: [] };
@@ -1393,7 +1429,7 @@ function SimSKUTable({ toolRows, ovrRows, allDates, hasOverrides, priceData }) {
             const isOpen = expSKU === sku.skuId;
             const toolOos = sku.dsRows.reduce((s, p) => s + p.tool.oosInstances, 0);
             const ovrOos  = sku.dsRows.reduce((s, p) => s + p.ovr.oosInstances,  0);
-            const totInst = sku.dsRows.reduce((s, p) => s + p.tool.totalInstances, 0);
+            const totInst = fullInstMap[sku.skuId] || sku.dsRows.reduce((s, p) => s + p.tool.totalInstances, 0);
             const toolRate = totInst > 0 ? ((toolOos / totInst) * 100).toFixed(1) : "0.0";
             const ovrRate  = totInst > 0 ? ((ovrOos  / totInst) * 100).toFixed(1) : "0.0";
             const tAcc = oosColor(toolRate), oAcc = oosColor(ovrRate);
@@ -1516,17 +1552,33 @@ function SimSKUTable({ toolRows, ovrRows, allDates, hasOverrides, priceData }) {
                       </td>
                     </tr>
                   )
-                ];
-              })
-            ];
-          })}
+        ];
+      }),
+      isOpen && (() => {
+        const oosDs = new Set(sku.dsRows.map(p => p.tool.dsId));
+        const cleanDS = DS_LIST.filter(ds => !oosDs.has(ds));
+        const cleanInst = cleanDS.reduce((s, ds) => s + (winRowsBySkuDs[`${sku.skuId}||${ds}`] || 0), 0);
+        if (!cleanInst) return null;
+        return (
+          <tr key={sku.skuId + "_clean"}>
+            <td colSpan={hasOverrides ? 13 : 10} style={{ padding: "4px 16px", background: "#F8FAFC", borderTop: `1px solid ${HR.border}` }}>
+              <span style={{ fontSize: 10, color: HR.muted }}>
+                {cleanDS.filter(ds => (winRowsBySkuDs[`${sku.skuId}||${ds}`] || 0) > 0).join(", ")}
+                {" · "}{cleanInst} instance{cleanInst !== 1 ? "s" : ""} · <span style={{ color: HR.green, fontWeight: 700 }}>no OOS ✓</span>
+              </span>
+            </td>
+          </tr>
+        );
+      })()
+    ];
+  })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function ProblematicSKUs({ toolRows, ovrRows, allDates, hasOverrides, priceData }) {
+function ProblematicSKUs({ toolRows, ovrRows, allDates, hasOverrides, priceData, toolRowsFull, winRows }) {
   const [topN, setTopN] = useState(10);
   const bySKU = useMemo(() => {
     const m = {};
@@ -1557,7 +1609,7 @@ function ProblematicSKUs({ toolRows, ovrRows, allDates, hasOverrides, priceData 
           ))}
         </div>
       </div>
-      <SimSKUTable toolRows={visTool} ovrRows={visOvr} allDates={[]} hasOverrides={hasOverrides} priceData={priceData} />
+      <SimSKUTable toolRows={visTool} ovrRows={visOvr} allDates={[]} hasOverrides={hasOverrides} priceData={priceData} toolRowsFull={toolRowsFull} winRows={winRows} />
       {topN !== "All" && bySKU.length > topN && (
         <div style={{ fontSize: 10, color: HR.muted, textAlign: "center", marginTop: 6 }}>Showing {topN} of {bySKU.length} problematic SKUs</div>
       )}
@@ -1665,14 +1717,14 @@ function WhatIfUploadPanel({ onUpload, hasOverrides, onReset, overrideCount }) {
   );
 }
 
-function SimOrgLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, hasOverrides, priceData, totInst, totSkus, onDrillCategory }) {
+function SimOrgLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, hasOverrides, priceData, totInst, totSkus, onDrillCategory, toolRowsFull }) {
   const groupRows = buildGroupRows(toolRows, ovrRows, winRows, (r, mode) => mode === "ord" ? (skuMeta[r.sku]?.category || "Unknown") : (r.category || "Unknown"), priceData);
   return (
     <div>
       <SimSummaryCards toolRows={toolRows} ovrRows={ovrRows} ovrRowsFull={ovrRowsFull} totInst={totInst} totSkus={totSkus} hasOverrides={hasOverrides} priceData={priceData} />
       <div style={{ fontSize: 12, fontWeight: 700, color: HR.text, marginBottom: 8 }}>Categories</div>
       <RankTable rows={groupRows} nameLabel="Category" nameKey="name" onClick={onDrillCategory} hasOverrides={hasOverrides} />
-      <ProblematicSKUs toolRows={toolRows} ovrRows={ovrRows} allDates={[]} hasOverrides={hasOverrides} priceData={priceData} />
+      <ProblematicSKUs toolRows={toolRows} ovrRows={ovrRows} allDates={[]} hasOverrides={hasOverrides} priceData={priceData} toolRowsFull={toolRowsFull} winRows={winRows} />
       <OverriddenSKUsSection ovrRowsFull={ovrRowsFull} priceData={priceData} />
     </div>
   );
@@ -1693,7 +1745,7 @@ function SimCategoryLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, ca
   );
 }
 
-function SimBrandLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, category, brand, hasOverrides, priceData, allDates }) {
+function SimBrandLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, category, brand, hasOverrides, priceData, allDates, toolRowsFull }) {
   const tScope = toolRows.filter(r => (r.category || "Unknown") === category && (r.brand || "Unknown") === brand);
   const oScope = ovrRows.filter(r  => (r.category || "Unknown") === category && (r.brand || "Unknown") === brand);
   const wScope = winRows.filter(r  => (skuMeta[r.sku]?.category || "Unknown") === category && (skuMeta[r.sku]?.brand || "Unknown") === brand);
@@ -1702,7 +1754,7 @@ function SimBrandLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, categ
     <div>
       <SimSummaryCards toolRows={tScope} ovrRows={oScope} ovrRowsFull={oScopeFull} totInst={wScope.length} totSkus={new Set(wScope.map(r => r.sku)).size} hasOverrides={hasOverrides} priceData={priceData} />
       <div style={{ fontSize: 12, fontWeight: 700, color: HR.text, marginBottom: 8 }}>Failing SKUs — <span style={{ color: HR.yellowDark }}>{brand}</span><span style={{ color: HR.muted, fontWeight: 400 }}> · {category}</span></div>
-      <SimSKUTable toolRows={tScope} ovrRows={oScope} allDates={allDates} hasOverrides={hasOverrides} priceData={priceData} />
+      <SimSKUTable toolRows={tScope} ovrRows={oScope} allDates={allDates} hasOverrides={hasOverrides} priceData={priceData} toolRowsFull={toolRowsFull} winRows={wScope} />
     </div>
   );
 }
@@ -1954,7 +2006,7 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
         <>
           {!drill && <SimOrgLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} hasOverrides={hasOverrides} priceData={priceData} totInst={totInst} totSkus={totSkus} onDrillCategory={cat => setDrill({ type: "category", value: cat, category: cat })} />}
           {drill?.type === "category" && <SimCategoryLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.value} hasOverrides={hasOverrides} priceData={priceData} totInst={totInst} totSkus={totSkus} allDates={allDates} onDrillBrand={brand => setDrill({ type: "brand", value: brand, brand, category: drill.value })} />}
-          {drill?.type === "brand" && <SimBrandLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.category} brand={drill.value} hasOverrides={hasOverrides} priceData={priceData} allDates={allDates} />}
+          {drill?.type === "brand" && <SimBrandLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.category} brand={drill.value} hasOverrides={hasOverrides} priceData={priceData} allDates={allDates} toolRowsFull={toolRowsFull} />}
         </>
       )}
     </div>
