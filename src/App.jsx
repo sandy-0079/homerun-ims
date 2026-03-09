@@ -1817,11 +1817,12 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
 
   // ── Early returns AFTER all hooks ──
   if (!invoiceData.length || !results) return (
-    <div style={{ textAlign: "center", padding: 80 }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>🔬</div>
-      <div style={{ color: HR.muted, fontSize: 14 }}>No data available</div>
-    </div>
-  );
+  <div style={{ textAlign: "center", padding: 80 }}>
+    <div style={{ fontSize: 40, marginBottom: 12 }}>⚡</div>
+    <div style={{ color: HR.yellowDark, fontWeight: 700, fontSize: 14 }}>Loading data...</div>
+    <div style={{ color: HR.muted, fontSize: 12, marginTop: 4 }}>Please wait a moment</div>
+  </div>
+);
 
   if (simLoading) return (
     <div style={{ textAlign: "center", padding: 80 }}>
@@ -2636,13 +2637,19 @@ export default function App(){
       // Try Supabase team_data first
       const sbData = await loadFromSupabase("team_data","global");
       if(sbData?.invoiceData?.length&&sbData?.skuMaster){
-        setInv(sbData.invoiceData);setSKU(sbData.skuMaster);
-        if(sbData.minReqQty)setMRQ(sbData.minReqQty);
-        if(sbData.newSKUQty)setNSQ(sbData.newSKUQty);
-        if(sbData.deadStock)setDead(new Set(sbData.deadStock));
-        if(sbData.priceData)setPrice(sbData.priceData);
-        setLoaded(true);
-        return;
+  setInv(sbData.invoiceData);setSKU(sbData.skuMaster);
+  if(sbData.minReqQty)setMRQ(sbData.minReqQty);
+  if(sbData.newSKUQty)setNSQ(sbData.newSKUQty);
+  if(sbData.deadStock)setDead(new Set(sbData.deadStock));
+  if(sbData.priceData)setPrice(sbData.priceData);
+  setLoaded(true);
+  setTimeout(()=>{
+    try{
+      const raw=runEngine(sbData.invoiceData,sbData.skuMaster,sbData.minReqQty||{},sbData.priceData||{},new Set(sbData.deadStock||[]),sbData.newSKUQty||{},savedParams);
+      setResults(raw);
+    }catch(err){console.error("Auto-run error:",err);}
+  },100);
+  return;
       }
       // Fallback: try public/team-data.json
       try{
@@ -2650,12 +2657,20 @@ export default function App(){
         if(res.ok){
           const bundle=await res.json();
           if(bundle.invoiceData?.length&&bundle.skuMaster){
-            setInv(bundle.invoiceData);setSKU(bundle.skuMaster);
-            if(bundle.minReqQty)setMRQ(bundle.minReqQty);
-            if(bundle.newSKUQty)setNSQ(bundle.newSKUQty);
-            if(bundle.deadStock)setDead(new Set(bundle.deadStock));
-            if(bundle.priceData)setPrice(bundle.priceData);
-            setLoaded(true);return;
+  setInv(bundle.invoiceData);setSKU(bundle.skuMaster);
+  if(bundle.minReqQty)setMRQ(bundle.minReqQty);
+  if(bundle.newSKUQty)setNSQ(bundle.newSKUQty);
+  if(bundle.deadStock)setDead(new Set(bundle.deadStock));
+  if(bundle.priceData)setPrice(bundle.priceData);
+  setLoaded(true);
+  // Auto-run model for all users on load
+  setTimeout(()=>{
+    try{
+      const raw=runEngine(bundle.invoiceData,bundle.skuMaster,bundle.minReqQty||{},bundle.priceData||{},new Set(bundle.deadStock||[]),bundle.newSKUQty||{},savedParams);
+      setResults(raw);
+    }catch(err){console.error("Auto-run error:",err);}
+  },100);
+  return;
           }
         }
       }catch(e){}
@@ -3369,7 +3384,7 @@ ref={el => { if(el && scrollTop === 0) el.scrollTop = 0; }}>
           )
         )}
         {tab==="output"&&(
-          !results?<div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>No data available.</div>:(
+          !results?<div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>Loading data, please wait...</div>:(
             <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <h2 style={{color:HR.yellowDark,margin:0,fontSize:16}}>Tool Output Download</h2>
