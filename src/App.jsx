@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { loadFromSupabase, saveToSupabase } from "./supabase";
 
-const ROLLING_DAYS = 90;
-const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
+import {
+  ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
+  DC_MULT_DEFAULT, DC_DEAD_MULT_DEFAULT, RECENCY_WT_DEFAULT,
+  BASE_MIN_DAYS_DEFAULT, DEFAULT_BRAND_BUFFER, DEFAULT_PARAMS,
+  runEngine, calcPeriodMinMax,
+  parseCSV, getPriceTag, getMovTag, getSpikeTag, computeStats, getInvSlice, aggStats,
+} from "./engine/index.js";
 
 const HR = {
   yellow:"#F5C400",yellowDark:"#D4A800",black:"#1A1A1A",white:"#FFFFFF",
@@ -17,7 +22,6 @@ const DS_COLORS = [
   {bg:"#FFF0F6",header:"#B5006A",text:"#7A0040"},
 ];
 const DC_COLOR = {bg:"#EAF9FF",header:"#0077A8",text:"#004D70"};
-const MOVEMENT_TIERS_DEFAULT = [2,4,7,10];
 const MOV_COLORS = {"Super Fast":"#16a34a","Fast":"#2D7A3A","Moderate":"#B8860B","Slow":"#C05A00","Super Slow":"#C0392B"};
 const PRICE_TAG_COLORS = {
   "Premium":{bg:"#FEE2E2",color:"#B91C1C",border:"#FECACA"},
@@ -36,25 +40,6 @@ const TOPN_TAG_COLORS = {
 };
 const TOPN_DISPLAY = { "T50":"Top 50","T150":"Top 150","T250":"Top 250","No":"Not Top","Zero Sale L90D":"Zero Sale L90D" };
 
-const DEFAULT_BRAND_BUFFER = {
-  "Asian Paints":3,"VIP Extrusions":3,"MYK Laticrete":3,"Roff":3,
-  "Supreme":3,"Saint-Gobain":2,"Alagar":3,"Legrand":1,"Archidply":1,
-};
-const DC_MULT_DEFAULT = {
-  "Super Fast":{min:0.75,max:1.0},"Fast":{min:0.5,max:0.75},
-  "Moderate":{min:0.5,max:0.75},"Slow":{min:0.25,max:0.5},"Super Slow":{min:0.25,max:0.5},
-};
-const DC_DEAD_MULT_DEFAULT = {min:0.25,max:0.25};
-const RECENCY_WT_DEFAULT = {"Super Fast":2,"Fast":3,"Moderate":1.5,"Slow":1,"Super Slow":1};
-const BASE_MIN_DAYS_DEFAULT = {"Super Fast":6,"Fast":5,"Moderate":3,"Slow":3,"Super Slow":3};
-const DEFAULT_PARAMS = {
-  overallPeriod:90,recencyWindow:15,recencyWt:RECENCY_WT_DEFAULT,movIntervals:[2,4,7,10],
-  priceTiers:[3000,1500,400,100],spikeMultiplier:5,spikePctFrequent:10,spikePctOnce:5,
-  maxDaysBuffer:2,abqMaxMultiplier:1.5,baseMinDays:BASE_MIN_DAYS_DEFAULT,
-  brandBuffer:DEFAULT_BRAND_BUFFER,newDSList:["DS04","DS05"],newDSFloorTopN:150,
-  activeDSCount:4,dcMult:DC_MULT_DEFAULT,dcDeadMult:DC_DEAD_MULT_DEFAULT,
-};
-
 const LS = {
   get:(key)=>{try{const v=localStorage.getItem(key);return v?{value:v}:null;}catch{return null;}},
   set:(key,value)=>{try{localStorage.setItem(key,value);return true;}catch{return null;}},
@@ -67,176 +52,6 @@ function useDebounce(value, delay = 300) {
     return () => clearTimeout(t);
   }, [value, delay]);
   return debounced;
-}
-function parseCSV(text){
-  const lines=text.trim().split("\n");
-  const headers=lines[0].split(",").map(h=>h.trim().replace(/^"|"$/g,""));
-  return lines.slice(1).filter(l=>l.trim()).map(line=>{
-    const vals=[];let cur="",inQ=false;
-    for(let i=0;i<line.length;i++){
-      if(line[i]==='"'){inQ=!inQ;continue;}
-      if(line[i]===','&&!inQ){vals.push(cur.trim());cur="";continue;}
-      cur+=line[i];
-    }
-    vals.push(cur.trim());
-    const obj={};headers.forEach((h,i)=>{obj[h]=vals[i]||"";});
-    return obj;
-  });
-}
-
-function getPriceTag(p,tiers){const v=parseFloat(p)||0;const[t1,t2,t3,t4]=tiers||[3000,1500,400,100];if(v>=t1)return"Premium";if(v>=t2)return"High";if(v>=t3)return"Medium";if(v>=t4)return"Low";if(v>0)return"Super Low";return"No Price";}
-function getMovTag(nzd,total,intervals){if(!nzd)return"Super Slow";const avg=total/nzd;const[i1,i2,i3,i4]=intervals||MOVEMENT_TIERS_DEFAULT;if(avg<=i1)return"Super Fast";if(avg<=i2)return"Fast";if(avg<=i3)return"Moderate";if(avg<=i4)return"Slow";return"Super Slow";}
-function getSpikeTag(spikeDays,totalDays,pFreq,pOnce){const pct=totalDays>0?(spikeDays/totalDays)*100:0;if(pct>=pFreq)return"Frequent";if(pct>=pOnce)return"Once in a while";if(spikeDays>0)return"Rare";return"No Spike";}
-function computeStats(qtys,ords,periodDays,spikeMult){
-  const totalQty=qtys.reduce((a,b)=>a+b,0),totalOrders=ords.reduce((a,b)=>a+b,0),nonZeroDays=qtys.filter(q=>q>0).length;
-  const dailyAvg=totalQty/periodDays,abq=totalOrders>0?totalQty/totalOrders:0,maxDayQty=Math.max(...qtys);
-  let spikeDays=0,spikeVals=[];
-  qtys.forEach(q=>{if(q>spikeMult*dailyAvg){spikeDays++;spikeVals.push(q);}});
-  const sorted=[...spikeVals].sort((a,b)=>a-b),mid=Math.floor(sorted.length/2);
-  const spikeMedian=sorted.length===0?0:sorted.length%2===1?sorted[mid]:(sorted[mid-1]+sorted[mid])/2;
-  const spikeRef=spikeDays===0?maxDayQty:spikeMedian,spikeRatio=dailyAvg>0?spikeRef/dailyAvg:0;
-  return{totalQty,totalOrders,nonZeroDays,dailyAvg,abq,spikeDays,spikeRatio,spikeMedian:spikeRef};
-}
-function calcPeriodMinMax(stats,prTag,spTag,mvTag,abqMaxMult,maxDaysBuffer,baseMinDays){
-  const bmd=baseMinDays||BASE_MIN_DAYS_DEFAULT,isSlow=["Slow","Super Slow"].includes(mvTag),lowPrice=["Low","Super Low","No Price"].includes(prTag);
-  const base=bmd[mvTag]??3,useRatio=spTag==="Frequent"||spTag==="No Spike"||(["Once in a while","Rare"].includes(spTag)&&lowPrice);
-  const baseMinQty=stats.dailyAvg*base,bufQty=maxDaysBuffer*stats.dailyAvg;
-  let minQty=useRatio?Math.ceil(Math.max(baseMinQty,stats.spikeMedian)):Math.ceil(baseMinQty);
-  let maxQty=useRatio?Math.ceil(Math.max(baseMinQty+bufQty,stats.spikeMedian+bufQty)):Math.ceil(baseMinQty+bufQty);
-  if(isSlow&&["Medium","Low","Super Low"].includes(prTag)&&stats.abq>0){const abqCeil=Math.ceil(stats.abq);if(abqCeil>=minQty){minQty=Math.ceil(abqCeil);maxQty=Math.ceil(minQty*abqMaxMult);}}
-  minQty=Math.ceil(minQty);maxQty=Math.ceil(Math.max(maxQty,minQty));
-  return{minQty,maxQty};
-}
-function getDCStats(inv,skuId,activeDSCount,intervals,op){
-  const nzd=Math.min(new Set(inv.filter(r=>r.sku===skuId&&r.qty>0).map(r=>r.date)).size,op);
-  if(!nzd)return{mvTag:"Super Slow",nonZeroDays:0};
-  const interval=op/nzd,dc=[...(intervals||MOVEMENT_TIERS_DEFAULT)].map(x=>x/activeDSCount);
-  let mvTag="Super Slow";
-  if(interval<=dc[0])mvTag="Super Fast";else if(interval<=dc[1])mvTag="Fast";else if(interval<=dc[2])mvTag="Moderate";else if(interval<=dc[3])mvTag="Slow";
-  if(mvTag==="Fast")mvTag="Super Fast";
-  return{mvTag,nonZeroDays:nzd};
-}
-
-function runEngine(inv,skuM,mrq,pd,deadStockSet,nsq,p){
-  const op=p.overallPeriod||90,rw=Math.min(p.recencyWindow||15,op-1),recencyWt=p.recencyWt||RECENCY_WT_DEFAULT;
-  const intervals=p.movIntervals||MOVEMENT_TIERS_DEFAULT,priceTiers=p.priceTiers||[3000,1500,400,100];
-  const brandBuffer=p.brandBuffer||DEFAULT_BRAND_BUFFER,topN=p.newDSFloorTopN||150;
-  const allDatesRaw=[...new Set(inv.map(r=>r.date))].sort(),allDates=allDatesRaw.slice(-op);
-  const total=allDates.length,split=Math.max(0,total-rw),dLong=allDates.slice(0,split),dRecent=allDates.slice(split);
-  const invSliced=inv.filter(r=>allDates.includes(r.date));
-  const qMap={},oMap={};
-  invSliced.forEach(r=>{const k=`${r.sku}||${r.ds}`;if(!qMap[k])qMap[k]={};if(!oMap[k])oMap[k]={};qMap[k][r.date]=(qMap[k][r.date]||0)+r.qty;oMap[k][r.date]=(oMap[k][r.date]||0)+1;});
-  const skuTotals={};
-  invSliced.forEach(r=>{skuTotals[r.sku]=(skuTotals[r.sku]||0)+r.qty;});
-  const t150={};
-  Object.entries(skuTotals).sort((a,b)=>b[1]-a[1]).forEach(([s],i)=>{t150[s]=i<50?"T50":i<150?"T150":i<250?"T250":"No";});
-  Object.values(skuM).forEach(s=>{if((s.status||"").toLowerCase()==="active"&&!skuTotals[s.sku])t150[s.sku]="Zero Sale L90D";});
-  const tags90={};
-  [...new Set(invSliced.map(r=>r.sku))].forEach(skuId=>{
-    DS_LIST.forEach(dsId=>{
-      const k=`${skuId}||${dsId}`,qm=qMap[k]||{},om=oMap[k]||{};
-      const q90=allDates.map(d=>qm[d]||0),o90=allDates.map(d=>om[d]||0);
-      const s90=computeStats(q90,o90,op,p.spikeMultiplier);
-      tags90[k]={mvTag:getMovTag(s90.nonZeroDays,op,intervals),spTag:getSpikeTag(s90.spikeDays,op,p.spikePctFrequent,p.spikePctOnce),dailyAvg:s90.dailyAvg,abq:s90.abq};
-    });
-  });
-  const allSKUs=[...new Set([...invSliced.map(r=>r.sku),...Object.keys(skuM)])],activeDSCount=p.activeDSCount||4,res={};
-  allSKUs.forEach(skuId=>{
-    const meta=skuM[skuId]||{sku:skuId,name:skuId,category:"Unknown",brand:"",status:"Active",inventorisedAt:"DS"};
-    const prTag=getPriceTag(pd[skuId]||0,priceTiers),t150Tag=t150[skuId]||"No",isDead=deadStockSet.has(skuId);
-    const bufDays=brandBuffer[meta.brand]||0,hasBuf=bufDays>0,dsMinArr=[],dsMaxArr=[],stores={};
-    DS_LIST.forEach(dsId=>{
-      const k=`${skuId}||${dsId}`,qm=qMap[k]||{},om=oMap[k]||{};
-      const qLong=dLong.map(d=>qm[d]||0),oLong=dLong.map(d=>om[d]||0);
-      const qRecent=dRecent.map(d=>qm[d]||0),oRecent=dRecent.map(d=>om[d]||0);
-      const q90=allDates.map(d=>qm[d]||0),o90=allDates.map(d=>om[d]||0);
-      const hasData=q90.some(v=>v>0),isNewDS=(p.newDSList||[]).includes(dsId);
-      const isEligible=(()=>{const rank=["T50","T150","T250"].indexOf(t150Tag);if(rank===-1)return false;return[50,150,250][rank]<=topN;})();
-
-      // ── NO DATA PATH ──────────────────────────────────────────────────────
-      if(!hasData){
-        if(isNewDS){
-          let nm=isEligible?(mrq[skuId]||0):0,nx=isEligible?nm:0;
-          let logicTag="Base Logic";
-          if(isEligible&&nm>0) logicTag="New DS Floor";
-          if(nsq&&nsq[skuId]){
-            const q=nsq[skuId][dsId]||0;
-            if(q>0){nm=Math.max(nm,q);nx=nm;logicTag="New SKU Floor";}
-          }
-          if(isDead)nx=nm;
-          stores[dsId]={min:nm,max:nx,dailyAvg:0,abq:0,mvTag:"Super Slow",spTag:"No Spike",logicTag};
-          dsMinArr.push(nm);dsMaxArr.push(nx);
-        }else if(nsq&&nsq[skuId]){
-          const q=nsq[skuId][dsId]||0;
-          const logicTag=q>0?"New SKU Floor":"Base Logic";
-          stores[dsId]={min:q,max:q,dailyAvg:0,abq:0,mvTag:"Super Slow",spTag:"No Spike",logicTag};
-          dsMinArr.push(q);dsMaxArr.push(q);
-        }else{
-          stores[dsId]={min:0,max:0,dailyAvg:0,abq:0,mvTag:"Super Slow",spTag:"No Spike",logicTag:"Base Logic"};
-        }
-        return;
-      }
-
-      // ── HAS DATA PATH ─────────────────────────────────────────────────────
-      const sLong=computeStats(qLong,oLong,op-rw,p.spikeMultiplier),sRecent=computeStats(qRecent,oRecent,rw,p.spikeMultiplier);
-      const s90=computeStats(q90,o90,op,p.spikeMultiplier);
-      const mvTagLong=getMovTag(sLong.nonZeroDays,op-rw,intervals),spTagLong=getSpikeTag(sLong.spikeDays,op-rw,p.spikePctFrequent,p.spikePctOnce);
-      const mvTagRecent=getMovTag(sRecent.nonZeroDays,rw,intervals),spTagRecent=getSpikeTag(sRecent.spikeDays,rw,p.spikePctFrequent,p.spikePctOnce);
-      const mvTag90=tags90[k].mvTag,wt=recencyWt[mvTag90]||1;
-      const rLong=calcPeriodMinMax(sLong,prTag,spTagLong,mvTagLong,p.abqMaxMultiplier,p.maxDaysBuffer,p.baseMinDays);
-      const rRecent=calcPeriodMinMax(sRecent,prTag,spTagRecent,mvTagRecent,p.abqMaxMultiplier,p.maxDaysBuffer,p.baseMinDays);
-      let minQty=Math.ceil((rLong.minQty+rRecent.minQty*wt)/(1+wt)),maxQty=Math.ceil((rLong.maxQty+rRecent.maxQty*wt)/(1+wt));
-
-      // Track what wins — start assuming base logic
-      let logicTag="Base Logic";
-
-      // New DS floor — only wins if floor actually exceeds the blend
-      if(isNewDS&&isEligible){
-        const floor=mrq[skuId]||0;
-        if(floor>minQty){minQty=floor;maxQty=floor;logicTag="New DS Floor";}
-        else maxQty=Math.max(maxQty,minQty);
-      }
-
-      // Brand buffer — physically overwrites minQty/maxQty, so it always wins
-      // (unless NSQ later overrides it further — checked below)
-      if(hasBuf){
-        const dohMin=s90.dailyAvg>0?minQty/s90.dailyAvg:0;
-        minQty=Math.ceil((dohMin+bufDays)*s90.dailyAvg);
-        maxQty=minQty;
-        logicTag="Brand Buffer";
-      }
-
-      minQty=Math.ceil(minQty);maxQty=Math.ceil(Math.max(maxQty,minQty));
-      if(isDead)maxQty=minQty;maxQty=Math.max(maxQty,minQty);if(isDead)maxQty=minQty;
-
-      // NSQ — runs last, wins if it raises minQty above everything so far
-      if(nsq&&nsq[skuId]){
-        const q=nsq[skuId][dsId]||0;
-        if(q>minQty){minQty=q;maxQty=minQty;logicTag="New SKU Floor";}
-      }
-
-      stores[dsId]={min:Math.round(minQty),max:Math.round(maxQty),dailyAvg:s90.dailyAvg,abq:s90.abq,mvTag:mvTag90,spTag:tags90[k].spTag,logicTag};
-      dsMinArr.push(Math.round(minQty));dsMaxArr.push(Math.round(maxQty));
-    });
-    const sumMin=dsMinArr.reduce((a,b)=>a+b,0),sumMax=dsMaxArr.reduce((a,b)=>a+b,0);
-    const dcStats=getDCStats(invSliced,skuId,activeDSCount,intervals,op);
-    const dcDeadMult=p.dcDeadMult||DC_DEAD_MULT_DEFAULT,dcM=isDead?dcDeadMult:(p.dcMult||DC_MULT_DEFAULT)[dcStats.mvTag]||DC_MULT_DEFAULT[dcStats.mvTag];
-    res[skuId]={meta:{...meta,priceTag:prTag,t150Tag},stores,dc:{min:Math.round(sumMin*dcM.min),max:Math.round(sumMax*dcM.max),mvTag:dcStats.mvTag,nonZeroDays:dcStats.nonZeroDays}};
-  });
-  return res;
-}
-
-function getInvSlice(invoiceData,period,recencyWindow){
-  const allDates=[...new Set(invoiceData.map(r=>r.date))].sort(),full=allDates.slice(-90);
-  if(period==="90D")return invoiceData.filter(r=>full.includes(r.date));
-  const rw=Math.min(recencyWindow||15,full.length-1),split=full.length-rw;
-  if(period==="15D")return invoiceData.filter(r=>full.slice(split).includes(r.date));
-  if(period==="75D")return invoiceData.filter(r=>full.slice(0,split).includes(r.date));
-  return invoiceData.filter(r=>full.includes(r.date));
-}
-function aggStats(rows){
-  const skus=new Set(rows.map(r=>r.sku)),totalOrders=rows.length,totalQty=rows.reduce((a,r)=>a+r.qty,0),avgOrderQty=totalOrders>0?totalQty/totalOrders:0;
-  return{skuCount:skus.size,totalOrders,totalQty,avgOrderQty};
 }
 
 const TAG_STYLE = {padding:"1px 5px",borderRadius:3,fontSize:8,fontWeight:700,whiteSpace:"nowrap",lineHeight:"14px",display:"inline-block"};
@@ -298,10 +113,16 @@ const DSCols=React.memo(({r,displayDS,coreOverrides})=>displayDS.map(ds=>{
   const s=r.stores[ds]||{min:0,max:0,dailyAvg:0,abq:0,mvTag:"—",logicTag:"Base Logic"};
   const di=DS_LIST.indexOf(ds),dc=DS_COLORS[di>=0?di:0];
   const logicTag=coreOverrides?.[r.meta?.sku]?.[ds]?"Manual Override":(s.logicTag||"Base Logic");
+  const strategyTag = s.strategyTag || "standard";
   return[
     <td key={ds+"mv"} style={{padding:"3px 6px",borderTop:`1px solid ${HR.border}`,textAlign:"center",background:dc.bg,borderLeft:`1px solid ${dc.header}22`}}>
       <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
         <MovTag value={s.mvTag}/>
+        {strategyTag && strategyTag !== "standard" && (
+          <span style={{fontSize:7,color:"#6366F1",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>
+            {strategyTag === "percentile_cover" ? "PCT" : strategyTag === "fixed_unit_floor" ? "FLOOR" : strategyTag.toUpperCase()}
+          </span>
+        )}
         <LogicTag value={logicTag}/>
       </div>
     </td>,
@@ -2681,7 +2502,7 @@ export default function App(){
   const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);setQaOpen(false);};
 
   const hasChanges=JSON.stringify(params)!==JSON.stringify(savedParams);
-  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult)].filter(Boolean).length;
+  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays)].filter(Boolean).length;
 
   // ── Load team data (invoice, SKU master etc.) ───────────────────────────────
   useEffect(()=>{
@@ -3912,6 +3733,212 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
               </div>
             </Section>
           </div>
+        </div>
+
+        {/* ── Strategy Config Sections ── */}
+        <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:16}}>
+          <div style={{
+            background:"#F3E8FF",border:"1px solid #D8B4FE",borderRadius:8,
+            padding:"12px 16px",marginBottom:4,
+            display:"flex",alignItems:"center",gap:10,
+          }}>
+            <span style={{fontSize:20}}>🎯</span>
+            <span style={{fontWeight:800,fontSize:16,color:"#7C3AED",letterSpacing:"-0.3px"}}>
+              Category Strategy Engine
+            </span>
+          </div>
+
+          {/* Section A: Category Strategy Assignment */}
+          {(()=>{
+            const cats=[...new Set(Object.values(skuMaster).map(s=>s.category||"Unknown"))].sort();
+            const cs=params.categoryStrategies||{};
+            const nonStd=Object.values(cs).filter(v=>v&&v!=="standard").length;
+            return(
+              <Section title="Category → Strategy Map" icon="📋" accent="#7C3AED"
+                summary={nonStd>0?`${nonStd} non-standard`:"All standard"}>
+                <div style={{...S.card,padding:0,overflow:"hidden",maxHeight:360,overflowY:"auto"}}>
+                  <table style={S.table}>
+                    <thead><tr style={{background:HR.surfaceLight}}>
+                      <th style={{...S.th,position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Category</th>
+                      <th style={{...S.th,textAlign:"center",position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Strategy</th>
+                    </tr></thead>
+                    <tbody>
+                      {cats.map((cat,i)=>(
+                        <tr key={cat} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                          <td style={{...S.td,fontWeight:600,fontSize:11}}>{cat}</td>
+                          <td style={{...S.td,textAlign:"center"}}>
+                            <select value={cs[cat]||"standard"}
+                              onChange={e=>{
+                                const v=e.target.value;
+                                const next={...cs};
+                                if(v==="standard") delete next[cat]; else next[cat]=v;
+                                saveParams({...params,categoryStrategies:next});
+                              }}
+                              style={{...S.input,fontSize:11,padding:"3px 6px",fontWeight:600,
+                                color:cs[cat]&&cs[cat]!=="standard"?"#7C3AED":HR.muted}}>
+                              <option value="standard">Standard</option>
+                              <option value="percentile_cover">Percentile Cover</option>
+                              <option value="fixed_unit_floor">Fixed Unit Floor</option>
+                              <option value="manual">Manual</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Section>
+            );
+          })()}
+
+          {/* Section B: Percentile Cover Params */}
+          {(()=>{
+            const pc=params.percentileCover||DEFAULT_PARAMS.percentileCover;
+            const pbp=pc.percentileByPrice||DEFAULT_PARAMS.percentileCover.percentileByPrice;
+            const cdm=pc.coverDaysByMovement||DEFAULT_PARAMS.percentileCover.coverDaysByMovement;
+            const priceTags=["Premium","High","Medium","Low","Super Low","No Price"];
+            const movTags=["Super Fast","Fast","Moderate","Slow","Super Slow"];
+            return(
+              <Section title="Percentile Cover Params" icon="📊" accent="#7C3AED"
+                summary={`P${pbp["Medium"]||90} mid · ${cdm["Moderate"]||3}d mod cover`}>
+                <div style={{fontSize:11,color:HR.muted,marginBottom:8,fontWeight:600}}>Percentile by Price Tag</div>
+                <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:12}}>
+                  <table style={S.table}>
+                    <thead><tr style={{background:HR.surfaceLight}}>
+                      <th style={S.th}>Price Tag</th>
+                      <th style={{...S.th,textAlign:"center"}}>Percentile</th>
+                    </tr></thead>
+                    <tbody>
+                      {priceTags.map((tag,i)=>(
+                        <tr key={tag} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                          <td style={{...S.td,fontWeight:600,fontSize:11}}>
+                            <TagPill value={tag} colorMap={PRICE_TAG_COLORS}/>
+                          </td>
+                          <td style={{...S.td,textAlign:"center"}}>
+                            <NumInput value={pbp[tag]||90} min={50} max={99} step={1}
+                              onChange={v=>saveParams({...params,percentileCover:{...pc,percentileByPrice:{...pbp,[tag]:v}}})}
+                              style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{fontSize:11,color:HR.muted,marginBottom:8,fontWeight:600}}>Cover Days by Movement</div>
+                <div style={{...S.card,padding:0,overflow:"hidden"}}>
+                  <table style={S.table}>
+                    <thead><tr style={{background:HR.surfaceLight}}>
+                      <th style={S.th}>Movement</th>
+                      <th style={{...S.th,textAlign:"center"}}>Cover Days</th>
+                    </tr></thead>
+                    <tbody>
+                      {movTags.map((tag,i)=>(
+                        <tr key={tag} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                          <td style={{...S.td,fontSize:11}}><MovTag value={tag}/></td>
+                          <td style={{...S.td,textAlign:"center"}}>
+                            <NumInput value={cdm[tag]||2} min={1} max={7} step={1}
+                              onChange={v=>saveParams({...params,percentileCover:{...pc,coverDaysByMovement:{...cdm,[tag]:v}}})}
+                              style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Section>
+            );
+          })()}
+
+          {/* Section C: Fixed Unit Floor Params */}
+          {(()=>{
+            const fu=params.fixedUnitFloor||DEFAULT_PARAMS.fixedUnitFloor;
+            return(
+              <Section title="Fixed Unit Floor Params" icon="📐" accent="#7C3AED"
+                summary={`P${fu.orderQtyPercentile||90} · ${fu.maxMultiplier||1.5}× + ${fu.maxAdditive||1}`}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Order Qty Percentile</div>
+                    <NumInput value={fu.orderQtyPercentile||90} min={50} max={99} step={1}
+                      onChange={v=>saveParams({...params,fixedUnitFloor:{...fu,orderQtyPercentile:v}})}
+                      style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+                  </div>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Max Multiplier</div>
+                    <NumInput value={fu.maxMultiplier||1.5} min={1} max={3} step={0.1}
+                      onChange={v=>saveParams({...params,fixedUnitFloor:{...fu,maxMultiplier:v}})}
+                      style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+                  </div>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Max Additive</div>
+                    <NumInput value={fu.maxAdditive||1} min={0} max={5} step={1}
+                      onChange={v=>saveParams({...params,fixedUnitFloor:{...fu,maxAdditive:v}})}
+                      style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+                  </div>
+                </div>
+              </Section>
+            );
+          })()}
+
+          {/* Section D: Brand Lead Time (DC) */}
+          {(()=>{
+            const blt=params.brandLeadTimeDays||{_default:2};
+            const allBrands=[...new Set(Object.values(skuMaster).map(s=>s.brand).filter(Boolean))].sort();
+            const configuredBrands=Object.keys(blt).filter(k=>k!=="_default");
+            const availableBrands=allBrands.filter(b=>!configuredBrands.includes(b));
+            return(
+              <Section title="Brand Lead Time (DC)" icon="🚚" accent="#7C3AED"
+                summary={`Default ${blt._default||2}d · ${configuredBrands.length} brand override${configuredBrands.length!==1?"s":""}`}>
+                <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                    <div style={{fontWeight:600,color:HR.text,fontSize:12}}>Default Lead Time (days)</div>
+                    <NumInput value={blt._default||2} min={1} max={10} step={1}
+                      onChange={v=>saveParams({...params,brandLeadTimeDays:{...blt,_default:v}})}
+                      style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
+                  </div>
+                </div>
+                {configuredBrands.length>0&&(
+                  <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:10}}>
+                    <table style={S.table}>
+                      <thead><tr style={{background:HR.surfaceLight}}>
+                        <th style={S.th}>Brand</th>
+                        <th style={{...S.th,textAlign:"center"}}>Lead Days</th>
+                        <th style={{...S.th,textAlign:"center"}}>Remove</th>
+                      </tr></thead>
+                      <tbody>
+                        {configuredBrands.map((brand,i)=>(
+                          <tr key={brand} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                            <td style={{...S.td,fontWeight:600,fontSize:11}}>{brand}</td>
+                            <td style={{...S.td,textAlign:"center"}}>
+                              <NumInput value={blt[brand]||2} min={1} max={10} step={1}
+                                onChange={v=>saveParams({...params,brandLeadTimeDays:{...blt,[brand]:v}})}
+                                style={{width:64,color:"#7C3AED",fontWeight:700}}/>
+                            </td>
+                            <td style={{...S.td,textAlign:"center"}}>
+                              <button onClick={()=>{const next={...blt};delete next[brand];saveParams({...params,brandLeadTimeDays:next});}}
+                                style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"3px 8px",borderRadius:4,cursor:"pointer",fontSize:11}}>✕</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {availableBrands.length>0&&(
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <select id="newLeadBrand" style={{...S.input,fontSize:11,flex:1}}>
+                      {availableBrands.map(b=><option key={b} value={b}>{b}</option>)}
+                    </select>
+                    <button onClick={()=>{
+                      const sel=document.getElementById("newLeadBrand");
+                      if(!sel?.value)return;
+                      saveParams({...params,brandLeadTimeDays:{...(params.brandLeadTimeDays||{_default:2}),[sel.value]:5}});
+                    }} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12,whiteSpace:"nowrap"}}>+ Add</button>
+                  </div>
+                )}
+              </Section>
+            );
+          })()}
+
         </div>
       </div>{/* end col 2 */}
 
