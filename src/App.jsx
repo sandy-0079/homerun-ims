@@ -10,6 +10,7 @@ import {
   DEFAULT_PARAMS,
 } from "./engine/constants";
 import { parseCSV, getPriceTag, getMovTag, getSpikeTag, computeStats, percentile, getInvSlice, aggStats } from "./engine/utils.js";
+import { calcPeriodMinMax, standardStrategy } from "./engine/strategies/standard.js";
 
 const HR = {
   yellow:"#F5C400",yellowDark:"#D4A800",black:"#1A1A1A",white:"#FFFFFF",
@@ -54,16 +55,6 @@ function useDebounce(value, delay = 300) {
     return () => clearTimeout(t);
   }, [value, delay]);
   return debounced;
-}
-function calcPeriodMinMax(stats,prTag,spTag,mvTag,abqMaxMult,maxDaysBuffer,baseMinDays){
-  const bmd=baseMinDays||BASE_MIN_DAYS_DEFAULT,isSlow=["Slow","Super Slow"].includes(mvTag),lowPrice=["Low","Super Low","No Price"].includes(prTag);
-  const base=bmd[mvTag]??3,useRatio=spTag==="Frequent"||spTag==="No Spike"||(["Once in a while","Rare"].includes(spTag)&&lowPrice);
-  const baseMinQty=stats.dailyAvg*base,bufQty=maxDaysBuffer*stats.dailyAvg;
-  let minQty=useRatio?Math.ceil(Math.max(baseMinQty,stats.spikeMedian)):Math.ceil(baseMinQty);
-  let maxQty=useRatio?Math.ceil(Math.max(baseMinQty+bufQty,stats.spikeMedian+bufQty)):Math.ceil(baseMinQty+bufQty);
-  if(isSlow&&["Medium","Low","Super Low"].includes(prTag)&&stats.abq>0){const abqCeil=Math.ceil(stats.abq);if(abqCeil>=minQty){minQty=Math.ceil(abqCeil);maxQty=Math.ceil(minQty*abqMaxMult);}}
-  minQty=Math.ceil(minQty);maxQty=Math.ceil(Math.max(maxQty,minQty));
-  return{minQty,maxQty};
 }
 function getDCStats(inv,skuId,activeDSCount,intervals,op){
   const nzd=Math.min(new Set(inv.filter(r=>r.sku===skuId&&r.qty>0).map(r=>r.date)).size,op);
