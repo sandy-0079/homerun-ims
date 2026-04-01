@@ -113,10 +113,16 @@ const DSCols=React.memo(({r,displayDS,coreOverrides})=>displayDS.map(ds=>{
   const s=r.stores[ds]||{min:0,max:0,dailyAvg:0,abq:0,mvTag:"—",logicTag:"Base Logic"};
   const di=DS_LIST.indexOf(ds),dc=DS_COLORS[di>=0?di:0];
   const logicTag=coreOverrides?.[r.meta?.sku]?.[ds]?"Manual Override":(s.logicTag||"Base Logic");
+  const strategyTag = s.strategyTag || "standard";
   return[
     <td key={ds+"mv"} style={{padding:"3px 6px",borderTop:`1px solid ${HR.border}`,textAlign:"center",background:dc.bg,borderLeft:`1px solid ${dc.header}22`}}>
       <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
         <MovTag value={s.mvTag}/>
+        {strategyTag && strategyTag !== "standard" && (
+          <span style={{fontSize:7,color:"#6366F1",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>
+            {strategyTag === "percentile_cover" ? "PCT" : strategyTag === "fixed_unit_floor" ? "FLOOR" : strategyTag.toUpperCase()}
+          </span>
+        )}
         <LogicTag value={logicTag}/>
       </div>
     </td>,
