@@ -2,15 +2,12 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { loadFromSupabase, saveToSupabase } from "./supabase";
 
 import {
-  ROLLING_DAYS, DS_LIST,
-  MOVEMENT_TIERS_DEFAULT,
-  DC_MULT_DEFAULT, DC_DEAD_MULT_DEFAULT,
-  RECENCY_WT_DEFAULT, BASE_MIN_DAYS_DEFAULT,
-  DEFAULT_BRAND_BUFFER,
-  DEFAULT_PARAMS,
-} from "./engine/constants";
-import { parseCSV, getPriceTag, getMovTag, getSpikeTag, computeStats, percentile, getInvSlice, aggStats } from "./engine/utils.js";
-import { calcPeriodMinMax, standardStrategy } from "./engine/strategies/standard.js";
+  ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
+  DC_MULT_DEFAULT, DC_DEAD_MULT_DEFAULT, RECENCY_WT_DEFAULT,
+  BASE_MIN_DAYS_DEFAULT, DEFAULT_BRAND_BUFFER, DEFAULT_PARAMS,
+  runEngine, calcPeriodMinMax,
+  parseCSV, getPriceTag, getMovTag, getSpikeTag, computeStats, getInvSlice, aggStats,
+} from "./engine/index.js";
 
 const HR = {
   yellow:"#F5C400",yellowDark:"#D4A800",black:"#1A1A1A",white:"#FFFFFF",
@@ -55,124 +52,6 @@ function useDebounce(value, delay = 300) {
     return () => clearTimeout(t);
   }, [value, delay]);
   return debounced;
-}
-function getDCStats(inv,skuId,activeDSCount,intervals,op){
-  const nzd=Math.min(new Set(inv.filter(r=>r.sku===skuId&&r.qty>0).map(r=>r.date)).size,op);
-  if(!nzd)return{mvTag:"Super Slow",nonZeroDays:0};
-  const interval=op/nzd,dc=[...(intervals||MOVEMENT_TIERS_DEFAULT)].map(x=>x/activeDSCount);
-  let mvTag="Super Slow";
-  if(interval<=dc[0])mvTag="Super Fast";else if(interval<=dc[1])mvTag="Fast";else if(interval<=dc[2])mvTag="Moderate";else if(interval<=dc[3])mvTag="Slow";
-  if(mvTag==="Fast")mvTag="Super Fast";
-  return{mvTag,nonZeroDays:nzd};
-}
-
-function runEngine(inv,skuM,mrq,pd,deadStockSet,nsq,p){
-  const op=p.overallPeriod||90,rw=Math.min(p.recencyWindow||15,op-1),recencyWt=p.recencyWt||RECENCY_WT_DEFAULT;
-  const intervals=p.movIntervals||MOVEMENT_TIERS_DEFAULT,priceTiers=p.priceTiers||[3000,1500,400,100];
-  const brandBuffer=p.brandBuffer||DEFAULT_BRAND_BUFFER,topN=p.newDSFloorTopN||150;
-  const allDatesRaw=[...new Set(inv.map(r=>r.date))].sort(),allDates=allDatesRaw.slice(-op);
-  const total=allDates.length,split=Math.max(0,total-rw),dLong=allDates.slice(0,split),dRecent=allDates.slice(split);
-  const invSliced=inv.filter(r=>allDates.includes(r.date));
-  const qMap={},oMap={};
-  invSliced.forEach(r=>{const k=`${r.sku}||${r.ds}`;if(!qMap[k])qMap[k]={};if(!oMap[k])oMap[k]={};qMap[k][r.date]=(qMap[k][r.date]||0)+r.qty;oMap[k][r.date]=(oMap[k][r.date]||0)+1;});
-  const skuTotals={};
-  invSliced.forEach(r=>{skuTotals[r.sku]=(skuTotals[r.sku]||0)+r.qty;});
-  const t150={};
-  Object.entries(skuTotals).sort((a,b)=>b[1]-a[1]).forEach(([s],i)=>{t150[s]=i<50?"T50":i<150?"T150":i<250?"T250":"No";});
-  Object.values(skuM).forEach(s=>{if((s.status||"").toLowerCase()==="active"&&!skuTotals[s.sku])t150[s.sku]="Zero Sale L90D";});
-  const tags90={};
-  [...new Set(invSliced.map(r=>r.sku))].forEach(skuId=>{
-    DS_LIST.forEach(dsId=>{
-      const k=`${skuId}||${dsId}`,qm=qMap[k]||{},om=oMap[k]||{};
-      const q90=allDates.map(d=>qm[d]||0),o90=allDates.map(d=>om[d]||0);
-      const s90=computeStats(q90,o90,op,p.spikeMultiplier);
-      tags90[k]={mvTag:getMovTag(s90.nonZeroDays,op,intervals),spTag:getSpikeTag(s90.spikeDays,op,p.spikePctFrequent,p.spikePctOnce),dailyAvg:s90.dailyAvg,abq:s90.abq};
-    });
-  });
-  const allSKUs=[...new Set([...invSliced.map(r=>r.sku),...Object.keys(skuM)])],activeDSCount=p.activeDSCount||4,res={};
-  allSKUs.forEach(skuId=>{
-    const meta=skuM[skuId]||{sku:skuId,name:skuId,category:"Unknown",brand:"",status:"Active",inventorisedAt:"DS"};
-    const prTag=getPriceTag(pd[skuId]||0,priceTiers),t150Tag=t150[skuId]||"No",isDead=deadStockSet.has(skuId);
-    const bufDays=brandBuffer[meta.brand]||0,hasBuf=bufDays>0,dsMinArr=[],dsMaxArr=[],stores={};
-    DS_LIST.forEach(dsId=>{
-      const k=`${skuId}||${dsId}`,qm=qMap[k]||{},om=oMap[k]||{};
-      const qLong=dLong.map(d=>qm[d]||0),oLong=dLong.map(d=>om[d]||0);
-      const qRecent=dRecent.map(d=>qm[d]||0),oRecent=dRecent.map(d=>om[d]||0);
-      const q90=allDates.map(d=>qm[d]||0),o90=allDates.map(d=>om[d]||0);
-      const hasData=q90.some(v=>v>0),isNewDS=(p.newDSList||[]).includes(dsId);
-      const isEligible=(()=>{const rank=["T50","T150","T250"].indexOf(t150Tag);if(rank===-1)return false;return[50,150,250][rank]<=topN;})();
-
-      // ── NO DATA PATH ──────────────────────────────────────────────────────
-      if(!hasData){
-        if(isNewDS){
-          let nm=isEligible?(mrq[skuId]||0):0,nx=isEligible?nm:0;
-          let logicTag="Base Logic";
-          if(isEligible&&nm>0) logicTag="New DS Floor";
-          if(nsq&&nsq[skuId]){
-            const q=nsq[skuId][dsId]||0;
-            if(q>0){nm=Math.max(nm,q);nx=nm;logicTag="New SKU Floor";}
-          }
-          if(isDead)nx=nm;
-          stores[dsId]={min:nm,max:nx,dailyAvg:0,abq:0,mvTag:"Super Slow",spTag:"No Spike",logicTag};
-          dsMinArr.push(nm);dsMaxArr.push(nx);
-        }else if(nsq&&nsq[skuId]){
-          const q=nsq[skuId][dsId]||0;
-          const logicTag=q>0?"New SKU Floor":"Base Logic";
-          stores[dsId]={min:q,max:q,dailyAvg:0,abq:0,mvTag:"Super Slow",spTag:"No Spike",logicTag};
-          dsMinArr.push(q);dsMaxArr.push(q);
-        }else{
-          stores[dsId]={min:0,max:0,dailyAvg:0,abq:0,mvTag:"Super Slow",spTag:"No Spike",logicTag:"Base Logic"};
-        }
-        return;
-      }
-
-      // ── HAS DATA PATH ─────────────────────────────────────────────────────
-      const sLong=computeStats(qLong,oLong,op-rw,p.spikeMultiplier),sRecent=computeStats(qRecent,oRecent,rw,p.spikeMultiplier);
-      const s90=computeStats(q90,o90,op,p.spikeMultiplier);
-      const mvTagLong=getMovTag(sLong.nonZeroDays,op-rw,intervals),spTagLong=getSpikeTag(sLong.spikeDays,op-rw,p.spikePctFrequent,p.spikePctOnce);
-      const mvTagRecent=getMovTag(sRecent.nonZeroDays,rw,intervals),spTagRecent=getSpikeTag(sRecent.spikeDays,rw,p.spikePctFrequent,p.spikePctOnce);
-      const mvTag90=tags90[k].mvTag,wt=recencyWt[mvTag90]||1;
-      const rLong=calcPeriodMinMax(sLong,prTag,spTagLong,mvTagLong,p.abqMaxMultiplier,p.maxDaysBuffer,p.baseMinDays);
-      const rRecent=calcPeriodMinMax(sRecent,prTag,spTagRecent,mvTagRecent,p.abqMaxMultiplier,p.maxDaysBuffer,p.baseMinDays);
-      let minQty=Math.ceil((rLong.minQty+rRecent.minQty*wt)/(1+wt)),maxQty=Math.ceil((rLong.maxQty+rRecent.maxQty*wt)/(1+wt));
-
-      // Track what wins — start assuming base logic
-      let logicTag="Base Logic";
-
-      // New DS floor — only wins if floor actually exceeds the blend
-      if(isNewDS&&isEligible){
-        const floor=mrq[skuId]||0;
-        if(floor>minQty){minQty=floor;maxQty=floor;logicTag="New DS Floor";}
-        else maxQty=Math.max(maxQty,minQty);
-      }
-
-      // Brand buffer — physically overwrites minQty/maxQty, so it always wins
-      // (unless NSQ later overrides it further — checked below)
-      if(hasBuf){
-        const dohMin=s90.dailyAvg>0?minQty/s90.dailyAvg:0;
-        minQty=Math.ceil((dohMin+bufDays)*s90.dailyAvg);
-        maxQty=minQty;
-        logicTag="Brand Buffer";
-      }
-
-      minQty=Math.ceil(minQty);maxQty=Math.ceil(Math.max(maxQty,minQty));
-      if(isDead)maxQty=minQty;maxQty=Math.max(maxQty,minQty);if(isDead)maxQty=minQty;
-
-      // NSQ — runs last, wins if it raises minQty above everything so far
-      if(nsq&&nsq[skuId]){
-        const q=nsq[skuId][dsId]||0;
-        if(q>minQty){minQty=q;maxQty=minQty;logicTag="New SKU Floor";}
-      }
-
-      stores[dsId]={min:Math.round(minQty),max:Math.round(maxQty),dailyAvg:s90.dailyAvg,abq:s90.abq,mvTag:mvTag90,spTag:tags90[k].spTag,logicTag};
-      dsMinArr.push(Math.round(minQty));dsMaxArr.push(Math.round(maxQty));
-    });
-    const sumMin=dsMinArr.reduce((a,b)=>a+b,0),sumMax=dsMaxArr.reduce((a,b)=>a+b,0);
-    const dcStats=getDCStats(invSliced,skuId,activeDSCount,intervals,op);
-    const dcDeadMult=p.dcDeadMult||DC_DEAD_MULT_DEFAULT,dcM=isDead?dcDeadMult:(p.dcMult||DC_MULT_DEFAULT)[dcStats.mvTag]||DC_MULT_DEFAULT[dcStats.mvTag];
-    res[skuId]={meta:{...meta,priceTag:prTag,t150Tag},stores,dc:{min:Math.round(sumMin*dcM.min),max:Math.round(sumMax*dcM.max),mvTag:dcStats.mvTag,nonZeroDays:dcStats.nonZeroDays}};
-  });
-  return res;
 }
 
 const TAG_STYLE = {padding:"1px 5px",borderRadius:3,fontSize:8,fontWeight:700,whiteSpace:"nowrap",lineHeight:"14px",display:"inline-block"};
