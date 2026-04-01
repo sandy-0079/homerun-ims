@@ -9,6 +9,7 @@ import {
   DEFAULT_BRAND_BUFFER,
   DEFAULT_PARAMS,
 } from "./engine/constants";
+import { parseCSV, getPriceTag, getMovTag, getSpikeTag, computeStats, percentile, getInvSlice, aggStats } from "./engine/utils.js";
 
 const HR = {
   yellow:"#F5C400",yellowDark:"#D4A800",black:"#1A1A1A",white:"#FFFFFF",
@@ -53,35 +54,6 @@ function useDebounce(value, delay = 300) {
     return () => clearTimeout(t);
   }, [value, delay]);
   return debounced;
-}
-function parseCSV(text){
-  const lines=text.trim().split("\n");
-  const headers=lines[0].split(",").map(h=>h.trim().replace(/^"|"$/g,""));
-  return lines.slice(1).filter(l=>l.trim()).map(line=>{
-    const vals=[];let cur="",inQ=false;
-    for(let i=0;i<line.length;i++){
-      if(line[i]==='"'){inQ=!inQ;continue;}
-      if(line[i]===','&&!inQ){vals.push(cur.trim());cur="";continue;}
-      cur+=line[i];
-    }
-    vals.push(cur.trim());
-    const obj={};headers.forEach((h,i)=>{obj[h]=vals[i]||"";});
-    return obj;
-  });
-}
-
-function getPriceTag(p,tiers){const v=parseFloat(p)||0;const[t1,t2,t3,t4]=tiers||[3000,1500,400,100];if(v>=t1)return"Premium";if(v>=t2)return"High";if(v>=t3)return"Medium";if(v>=t4)return"Low";if(v>0)return"Super Low";return"No Price";}
-function getMovTag(nzd,total,intervals){if(!nzd)return"Super Slow";const avg=total/nzd;const[i1,i2,i3,i4]=intervals||MOVEMENT_TIERS_DEFAULT;if(avg<=i1)return"Super Fast";if(avg<=i2)return"Fast";if(avg<=i3)return"Moderate";if(avg<=i4)return"Slow";return"Super Slow";}
-function getSpikeTag(spikeDays,totalDays,pFreq,pOnce){const pct=totalDays>0?(spikeDays/totalDays)*100:0;if(pct>=pFreq)return"Frequent";if(pct>=pOnce)return"Once in a while";if(spikeDays>0)return"Rare";return"No Spike";}
-function computeStats(qtys,ords,periodDays,spikeMult){
-  const totalQty=qtys.reduce((a,b)=>a+b,0),totalOrders=ords.reduce((a,b)=>a+b,0),nonZeroDays=qtys.filter(q=>q>0).length;
-  const dailyAvg=totalQty/periodDays,abq=totalOrders>0?totalQty/totalOrders:0,maxDayQty=Math.max(...qtys);
-  let spikeDays=0,spikeVals=[];
-  qtys.forEach(q=>{if(q>spikeMult*dailyAvg){spikeDays++;spikeVals.push(q);}});
-  const sorted=[...spikeVals].sort((a,b)=>a-b),mid=Math.floor(sorted.length/2);
-  const spikeMedian=sorted.length===0?0:sorted.length%2===1?sorted[mid]:(sorted[mid-1]+sorted[mid])/2;
-  const spikeRef=spikeDays===0?maxDayQty:spikeMedian,spikeRatio=dailyAvg>0?spikeRef/dailyAvg:0;
-  return{totalQty,totalOrders,nonZeroDays,dailyAvg,abq,spikeDays,spikeRatio,spikeMedian:spikeRef};
 }
 function calcPeriodMinMax(stats,prTag,spTag,mvTag,abqMaxMult,maxDaysBuffer,baseMinDays){
   const bmd=baseMinDays||BASE_MIN_DAYS_DEFAULT,isSlow=["Slow","Super Slow"].includes(mvTag),lowPrice=["Low","Super Low","No Price"].includes(prTag);
@@ -210,19 +182,6 @@ function runEngine(inv,skuM,mrq,pd,deadStockSet,nsq,p){
     res[skuId]={meta:{...meta,priceTag:prTag,t150Tag},stores,dc:{min:Math.round(sumMin*dcM.min),max:Math.round(sumMax*dcM.max),mvTag:dcStats.mvTag,nonZeroDays:dcStats.nonZeroDays}};
   });
   return res;
-}
-
-function getInvSlice(invoiceData,period,recencyWindow){
-  const allDates=[...new Set(invoiceData.map(r=>r.date))].sort(),full=allDates.slice(-90);
-  if(period==="90D")return invoiceData.filter(r=>full.includes(r.date));
-  const rw=Math.min(recencyWindow||15,full.length-1),split=full.length-rw;
-  if(period==="15D")return invoiceData.filter(r=>full.slice(split).includes(r.date));
-  if(period==="75D")return invoiceData.filter(r=>full.slice(0,split).includes(r.date));
-  return invoiceData.filter(r=>full.includes(r.date));
-}
-function aggStats(rows){
-  const skus=new Set(rows.map(r=>r.sku)),totalOrders=rows.length,totalQty=rows.reduce((a,r)=>a+r.qty,0),avgOrderQty=totalOrders>0?totalQty/totalOrders:0;
-  return{skuCount:skus.size,totalOrders,totalQty,avgOrderQty};
 }
 
 const TAG_STYLE = {padding:"1px 5px",borderRadius:3,fontSize:8,fontWeight:700,whiteSpace:"nowrap",lineHeight:"14px",display:"inline-block"};
