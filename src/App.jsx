@@ -2502,7 +2502,7 @@ export default function App(){
   const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);setQaOpen(false);};
 
   const hasChanges=JSON.stringify(params)!==JSON.stringify(savedParams);
-  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult)].filter(Boolean).length;
+  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays)].filter(Boolean).length;
 
   // ── Load team data (invoice, SKU master etc.) ───────────────────────────────
   useEffect(()=>{
@@ -3733,6 +3733,212 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
               </div>
             </Section>
           </div>
+        </div>
+
+        {/* ── Strategy Config Sections ── */}
+        <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:16}}>
+          <div style={{
+            background:"#F3E8FF",border:"1px solid #D8B4FE",borderRadius:8,
+            padding:"12px 16px",marginBottom:4,
+            display:"flex",alignItems:"center",gap:10,
+          }}>
+            <span style={{fontSize:20}}>🎯</span>
+            <span style={{fontWeight:800,fontSize:16,color:"#7C3AED",letterSpacing:"-0.3px"}}>
+              Category Strategy Engine
+            </span>
+          </div>
+
+          {/* Section A: Category Strategy Assignment */}
+          {(()=>{
+            const cats=[...new Set(Object.values(skuMaster).map(s=>s.category||"Unknown"))].sort();
+            const cs=params.categoryStrategies||{};
+            const nonStd=Object.values(cs).filter(v=>v&&v!=="standard").length;
+            return(
+              <Section title="Category → Strategy Map" icon="📋" accent="#7C3AED"
+                summary={nonStd>0?`${nonStd} non-standard`:"All standard"}>
+                <div style={{...S.card,padding:0,overflow:"hidden",maxHeight:360,overflowY:"auto"}}>
+                  <table style={S.table}>
+                    <thead><tr style={{background:HR.surfaceLight}}>
+                      <th style={{...S.th,position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Category</th>
+                      <th style={{...S.th,textAlign:"center",position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Strategy</th>
+                    </tr></thead>
+                    <tbody>
+                      {cats.map((cat,i)=>(
+                        <tr key={cat} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                          <td style={{...S.td,fontWeight:600,fontSize:11}}>{cat}</td>
+                          <td style={{...S.td,textAlign:"center"}}>
+                            <select value={cs[cat]||"standard"}
+                              onChange={e=>{
+                                const v=e.target.value;
+                                const next={...cs};
+                                if(v==="standard") delete next[cat]; else next[cat]=v;
+                                saveParams({...params,categoryStrategies:next});
+                              }}
+                              style={{...S.input,fontSize:11,padding:"3px 6px",fontWeight:600,
+                                color:cs[cat]&&cs[cat]!=="standard"?"#7C3AED":HR.muted}}>
+                              <option value="standard">Standard</option>
+                              <option value="percentile_cover">Percentile Cover</option>
+                              <option value="fixed_unit_floor">Fixed Unit Floor</option>
+                              <option value="manual">Manual</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Section>
+            );
+          })()}
+
+          {/* Section B: Percentile Cover Params */}
+          {(()=>{
+            const pc=params.percentileCover||DEFAULT_PARAMS.percentileCover;
+            const pbp=pc.percentileByPrice||DEFAULT_PARAMS.percentileCover.percentileByPrice;
+            const cdm=pc.coverDaysByMovement||DEFAULT_PARAMS.percentileCover.coverDaysByMovement;
+            const priceTags=["Premium","High","Medium","Low","Super Low","No Price"];
+            const movTags=["Super Fast","Fast","Moderate","Slow","Super Slow"];
+            return(
+              <Section title="Percentile Cover Params" icon="📊" accent="#7C3AED"
+                summary={`P${pbp["Medium"]||90} mid · ${cdm["Moderate"]||3}d mod cover`}>
+                <div style={{fontSize:11,color:HR.muted,marginBottom:8,fontWeight:600}}>Percentile by Price Tag</div>
+                <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:12}}>
+                  <table style={S.table}>
+                    <thead><tr style={{background:HR.surfaceLight}}>
+                      <th style={S.th}>Price Tag</th>
+                      <th style={{...S.th,textAlign:"center"}}>Percentile</th>
+                    </tr></thead>
+                    <tbody>
+                      {priceTags.map((tag,i)=>(
+                        <tr key={tag} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                          <td style={{...S.td,fontWeight:600,fontSize:11}}>
+                            <TagPill value={tag} colorMap={PRICE_TAG_COLORS}/>
+                          </td>
+                          <td style={{...S.td,textAlign:"center"}}>
+                            <NumInput value={pbp[tag]||90} min={50} max={99} step={1}
+                              onChange={v=>saveParams({...params,percentileCover:{...pc,percentileByPrice:{...pbp,[tag]:v}}})}
+                              style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{fontSize:11,color:HR.muted,marginBottom:8,fontWeight:600}}>Cover Days by Movement</div>
+                <div style={{...S.card,padding:0,overflow:"hidden"}}>
+                  <table style={S.table}>
+                    <thead><tr style={{background:HR.surfaceLight}}>
+                      <th style={S.th}>Movement</th>
+                      <th style={{...S.th,textAlign:"center"}}>Cover Days</th>
+                    </tr></thead>
+                    <tbody>
+                      {movTags.map((tag,i)=>(
+                        <tr key={tag} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                          <td style={{...S.td,fontSize:11}}><MovTag value={tag}/></td>
+                          <td style={{...S.td,textAlign:"center"}}>
+                            <NumInput value={cdm[tag]||2} min={1} max={7} step={1}
+                              onChange={v=>saveParams({...params,percentileCover:{...pc,coverDaysByMovement:{...cdm,[tag]:v}}})}
+                              style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Section>
+            );
+          })()}
+
+          {/* Section C: Fixed Unit Floor Params */}
+          {(()=>{
+            const fu=params.fixedUnitFloor||DEFAULT_PARAMS.fixedUnitFloor;
+            return(
+              <Section title="Fixed Unit Floor Params" icon="📐" accent="#7C3AED"
+                summary={`P${fu.orderQtyPercentile||90} · ${fu.maxMultiplier||1.5}× + ${fu.maxAdditive||1}`}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Order Qty Percentile</div>
+                    <NumInput value={fu.orderQtyPercentile||90} min={50} max={99} step={1}
+                      onChange={v=>saveParams({...params,fixedUnitFloor:{...fu,orderQtyPercentile:v}})}
+                      style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+                  </div>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Max Multiplier</div>
+                    <NumInput value={fu.maxMultiplier||1.5} min={1} max={3} step={0.1}
+                      onChange={v=>saveParams({...params,fixedUnitFloor:{...fu,maxMultiplier:v}})}
+                      style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+                  </div>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Max Additive</div>
+                    <NumInput value={fu.maxAdditive||1} min={0} max={5} step={1}
+                      onChange={v=>saveParams({...params,fixedUnitFloor:{...fu,maxAdditive:v}})}
+                      style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+                  </div>
+                </div>
+              </Section>
+            );
+          })()}
+
+          {/* Section D: Brand Lead Time (DC) */}
+          {(()=>{
+            const blt=params.brandLeadTimeDays||{_default:2};
+            const allBrands=[...new Set(Object.values(skuMaster).map(s=>s.brand).filter(Boolean))].sort();
+            const configuredBrands=Object.keys(blt).filter(k=>k!=="_default");
+            const availableBrands=allBrands.filter(b=>!configuredBrands.includes(b));
+            return(
+              <Section title="Brand Lead Time (DC)" icon="🚚" accent="#7C3AED"
+                summary={`Default ${blt._default||2}d · ${configuredBrands.length} brand override${configuredBrands.length!==1?"s":""}`}>
+                <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                    <div style={{fontWeight:600,color:HR.text,fontSize:12}}>Default Lead Time (days)</div>
+                    <NumInput value={blt._default||2} min={1} max={10} step={1}
+                      onChange={v=>saveParams({...params,brandLeadTimeDays:{...blt,_default:v}})}
+                      style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
+                  </div>
+                </div>
+                {configuredBrands.length>0&&(
+                  <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:10}}>
+                    <table style={S.table}>
+                      <thead><tr style={{background:HR.surfaceLight}}>
+                        <th style={S.th}>Brand</th>
+                        <th style={{...S.th,textAlign:"center"}}>Lead Days</th>
+                        <th style={{...S.th,textAlign:"center"}}>Remove</th>
+                      </tr></thead>
+                      <tbody>
+                        {configuredBrands.map((brand,i)=>(
+                          <tr key={brand} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                            <td style={{...S.td,fontWeight:600,fontSize:11}}>{brand}</td>
+                            <td style={{...S.td,textAlign:"center"}}>
+                              <NumInput value={blt[brand]||2} min={1} max={10} step={1}
+                                onChange={v=>saveParams({...params,brandLeadTimeDays:{...blt,[brand]:v}})}
+                                style={{width:64,color:"#7C3AED",fontWeight:700}}/>
+                            </td>
+                            <td style={{...S.td,textAlign:"center"}}>
+                              <button onClick={()=>{const next={...blt};delete next[brand];saveParams({...params,brandLeadTimeDays:next});}}
+                                style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"3px 8px",borderRadius:4,cursor:"pointer",fontSize:11}}>✕</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {availableBrands.length>0&&(
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <select id="newLeadBrand" style={{...S.input,fontSize:11,flex:1}}>
+                      {availableBrands.map(b=><option key={b} value={b}>{b}</option>)}
+                    </select>
+                    <button onClick={()=>{
+                      const sel=document.getElementById("newLeadBrand");
+                      if(!sel?.value)return;
+                      saveParams({...params,brandLeadTimeDays:{...(params.brandLeadTimeDays||{_default:2}),[sel.value]:5}});
+                    }} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12,whiteSpace:"nowrap"}}>+ Add</button>
+                  </div>
+                )}
+              </Section>
+            );
+          })()}
+
         </div>
       </div>{/* end col 2 */}
 
