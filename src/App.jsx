@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { loadFromSupabase, saveToSupabase } from "./supabase";
 
-const ROLLING_DAYS = 90;
-const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
+import {
+  ROLLING_DAYS, DS_LIST,
+  MOVEMENT_TIERS_DEFAULT,
+  DC_MULT_DEFAULT, DC_DEAD_MULT_DEFAULT,
+  RECENCY_WT_DEFAULT, BASE_MIN_DAYS_DEFAULT,
+  DEFAULT_BRAND_BUFFER,
+  DEFAULT_PARAMS,
+} from "./engine/constants";
 
 const HR = {
   yellow:"#F5C400",yellowDark:"#D4A800",black:"#1A1A1A",white:"#FFFFFF",
@@ -17,7 +23,6 @@ const DS_COLORS = [
   {bg:"#FFF0F6",header:"#B5006A",text:"#7A0040"},
 ];
 const DC_COLOR = {bg:"#EAF9FF",header:"#0077A8",text:"#004D70"};
-const MOVEMENT_TIERS_DEFAULT = [2,4,7,10];
 const MOV_COLORS = {"Super Fast":"#16a34a","Fast":"#2D7A3A","Moderate":"#B8860B","Slow":"#C05A00","Super Slow":"#C0392B"};
 const PRICE_TAG_COLORS = {
   "Premium":{bg:"#FEE2E2",color:"#B91C1C",border:"#FECACA"},
@@ -35,25 +40,6 @@ const TOPN_TAG_COLORS = {
   "Zero Sale L90D":{bg:"#FEE2E2",color:"#B91C1C",border:"#FECACA"},
 };
 const TOPN_DISPLAY = { "T50":"Top 50","T150":"Top 150","T250":"Top 250","No":"Not Top","Zero Sale L90D":"Zero Sale L90D" };
-
-const DEFAULT_BRAND_BUFFER = {
-  "Asian Paints":3,"VIP Extrusions":3,"MYK Laticrete":3,"Roff":3,
-  "Supreme":3,"Saint-Gobain":2,"Alagar":3,"Legrand":1,"Archidply":1,
-};
-const DC_MULT_DEFAULT = {
-  "Super Fast":{min:0.75,max:1.0},"Fast":{min:0.5,max:0.75},
-  "Moderate":{min:0.5,max:0.75},"Slow":{min:0.25,max:0.5},"Super Slow":{min:0.25,max:0.5},
-};
-const DC_DEAD_MULT_DEFAULT = {min:0.25,max:0.25};
-const RECENCY_WT_DEFAULT = {"Super Fast":2,"Fast":3,"Moderate":1.5,"Slow":1,"Super Slow":1};
-const BASE_MIN_DAYS_DEFAULT = {"Super Fast":6,"Fast":5,"Moderate":3,"Slow":3,"Super Slow":3};
-const DEFAULT_PARAMS = {
-  overallPeriod:90,recencyWindow:15,recencyWt:RECENCY_WT_DEFAULT,movIntervals:[2,4,7,10],
-  priceTiers:[3000,1500,400,100],spikeMultiplier:5,spikePctFrequent:10,spikePctOnce:5,
-  maxDaysBuffer:2,abqMaxMultiplier:1.5,baseMinDays:BASE_MIN_DAYS_DEFAULT,
-  brandBuffer:DEFAULT_BRAND_BUFFER,newDSList:["DS04","DS05"],newDSFloorTopN:150,
-  activeDSCount:4,dcMult:DC_MULT_DEFAULT,dcDeadMult:DC_DEAD_MULT_DEFAULT,
-};
 
 const LS = {
   get:(key)=>{try{const v=localStorage.getItem(key);return v?{value:v}:null;}catch{return null;}},
