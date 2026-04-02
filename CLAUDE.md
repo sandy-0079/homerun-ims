@@ -303,53 +303,118 @@ Paste a CSV from Google Sheet (columns: SKU, DS01 Min, DS01 Max ... DC Min, DC M
 
 ---
 
-## 4. Why We Are Building a New Version
+## 4. Category Strategy Engine (SHIPPED — April 2026)
 
-The current model was built on the assumption that one weekly data refresh would be sufficient to keep stockouts under control. That assumption has broken down. Here is what we know:
+The original model used a single average-based formula for all SKUs. This failed for slow-moving SKUs with erratic demand — 78.7% of all SKU×DS combos are Slow or Super Slow, and averages are near-zero for items that sell once every 10+ days.
 
-### 4.1 Stockouts Not Under Control
+### 4.1 What Was Built
 
-Despite the existing model and manual overrides, stockout instances remain high — particularly for:
-- **Moderate, Slow, Super Slow moving SKUs** priced at Medium, High, or Premium
-- These SKUs are not covered adequately even when New SKU Floor and New DS Floor overrides are in place
-- Also, the order behaviour for these SKUs is too erratic, order for an SKU comes after 45 days of previous order for example
+A **strategy dispatcher** that routes each SKU to a different Min/Max calculation method based on its category. The engine sits in `src/engine/` as a modular set of files (extracted from the original monolithic App.jsx).
 
-This suggests the base Min/Max logic is underestimating required stock for low-velocity, higher-value items. The weekly batch model is not catching demand shifts fast enough for these SKUs.
+### 4.2 The Three Strategies
 
-### 4.2 Business Has Scaled
+#### Standard (existing engine, unchanged)
+- Uses daily average × base min days, with long/recent blending and recency weights
+- Works well for categories with regular, frequent sales
+- All existing params (spike, ABQ floor, recency weights) continue to apply
 
-Order volume has grown from ~220 orders/day to ~280 orders/day (~27% growth). The model's historical averages were calibrated at the lower volume. Min/Max levels computed on 90-day history may now be systematically too low.
+#### Percentile Cover (new)
+Instead of averages, stocks based on the **Xth percentile of non-zero daily quantities**.
 
-### 4.3 Backward-Looking, Weekly Refresh Is Not Enough
+- **Percentile selected by price tag** — cheap items stocked more aggressively (hard to emergency-source), premium items leaner (easy to source on demand):
 
-The model only looks backward at historical sales. It has no forward signal. A weekly refresh means up to 7 days of demand shift go unaddressed. We need the person managing inventory to be able to act on real-time or near-real-time signals.
+| Price Tag | Percentile |
+|---|---|
+| Low / Super Low / No Price | 95th |
+| Medium | 85th |
+| High | 80th |
+| Premium | 75th |
 
-### 4.4 Category-Level Strategy May Be Needed
+- **Cover days selected by movement tag:**
 
-Not all categories behave the same way. A blanket model may be too blunt. We need to think about whether different categories need different inventory strategies — not just different parameters within the same formula.
+| Movement | Cover Days |
+|---|---|
+| Super Fast / Fast | 2 |
+| Moderate / Slow / Super Slow | 1 |
 
-### 4.5 The Role Has Changed
+- **Formula:** Min = CEILING(Pxx of non-zero daily qty × cover days), Max = CEILING(Min + daily avg × maxDaysBuffer)
 
-Earlier: one admin refreshes data once a week, model outputs are fed into procurement.
+#### Fixed Unit Floor (new)
+For categories where order timing is erratic but order size is predictable (e.g., Wires — always 1-2 qty).
 
-Now: one person sits on the tool daily (or continuously), monitors SKU-level inventory health, and makes active decisions. The tool needs to support that workflow — giving that person all the information they need to decide whether inventory at each SKU × DS × DC is at the right level right now.
+- **Formula:** Min = CEILING(P90 of individual order quantities), Max = CEILING(MAX(Min + 1, Min × 1.5))
+- Falls back to Standard if no orders exist in the period
 
-### 4.6 Core Goals Remain the Same
+### 4.3 Current Category Assignments
 
-- Minimise stockouts for all SKUs, irrespective of how erratic their order behaviour is
-- Optimise total inventory value
+| Strategy | Categories |
+|---|---|
+| **Standard** | Cement, General Hardware, Painting, Fevicol, Water Proofing |
+| **Percentile Cover** | Furniture & Architectural Hardware, Tiling, CPVC Pipes & Fittings, Plywood/MDF & HDHMR, Switches & Sockets, Conduits & GI Boxes, Lighting |
+| **Fixed Unit Floor** | Wires/MCB & Distribution Boards, Sanitary & Bath Fittings, Overhead Tanks |
+
+### 4.4 DC Calculation — Lead-Time-Aware
+
+DC Min now accounts for brand-specific supplier lead times:
+```
+DC Min = MAX(sumDailyAvg × brandLeadTimeDays, sumDSMin × dcMultiplier.min)
+DC Max = MAX(CEILING(dcMin × dcMultiplier.max/min), sumDSMax × dcMultiplier.max)
+```
+- Lead time is configurable per brand (default 2 days)
+- Strategy-agnostic — DC doesn't care how DS Min was calculated
+
+### 4.5 Strategy Dispatch Flow
+
+```
+For each SKU × DS:
+  1. Run all tagging (Movement, Spike, Price, T150) — same as before
+  2. Look up SKU's category → assigned strategy
+  3. Dispatch to strategy's Min/Max formula
+  4. Apply post-blend adjustments in strict order:
+     a. New DS Floor (if applicable)
+     b. Brand Buffer (if applicable)
+     c. NSQ Override (if applicable)
+     d. Dead Stock cap (if applicable)
+     e. Final rounding
+  5. Record Strategy Tag (PCT / FLOOR / standard)
+  6. Record Logic Tag (which post-blend rule modified it)
+```
+
+### 4.6 Configuration
+
+All strategy config is editable in Logic Tweaker (Column 2, "Category Strategy Engine" section):
+- Category → Strategy dropdown
+- Percentile Cover params (percentile by price, cover days by movement)
+- Fixed Unit Floor params (order qty percentile, max multiplier, max additive)
+- Brand Lead Time Days (per-brand, with default)
+
+Config stored in Supabase `params` table under keys: `categoryStrategies`, `percentileCover`, `fixedUnitFloor`, `brandLeadTimeDays`.
+
+### 4.7 Validated Impact (April 2026)
+
+| Metric | Before (all Standard) | After (strategy assigned) |
+|---|---|---|
+| OOS Rate (L15D) | 4.0% (300 instances) | 2.0% (~150 instances) |
+| Inv Min | ₹256L | ₹302L |
+| Inv Max | ₹336L | ₹418L |
+
+50% reduction in stockout instances. Inventory increase concentrated in low-cost items.
 
 ---
 
-## 5. What the New Version Needs to Do
+## 5. What Still Needs to Be Built
 
-### 5.1 Real-Time or Near-Real-Time Sales Visibility
+### 5.1 Demand Shaping Within Categories (v2 — next)
+
+Currently each category gets one strategy with fixed params. v2 will auto-tune strategy params based on each SKU's **coefficient of variation (CV)** — high CV SKUs get more aggressive percentiles, low CV SKUs get tighter ones. This is Approach C from the design spec.
+
+### 5.2 Real-Time or Near-Real-Time Sales Visibility
 
 The person sitting on the tool needs to see current sales as they happen (or as close to it as possible). This means:
 - Sales data needs to flow in more frequently than once a week — ideally daily, ideally via an API or automated upload rather than a manual CSV export
 - The tool should show how today's sales compare to the expected daily average for each SKU at each DS
 
-### 5.2 Inventory Health Monitor (the core new view)
+### 5.3 Inventory Health Monitor (the core new view)
 
 A live view — the primary working surface for the inventory manager — showing for each SKU × DS × DC:
 
@@ -361,47 +426,7 @@ A live view — the primary working surface for the inventory manager — showin
 
 This is the decision support layer. The person should be able to scan this view and immediately know where to act.
 
-### 5.3 Percentile-Based Strategy (new logic to explore)
-
-Current model uses: daily average × base min days as the starting point for Min.
-
-**Proposed new approach to explore:** For each SKU at each DS, compute the **90th percentile of single-day order qty** over the lookback window. Stock Min = this 90th percentile value. This means:
-- On 90% of days, opening stock covers the full day's demand without a restock trigger
-- Max = some multiple of this (to be determined per category or movement tier)
-
-This is simpler, more intuitive, and directly addresses stockouts for lumpy-demand SKUs (moderate/slow, higher price) where the current average-based approach fails.
-
-We need to:
-- Implement this as an alternative engine
-- Run it alongside the current engine so outputs can be compared
-- Evaluate which produces better coverage for the stockout-prone segments
-
-This is just me brainstorming, want more suggestions on how we can re-think the model from a category lens
-
-### 5.4 Category-Level Strategy Flags
-
-Rather than applying one formula across all categories, allow the inventory manager to assign a strategy to each category. Initial strategies to define:
-
-| Strategy | Logic |
-|---|---|
-| Standard | Current blend model (existing engine) |
-| Percentile Cover | 90th percentile of daily demand as Min |
-| ABQ Cover | CEILING(ABQ) as Min, with a Max multiplier |
-| Manual | Min/Max set entirely by the operator |
-
-Each category (or even individual SKU) should be assignable to a strategy. The model then uses the appropriate engine for that SKU.
-
-### 5.5 Replenishment Lead Time Awareness
-
-The DC replenishment logic needs to reflect reality:
-- **Most brands:** DC gets replenished in 1–2 days (next-day or day-after delivery)
-- **A few specific brands:** DC replenishment cycle is up to 5 days
-
-The DC Min/Max calculation should factor in the replenishment lead time for each brand. Currently DC Min/Max is purely a multiplier of DS totals — it does not account for how long the DC will wait without a top-up.
-
-A simple approach: DC Min = sum of DS daily averages × lead time days (by brand). DC Max = DC Min + safety buffer.
-
-### 5.6 Smarter Alerts and Prioritisation
+### 5.4 Smarter Alerts and Prioritisation
 
 The inventory manager should not need to scroll through 1,500 SKUs to find problems. The tool should surface:
 - SKUs at risk of stockout within X days given current sales pace
@@ -411,13 +436,13 @@ The inventory manager should not need to scroll through 1,500 SKUs to find probl
 
 These should be filterable, sortable, and actionable — the manager should be able to click through to the SKU detail and immediately see what to do.
 
-### 5.7 Manual Override Workflow — Simplified
+### 5.5 Manual Override Workflow — Simplified
 
 Currently, overrides require: run OOS simulation → download CSV → edit → re-upload → apply to core. This is too heavy for daily use.
 
 The new version should allow the inventory manager to directly edit Min/Max for any SKU × DS inline in the monitoring view, with a clear audit trail showing: who changed it, when, what the tool recommendation was, and what override was applied.
 
-### 5.8 Retain Everything That Works
+### 5.6 Retain Everything That Works
 
 The following from the current tool are working well and must be retained:
 - T150 ranking logic
@@ -457,32 +482,48 @@ The following from the current tool are working well and must be retained:
 
 ---
 
-## 8. Open Questions (to work through during build)
+## 8. Open Questions (remaining)
 
-1. What is the right percentile to use? 90th? 85th? Should it vary by movement tag or category?
-2. How do we handle SKUs with very few data points (e.g. 3 orders in 90 days) where a 90th percentile is statistically meaningless?
-3. Which brands have a 5-day DC replenishment cycle? This list needs to be configured in the tool.
-4. What is the right Max for the percentile strategy? 2× the 90th percentile? Or a fixed number of days of cover above it? Or the multiplying factor depends on the movement tag - Super Fast moving SKU: 5 times the 90th percentile?
-5. Should the category-level strategy assignment live in the Logic Tweaker, or as a separate configuration screen?
-6. Can we get a real-time or daily stock-on-hand feed? If not, how do we approximate days-of-cover?
-7. What does the alert threshold look like — at what days-of-cover level do we flag a SKU as "at risk"?
-8. We can choose to start from scratch and build a new tool altogether, and let the existing tool remain - can be deprecated later
+1. Can we get a real-time or daily stock-on-hand feed? If not, how do we approximate days-of-cover?
+2. What does the alert threshold look like — at what days-of-cover level do we flag a SKU as "at risk"?
+3. Which brands have a 5-day DC replenishment cycle? (Configurable in Logic Tweaker now, but list needs to be populated)
+4. How should demand shaping (v2) auto-tune percentiles — by CV thresholds, or continuously scaled?
+
+### Resolved Questions
+- **Percentile by price:** Premium=75, High=80, Medium=85, Low/Super Low=95 (cheap items stock aggressively — hard to emergency-source)
+- **Cover days:** 1 day for Moderate/Slow/Super Slow (daily DC restock), 2 for Fast/Super Fast
+- **Max formula:** Min + daily avg × buffer days (not a multiplier of Min)
+- **Strategy assignment:** Lives in Logic Tweaker, Column 2
+- **Category assignments:** Determined from 90-day demand analysis — see section 4.3
 
 ---
 
-## 9. File Structure Reference (current)
+## 9. File Structure Reference
 
 ```
 src/
-  App.jsx              — main app, all tabs, model engine, all state
-  supabase.js          — Supabase client, loadFromSupabase, saveToSupabase
-  simWorker.js         — Web Worker for OOS simulation computation
+  App.jsx                              — UI: all tabs, state, components (~3,800 lines)
+  supabase.js                          — Supabase client, loadFromSupabase, saveToSupabase
+  simWorker.js                         — Web Worker for OOS simulation
+  engine/
+    constants.js                       — all default params, tier configs, DS_LIST
+    utils.js                           — parseCSV, getPriceTag, getMovTag, getSpikeTag, computeStats, percentile
+    runEngine.js                       — strategy dispatcher, getDCStats, post-blend adjustments, lead-time DC
+    index.js                           — barrel export
+    strategies/
+      standard.js                      — Standard strategy (calcPeriodMinMax + long/recent blend)
+      percentileCover.js               — Percentile Cover strategy
+      fixedUnitFloor.js                — Fixed Unit Floor strategy
 public/
-  team-data.json       — fallback data bundle (generated on Publish)
-.env                   — VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_ADMIN_PASSWORD
+  team-data.json                       — fallback data bundle (generated on Publish)
+docs/
+  superpowers/specs/                   — design specs
+  superpowers/plans/                   — implementation plans
+  category-analysis.md                 — demand analysis by category (from 90-day invoice data)
+.env                                   — VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_ADMIN_PASSWORD
 ```
 
-The entire model engine (`runEngine`), all tab components, and all state management currently live in `App.jsx`. As we add new engines and views, this file will need to be broken into modules.
+Engine logic lives in `src/engine/`. UI, state management, and tab components remain in `App.jsx`.
 
 ---
 
@@ -505,4 +546,9 @@ The entire model engine (`runEngine`), all tab components, and all state managem
 | Core Override | A manual Min/Max override applied from OOS Simulation that bakes into the model output |
 | OOS | Out of Stock — an order line that could not be fully fulfilled |
 | OOS Rate | OOS instances ÷ total order instances (north-star simulation metric) |
-| Logic Tag | Tag on each DS cell showing which rule determined the final Min/Max |
+| Logic Tag | Tag on each DS cell showing which post-blend rule modified the final Min/Max |
+| Strategy Tag | Tag showing which strategy computed the base Min/Max (PCT / FLOOR / standard) |
+| Percentile Cover | Strategy using Xth percentile of non-zero daily qty × cover days as Min |
+| Fixed Unit Floor | Strategy using P90 of individual order quantities as Min |
+| CV | Coefficient of Variation — std(demand) / mean(demand), measures demand lumpiness |
+| Lead Time | Days for DC to receive supplier replenishment (default 2, configurable per brand) |
