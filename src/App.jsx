@@ -1912,9 +1912,24 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
   }), [allRows, filterCat, filterSource, search]);
 
   /* ---------- KPIs ---------- */
-  const kpiDeltaMin = filtered.reduce((s, r) => s + r.deltaMin, 0);
-  const kpiDeltaMax = filtered.reduce((s, r) => s + r.deltaMax, 0);
-  const kpiDeltaTotal = kpiDeltaMin + kpiDeltaMax;
+  const kpiMinBefore = filtered.reduce((s, r) => {
+    const p = r.price || 0;
+    return s + DS_LIST.reduce((ds, d) => ds + (r.dsData[d]?.toolMin || 0) * p, 0) + (r.dcToolMin || 0) * p;
+  }, 0);
+  const kpiMinAfter = filtered.reduce((s, r) => {
+    const p = r.price || 0;
+    return s + DS_LIST.reduce((ds, d) => ds + Math.max(r.dsData[d]?.effectiveMin || 0, r.dsData[d]?.ovrMin || 0) * p, 0) + (r.dcEffMin || 0) * p;
+  }, 0);
+  const kpiMaxBefore = filtered.reduce((s, r) => {
+    const p = r.price || 0;
+    return s + DS_LIST.reduce((ds, d) => ds + (r.dsData[d]?.toolMax || 0) * p, 0) + (r.dcToolMax || 0) * p;
+  }, 0);
+  const kpiMaxAfter = filtered.reduce((s, r) => {
+    const p = r.price || 0;
+    return s + DS_LIST.reduce((ds, d) => ds + Math.max(r.dsData[d]?.effectiveMax || 0, r.dsData[d]?.ovrMax || 0) * p, 0) + (r.dcEffMax || 0) * p;
+  }, 0);
+  const kpiMinDelta = Math.round(kpiMinAfter - kpiMinBefore);
+  const kpiMaxDelta = Math.round(kpiMaxAfter - kpiMaxBefore);
 
   /* ---------- Actions ---------- */
   const removeOverride = (sku) => {
@@ -1944,17 +1959,30 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
         <span style={{ color: HR.muted, fontSize: 12 }}>One row per SKU. Shows OOS Simulation overrides and SKU Floor entries across all DS.</span>
       </div>
 
-      {/* 3 KPI Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 12 }}>
+      {/* 2 KPI Cards — Min and Max, each with Before / After / Delta */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
         {[
-          { label: "Min Inv Value Delta", value: `${kpiDeltaMin >= 0 ? "+" : ""}${fmtInr(kpiDeltaMin)}`, sub: `${filtered.length} SKU${filtered.length !== 1 ? "s" : ""} with overrides/floors`, color: kpiDeltaMin >= 0 ? "#C05A00" : HR.green },
-          { label: "Max Inv Value Delta", value: `${kpiDeltaMax >= 0 ? "+" : ""}${fmtInr(kpiDeltaMax)}`, sub: `Across DS + DC`, color: kpiDeltaMax >= 0 ? "#C05A00" : HR.green },
-          { label: "Total Delta (Min + Max)", value: `${kpiDeltaTotal >= 0 ? "+" : ""}${fmtInr(kpiDeltaTotal)}`, sub: kpiDeltaTotal >= 0 ? "Inventory increase" : "Inventory decrease", color: kpiDeltaTotal >= 0 ? "#C05A00" : HR.green },
+          { label: "Inventory Value (Min)", before: kpiMinBefore, after: kpiMinAfter, delta: kpiMinDelta, color: "#0077A8" },
+          { label: "Inventory Value (Max)", before: kpiMaxBefore, after: kpiMaxAfter, delta: kpiMaxDelta, color: "#7A3DBF" },
         ].map(c => (
-          <div key={c.label} style={{ background: HR.surface, borderRadius: 7, padding: "8px 12px", border: `1px solid ${HR.border}`, borderLeft: `3px solid ${c.color}` }}>
-            <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 2 }}>{c.label}</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: c.color, lineHeight: 1.2 }}>{c.value}</div>
-            <div style={{ fontSize: 10, color: c.subColor || HR.muted, marginTop: 2, fontWeight: c.subColor ? 700 : 400 }}>{c.sub}</div>
+          <div key={c.label} style={{ background: HR.surface, borderRadius: 7, padding: "10px 14px", border: `1px solid ${HR.border}`, borderLeft: `3px solid ${c.color}` }}>
+            <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 6 }}>{c.label}</div>
+            <div style={{ display: "flex", gap: 16, alignItems: "baseline" }}>
+              <div>
+                <div style={{ fontSize: 9, color: HR.muted, marginBottom: 1 }}>Before</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: HR.text }}>{fmtInr(Math.round(c.before))}</div>
+              </div>
+              <div style={{ fontSize: 16, color: HR.muted }}>→</div>
+              <div>
+                <div style={{ fontSize: 9, color: HR.muted, marginBottom: 1 }}>After</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: c.color }}>{fmtInr(Math.round(c.after))}</div>
+              </div>
+              <div style={{ marginLeft: "auto", textAlign: "right" }}>
+                <div style={{ fontSize: 9, color: HR.muted, marginBottom: 1 }}>Delta</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: c.delta >= 0 ? "#C05A00" : HR.green }}>{c.delta >= 0 ? "+" : ""}{fmtInr(c.delta)}</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 9, color: HR.muted, marginTop: 4 }}>{filtered.length} SKU{filtered.length !== 1 ? "s" : ""} · DS + DC</div>
           </div>
         ))}
       </div>
