@@ -2823,7 +2823,8 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
 };
   const runQA=()=>{if(!results||!qaText.trim()){alert("Upload data and run model first.");return;}const rows=parseQACSV(qaText);if(!rows.length){alert("Could not parse CSV.");return;}setQaDiffs(buildDiff(rows,results));setQaFDS("All");setQaFMv("All");setQaFSp("All");setQaFPr("All");};
 
-  const soldSKUs=new Set(invoiceData.map(r=>r.sku));
+  const periodDates=useMemo(()=>{const d=[...new Set(invoiceData.map(r=>r.date))].sort();return new Set(d.slice(-(params.overallPeriod||90)));},[invoiceData,params.overallPeriod]);
+  const soldSKUs=new Set(invoiceData.filter(r=>periodDates.has(r.date)).map(r=>r.sku));
   // trim + lowercase status check to handle trailing spaces / casing issues
   const activeMaster=Object.values(skuMaster).filter(s=>(s.status||"").trim().toLowerCase()==="active");
   const uniqueSold=[...soldSKUs].filter(s=>skuMaster[s]&&(skuMaster[s].status||"").trim().toLowerCase()==="active").length;
