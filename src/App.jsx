@@ -2640,7 +2640,21 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   },[invoiceData,minReqQty,newSKUQty,deadStock,priceData,params]);
 
   const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));e.target.value="";},[]);
-  const handleNSQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const nsq={};rows.forEach(r=>{const s=r["SKU"]||"";if(!s)return;nsq[s]={};DS_LIST.forEach(ds=>{const v=parseFloat(r[ds]||0);if(v>0)nsq[s][ds]=v;});});setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));e.target.value="";},[]);
+  const handleNSQ=useCallback(async(e)=>{
+  const file=e.target.files[0];if(!file)return;
+  const rows=parseCSV(await file.text());
+  const nsq={};
+  rows.forEach(r=>{
+    const s=r["SKU"]||"";if(!s)return;
+    nsq[s]={};
+    DS_LIST.forEach(ds=>{
+      const mn=parseFloat(r[ds+" Min"]||r[ds]||0);
+      const mx=parseFloat(r[ds+" Max"]||r[ds]||0);
+      if(mn>0||mx>0) nsq[s][ds]={min:mn,max:Math.max(mn,mx)};
+    });
+  });
+  setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));e.target.value="";
+},[]);
   const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));e.target.value="";},[]);
   const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));e.target.value="";},[]);
 
@@ -2941,7 +2955,7 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
           skuMaster:  {file:"SKU_Master_Template.csv",  headers:["Name","Inventorised At","SKU","Category","Status","Brand"],rows:[["Product Name A","DS","SKU001","Paints","Active","Asian Paints"],["Product Name B","DS","SKU002","Adhesives","Active","MYK Laticrete"]]},
           priceData:{file:"Avg_Price_Template.csv",headers:["item_id","item_name","unit","is_combo_product","quantity_purchased","amount","average_price","location_name","sku"],rows:[["ITEM001","Product Name A","PCS","No",100,25000,250,"DS01 Warehouse","SKU001"],["ITEM002","Product Name B","PCS","No",10,18000,1800,"DS02 Warehouse","SKU002"]]},
           minReqQty:  {file:"New_DS_Floor_Template.csv",headers:["SKU","Qty"],rows:[["SKU001",10],["SKU002",5]]},
-          newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU","DS01","DS02","DS03","DS04","DS05"],rows:[["SKU001",3,2,0,5,0],["SKU002",0,1,2,0,3]]},
+          newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU","DS01 Min","DS01 Max","DS02 Min","DS02 Max","DS03 Min","DS03 Max","DS04 Min","DS04 Max","DS05 Min","DS05 Max"],rows:[["SKU001",3,5,2,3,0,0,5,7,0,0],["SKU002",0,0,1,2,2,3,0,0,3,4]]},
           deadStock:  {file:"Dead_Stock_Template.csv",  headers:["Dead Stock"],rows:[["SKU001"],["SKU002"]]},
         };
         const cards=[
@@ -2949,7 +2963,7 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
           {label:"SKU Master",desc:"Columns: Name, SKU, Category, Brand, Status, Inventorised At",handler:handleSKU,count:`${Object.keys(skuMaster).length.toLocaleString()} SKUs`,key:"skuMaster",required:true,hasData:Object.keys(skuMaster).length>0},
           {label:"Average Purchase Price of SKU",desc:"Columns: sku, average_price",handler:handlePrice,count:`${Object.keys(priceData).length.toLocaleString()} SKUs`,key:"priceData",required:true,hasData:Object.keys(priceData).length>0},
           {label:"Newly Launched Dark Store Floor Qty",desc:"Columns: SKU, Qty",handler:handleMRQ,count:`${Object.keys(minReqQty).length.toLocaleString()} SKUs`,key:"minReqQty",required:true,hasData:Object.keys(minReqQty).length>0},
-          {label:"SKU Floors - DS Level",desc:"Per-store manual floor qtys. Columns: SKU, DS01–DS05",handler:handleNSQ,count:`${Object.keys(newSKUQty).length.toLocaleString()} SKUs`,key:"newSKUQty",required:true,hasData:Object.keys(newSKUQty).length>0},
+          {label:"SKU Floors - DS Level",desc:"Per-store manual Min/Max floors. Columns: SKU, DS01 Min, DS01 Max, ..., DS05 Max",handler:handleNSQ,count:`${Object.keys(newSKUQty).length.toLocaleString()} SKUs`,key:"newSKUQty",required:true,hasData:Object.keys(newSKUQty).length>0},
           {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,count:`${deadStock.size.toLocaleString()} SKUs`,key:"deadStock",required:true,hasData:deadStock.size>0},
         ];
         return(

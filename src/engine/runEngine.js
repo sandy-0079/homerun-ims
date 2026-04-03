@@ -119,18 +119,22 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
           let nm = isEligible ? (mrq[skuId] || 0) : 0, nx = isEligible ? nm : 0;
           let logicTag = "Base Logic";
           if (isEligible && nm > 0) logicTag = "New DS Floor";
-          if (nsq && nsq[skuId]) {
-            const q = nsq[skuId][dsId] || 0;
-            if (q > 0) { nm = Math.max(nm, q); nx = nm; logicTag = "SKU Floor"; }
+          if (nsq && nsq[skuId] && nsq[skuId][dsId]) {
+            const fl = nsq[skuId][dsId];
+            const fMin = typeof fl === "number" ? fl : (fl.min || 0);
+            const fMax = typeof fl === "number" ? fl : (fl.max || fMin);
+            if (fMin > 0) { nm = Math.max(nm, fMin); nx = Math.max(nx, fMax); logicTag = "SKU Floor"; }
           }
           if (isDead) nx = nm;
           stores[dsId] = { min: nm, max: nx, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag, strategyTag: "standard" };
           dsMinArr.push(nm); dsMaxArr.push(nx); dsDailyAvgs.push(0);
         } else if (nsq && nsq[skuId]) {
-          const q = nsq[skuId][dsId] || 0;
-          const logicTag = q > 0 ? "SKU Floor" : "Base Logic";
-          stores[dsId] = { min: q, max: q, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag, strategyTag: "standard" };
-          dsMinArr.push(q); dsMaxArr.push(q); dsDailyAvgs.push(0);
+          const fl = nsq[skuId][dsId];
+          const fMin = !fl ? 0 : typeof fl === "number" ? fl : (fl.min || 0);
+          const fMax = !fl ? 0 : typeof fl === "number" ? fl : (fl.max || fMin);
+          const logicTag = fMin > 0 ? "SKU Floor" : "Base Logic";
+          stores[dsId] = { min: fMin, max: Math.max(fMin, fMax), dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag, strategyTag: "standard" };
+          dsMinArr.push(fMin); dsMaxArr.push(Math.max(fMin, fMax)); dsDailyAvgs.push(0);
         } else {
           stores[dsId] = { min: 0, max: 0, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag: "Base Logic", strategyTag: "standard" };
           dsDailyAvgs.push(0);
@@ -183,10 +187,12 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       minQty = Math.ceil(minQty); maxQty = Math.ceil(Math.max(maxQty, minQty));
       if (isDead) maxQty = minQty; maxQty = Math.max(maxQty, minQty); if (isDead) maxQty = minQty;
 
-      // 3. SKU Floors — runs last, wins if floor exceeds engine Min
+      // 3. SKU Floors — runs last, wins if floor Min exceeds engine Min
       if (nsq && nsq[skuId]) {
-        const q = nsq[skuId][dsId] || 0;
-        if (q > minQty) { minQty = q; maxQty = minQty; logicTag = "SKU Floor"; }
+        const fl = nsq[skuId][dsId];
+        const fMin = !fl ? 0 : typeof fl === "number" ? fl : (fl.min || 0);
+        const fMax = !fl ? 0 : typeof fl === "number" ? fl : (fl.max || fMin);
+        if (fMin > minQty) { minQty = fMin; maxQty = Math.max(fMax, maxQty); logicTag = "SKU Floor"; }
       }
 
       stores[dsId] = {
