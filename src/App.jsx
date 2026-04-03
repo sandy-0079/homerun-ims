@@ -1882,17 +1882,20 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
       const dcMin = results?.[sku]?.dc?.min || 0;
       const dcMax = results?.[sku]?.dc?.max || 0;
 
-      /* Inventory values (Max-based): Before = pre-floor engine output, After = with floors + overrides */
-      let invBefore = 0, invAfter = 0;
+      /* Inventory values: Before = pre-floor engine output, After = with floors + overrides */
+      let minBefore = 0, minAfter = 0, maxBefore = 0, maxAfter = 0;
       DS_LIST.forEach(ds => {
-        invBefore += dsData[ds].toolMax * price;
-        invAfter  += Math.max(dsData[ds].effectiveMax, dsData[ds].ovrMax) * price;
+        minBefore += dsData[ds].toolMin * price;
+        minAfter  += Math.max(dsData[ds].effectiveMin, dsData[ds].ovrMin) * price;
+        maxBefore += dsData[ds].toolMax * price;
+        maxAfter  += Math.max(dsData[ds].effectiveMax, dsData[ds].ovrMax) * price;
       });
-      invBefore += dcMax * price;
-      invAfter  += dcMax * price;
-      const invDelta = invAfter - invBefore;
+      minBefore += dcMin * price; minAfter += dcMin * price;
+      maxBefore += dcMax * price; maxAfter += dcMax * price;
+      const deltaMin = Math.round(minAfter - minBefore);
+      const deltaMax = Math.round(maxAfter - maxBefore);
 
-      rows.push({ sku, name, category, price, source, timestamp, dsData, dcMin, dcMax, invBefore: Math.round(invBefore), invAfter: Math.round(invAfter), invDelta: Math.round(invDelta) });
+      rows.push({ sku, name, category, price, source, timestamp, dsData, dcMin, dcMax, deltaMin, deltaMax });
     });
     return rows;
   }, [coreOverrides, newSKUQty, results, skuMaster, priceData]);
@@ -1907,9 +1910,9 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
   }), [allRows, filterCat, filterSource, search]);
 
   /* ---------- KPIs ---------- */
-  const kpiBeforeMax = filtered.reduce((s, r) => s + r.invBefore, 0);
-  const kpiAfterMax  = filtered.reduce((s, r) => s + r.invAfter, 0);
-  const kpiDelta     = kpiAfterMax - kpiBeforeMax;
+  const kpiDeltaMin = filtered.reduce((s, r) => s + r.deltaMin, 0);
+  const kpiDeltaMax = filtered.reduce((s, r) => s + r.deltaMax, 0);
+  const kpiDeltaTotal = kpiDeltaMin + kpiDeltaMax;
 
   /* ---------- Actions ---------- */
   const removeOverride = (sku) => {
@@ -1942,9 +1945,9 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
       {/* 3 KPI Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 12 }}>
         {[
-          { label: "Total Inv Value (Before)", value: fmtInr(kpiBeforeMax), sub: `${filtered.length} SKU${filtered.length !== 1 ? "s" : ""} with overrides`, color: "#0077A8" },
-          { label: "Total Inv Value (After)",  value: fmtInr(kpiAfterMax),  sub: `Max-based across DS + DC`, color: "#7A3DBF" },
-          { label: "Delta", value: `${kpiDelta >= 0 ? "+" : ""}${fmtInr(kpiDelta)}`, sub: kpiDelta >= 0 ? "Inventory increase" : "Inventory decrease", color: kpiDelta >= 0 ? "#C05A00" : HR.green, subColor: kpiDelta >= 0 ? "#C05A00" : HR.green },
+          { label: "Min Inv Value Delta", value: `${kpiDeltaMin >= 0 ? "+" : ""}${fmtInr(kpiDeltaMin)}`, sub: `${filtered.length} SKU${filtered.length !== 1 ? "s" : ""} with overrides/floors`, color: kpiDeltaMin >= 0 ? "#C05A00" : HR.green },
+          { label: "Max Inv Value Delta", value: `${kpiDeltaMax >= 0 ? "+" : ""}${fmtInr(kpiDeltaMax)}`, sub: `Across DS + DC`, color: kpiDeltaMax >= 0 ? "#C05A00" : HR.green },
+          { label: "Total Delta (Min + Max)", value: `${kpiDeltaTotal >= 0 ? "+" : ""}${fmtInr(kpiDeltaTotal)}`, sub: kpiDeltaTotal >= 0 ? "Inventory increase" : "Inventory decrease", color: kpiDeltaTotal >= 0 ? "#C05A00" : HR.green },
         ].map(c => (
           <div key={c.label} style={{ background: HR.surface, borderRadius: 7, padding: "8px 12px", border: `1px solid ${HR.border}`, borderLeft: `3px solid ${c.color}` }}>
             <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 2 }}>{c.label}</div>
@@ -1978,9 +1981,8 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
               <th style={th({ textAlign: "left" })} rowSpan={2}>Item</th>
               <th style={th({ textAlign: "left" })} rowSpan={2}>Category</th>
               <th style={th()} rowSpan={2}>Price</th>
-              <th style={th()} rowSpan={2}>Inv Before</th>
-              <th style={th()} rowSpan={2}>Inv After</th>
-              <th style={th()} rowSpan={2}>Delta</th>
+              <th style={th()} rowSpan={2}>Delta Min</th>
+              <th style={th()} rowSpan={2}>Delta Max</th>
               <th style={th()} rowSpan={2}>Source</th>
               <th style={th()} rowSpan={2}>Timestamp</th>
               {DS_LIST.map((ds, i) => (
@@ -2010,9 +2012,8 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
                 <td style={td({ textAlign: "left", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })} title={r.name}>{r.name}</td>
                 <td style={td({ textAlign: "left", color: HR.muted })}>{r.category}</td>
                 <td style={td({ color: HR.muted })}>{r.price ? fmtInr(r.price) : "—"}</td>
-                <td style={td({ color: HR.muted })}>{fmtInr(r.invBefore)}</td>
-                <td style={td({ fontWeight: 700 })}>{fmtInr(r.invAfter)}</td>
-                <td style={td()}><span style={{ fontWeight: 700, color: r.invDelta >= 0 ? "#C05A00" : HR.green }}>{r.invDelta >= 0 ? "+" : ""}{fmtInr(r.invDelta)}</span></td>
+                <td style={td()}><span style={{ fontWeight: 700, color: r.deltaMin > 0 ? "#C05A00" : r.deltaMin < 0 ? HR.green : HR.muted }}>{r.deltaMin !== 0 ? (r.deltaMin > 0 ? "+" : "") + fmtInr(r.deltaMin) : "—"}</span></td>
+                <td style={td()}><span style={{ fontWeight: 700, color: r.deltaMax > 0 ? "#C05A00" : r.deltaMax < 0 ? HR.green : HR.muted }}>{r.deltaMax !== 0 ? (r.deltaMax > 0 ? "+" : "") + fmtInr(r.deltaMax) : "—"}</span></td>
                 <td style={td()}>
                   {(r.source === "OOS Simulation" || r.source === "Both") && <span style={pill("#DBEAFE", "#1D4ED8")}>OOS Sim</span>}
                   {(r.source === "SKU Floor" || r.source === "Both") && <span style={pill("#EDE9FE", "#7C3AED")}>SKU Floor</span>}
