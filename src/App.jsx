@@ -36,9 +36,9 @@ const TOPN_TAG_COLORS = {
   "T150":{bg:"#D1FAE5",color:"#065F46",border:"#A7F3D0"},
   "T250":{bg:"#CFFAFE",color:"#0E7490",border:"#A5F3FC"},
   "No":{bg:"#F1F5F9",color:"#475569",border:"#CBD5E1"},
-  "Zero Sale L90D":{bg:"#FEE2E2",color:"#B91C1C",border:"#FECACA"},
+  "Zero Sale":{bg:"#FEE2E2",color:"#B91C1C",border:"#FECACA"},
 };
-const TOPN_DISPLAY = { "T50":"Top 50","T150":"Top 150","T250":"Top 250","No":"Not Top","Zero Sale L90D":"Zero Sale L90D" };
+const TOPN_DISPLAY = { "T50":"Top 50","T150":"Top 150","T250":"Top 250","No":"Not Top","Zero Sale":"Zero Sale" };
 
 const LS = {
   get:(key)=>{try{const v=localStorage.getItem(key);return v?{value:v}:null;}catch{return null;}},
@@ -2842,7 +2842,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
           category:sku.category||"Unknown",brand:sku.brand||"",
           status:(sku.status||"").trim(),
           priceTag:getPriceTag(priceData[sku.sku]||0,params.priceTiers),
-          t150Tag:"Zero Sale L90D",
+          t150Tag:"Zero Sale",
         },
         stores:Object.fromEntries(DS_LIST.map(ds=>[ds,{min:0,max:0,dailyAvg:0,abq:0,mvTag:"Super Slow",spTag:"No Spike",logicTag:"Base Logic"}])),
         dc:{min:0,max:0,mvTag:"Super Slow",nonZeroDays:0},
@@ -3326,7 +3326,7 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
                 {/* Top N */}
                 <select value={filterTopN} onChange={e=>setFilterTopN(e.target.value)} style={{...S.input,fontSize:11,padding:"3px 6px"}}>
                   <option value="All">All Top N</option>
-                  {["T50","T150","T250","No","Zero Sale L90D"].map(t=><option key={t} value={t}>{TOPN_DISPLAY[t]||t}</option>)}
+                  {["T50","T150","T250","No","Zero Sale"].map(t=><option key={t} value={t}>{TOPN_DISPLAY[t]||t}</option>)}
                 </select>
 
                 {/* Movement */}
@@ -3462,7 +3462,7 @@ ref={el => { if(el && scrollTop === 0) el.scrollTop = 0; }}>
                       const rows=Object.values(skuMaster).map(s=>{
                         const res=results[s.sku];
                         const priceTag=res?.meta?.priceTag||getPriceTag(priceData[s.sku]||0,params.priceTiers);
-                        const topN=res?.meta?.t150Tag||"Zero Sale L90D";
+                        const topN=res?.meta?.t150Tag||"Zero Sale";
                         return[
                           `"${(s.name||"").replace(/"/g,'""')}"`,
                           `"${(s.inventorisedAt||"").replace(/"/g,'""')}"`,

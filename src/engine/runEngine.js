@@ -74,7 +74,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     t150[s] = i < 50 ? "T50" : i < 150 ? "T150" : i < 250 ? "T250" : "No";
   });
   Object.values(skuM).forEach(s => {
-    if ((s.status || "").toLowerCase() === "active" && !skuTotals[s.sku]) t150[s.sku] = "Zero Sale L90D";
+    if ((s.status || "").toLowerCase() === "active" && !skuTotals[s.sku]) t150[s.sku] = "Zero Sale";
   });
 
   const tags90 = {};
