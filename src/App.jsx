@@ -1860,11 +1860,14 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
         if (dates.length) timestamp = dates.sort().pop(); /* latest */
       }
 
-      /* Per-DS values */
+      /* Per-DS values — use preFloorMin/Max for "before" (engine output without SKU floors) */
       const dsData = {};
       DS_LIST.forEach(ds => {
-        const toolMin = results?.[sku]?.stores?.[ds]?.min || 0;
-        const toolMax = results?.[sku]?.stores?.[ds]?.max || 0;
+        const store = results?.[sku]?.stores?.[ds];
+        const toolMin = store?.preFloorMin ?? store?.min ?? 0;
+        const toolMax = store?.preFloorMax ?? store?.max ?? 0;
+        const effectiveMin = store?.min || 0;
+        const effectiveMax = store?.max || 0;
         const coreMin = coreOverrides?.[sku]?.[ds]?.min || 0;
         const coreMax = coreOverrides?.[sku]?.[ds]?.max || 0;
         const fl = newSKUQty?.[sku]?.[ds];
@@ -1872,18 +1875,18 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
         const floorMax = fl == null ? 0 : (typeof fl === "number" ? fl : (fl?.max || floorMin));
         const ovrMin = Math.max(coreMin, floorMin);
         const ovrMax = Math.max(coreMax, floorMax);
-        dsData[ds] = { toolMin, toolMax, ovrMin: ovrMin || 0, ovrMax: ovrMax || 0 };
+        dsData[ds] = { toolMin, toolMax, ovrMin: ovrMin || 0, ovrMax: ovrMax || 0, effectiveMin, effectiveMax };
       });
 
       /* DC values */
       const dcMin = results?.[sku]?.dc?.min || 0;
       const dcMax = results?.[sku]?.dc?.max || 0;
 
-      /* Inventory values (Max-based) */
+      /* Inventory values (Max-based): Before = pre-floor engine output, After = with floors + overrides */
       let invBefore = 0, invAfter = 0;
       DS_LIST.forEach(ds => {
         invBefore += dsData[ds].toolMax * price;
-        invAfter  += Math.max(dsData[ds].toolMax, dsData[ds].ovrMax) * price;
+        invAfter  += Math.max(dsData[ds].effectiveMax, dsData[ds].ovrMax) * price;
       });
       invBefore += dcMax * price;
       invAfter  += dcMax * price;
