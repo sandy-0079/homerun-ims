@@ -3059,9 +3059,56 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
       <p style={{color:HR.muted,fontSize:13,marginBottom:14}}>Upload CSVs to power the model. Invoice data stored as rolling 90-day window.</p>
 
       {(()=>{
-        const dlTemplate=(filename,headers,rows)=>{
-          const csv=[headers.join(","),...rows.map(r=>r.join(","))].join("\n");
+        const dlCSV=(filename,csv)=>{
           const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=filename;a.click();
+        };
+        const dlTemplate=(filename,headers,rows)=>{
+          dlCSV(filename,[headers.join(","),...rows.map(r=>r.join(","))].join("\n"));
+        };
+        const buildDataCSV=(key)=>{
+          if(key==="invoiceData"){
+            if(!invoiceData.length) return null;
+            const h=["Invoice Date","Invoice Number","Invoice Status","Shopify Order","Item Name","SKU","Category Name","Quantity","Line Item Location Name"];
+            const rows=invoiceData.map(r=>[r.date,r.invoiceNumber||"",r.status||"",r.shopifyOrder||"",r.itemName||"",r.sku,r.category||"",r.qty,r.locationName||r.ds||""].map(v=>`"${v}"`).join(","));
+            return h.join(",")+"\n"+rows.join("\n");
+          }
+          if(key==="skuMaster"){
+            if(!Object.keys(skuMaster).length) return null;
+            const h=["Name","Inventorised At","SKU","Category","Status","Brand"];
+            const rows=Object.values(skuMaster).map(s=>[s.name||"",s.inventorisedAt||"DS",s.sku,s.category||"",s.status||"",s.brand||""].map(v=>`"${v}"`).join(","));
+            return h.join(",")+"\n"+rows.join("\n");
+          }
+          if(key==="priceData"){
+            if(!Object.keys(priceData).length) return null;
+            const h=["sku","average_price"];
+            const rows=Object.entries(priceData).map(([s,p])=>`"${s}",${p}`);
+            return h.join(",")+"\n"+rows.join("\n");
+          }
+          if(key==="minReqQty"){
+            if(!Object.keys(minReqQty).length) return null;
+            const h=["SKU","Qty"];
+            const rows=Object.entries(minReqQty).map(([s,q])=>`"${s}",${q}`);
+            return h.join(",")+"\n"+rows.join("\n");
+          }
+          if(key==="newSKUQty"){
+            if(!Object.keys(newSKUQty).length) return null;
+            const h=["SKU",...DS_LIST.flatMap(ds=>[ds+" Min",ds+" Max"])];
+            const rows=Object.entries(newSKUQty).map(([s,dsMap])=>{
+              const vals=DS_LIST.flatMap(ds=>{
+                const fl=dsMap[ds];
+                if(!fl) return [0,0];
+                if(typeof fl==="number") return [fl,fl];
+                return [fl.min||0,fl.max||0];
+              });
+              return `"${s}",${vals.join(",")}`;
+            });
+            return h.join(",")+"\n"+rows.join("\n");
+          }
+          if(key==="deadStock"){
+            if(!deadStock.size) return null;
+            return "Dead Stock\n"+[...deadStock].map(s=>`"${s}"`).join("\n");
+          }
+          return null;
         };
         const templates={
           invoiceData:{file:"Invoice_Dump_Template.csv",headers:["Invoice Date","Invoice Number","Invoice Status","PurchaseOrder","Item Name","SKU","Category Name","Quantity","Line Item Location Name"],rows:[["2026-01-01","INV001","Confirmed","PO001","Product Name A","SKU001","Paints",5,"DS01 Warehouse"],["2026-01-02","INV002","Confirmed","PO002","Product Name B","SKU002","Adhesives",3,"DS02 Warehouse"]]},
@@ -3099,6 +3146,12 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
                     style={{background:"#EAF9FF",color:"#0077A8",border:"1px solid #A5F3FC",padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}>
                     ⬇ Template
                   </button>
+                  {item.hasData&&(
+                    <button onClick={()=>{const csv=buildDataCSV(item.key);if(csv)dlCSV(item.key+"_data.csv",csv);}}
+                      style={{background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}>
+                      ⬇ Data
+                    </button>
+                  )}
                   {item.hasData&&(
                     <button onClick={()=>clearData(item.key)}
                       style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}>
