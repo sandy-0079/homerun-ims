@@ -212,6 +212,9 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
 
     const sumMin = dsMinArr.reduce((a, b) => a + b, 0),
       sumMax = dsMaxArr.reduce((a, b) => a + b, 0);
+    // Pre-floor DS sums for DC "before" calculation
+    const sumPreFloorMin = DS_LIST.reduce((s, ds) => s + (stores[ds]?.preFloorMin ?? stores[ds]?.min ?? 0), 0);
+    const sumPreFloorMax = DS_LIST.reduce((s, ds) => s + (stores[ds]?.preFloorMax ?? stores[ds]?.max ?? 0), 0);
     const dcStats = getDCStats(invSliced, skuId, activeDSCount, intervals, op);
     const dcDeadMult = p.dcDeadMult || DC_DEAD_MULT_DEFAULT;
 
@@ -219,21 +222,26 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     const sumDailyAvg = dsDailyAvgs.reduce((a, b) => a + b, 0);
     const leadTime = (p.brandLeadTimeDays || {})[meta.brand] ?? (p.brandLeadTimeDays || {})._default ?? 2;
 
-    let dcMin, dcMax;
+    let dcMin, dcMax, preFloorDcMin, preFloorDcMax;
     if (isDead) {
       dcMin = Math.round(sumMin * dcDeadMult.min);
       dcMax = Math.round(sumMax * dcDeadMult.max);
+      preFloorDcMin = Math.round(sumPreFloorMin * dcDeadMult.min);
+      preFloorDcMax = Math.round(sumPreFloorMax * dcDeadMult.max);
     } else {
       const dcM = (p.dcMult || DC_MULT_DEFAULT)[dcStats.mvTag] || DC_MULT_DEFAULT[dcStats.mvTag];
       const leadTimeMin = Math.ceil(sumDailyAvg * leadTime);
       dcMin = Math.round(Math.max(leadTimeMin, sumMin * dcM.min));
       dcMax = Math.round(Math.max(Math.ceil(dcMin * (dcM.max / dcM.min)), sumMax * dcM.max));
+      const preFloorLeadTimeMin = Math.ceil(sumDailyAvg * leadTime);
+      preFloorDcMin = Math.round(Math.max(preFloorLeadTimeMin, sumPreFloorMin * dcM.min));
+      preFloorDcMax = Math.round(Math.max(Math.ceil(preFloorDcMin * (dcM.max / dcM.min)), sumPreFloorMax * dcM.max));
     }
 
     res[skuId] = {
       meta: { ...meta, priceTag: prTag, t150Tag },
       stores,
-      dc: { min: dcMin, max: dcMax, mvTag: dcStats.mvTag, nonZeroDays: dcStats.nonZeroDays },
+      dc: { min: dcMin, max: dcMax, preFloorMin: preFloorDcMin, preFloorMax: preFloorDcMax, mvTag: dcStats.mvTag, nonZeroDays: dcStats.nonZeroDays },
     };
   });
 

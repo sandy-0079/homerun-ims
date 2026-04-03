@@ -1878,9 +1878,11 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
         dsData[ds] = { toolMin, toolMax, ovrMin: ovrMin || 0, ovrMax: ovrMax || 0, effectiveMin, effectiveMax };
       });
 
-      /* DC values */
-      const dcMin = results?.[sku]?.dc?.min || 0;
-      const dcMax = results?.[sku]?.dc?.max || 0;
+      /* DC values — tool = pre-floor, effective = with floors */
+      const dcToolMin = results?.[sku]?.dc?.preFloorMin ?? results?.[sku]?.dc?.min ?? 0;
+      const dcToolMax = results?.[sku]?.dc?.preFloorMax ?? results?.[sku]?.dc?.max ?? 0;
+      const dcEffMin = results?.[sku]?.dc?.min || 0;
+      const dcEffMax = results?.[sku]?.dc?.max || 0;
 
       /* Inventory values: Before = pre-floor engine output, After = with floors + overrides */
       let minBefore = 0, minAfter = 0, maxBefore = 0, maxAfter = 0;
@@ -1890,12 +1892,12 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
         maxBefore += dsData[ds].toolMax * price;
         maxAfter  += Math.max(dsData[ds].effectiveMax, dsData[ds].ovrMax) * price;
       });
-      minBefore += dcMin * price; minAfter += dcMin * price;
-      maxBefore += dcMax * price; maxAfter += dcMax * price;
+      minBefore += dcToolMin * price; minAfter += dcEffMin * price;
+      maxBefore += dcToolMax * price; maxAfter += dcEffMax * price;
       const deltaMin = Math.round(minAfter - minBefore);
       const deltaMax = Math.round(maxAfter - maxBefore);
 
-      rows.push({ sku, name, category, price, source, timestamp, dsData, dcMin, dcMax, deltaMin, deltaMax });
+      rows.push({ sku, name, category, price, source, timestamp, dsData, dcToolMin, dcToolMax, dcEffMin, dcEffMax, deltaMin, deltaMax });
     });
     return rows;
   }, [coreOverrides, newSKUQty, results, skuMaster, priceData]);
@@ -1988,7 +1990,7 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
               {DS_LIST.map((ds, i) => (
                 <th key={ds} colSpan={4} style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].header, borderLeft: `2px solid ${DS_COLORS[i].header}44` })}>{ds}</th>
               ))}
-              <th colSpan={2} style={th({ background: DC_COLOR.bg, color: DC_COLOR.header, borderLeft: `2px solid ${DC_COLOR.header}44` })}>DC</th>
+              <th colSpan={4} style={th({ background: DC_COLOR.bg, color: DC_COLOR.header, borderLeft: `2px solid ${DC_COLOR.header}44` })}>DC</th>
               <th style={th()} rowSpan={2}>Actions</th>
             </tr>
             {/* Row 2: sub-headers */}
@@ -2001,8 +2003,10 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
                   <th style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].text, fontSize: 8 })}>OMax</th>
                 </React.Fragment>
               ))}
-              <th style={th({ background: DC_COLOR.bg, color: DC_COLOR.text, fontSize: 8, borderLeft: `2px solid ${DC_COLOR.header}44` })}>Min</th>
-              <th style={th({ background: DC_COLOR.bg, color: DC_COLOR.text, fontSize: 8 })}>Max</th>
+              <th style={th({ background: DC_COLOR.bg, color: DC_COLOR.text, fontSize: 8, borderLeft: `2px solid ${DC_COLOR.header}44` })}>TMin</th>
+              <th style={th({ background: DC_COLOR.bg, color: DC_COLOR.text, fontSize: 8 })}>TMax</th>
+              <th style={th({ background: DC_COLOR.bg, color: DC_COLOR.text, fontSize: 8 })}>OMin</th>
+              <th style={th({ background: DC_COLOR.bg, color: DC_COLOR.text, fontSize: 8 })}>OMax</th>
             </tr>
           </thead>
           <tbody>
@@ -2033,8 +2037,10 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
                     </React.Fragment>
                   );
                 })}
-                <td style={td({ color: HR.muted, borderLeft: `2px solid ${DC_COLOR.header}22` })}>{r.dcMin}</td>
-                <td style={td({ color: HR.muted })}>{r.dcMax}</td>
+                <td style={td({ color: HR.muted, borderLeft: `2px solid ${DC_COLOR.header}22` })}>{r.dcToolMin}</td>
+                <td style={td({ color: HR.muted })}>{r.dcToolMax}</td>
+                <td style={td(r.dcEffMin > r.dcToolMin ? { background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark } : { color: "#ccc" })}>{r.dcEffMin > r.dcToolMin ? r.dcEffMin : "—"}</td>
+                <td style={td(r.dcEffMax > r.dcToolMax ? { background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark } : { color: "#ccc" })}>{r.dcEffMax > r.dcToolMax ? r.dcEffMax : "—"}</td>
                 <td style={td()}>
                   {(r.source === "OOS Simulation" || r.source === "Both") && (
                     <button onClick={() => removeOverride(r.sku)} style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", padding: "3px 8px", borderRadius: 4, cursor: "pointer", fontSize: 9, fontWeight: 700 }}>Remove</button>
