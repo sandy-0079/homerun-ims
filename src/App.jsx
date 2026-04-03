@@ -3416,7 +3416,7 @@ ref={el => { if(el && scrollTop === 0) el.scrollTop = 0; }}>
                       const blob=new Blob([[hdr,...rows].join("\n")],{type:"text/csv"});
                       const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="SKU_Master.csv";a.click();
                     }}
-                    style={{background:results?"#0077A8":"#ccc",color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:results?"pointer":"not-allowed",fontWeight:700,fontSize:12,opacity:results?1:0.6}}
+                    style={{background:results?"#7C3AED":"#ccc",color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:results?"pointer":"not-allowed",fontWeight:700,fontSize:12,opacity:results?1:0.6}}
                   >⬇ SKU Master CSV</button>
 
                   {/* ── Tool Output DS Level CSV ── */}
