@@ -2829,7 +2829,11 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   const activeMaster=Object.values(skuMaster).filter(s=>(s.status||"").trim().toLowerCase()==="active");
   const uniqueSold=[...soldSKUs].filter(s=>skuMaster[s]&&(skuMaster[s].status||"").trim().toLowerCase()==="active").length;
   const zeroSale=activeMaster.filter(s=>!soldSKUs.has(s.sku)).length;
-  const dateRange=invoiceData.length>0?(()=>{const d=[...new Set(invoiceData.map(r=>r.date))].sort().slice(-(params.overallPeriod||90));return `${d[0]} → ${d[d.length-1]} (${d.length} days)`;})():"No data";
+  const dateRange=invoiceData.length>0?(()=>{
+    const d=[...new Set(invoiceData.map(r=>r.date))].sort().slice(-(params.overallPeriod||90));
+    const fmt=dt=>{const p=dt.split("-");const m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(p[1],10)-1];return `${parseInt(p[2],10)} ${m} '${p[0].slice(2)}`;};
+    return `Period Considered: ${fmt(d[0])} → ${fmt(d[d.length-1])} (${d.length}D)`;
+  })():"No data";
   const missing=[...soldSKUs].filter(s=>!skuMaster[s]||(skuMaster[s].status||"").trim().toLowerCase()!=="active");
 
   // ALL SKUs from master (all statuses) — so full 1920 shows when no status filter
@@ -2972,9 +2976,9 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
     <div style={S.app}>
       <div style={S.header}>
         <HomeRunLogo/>
-        <div style={{fontSize:12,color:HR.text,fontWeight:700,marginLeft:8,background:HR.surfaceLight,padding:"3px 10px",borderRadius:5,border:`1px solid ${HR.border}`}}>{dateRange}</div>
         <SyncBadge/>
         <div style={{flex:1}}/>
+        <div style={{fontSize:10,color:HR.muted,marginRight:8,whiteSpace:"nowrap"}}>{dateRange}</div>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}
         {isAdmin&&<button onClick={()=>setQaOpen(o=>!o)} style={{...S.btn(qaOpen),fontSize:11}}>🔬 QA</button>}
         {isAdmin
