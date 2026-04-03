@@ -3419,39 +3419,45 @@ ref={el => { if(el && scrollTop === 0) el.scrollTop = 0; }}>
                     style={{background:results?"#0077A8":"#ccc",color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:results?"pointer":"not-allowed",fontWeight:700,fontSize:12,opacity:results?1:0.6}}
                   >⬇ SKU Master CSV</button>
 
-                  {/* ── Tool Output CSV ── */}
+                  {/* ── Tool Output DS Level CSV ── */}
                   <button onClick={()=>{
-                    const hdr=[
-                      "Item Name","Inventorised At","SKU","Category","Status","Dead Stock (Y/N)",
-                      ...DS_LIST.flatMap(d=>[`${d} Logic Applied`,`${d} Min`,`${d} Max`]),
-                      "DC Min","DC Max"
-                    ].join(",");
+                    const hdr=["Item Name","SKU","Category",...DS_LIST.flatMap(d=>[`${d} Min`,`${d} Max`])].join(",");
                     const rows=Object.values(skuMaster).map(s=>{
                       const r=results[s.sku];
-                      const isDead=deadStock.has(s.sku)?"Y":"N";
                       const dsCols=DS_LIST.flatMap(d=>{
                         const st=r?.stores[d]||{min:0,max:0};
                         const ov=coreOverrides[s.sku]?.[d];
                         const min=ov?Math.max(st.min,ov.min):st.min;
                         const max=ov?Math.max(st.max,ov.max):st.max;
-                        const logic=ov?"Manual Override":(st.logicTag||"Base Logic");
-                        return[`"${logic}"`,min,max];
+                        return[min,max];
                       });
                       return[
                         `"${(s.name||s.sku).replace(/"/g,'""')}"`,
-                        `"${(s.inventorisedAt||"").replace(/"/g,'""')}"`,
                         s.sku,
                         `"${(s.category||"").replace(/"/g,'""')}"`,
-                        `"${(s.status||"").trim()}"`,
-                        isDead,
                         ...dsCols,
+                      ].join(",");
+                    });
+                    const blob=new Blob([[hdr,...rows].join("\n")],{type:"text/csv"});
+                    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="IMS_Output_DS.csv";a.click();
+                  }} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:"pointer",fontWeight:700,fontSize:12}}>⬇ Tool Output DS Level</button>
+
+                  {/* ── Tool Output DC CSV ── */}
+                  <button onClick={()=>{
+                    const hdr=["Item Name","SKU","Category","DC Min","DC Max"].join(",");
+                    const rows=Object.values(skuMaster).map(s=>{
+                      const r=results[s.sku];
+                      return[
+                        `"${(s.name||s.sku).replace(/"/g,'""')}"`,
+                        s.sku,
+                        `"${(s.category||"").replace(/"/g,'""')}"`,
                         r?.dc.min??0,
                         r?.dc.max??0,
                       ].join(",");
                     });
                     const blob=new Blob([[hdr,...rows].join("\n")],{type:"text/csv"});
-                    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="IMS_Output.csv";a.click();
-                  }} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:"pointer",fontWeight:700,fontSize:12}}>⬇ Tool Output CSV</button>
+                    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="IMS_Output_DC.csv";a.click();
+                  }} style={{background:"#0077A8",color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:"pointer",fontWeight:700,fontSize:12}}>⬇ Tool Output DC</button>
 
                 </div>
               </div>
