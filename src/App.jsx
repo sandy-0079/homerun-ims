@@ -2972,7 +2972,7 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
     <div style={S.app}>
       <div style={S.header}>
         <HomeRunLogo/>
-        <div style={{fontSize:10,color:HR.muted,marginLeft:4}}>{dateRange}</div>
+        <div style={{fontSize:12,color:HR.text,fontWeight:700,marginLeft:8,background:HR.surfaceLight,padding:"3px 10px",borderRadius:5,border:`1px solid ${HR.border}`}}>{dateRange}</div>
         <SyncBadge/>
         <div style={{flex:1}}/>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}
