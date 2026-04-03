@@ -290,10 +290,10 @@ function InsightsTab({
   const slice = useMemo(() => {
     if (period === "CUSTOM") {
       const allDates = [...new Set(invoiceData.map(r => r.date))].sort();
-      const last = allDates.slice(-Math.min(customDays, 90));
+      const last = allDates.slice(-Math.min(customDays, params.overallPeriod || 90));
       return invoiceData.filter(r => last.includes(r.date));
     }
-    return getInvSlice(invoiceData, period, rw);
+    return getInvSlice(invoiceData, period, rw, params.overallPeriod);
   }, [invoiceData, period, customDays, rw]);
 
   const sliceForDs = useMemo(
@@ -2828,7 +2828,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   const activeMaster=Object.values(skuMaster).filter(s=>(s.status||"").trim().toLowerCase()==="active");
   const uniqueSold=[...soldSKUs].filter(s=>skuMaster[s]&&(skuMaster[s].status||"").trim().toLowerCase()==="active").length;
   const zeroSale=activeMaster.filter(s=>!soldSKUs.has(s.sku)).length;
-  const dateRange=invoiceData.length>0?(()=>{const d=[...new Set(invoiceData.map(r=>r.date))].sort();return `${d[0]} → ${d[d.length-1]} (${d.length} days)`;})():"No data";
+  const dateRange=invoiceData.length>0?(()=>{const d=[...new Set(invoiceData.map(r=>r.date))].sort().slice(-(params.overallPeriod||90));return `${d[0]} → ${d[d.length-1]} (${d.length} days)`;})():"No data";
   const missing=[...soldSKUs].filter(s=>!skuMaster[s]||(skuMaster[s].status||"").trim().toLowerCase()!=="active");
 
   // ALL SKUs from master (all statuses) — so full 1920 shows when no status filter

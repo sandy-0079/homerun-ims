@@ -34,8 +34,9 @@ export function computeStats(qtys,ords,periodDays,spikeMult){
   return{totalQty,totalOrders,nonZeroDays,dailyAvg,abq,spikeDays,spikeRatio,spikeMedian:spikeRef};
 }
 
-export function getInvSlice(invoiceData,period,recencyWindow){
-  const allDates=[...new Set(invoiceData.map(r=>r.date))].sort(),full=allDates.slice(-90);
+export function getInvSlice(invoiceData,period,recencyWindow,overallPeriod){
+  const op=overallPeriod||90;
+  const allDates=[...new Set(invoiceData.map(r=>r.date))].sort(),full=allDates.slice(-op);
   if(period==="90D")return invoiceData.filter(r=>full.includes(r.date));
   const rw=Math.min(recencyWindow||15,full.length-1),split=full.length-rw;
   if(period==="15D")return invoiceData.filter(r=>full.slice(split).includes(r.date));
