@@ -58,7 +58,6 @@ RLS is enabled. Public read + anon write policies on all three tables.
 | Upload Data | ✅ | ❌ |
 | Logic Tweaker | ✅ | ❌ |
 | Manual Overrides | ✅ | ❌ |
-| QA Mode | ✅ | ❌ |
 
 Admin login via password modal (top right). Session stored in localStorage.
 
@@ -79,7 +78,7 @@ Admin login via password modal (top right). Session stored in localStorage.
 |---|---|---|
 | Average Purchase Price | sku, average_price | Price tagging + inventory value calculations |
 | New DS Floor Qty | SKU, Qty | Min floor for new dark stores for top-N SKUs |
-| SKU Floors | SKU, DS01–DS05 | Per-store manual floor qtys for any SKU |
+| SKU Floors | SKU, DS01 Min, DS01 Max, ..., DS05 Max | Per-store manual Min/Max floors for any SKU |
 | Dead Stock List | Dead Stock (SKU) | Forces Max = Min for flagged SKUs |
 
 #### Store Reference
@@ -92,7 +91,7 @@ DS01, DS02, DS03, DS04, DS05, DC. DS04 and DS05 are "New Dark Stores" by default
 #### Step 1: Data Preparation
 
 - Invoice rows filtered to status "Closed" or "Overdue"
-- Sorted by date; only most recent 90 unique sale dates kept
+- Sorted by date; only most recent N unique sale dates kept (N = Overall Period from Logic Tweaker, default 90)
 - Split into:
   - **Long period** = first (90 − recency window) dates. Default: 75 days
   - **Recent period** = last N dates. Default: 15 days
@@ -110,7 +109,7 @@ Total qty sold per SKU across all DS over 90 days, ranked descending:
 | 51–150 | T150 |
 | 151–250 | T250 |
 | 251+ | No |
-| Active, zero sales | Zero Sale L90D |
+| Active, zero sales | Zero Sale |
 
 #### Step 3: Stats Computation (per period)
 
@@ -189,7 +188,7 @@ Recency weights (configurable):
 
 1. **New DS Floor** — if DS is flagged New DS and SKU is in top-N (default top 150): floor > blend → Min = Max = floor. Tagged "New DS Floor".
 2. **Brand Buffer** — if brand has buffer days configured and dailyAvg > 0: Min = CEILING((DOC + bufferDays) × dailyAvg), Max = Min. Tagged "Brand Buffer".
-3. **SKU Floor Override** — if manual per-store floor exists and exceeds current Min: Min = floor, Max = Min. Tagged "SKU Floor". Runs last — wins if it raises Min above everything else.
+3. **SKU Floor Override** — if manual per-store floor exists and exceeds current Min: Min = floor Min, Max = max(floor Max, engine Max). Tagged "SKU Floor". Runs last — wins if it raises Min above everything else. Supports separate Min and Max values per DS.
 4. **Dead Stock cap** — Max = Min.
 5. **Final rounding** — Math.round() on both values.
 
@@ -212,9 +211,14 @@ Default DC multipliers:
 
 ---
 
-### 3.4 Dashboard Tab
+### 3.4 Header Bar
 
-- KPI strip: Active SKUs, SKUs Sold, Zero Sale, Dead Stock, Inv Value Min, Inv Value Max
+- Period display: "Period Considered: 15 Feb '26 → 31 Mar '26 (45D)" — positioned left of nav buttons, reflects the Overall Period setting from Logic Tweaker
+- All period-dependent displays (date range, KPIs, Insights slicing) respect the selected overall period
+
+### 3.5 Dashboard Tab
+
+- KPI strip: Active SKUs, Active SKUs Sold, Zero Sale SKUs, Dead Stock, Inv Value Min, Inv Value Max — SKUs Sold and Zero Sale computed within the selected overall period
 - Filter bar: search, category, status, store, price tag, top-N, movement, logic tag
 - Virtualised table (renders only visible rows) with frozen left columns: Item, Category, Status, Price Tag, Top N
 - Per DS: Movement tag, Logic tag, Daily Avg, ABQ, Min, Max
@@ -223,7 +227,7 @@ Default DC multipliers:
 
 ---
 
-### 3.5 Insights Tab (SKU Order Behaviour)
+### 3.6 Insights Tab (SKU Order Behaviour)
 
 - Period toggle: 90D / 75D / 15D / Custom (1–90 days)
 - DS view: All / DS01–DS05 / Compare
@@ -234,7 +238,7 @@ Default DC multipliers:
 
 ---
 
-### 3.6 OOS Simulation Tab
+### 3.7 OOS Simulation Tab
 
 Replays last N trading days (default 15, up to 90) of invoice data against model Min/Max. Processes every individual order line preserving intra-day sequence.
 
@@ -255,11 +259,25 @@ Replays last N trading days (default 15, up to 90) of invoice data against model
 
 ---
 
-### 3.7 Logic Tweaker Tab (Admin only)
+### 3.8 Upload Data Tab (Admin only)
+
+- 6 upload cards: Invoice Dump, SKU Master, Average Purchase Price, New DS Floor Qty, SKU Floors - DS Level, Dead Stock List
+- Each card has 4 buttons: Upload CSV, Template (blank), Data (download currently uploaded data), Clear
+- SKU Floors CSV format: SKU, DS01 Min, DS01 Max, ..., DS05 Min, DS05 Max (backward-compatible with old single-column format)
+- Upload replaces entire dataset (not incremental merge)
+
+### 3.9 Tool Output Download Tab
+
+- Two download buttons:
+  - **Tool Output DS Level** (green): Item Name, SKU, Category, DS01-DS05 Min/Max — effective values with floors + overrides applied
+  - **Tool Output DC** (blue): Item Name, SKU, Category, DC Min, DC Max
+- **SKU Master CSV** (purple): enriched SKU master with computed tags
+
+### 3.10 Logic Tweaker Tab (Admin only)
 
 3-column layout:
 - **Col 1:** Analysis period, recency window, recency weights, DC multipliers, active DS count
-- **Col 2:** Base min days, movement boundaries, price boundaries, spike params, max days buffer, ABQ multiplier, brand buffer days, new DS logic
+- **Col 2:** Base min days, movement boundaries, price boundaries, spike params, max days buffer, ABQ multiplier, brand buffer days, new DS logic, **Category Strategy Engine** (category→strategy assignment, percentile cover params, fixed unit floor params, brand lead time days)
 - **Col 3:** Impact Preview — shadow model run, shows SKUs affected, ₹ delta by movement tag / store / category
 
 Sticky bar when unsaved changes: Reset / Run Preview / Apply & Re-run. Navigation guard intercepts tab switches with unsaved changes.
@@ -268,23 +286,22 @@ On Apply & Re-run: params saved to Supabase, model reruns, results pushed to all
 
 ---
 
-### 3.8 Manual Overrides Tab (Admin only)
+### 3.11 Manual Overrides Tab (Admin only)
 
-- Shows all active core overrides (from OOS Simulation → Apply to Core)
-- KPI cards: Tool vs Override inventory value delta
-- Filter by search / category / store
-- Remove any override to revert that SKU × DS to tool logic
-- All changes sync to Supabase immediately
+Shows **one row per SKU** with all DS + DC columns for any SKU that has an OOS Simulation override or a SKU Floor entry.
+
+- **KPI cards:** 2 cards — Inventory Value (Min) and Inventory Value (Max), each showing Before → After → Delta (includes DC impact)
+- **Before** values use pre-floor engine output; **After** uses effective values with floors + overrides applied
+- **Per-DS columns:** Tool Min, Tool Max, Override Min, Override Max (4 sub-columns per DS)
+- **DC columns:** Tool Min, Tool Max, Override Min, Override Max (override shows effective DC values when floors push DS values up)
+- **Source column:** "OOS Sim" (blue pill) or "SKU Floor" (purple pill), or both
+- **Actions:** Remove button for OOS Simulation overrides only; SKU Floor entries managed via re-upload
+- **Filters:** Search, category, source (All / OOS Simulation / SKU Floor)
+- OOS Simulation overrides sync to Supabase immediately
 
 ---
 
-### 3.9 QA Mode (Admin only)
-
-Paste a CSV from Google Sheet (columns: SKU, DS01 Min, DS01 Max ... DC Min, DC Max). Tool diffs every value against computed output, shows mismatches sorted by magnitude. Filterable by DS, movement, spike, price tag.
-
----
-
-### 3.10 Default Parameters
+### 3.12 Default Parameters
 
 | Parameter | Default |
 |---|---|
@@ -442,32 +459,14 @@ Currently, overrides require: run OOS simulation → download CSV → edit → r
 
 The new version should allow the inventory manager to directly edit Min/Max for any SKU × DS inline in the monitoring view, with a clear audit trail showing: who changed it, when, what the tool recommendation was, and what override was applied.
 
-### 5.6 Retain Everything That Works
-
-The following from the current tool are working well and must be retained:
-- T150 ranking logic
-- Price tagging
-- Movement tagging
-- Spike detection and spike median logic
-- Brand buffer logic
-- New DS floor logic
-- OOS simulation (replay engine)
-- Logic Tweaker with impact preview
-- Supabase sync architecture
-- Admin vs public access model
-- QA diff mode
-
 ---
 
-## 6. Replenishment Flow (unchanged)
+## 6. Replenishment Flow
 
 - Each DS is replenished daily from the DC
 - DS Min = reorder trigger; DS Max = restock-to level
-- DC is replenished from suppliers:
-  - Most brands: 1–2 day lead time
-  - A few brands (to be listed): up to 5-day lead time
-- DC Min must cover demand during the supplier lead time window
-- Current DC Min/Max = multiplier of DS totals. This needs to become lead-time-aware in the new version.
+- DC is replenished from suppliers with brand-specific lead times (configurable in Logic Tweaker, default 2 days)
+- DC Min/Max is now lead-time-aware — see section 4.4
 
 ---
 
@@ -477,7 +476,7 @@ The following from the current tool are working well and must be retained:
 - React + Vite frontend — no framework changes
 - Admin / public access model must be preserved
 - All existing data input formats (CSVs) must continue to work — do not break the upload pipeline
-- The existing model must continue to run and produce outputs — the new logic runs alongside it, not replacing it immediately. Outputs should be comparable side by side.
+- The existing Standard model continues to run for categories assigned to it. New strategies (Percentile Cover, Fixed Unit Floor) run for their assigned categories.
 - Performance: the tool currently handles ~1,500 SKUs × 5 stores. Any new engine must not block the UI thread — use Web Workers for heavy computation.
 
 ---
@@ -541,7 +540,7 @@ Engine logic lives in `src/engine/`. UI, state management, and tab components re
 | NZD | Non-Zero Days — days with at least one sale |
 | Dead Stock | SKU flagged as unsellable or to be discontinued — Max forced = Min |
 | New DS | A newly opened dark store — gets a Min floor for top-N SKUs |
-| SKU Floors | Per-store manual floor qtys uploaded via CSV; the engine uses these as a minimum floor for any SKU at any DS |
+| SKU Floors | Per-store manual Min/Max floors uploaded via CSV; the engine uses floor Min/Max if they exceed computed values. Supports separate Min and Max per DS. |
 | Brand Buffer | Extra days of cover added for brands with longer replenishment or MOQ constraints |
 | Core Override | A manual Min/Max override applied from OOS Simulation that bakes into the model output |
 | OOS | Out of Stock — an order line that could not be fully fulfilled |
