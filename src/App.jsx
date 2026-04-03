@@ -93,7 +93,7 @@ const frozenTd=(left,bg,extra={})=>({...S.td,position:"sticky",left,background:b
 const LOGIC_TAG_STYLES={
   "Base Logic":     {bg:"#DCFCE7",color:"#15803D",border:"#BBF7D0"},
   "New DS Floor":   {bg:"#DBEAFE",color:"#1D4ED8",border:"#BFDBFE"},
-  "New SKU Floor":  {bg:"#EDE9FE",color:"#6D28D9",border:"#C4B5FD"},
+  "SKU Floor":      {bg:"#EDE9FE",color:"#6D28D9",border:"#C4B5FD"},
   "Brand Buffer":   {bg:"#FEF3C7",color:"#92400E",border:"#FDE68A"},
   "Manual Override":{bg:"#FFFBEA",color:"#B8860B",border:"#F5C400"},
 };
@@ -2941,7 +2941,7 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
           skuMaster:  {file:"SKU_Master_Template.csv",  headers:["Name","Inventorised At","SKU","Category","Status","Brand"],rows:[["Product Name A","DS","SKU001","Paints","Active","Asian Paints"],["Product Name B","DS","SKU002","Adhesives","Active","MYK Laticrete"]]},
           priceData:{file:"Avg_Price_Template.csv",headers:["item_id","item_name","unit","is_combo_product","quantity_purchased","amount","average_price","location_name","sku"],rows:[["ITEM001","Product Name A","PCS","No",100,25000,250,"DS01 Warehouse","SKU001"],["ITEM002","Product Name B","PCS","No",10,18000,1800,"DS02 Warehouse","SKU002"]]},
           minReqQty:  {file:"New_DS_Floor_Template.csv",headers:["SKU","Qty"],rows:[["SKU001",10],["SKU002",5]]},
-          newSKUQty:  {file:"New_SKU_Floor_Template.csv",headers:["SKU","DS01","DS02","DS03","DS04","DS05"],rows:[["SKU001",3,2,0,5,0],["SKU002",0,1,2,0,3]]},
+          newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU","DS01","DS02","DS03","DS04","DS05"],rows:[["SKU001",3,2,0,5,0],["SKU002",0,1,2,0,3]]},
           deadStock:  {file:"Dead_Stock_Template.csv",  headers:["Dead Stock"],rows:[["SKU001"],["SKU002"]]},
         };
         const cards=[
@@ -2949,7 +2949,7 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
           {label:"SKU Master",desc:"Columns: Name, SKU, Category, Brand, Status, Inventorised At",handler:handleSKU,count:`${Object.keys(skuMaster).length.toLocaleString()} SKUs`,key:"skuMaster",required:true,hasData:Object.keys(skuMaster).length>0},
           {label:"Average Purchase Price of SKU",desc:"Columns: sku, average_price",handler:handlePrice,count:`${Object.keys(priceData).length.toLocaleString()} SKUs`,key:"priceData",required:true,hasData:Object.keys(priceData).length>0},
           {label:"Newly Launched Dark Store Floor Qty",desc:"Columns: SKU, Qty",handler:handleMRQ,count:`${Object.keys(minReqQty).length.toLocaleString()} SKUs`,key:"minReqQty",required:true,hasData:Object.keys(minReqQty).length>0},
-          {label:"Newly Launched SKU Floor Qty - DS Level",desc:"Per-store manual floor qtys. Columns: SKU, DS01–DS05",handler:handleNSQ,count:`${Object.keys(newSKUQty).length.toLocaleString()} SKUs`,key:"newSKUQty",required:true,hasData:Object.keys(newSKUQty).length>0},
+          {label:"SKU Floors - DS Level",desc:"Per-store manual floor qtys. Columns: SKU, DS01–DS05",handler:handleNSQ,count:`${Object.keys(newSKUQty).length.toLocaleString()} SKUs`,key:"newSKUQty",required:true,hasData:Object.keys(newSKUQty).length>0},
           {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,count:`${deadStock.size.toLocaleString()} SKUs`,key:"deadStock",required:true,hasData:deadStock.size>0},
         ];
         return(
@@ -3158,7 +3158,7 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
                 {/* Logic */}
                 <select value={filterLogic} onChange={e=>setFilterLogic(e.target.value)} style={{...S.input,fontSize:11,padding:"3px 6px"}}>
                   <option value="All">All Logic</option>
-                  {["Base Logic","New DS Floor","New SKU Floor","Brand Buffer","Manual Override"].map(t=><option key={t}>{t}</option>)}
+                  {["Base Logic","New DS Floor","SKU Floor","Brand Buffer","Manual Override"].map(t=><option key={t}>{t}</option>)}
                 </select>
 
                 {(search||filterCat||filterStatus!=="All"||filterDS!=="All"||filterPriceTag!=="All"||filterTopN!=="All"||filterMov!=="All"||filterLogic!=="All")&&(

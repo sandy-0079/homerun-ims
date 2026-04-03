@@ -121,14 +121,14 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
           if (isEligible && nm > 0) logicTag = "New DS Floor";
           if (nsq && nsq[skuId]) {
             const q = nsq[skuId][dsId] || 0;
-            if (q > 0) { nm = Math.max(nm, q); nx = nm; logicTag = "New SKU Floor"; }
+            if (q > 0) { nm = Math.max(nm, q); nx = nm; logicTag = "SKU Floor"; }
           }
           if (isDead) nx = nm;
           stores[dsId] = { min: nm, max: nx, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag, strategyTag: "standard" };
           dsMinArr.push(nm); dsMaxArr.push(nx); dsDailyAvgs.push(0);
         } else if (nsq && nsq[skuId]) {
           const q = nsq[skuId][dsId] || 0;
-          const logicTag = q > 0 ? "New SKU Floor" : "Base Logic";
+          const logicTag = q > 0 ? "SKU Floor" : "Base Logic";
           stores[dsId] = { min: q, max: q, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag, strategyTag: "standard" };
           dsMinArr.push(q); dsMaxArr.push(q); dsDailyAvgs.push(0);
         } else {
@@ -183,10 +183,10 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       minQty = Math.ceil(minQty); maxQty = Math.ceil(Math.max(maxQty, minQty));
       if (isDead) maxQty = minQty; maxQty = Math.max(maxQty, minQty); if (isDead) maxQty = minQty;
 
-      // 3. NSQ — runs last, wins if it raises minQty above everything so far
+      // 3. SKU Floors — runs last, wins if floor exceeds engine Min
       if (nsq && nsq[skuId]) {
         const q = nsq[skuId][dsId] || 0;
-        if (q > minQty) { minQty = q; maxQty = minQty; logicTag = "New SKU Floor"; }
+        if (q > minQty) { minQty = q; maxQty = minQty; logicTag = "SKU Floor"; }
       }
 
       stores[dsId] = {

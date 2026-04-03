@@ -79,7 +79,7 @@ Admin login via password modal (top right). Session stored in localStorage.
 |---|---|---|
 | Average Purchase Price | sku, average_price | Price tagging + inventory value calculations |
 | New DS Floor Qty | SKU, Qty | Min floor for new dark stores for top-N SKUs |
-| New SKU Floor Qty | SKU, DS01–DS05 | Per-store manual floor for newly listed SKUs |
+| SKU Floors | SKU, DS01–DS05 | Per-store manual floor qtys for any SKU |
 | Dead Stock List | Dead Stock (SKU) | Forces Max = Min for flagged SKUs |
 
 #### Store Reference
@@ -189,7 +189,7 @@ Recency weights (configurable):
 
 1. **New DS Floor** — if DS is flagged New DS and SKU is in top-N (default top 150): floor > blend → Min = Max = floor. Tagged "New DS Floor".
 2. **Brand Buffer** — if brand has buffer days configured and dailyAvg > 0: Min = CEILING((DOC + bufferDays) × dailyAvg), Max = Min. Tagged "Brand Buffer".
-3. **NSQ Override** — if manual per-store floor exists and exceeds current Min: Min = NSQ, Max = Min. Tagged "New SKU Floor". Runs last — wins if it raises Min above everything else.
+3. **SKU Floor Override** — if manual per-store floor exists and exceeds current Min: Min = floor, Max = Min. Tagged "SKU Floor". Runs last — wins if it raises Min above everything else.
 4. **Dead Stock cap** — Max = Min.
 5. **Final rounding** — Math.round() on both values.
 
@@ -219,7 +219,7 @@ Default DC multipliers:
 - Virtualised table (renders only visible rows) with frozen left columns: Item, Category, Status, Price Tag, Top N
 - Per DS: Movement tag, Logic tag, Daily Avg, ABQ, Min, Max
 - Per DC: Movement, Non-Zero Days, Min, Max
-- Logic tags: Base Logic / New DS Floor / New SKU Floor / Brand Buffer / Manual Override
+- Logic tags: Base Logic / New DS Floor / SKU Floor / Brand Buffer / Manual Override
 
 ---
 
@@ -373,7 +373,7 @@ For each SKU × DS:
   4. Apply post-blend adjustments in strict order:
      a. New DS Floor (if applicable)
      b. Brand Buffer (if applicable)
-     c. NSQ Override (if applicable)
+     c. SKU Floor Override (if applicable)
      d. Dead Stock cap (if applicable)
      e. Final rounding
   5. Record Strategy Tag (PCT / FLOOR / standard)
@@ -541,7 +541,7 @@ Engine logic lives in `src/engine/`. UI, state management, and tab components re
 | NZD | Non-Zero Days — days with at least one sale |
 | Dead Stock | SKU flagged as unsellable or to be discontinued — Max forced = Min |
 | New DS | A newly opened dark store — gets a Min floor for top-N SKUs |
-| NSQ | New SKU Qty — manually set per-store floor for a newly listed SKU |
+| SKU Floors | Per-store manual floor qtys uploaded via CSV; the engine uses these as a minimum floor for any SKU at any DS |
 | Brand Buffer | Extra days of cover added for brands with longer replenishment or MOQ constraints |
 | Core Override | A manual Min/Max override applied from OOS Simulation that bakes into the model output |
 | OOS | Out of Stock — an order line that could not be fully fulfilled |
