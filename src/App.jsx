@@ -1833,51 +1833,98 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
     </div>
   );
 }
-function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results }) {
+function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, newSKUQty, skuMaster, params }) {
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("All");
-  const [filterDS, setFilterDS] = useState("All");
+  const [filterSource, setFilterSource] = useState("All");
 
+  /* ---------- Build unified rows: one per SKU ---------- */
   const allRows = useMemo(() => {
+    const skuSet = new Set([...Object.keys(coreOverrides || {}), ...Object.keys(newSKUQty || {})]);
     const rows = [];
-    Object.entries(coreOverrides).forEach(([sku, dsList]) => {
-      Object.entries(dsList).forEach(([ds, ov]) => { rows.push({ sku, ds, ...ov }); });
+    skuSet.forEach(sku => {
+      const hasCoreOvr = !!(coreOverrides && coreOverrides[sku]);
+      const hasFloor   = !!(newSKUQty && newSKUQty[sku]);
+      const source = hasCoreOvr && hasFloor ? "Both" : hasCoreOvr ? "OOS Simulation" : "SKU Floor";
+      const meta = results?.[sku]?.meta || {};
+      const sm = skuMaster?.[sku] || {};
+      const name = meta.name || sm.name || sm.Name || sku;
+      const category = meta.category || sm.category || sm.Category || "Unknown";
+      const price = priceData?.[sku] || 0;
+
+      /* Determine timestamp */
+      let timestamp = null;
+      if (hasCoreOvr) {
+        const dsEntries = Object.values(coreOverrides[sku]);
+        const dates = dsEntries.map(e => e.appliedAt).filter(Boolean);
+        if (dates.length) timestamp = dates.sort().pop(); /* latest */
+      }
+
+      /* Per-DS values */
+      const dsData = {};
+      DS_LIST.forEach(ds => {
+        const toolMin = results?.[sku]?.stores?.[ds]?.min || 0;
+        const toolMax = results?.[sku]?.stores?.[ds]?.max || 0;
+        const coreMin = coreOverrides?.[sku]?.[ds]?.min || 0;
+        const coreMax = coreOverrides?.[sku]?.[ds]?.max || 0;
+        const fl = newSKUQty?.[sku]?.[ds];
+        const floorMin = fl == null ? 0 : (typeof fl === "number" ? fl : (fl?.min || 0));
+        const floorMax = fl == null ? 0 : (typeof fl === "number" ? fl : (fl?.max || floorMin));
+        const ovrMin = Math.max(coreMin, floorMin);
+        const ovrMax = Math.max(coreMax, floorMax);
+        dsData[ds] = { toolMin, toolMax, ovrMin: ovrMin || 0, ovrMax: ovrMax || 0 };
+      });
+
+      /* DC values */
+      const dcMin = results?.[sku]?.dc?.min || 0;
+      const dcMax = results?.[sku]?.dc?.max || 0;
+
+      /* Inventory values (Max-based) */
+      let invBefore = 0, invAfter = 0;
+      DS_LIST.forEach(ds => {
+        invBefore += dsData[ds].toolMax * price;
+        invAfter  += Math.max(dsData[ds].toolMax, dsData[ds].ovrMax) * price;
+      });
+      invBefore += dcMax * price;
+      invAfter  += dcMax * price;
+      const invDelta = invAfter - invBefore;
+
+      rows.push({ sku, name, category, price, source, timestamp, dsData, dcMin, dcMax, invBefore: Math.round(invBefore), invAfter: Math.round(invAfter), invDelta: Math.round(invDelta) });
     });
     return rows;
-  }, [coreOverrides]);
+  }, [coreOverrides, newSKUQty, results, skuMaster, priceData]);
 
-  const categories = useMemo(() => ["All", ...new Set(allRows.map(r => r.category || "Unknown"))].sort(), [allRows]);
+  /* ---------- Derived ---------- */
+  const categories = useMemo(() => ["All", ...new Set(allRows.map(r => r.category))].sort(), [allRows]);
   const filtered = useMemo(() => allRows.filter(r => {
-    if (filterCat !== "All" && (r.category || "Unknown") !== filterCat) return false;
-    if (filterDS !== "All" && r.ds !== filterDS) return false;
-    if (search && !r.sku.toLowerCase().includes(search.toLowerCase()) && !(r.skuName || "").toLowerCase().includes(search.toLowerCase())) return false;
+    if (filterCat !== "All" && r.category !== filterCat) return false;
+    if (filterSource !== "All" && r.source !== filterSource && !(filterSource === "OOS Simulation" && r.source === "Both") && !(filterSource === "SKU Floor" && r.source === "Both")) return false;
+    if (search) { const q = search.toLowerCase(); if (!r.sku.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q)) return false; }
     return true;
-  }), [allRows, filterCat, filterDS, search]);
+  }), [allRows, filterCat, filterSource, search]);
 
-  const overriddenSKUs = [...new Set(allRows.map(r => r.sku))];
-  const toolMinVal = Math.round(overriddenSKUs.reduce((t, sku) => { const p = priceData[sku] || 0; return t + DS_LIST.reduce((s, ds) => s + (coreOverrides[sku]?.[ds]?.toolMin || 0) * p, 0); }, 0));
-  const toolMaxVal = Math.round(overriddenSKUs.reduce((t, sku) => { const p = priceData[sku] || 0; return t + DS_LIST.reduce((s, ds) => s + (coreOverrides[sku]?.[ds]?.toolMax || 0) * p, 0); }, 0));
-  const ovrMinVal  = Math.round(overriddenSKUs.reduce((t, sku) => { const p = priceData[sku] || 0; return t + DS_LIST.reduce((s, ds) => { const ov = coreOverrides[sku]?.[ds]; return s + (ov ? Math.max(ov.toolMin, ov.min) : 0) * p; }, 0); }, 0));
-  const ovrMaxVal  = Math.round(overriddenSKUs.reduce((t, sku) => { const p = priceData[sku] || 0; return t + DS_LIST.reduce((s, ds) => { const ov = coreOverrides[sku]?.[ds]; return s + (ov ? Math.max(ov.toolMax, ov.max) : 0) * p; }, 0); }, 0));
-  const deltaMin = ovrMinVal - toolMinVal, deltaMax = ovrMaxVal - toolMaxVal;
+  /* ---------- KPIs ---------- */
+  const kpiBeforeMax = filtered.reduce((s, r) => s + r.invBefore, 0);
+  const kpiAfterMax  = filtered.reduce((s, r) => s + r.invAfter, 0);
+  const kpiDelta     = kpiAfterMax - kpiBeforeMax;
 
-  const removeOverride = (sku, ds) => {
+  /* ---------- Actions ---------- */
+  const removeOverride = (sku) => {
     const updated = { ...coreOverrides };
-    if (updated[sku]) {
-      updated[sku] = { ...updated[sku] };
-      delete updated[sku][ds];
-      if (Object.keys(updated[sku]).length === 0) delete updated[sku];
-    }
+    delete updated[sku];
     saveCoreOverrides(updated);
   };
 
-  const th = (extra = {}) => ({ padding: "6px 10px", textAlign: "left", color: HR.muted, background: HR.surfaceLight, fontWeight: 600, whiteSpace: "nowrap", fontSize: 10, ...extra });
-  const td = (extra = {}) => ({ padding: "5px 10px", borderTop: "1px solid #E0E0D0", verticalAlign: "middle", fontSize: 11, ...extra });
+  /* ---------- Styles ---------- */
+  const th = (extra = {}) => ({ padding: "6px 6px", textAlign: "center", color: HR.muted, background: HR.surfaceLight, fontWeight: 600, whiteSpace: "nowrap", fontSize: 9, ...extra });
+  const td = (extra = {}) => ({ padding: "4px 6px", borderTop: "1px solid #E0E0D0", verticalAlign: "middle", fontSize: 10, textAlign: "center", ...extra });
+  const pill = (bg, color) => ({ display: "inline-block", padding: "1px 6px", borderRadius: 8, fontSize: 9, fontWeight: 600, background: bg, color, marginRight: 2 });
 
+  /* ---------- Empty state ---------- */
   if (!allRows.length) return (
     <div style={{ textAlign: "center", padding: 80 }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
-      <div style={{ color: HR.muted, fontSize: 14 }}>No active overrides. Use the OOS Simulation tab to apply overrides to core.</div>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>&#x2705;</div>
+      <div style={{ color: HR.muted, fontSize: 14 }}>No active overrides or SKU floors.</div>
     </div>
   );
 
@@ -1885,17 +1932,16 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results }) 
     <div>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10 }}>
-        <h2 style={{ color: HR.yellowDark, margin: 0, fontSize: 15 }}>Active Core Overrides</h2>
-        <span style={{ color: HR.muted, fontSize: 12 }}>Overrides are baked into core logic. Remove a row to revert to tool logic for that SKU×DS.</span>
+        <h2 style={{ color: HR.yellowDark, margin: 0, fontSize: 15 }}>Manual Overrides</h2>
+        <span style={{ color: HR.muted, fontSize: 12 }}>One row per SKU. Shows OOS Simulation overrides and SKU Floor entries across all DS.</span>
       </div>
 
-      {/* 4 KPI Cards — full width */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 12 }}>
+      {/* 3 KPI Cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 12 }}>
         {[
-          { label: "Tool Min Inv Value",      value: fmtInr(toolMinVal), sub: `${overriddenSKUs.length} overridden SKU${overriddenSKUs.length !== 1 ? "s" : ""}`, color: "#0077A8" },
-          { label: "Override Min Inv Value",  value: fmtInr(ovrMinVal),  sub: `Delta: ${deltaMin >= 0 ? "+" : ""}${fmtInr(deltaMin)}`, color: deltaMin >= 0 ? "#C05A00" : HR.green, subColor: deltaMin >= 0 ? "#C05A00" : HR.green },
-          { label: "Tool Max Inv Value",      value: fmtInr(toolMaxVal), sub: `${overriddenSKUs.length} overridden SKU${overriddenSKUs.length !== 1 ? "s" : ""}`, color: "#7A3DBF" },
-          { label: "Override Max Inv Value",  value: fmtInr(ovrMaxVal),  sub: `Delta: ${deltaMax >= 0 ? "+" : ""}${fmtInr(deltaMax)}`, color: deltaMax >= 0 ? "#C05A00" : HR.green, subColor: deltaMax >= 0 ? "#C05A00" : HR.green },
+          { label: "Total Inv Value (Before)", value: fmtInr(kpiBeforeMax), sub: `${filtered.length} SKU${filtered.length !== 1 ? "s" : ""} with overrides`, color: "#0077A8" },
+          { label: "Total Inv Value (After)",  value: fmtInr(kpiAfterMax),  sub: `Max-based across DS + DC`, color: "#7A3DBF" },
+          { label: "Delta", value: `${kpiDelta >= 0 ? "+" : ""}${fmtInr(kpiDelta)}`, sub: kpiDelta >= 0 ? "Inventory increase" : "Inventory decrease", color: kpiDelta >= 0 ? "#C05A00" : HR.green, subColor: kpiDelta >= 0 ? "#C05A00" : HR.green },
         ].map(c => (
           <div key={c.label} style={{ background: HR.surface, borderRadius: 7, padding: "8px 12px", border: `1px solid ${HR.border}`, borderLeft: `3px solid ${c.color}` }}>
             <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 2 }}>{c.label}</div>
@@ -1911,58 +1957,87 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results }) 
         <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ ...S.input, fontSize: 11, padding: "4px 8px" }}>
           {categories.map(c => <option key={c} value={c}>{c === "All" ? "All Categories" : c}</option>)}
         </select>
-        <select value={filterDS} onChange={e => setFilterDS(e.target.value)} style={{ ...S.input, fontSize: 11, padding: "4px 8px" }}><option value="All">All Stores</option>{DS_LIST.map(d => <option key={d}>{d}</option>)}</select>
-        <span style={{ fontSize: 11, color: HR.muted }}>{filtered.length} override{filtered.length !== 1 ? "s" : ""}</span>
+        <select value={filterSource} onChange={e => setFilterSource(e.target.value)} style={{ ...S.input, fontSize: 11, padding: "4px 8px" }}>
+          <option value="All">All Sources</option>
+          <option value="OOS Simulation">OOS Simulation</option>
+          <option value="SKU Floor">SKU Floor</option>
+        </select>
+        <span style={{ fontSize: 11, color: HR.muted }}>{filtered.length} SKU{filtered.length !== 1 ? "s" : ""}</span>
       </div>
 
-      {/* Table — full width, grows naturally */}
+      {/* Table */}
       <div style={{ ...S.card, padding: 0, overflow: "auto" }}>
-        <table style={{ ...S.table, minWidth: 900 }}>
+        <table style={{ ...S.table, minWidth: 1400 }}>
           <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
+            {/* Row 1: group headers */}
             <tr style={{ background: HR.surfaceLight }}>
-              <th style={th({ minWidth: 180 })}>Item</th>
-              <th style={th()}>Category</th>
-              <th style={th()}>Brand</th>
-              <th style={th()}>Movement</th>
-              <th style={th()}>Price</th>
-              <th style={th({ textAlign: "center" })}>DS</th>
-              <th style={th({ textAlign: "center" })}>Tool Min</th>
-              <th style={th({ textAlign: "center" })}>Tool Max</th>
-              <th style={th({ textAlign: "center", background: "#FFFBEA" })}>Override Min</th>
-              <th style={th({ textAlign: "center", background: "#FFFBEA" })}>Override Max</th>
-              <th style={th({ textAlign: "center", background: "#FFFBEA" })}>Min Delta</th>
-              <th style={th({ textAlign: "center", background: "#FFFBEA" })}>Max Delta</th>
-              <th style={th()}>Applied Date</th>
-              <th style={th()} />
+              <th style={th({ textAlign: "left", minWidth: 150 })} rowSpan={2}>SKU</th>
+              <th style={th({ textAlign: "left" })} rowSpan={2}>Item</th>
+              <th style={th({ textAlign: "left" })} rowSpan={2}>Category</th>
+              <th style={th()} rowSpan={2}>Price</th>
+              <th style={th()} rowSpan={2}>Inv Before</th>
+              <th style={th()} rowSpan={2}>Inv After</th>
+              <th style={th()} rowSpan={2}>Delta</th>
+              <th style={th()} rowSpan={2}>Source</th>
+              <th style={th()} rowSpan={2}>Timestamp</th>
+              {DS_LIST.map((ds, i) => (
+                <th key={ds} colSpan={4} style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].header, borderLeft: `2px solid ${DS_COLORS[i].header}44` })}>{ds}</th>
+              ))}
+              <th colSpan={2} style={th({ background: DC_COLOR.bg, color: DC_COLOR.header, borderLeft: `2px solid ${DC_COLOR.header}44` })}>DC</th>
+              <th style={th()} rowSpan={2}>Actions</th>
+            </tr>
+            {/* Row 2: sub-headers */}
+            <tr style={{ background: HR.surfaceLight }}>
+              {DS_LIST.map((ds, i) => (
+                <React.Fragment key={ds}>
+                  <th style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].text, fontSize: 8, borderLeft: `2px solid ${DS_COLORS[i].header}44` })}>TMin</th>
+                  <th style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].text, fontSize: 8 })}>TMax</th>
+                  <th style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].text, fontSize: 8 })}>OMin</th>
+                  <th style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].text, fontSize: 8 })}>OMax</th>
+                </React.Fragment>
+              ))}
+              <th style={th({ background: DC_COLOR.bg, color: DC_COLOR.text, fontSize: 8, borderLeft: `2px solid ${DC_COLOR.header}44` })}>Min</th>
+              <th style={th({ background: DC_COLOR.bg, color: DC_COLOR.text, fontSize: 8 })}>Max</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r, i) => {
-              const p = priceData[r.sku] || 0;
-              const finalMin = Math.max(r.toolMin, r.min), finalMax = Math.max(r.toolMax, r.max);
-              const deltaMinRow = Math.round((finalMin - r.toolMin) * p), deltaMaxRow = Math.round((finalMax - r.toolMax) * p);
-              const di = DS_LIST.indexOf(r.ds), dc = DS_COLORS[di >= 0 ? di : 0];
-              const mvColor = MOV_COLORS[r.mvTag] || "#64748b";
-              const priceC  = PRICE_TAG_COLORS[r.priceTag] || { bg: "#F1F5F9", color: "#64748B", border: "#CBD5E1" };
-              return (
-                <tr key={`${r.sku}||${r.ds}`} style={{ background: i % 2 === 0 ? HR.white : HR.surfaceLight }}>
-                  <td style={td()}><div style={{ fontWeight: 700, color: HR.text, fontSize: 11 }}>{r.skuName || r.sku}</div><div style={{ fontSize: 9, color: HR.muted }}>{r.sku}</div></td>
-                  <td style={{ ...td(), color: HR.muted, fontSize: 10 }}>{r.category || "—"}</td>
-                  <td style={{ ...td(), color: HR.muted, fontSize: 10 }}>{r.brand || "—"}</td>
-                  <td style={td()}><span style={{ padding: "1px 5px", borderRadius: 3, fontSize: 9, fontWeight: 600, background: mvColor + "18", color: mvColor, border: `1px solid ${mvColor}33` }}>{r.mvTag || "—"}</span></td>
-                  <td style={td()}><span style={{ padding: "1px 5px", borderRadius: 3, fontSize: 9, fontWeight: 600, background: priceC.bg, color: priceC.color, border: `1px solid ${priceC.border}` }}>{r.priceTag || "—"}</span></td>
-                  <td style={{ ...td(), textAlign: "center" }}><span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: dc.bg, color: dc.header, border: `1px solid ${dc.header}55` }}>{r.ds}</span></td>
-                  <td style={{ ...td(), textAlign: "center", color: HR.muted }}>{r.toolMin}</td>
-                  <td style={{ ...td(), textAlign: "center", color: HR.muted }}>{r.toolMax}</td>
-                  <td style={{ ...td(), textAlign: "center", background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark }}>{finalMin}</td>
-                  <td style={{ ...td(), textAlign: "center", background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark }}>{finalMax}</td>
-                  <td style={{ ...td(), textAlign: "center", background: "#FFFDE7" }}><span style={{ fontWeight: 700, fontSize: 11, color: deltaMinRow >= 0 ? "#C05A00" : HR.green }}>{deltaMinRow >= 0 ? "+" : ""}{fmtInr(deltaMinRow)}</span></td>
-                  <td style={{ ...td(), textAlign: "center", background: "#FFFDE7" }}><span style={{ fontWeight: 700, fontSize: 11, color: deltaMaxRow >= 0 ? "#C05A00" : HR.green }}>{deltaMaxRow >= 0 ? "+" : ""}{fmtInr(deltaMaxRow)}</span></td>
-                  <td style={{ ...td(), color: HR.muted, fontSize: 10 }}>{r.appliedAt ? new Date(r.appliedAt).toLocaleDateString() : "—"}</td>
-                  <td style={td()}><button onClick={() => removeOverride(r.sku, r.ds)} style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", padding: "3px 8px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>Remove</button></td>
-                </tr>
-              );
-            })}
+            {filtered.map((r, i) => (
+              <tr key={r.sku} style={{ background: i % 2 === 0 ? HR.white : HR.surfaceLight }}>
+                <td style={td({ textAlign: "left", fontWeight: 700, color: HR.text, fontSize: 10 })}>{r.sku}</td>
+                <td style={td({ textAlign: "left", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })} title={r.name}>{r.name}</td>
+                <td style={td({ textAlign: "left", color: HR.muted })}>{r.category}</td>
+                <td style={td({ color: HR.muted })}>{r.price ? fmtInr(r.price) : "—"}</td>
+                <td style={td({ color: HR.muted })}>{fmtInr(r.invBefore)}</td>
+                <td style={td({ fontWeight: 700 })}>{fmtInr(r.invAfter)}</td>
+                <td style={td()}><span style={{ fontWeight: 700, color: r.invDelta >= 0 ? "#C05A00" : HR.green }}>{r.invDelta >= 0 ? "+" : ""}{fmtInr(r.invDelta)}</span></td>
+                <td style={td()}>
+                  {(r.source === "OOS Simulation" || r.source === "Both") && <span style={pill("#DBEAFE", "#1D4ED8")}>OOS Sim</span>}
+                  {(r.source === "SKU Floor" || r.source === "Both") && <span style={pill("#EDE9FE", "#7C3AED")}>SKU Floor</span>}
+                </td>
+                <td style={td({ color: HR.muted, fontSize: 9 })}>{r.timestamp ? new Date(r.timestamp).toLocaleDateString() : "—"}</td>
+                {DS_LIST.map((ds, di) => {
+                  const d = r.dsData[ds];
+                  const hasOvr = d.ovrMin > 0 || d.ovrMax > 0;
+                  const oMinHigher = d.ovrMin > d.toolMin;
+                  const oMaxHigher = d.ovrMax > d.toolMax;
+                  return (
+                    <React.Fragment key={ds}>
+                      <td style={td({ color: HR.muted, borderLeft: `2px solid ${DS_COLORS[di].header}22` })}>{d.toolMin}</td>
+                      <td style={td({ color: HR.muted })}>{d.toolMax}</td>
+                      <td style={td(hasOvr && oMinHigher ? { background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark } : { color: "#ccc" })}>{hasOvr ? d.ovrMin : "—"}</td>
+                      <td style={td(hasOvr && oMaxHigher ? { background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark } : { color: "#ccc" })}>{hasOvr ? d.ovrMax : "—"}</td>
+                    </React.Fragment>
+                  );
+                })}
+                <td style={td({ color: HR.muted, borderLeft: `2px solid ${DC_COLOR.header}22` })}>{r.dcMin}</td>
+                <td style={td({ color: HR.muted })}>{r.dcMax}</td>
+                <td style={td()}>
+                  {(r.source === "OOS Simulation" || r.source === "Both") && (
+                    <button onClick={() => removeOverride(r.sku)} style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", padding: "3px 8px", borderRadius: 4, cursor: "pointer", fontSize: 9, fontWeight: 700 }}>Remove</button>
+                  )}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
         {filtered.length === 0 && <div style={{ padding: 20, textAlign: "center", color: HR.muted, fontSize: 12 }}>No overrides match the current filters.</div>}
@@ -3991,7 +4066,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
     </div>{/* end 3-col grid */}
   </div>
 )}{/* end logic tab */}
-{tab==="overrides"&&isAdmin&&<OverridesTab coreOverrides={coreOverrides} saveCoreOverrides={saveCoreOverrides} priceData={priceData} results={results}/>}
+{tab==="overrides"&&isAdmin&&<OverridesTab coreOverrides={coreOverrides} saveCoreOverrides={saveCoreOverrides} priceData={priceData} results={results} newSKUQty={newSKUQty} skuMaster={skuMaster} params={params}/>}
       </div>{/* end pageWrap */}
     </div>
   );
