@@ -187,24 +187,6 @@ function TierSlider({label,value,min,max,step=1,onChange,color,disabled}){
   );
 }
 
-function parseQACSV(text){try{return parseCSV(text);}catch(e){return[];}}
-function buildDiff(qaRows,results){
-  const diffs=[];
-  qaRows.forEach(row=>{
-    const sku=(row["SKU"]||row["sku"]||"").trim();
-    if(!sku||!results[sku])return;
-    const r=results[sku];
-    DS_LIST.forEach(ds=>{
-      const sMin=parseFloat(row[`${ds} Min`]||0),sMax=parseFloat(row[`${ds} Max`]||0);
-      const tMin=r.stores[ds]?.min??0,tMax=r.stores[ds]?.max??0,dMin=tMin-sMin,dMax=tMax-sMax;
-      if(dMin!==0||dMax!==0)diffs.push({sku,ds,sheetMin:sMin,sheetMax:sMax,toolMin:tMin,toolMax:tMax,dMin,dMax,mvTag:r.stores[ds]?.mvTag||"—",spTag:r.stores[ds]?.spTag||"—",prTag:r.meta.priceTag||"—",t150:r.meta.t150Tag||"—",brand:r.meta.brand||"—"});
-    });
-    const sDCMin=parseFloat(row["DC Min"]||0),sDCMax=parseFloat(row["DC Max"]||0),dMin=r.dc.min-sDCMin,dMax=r.dc.max-sDCMax;
-    if(dMin!==0||dMax!==0)diffs.push({sku,ds:"DC",sheetMin:sDCMin,sheetMax:sDCMax,toolMin:r.dc.min,toolMax:r.dc.max,dMin,dMax,mvTag:r.dc.mvTag||"—",spTag:"—",prTag:r.meta.priceTag||"—",t150:r.meta.t150Tag||"—",brand:r.meta.brand||"—"});
-  });
-  diffs.sort((a,b)=>(Math.abs(b.dMin)+Math.abs(b.dMax))-(Math.abs(a.dMin)+Math.abs(a.dMax)));
-  return diffs;
-}
 
 const HomeRunLogo=()=>(
   <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -2552,8 +2534,6 @@ export default function App(){
   const catRef=useRef(null);
   const [params,setParams]=useState(DEFAULT_PARAMS),[savedParams,setSaved]=useState(DEFAULT_PARAMS);
   const [newBrand,setNewBrand]=useState(""),[newBrandDays,setNBD]=useState(1);
-  const [qaOpen,setQaOpen]=useState(false),[qaText,setQaText]=useState(""),[qaDiffs,setQaDiffs]=useState(null);
-  const [qaFilterDS,setQaFDS]=useState("All"),[qaFilterMv,setQaFMv]=useState("All"),[qaFilterSp,setQaFSp]=useState("All"),[qaFilterPr,setQaFPr]=useState("All");
   const [isAdmin,setIsAdmin]=useState(()=>localStorage.getItem("adminSession")==="true");
   const [showLoginModal,setShowLoginModal]=useState(false);
   const [publishStatus,setPublishStatus]=useState(null);
@@ -2612,7 +2592,7 @@ export default function App(){
     setTimeout(()=>setSyncStatus("idle"),3000);
   },[]);
 
-  const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);setQaOpen(false);};
+  const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);};
 
   const hasChanges=JSON.stringify(params)!==JSON.stringify(savedParams);
   const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays)].filter(Boolean).length;
@@ -2821,7 +2801,6 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   setScrollTop(0);
   setOutputScrollTop(0);
 };
-  const runQA=()=>{if(!results||!qaText.trim()){alert("Upload data and run model first.");return;}const rows=parseQACSV(qaText);if(!rows.length){alert("Could not parse CSV.");return;}setQaDiffs(buildDiff(rows,results));setQaFDS("All");setQaFMv("All");setQaFSp("All");setQaFPr("All");};
 
   const periodDates=useMemo(()=>{const d=[...new Set(invoiceData.map(r=>r.date))].sort();return new Set(d.slice(-(params.overallPeriod||90)));},[invoiceData,params.overallPeriod]);
   const soldSKUs=new Set(invoiceData.filter(r=>periodDates.has(r.date)).map(r=>r.sku));
@@ -2947,11 +2926,6 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
     topn:COL_ITEM_W+COL_CAT_W+COL_STATUS_W+COL_PRICE_W,
   };
 
-  const qaDS=qaDiffs?["All",...new Set(qaDiffs.map(d=>d.ds))]:["All"];
-  const qaMv=qaDiffs?["All",...new Set(qaDiffs.map(d=>d.mvTag))]:["All"];
-  const qaSp=qaDiffs?["All",...new Set(qaDiffs.map(d=>d.spTag))]:["All"];
-  const qaPr=qaDiffs?["All",...new Set(qaDiffs.map(d=>d.prTag))]:["All"];
-  const qaFiltered=qaDiffs?qaDiffs.filter(d=>(qaFilterDS==="All"||d.ds===qaFilterDS)&&(qaFilterMv==="All"||d.mvTag===qaFilterMv)&&(qaFilterSp==="All"||d.spTag===qaFilterSp)&&(qaFilterPr==="All"||d.prTag===qaFilterPr)):[];
 
   const mi=params.movIntervals||[2,4,7,10],pt=params.priceTiers||[3000,1500,400,100],bb=params.brandBuffer||DEFAULT_BRAND_BUFFER;
   const rw2=params.recencyWt||RECENCY_WT_DEFAULT,dcM=params.dcMult||DC_MULT_DEFAULT;
@@ -2980,7 +2954,6 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
         <div style={{flex:1}}/>
         <div style={{fontSize:10,color:HR.muted,marginRight:8,whiteSpace:"nowrap"}}>{dateRange}</div>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}
-        {isAdmin&&<button onClick={()=>setQaOpen(o=>!o)} style={{...S.btn(qaOpen),fontSize:11}}>🔬 QA</button>}
         {isAdmin
           ?<button onClick={handleLogout} style={{...S.btn(false),fontSize:11,color:"#B91C1C",borderColor:"#FECACA"}}>🔓 Logout</button>
           :<button onClick={()=>setShowLoginModal(true)} style={{...S.btn(false),fontSize:11}}>🔐 Admin</button>
@@ -3013,45 +2986,6 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
         </div>
       )}
 
-      {isAdmin&&qaOpen&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:900,display:"flex",flexDirection:"column",padding:20,gap:12,overflow:"auto"}}>
-          <div style={{background:HR.white,borderRadius:10,padding:20,flex:1,overflow:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
-              <span style={{color:HR.yellowDark,fontWeight:800,fontSize:16}}>🔬 QA Mode</span>
-              <button onClick={()=>setQaOpen(false)} style={{background:HR.white,border:`1px solid ${HR.border}`,color:HR.muted,padding:"5px 14px",borderRadius:5,cursor:"pointer",fontSize:12}}>Close</button>
-            </div>
-            {!qaDiffs?(
-              <div style={{maxWidth:800}}>
-                <div style={{fontWeight:700,color:HR.text,marginBottom:3,fontSize:13}}>Paste your sheet's Min/Max CSV output below</div>
-                <div style={{fontSize:11,color:HR.muted,marginBottom:10}}>Required columns: <code style={{color:HR.yellowDark}}>SKU, DS01 Min, DS01 Max ... DS05 Min, DS05 Max, DC Min, DC Max</code></div>
-                <textarea value={qaText} onChange={e=>setQaText(e.target.value)} placeholder="Paste CSV here..." style={{width:"100%",height:180,background:HR.surfaceLight,border:`1px solid ${HR.border}`,borderRadius:6,padding:10,color:HR.text,fontSize:11,fontFamily:"monospace",resize:"vertical",boxSizing:"border-box"}}/>
-                <button onClick={runQA} style={{...S.runBtn,marginTop:10,width:"auto",padding:"9px 24px"}}>▶ Run QA Diff</button>
-              </div>
-            ):(
-              <div>
-                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-                  <div style={{color:HR.yellowDark,fontWeight:700,fontSize:13}}>{qaFiltered.length} mismatches{qaFiltered.length!==qaDiffs.length?` (${qaDiffs.length} total)`:""}</div>
-                  {[{val:qaFilterDS,set:setQaFDS,opts:qaDS},{val:qaFilterMv,set:setQaFMv,opts:qaMv},{val:qaFilterSp,set:setQaFSp,opts:qaSp},{val:qaFilterPr,set:setQaFPr,opts:qaPr}].map((f,i)=><select key={i} value={f.val} onChange={e=>f.set(e.target.value)} style={S.input}>{f.opts.map(v=><option key={v}>{v}</option>)}</select>)}
-                  <button onClick={()=>setQaDiffs(null)} style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"6px 12px",borderRadius:5,cursor:"pointer",fontSize:12}}>↩ Re-paste CSV</button>
-                </div>
-                <div style={{...S.card,padding:0,overflow:"auto"}}>
-                  <table style={S.table}>
-                    <thead style={{position:"sticky",top:0}}><tr style={{background:HR.surfaceLight}}>{["SKU","DS","Mov Tag","Spike Tag","Price Tag","Top N","Brand","Sheet Min","Tool Min","Δ Min","Sheet Max","Tool Max","Δ Max"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-                    <tbody>
-                      {qaFiltered.map((d,i)=>{const minOk=d.dMin===0,maxOk=d.dMax===0;return <tr key={i} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                        <td style={{...S.td,fontWeight:600,fontSize:10}}>{d.sku}</td><td style={{...S.td,color:HR.muted,fontSize:10}}>{d.ds}</td><td style={S.td}><MovTag value={d.mvTag}/></td><td style={{...S.td,fontSize:10}}>{d.spTag}</td><td style={S.td}><TagPill value={d.prTag} colorMap={PRICE_TAG_COLORS}/></td><td style={S.td}><TagPill value={d.t150} colorMap={TOPN_TAG_COLORS}/></td><td style={{...S.td,fontSize:10,color:HR.muted}}>{d.brand||"—"}</td>
-                        <td style={{...S.td,textAlign:"center"}}>{d.sheetMin}</td><td style={{...S.td,textAlign:"center",color:minOk?HR.text:"#C05A00",fontWeight:minOk?400:700}}>{d.toolMin}</td><td style={{...S.td,textAlign:"center",color:minOk?HR.green:d.dMin>0?"#C05A00":"#B91C1C",fontWeight:700}}>{minOk?"✓":d.dMin>0?`+${d.dMin}`:d.dMin}</td>
-                        <td style={{...S.td,textAlign:"center"}}>{d.sheetMax}</td><td style={{...S.td,textAlign:"center",color:maxOk?HR.text:"#C05A00",fontWeight:maxOk?400:700}}>{d.toolMax}</td><td style={{...S.td,textAlign:"center",color:maxOk?HR.green:d.dMax>0?"#C05A00":"#B91C1C",fontWeight:700}}>{maxOk?"✓":d.dMax>0?`+${d.dMax}`:d.dMax}</td>
-                      </tr>;})}
-                    </tbody>
-                  </table>
-                  {qaFiltered.length===0&&<div style={{padding:28,textAlign:"center",color:HR.muted,fontSize:12}}>No mismatches with current filters.</div>}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       <div style={S.pageWrap}>
 
