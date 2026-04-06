@@ -2078,8 +2078,8 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
             if (!stats || !r) return line(`${label} (${days}D): no data`);
             return <>
               {line(label, " (", v(days, "D"), "): avg ", v(stats.dailyAvg?.toFixed(2)), "/day, ", v(stats.nonZeroDays), " NZD, spike median ", v(stats.spikeMedian?.toFixed(1)))}
-              {ex && line("  Base min days (", ex.mvTag, ") = ", v(ex.base), " × avg ", v(stats.dailyAvg?.toFixed(2)), " = ", v(ex.baseMinQty?.toFixed(2)),
-                ex.useRatio ? <> {" | Spike override: max(base, spike) = {v(Math.max(ex.baseMinQty, stats.spikeMedian).toFixed(2))}"}</> : null)}
+              {ex && line("  Base min days (", ex.mvTag, ") = ", v(ex.base), " × avg ", v(stats.dailyAvg?.toFixed(2)), " = ", v(ex.baseMinQty?.toFixed(2)))}
+              {ex && ex.useRatio && line("  Spike override: max(base ", ex.baseMinQty?.toFixed(1), ", spike ", stats.spikeMedian?.toFixed(1), ") = ", v(Math.max(ex.baseMinQty || 0, stats.spikeMedian || 0).toFixed(1)), " → Min, + buffer ", v(ex.buffer), "D → Max")}
               {ex && ex.abqApplied && line("  ABQ floor: ⌈ABQ ", v(ex.abq?.toFixed(1)), "⌉ ≥ min → Min = ", v(Math.ceil(ex.abq)), ", Max = ⌈Min × ", v(ex.abqMaxMult), "⌉")}
               {line("  → ", label, " Min ", v(r.minQty), " / Max ", v(r.maxQty))}
             </>;
