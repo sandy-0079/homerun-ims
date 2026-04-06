@@ -149,37 +149,51 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
 
       let minQty, maxQty;
       let strategyTag = strategy;
+      let strategyDetails = {};
 
       if (strategy === "percentile_cover") {
-        ({ minQty, maxQty } = percentileCoverStrategy({ q90, prTag, mvTag90, params: p }));
+        const r = percentileCoverStrategy({ q90, prTag, mvTag90, params: p });
+        ({ minQty, maxQty } = r);
+        strategyDetails = r.details || {};
       } else if (strategy === "fixed_unit_floor") {
         const result = fixedUnitFloorStrategy({ orderQtys: collectOrderQtys(invSliced, skuId, dsId), params: p });
         if (result) {
           ({ minQty, maxQty } = result);
+          strategyDetails = result.details || {};
         } else {
           // Null — fall back to standard
-          ({ minQty, maxQty } = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p }));
+          const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
+          ({ minQty, maxQty } = r);
+          strategyDetails = r.details || {};
           strategyTag = "standard";
         }
       } else {
         // "standard", "manual", or unknown — use standard blend
-        ({ minQty, maxQty } = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p }));
+        const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
+        ({ minQty, maxQty } = r);
+        strategyDetails = r.details || {};
         strategyTag = "standard";
       }
 
       // ── Post-blend adjustments (strict order preserved) ────────────────
+      const strategyMin = minQty, strategyMax = maxQty;
+      const postBlendSteps = [];
       let logicTag = "Base Logic";
 
       // 1. New DS floor — only wins if floor actually exceeds the blend
       if (isNewDS && isEligible) {
         const floor = mrq[skuId] || 0;
-        if (floor > minQty) { minQty = floor; maxQty = floor; logicTag = "New DS Floor"; }
+        if (floor > minQty) {
+          postBlendSteps.push({ rule: "New DS Floor", floor, beforeMin: minQty, beforeMax: maxQty });
+          minQty = floor; maxQty = floor; logicTag = "New DS Floor";
+        }
         else maxQty = Math.max(maxQty, minQty);
       }
 
       // 2. Brand buffer — physically overwrites minQty/maxQty
       if (hasBuf) {
         const dohMin = s90.dailyAvg > 0 ? minQty / s90.dailyAvg : 0;
+        postBlendSteps.push({ rule: "Brand Buffer", bufDays, dohMin, beforeMin: minQty, beforeMax: maxQty });
         minQty = Math.ceil((dohMin + bufDays) * s90.dailyAvg);
         maxQty = minQty;
         logicTag = "Brand Buffer";
@@ -196,15 +210,20 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
         const fl = nsq[skuId][dsId];
         const fMin = !fl ? 0 : typeof fl === "number" ? fl : (fl.min || 0);
         const fMax = !fl ? 0 : typeof fl === "number" ? fl : (fl.max || fMin);
-        if (fMin > minQty) { minQty = fMin; maxQty = Math.max(fMax, maxQty); logicTag = "SKU Floor"; }
+        if (fMin > minQty) {
+          postBlendSteps.push({ rule: "SKU Floor", floorMin: fMin, floorMax: fMax, beforeMin: minQty, beforeMax: maxQty });
+          minQty = fMin; maxQty = Math.max(fMax, maxQty); logicTag = "SKU Floor";
+        }
       }
 
       stores[dsId] = {
         min: Math.round(minQty), max: Math.round(maxQty),
         preFloorMin, preFloorMax,
         dailyAvg: s90.dailyAvg, abq: s90.abq,
+        nonZeroDays: s90.nonZeroDays,
         mvTag: mvTag90, spTag: tags90[k].spTag,
         logicTag, strategyTag,
+        strategyDetails, postBlendSteps,
       };
       dsMinArr.push(Math.round(minQty)); dsMaxArr.push(Math.round(maxQty));
       dsDailyAvgs.push(s90.dailyAvg);
@@ -223,25 +242,30 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     const leadTime = (p.brandLeadTimeDays || {})[meta.brand] ?? (p.brandLeadTimeDays || {})._default ?? 2;
 
     let dcMin, dcMax, preFloorDcMin, preFloorDcMax;
+    let dcDetails;
     if (isDead) {
-      dcMin = Math.round(sumMin * dcDeadMult.min);
-      dcMax = Math.round(sumMax * dcDeadMult.max);
-      preFloorDcMin = Math.round(sumPreFloorMin * dcDeadMult.min);
-      preFloorDcMax = Math.round(sumPreFloorMax * dcDeadMult.max);
+      const multMin = dcDeadMult.min, multMax = dcDeadMult.max;
+      dcMin = Math.round(sumMin * multMin);
+      dcMax = Math.round(sumMax * multMax);
+      preFloorDcMin = Math.round(sumPreFloorMin * multMin);
+      preFloorDcMax = Math.round(sumPreFloorMax * multMax);
+      dcDetails = { isDead: true, multMin, multMax, sumMin, sumMax, sumDailyAvg, leadTime };
     } else {
       const dcM = (p.dcMult || DC_MULT_DEFAULT)[dcStats.mvTag] || DC_MULT_DEFAULT[dcStats.mvTag];
+      const multMin = dcM.min, multMax = dcM.max;
       const leadTimeMin = Math.ceil(sumDailyAvg * leadTime);
-      dcMin = Math.round(Math.max(leadTimeMin, sumMin * dcM.min));
-      dcMax = Math.round(Math.max(Math.ceil(dcMin * (dcM.max / dcM.min)), sumMax * dcM.max));
+      dcMin = Math.round(Math.max(leadTimeMin, sumMin * multMin));
+      dcMax = Math.round(Math.max(Math.ceil(dcMin * (multMax / multMin)), sumMax * multMax));
       const preFloorLeadTimeMin = Math.ceil(sumDailyAvg * leadTime);
-      preFloorDcMin = Math.round(Math.max(preFloorLeadTimeMin, sumPreFloorMin * dcM.min));
-      preFloorDcMax = Math.round(Math.max(Math.ceil(preFloorDcMin * (dcM.max / dcM.min)), sumPreFloorMax * dcM.max));
+      preFloorDcMin = Math.round(Math.max(preFloorLeadTimeMin, sumPreFloorMin * multMin));
+      preFloorDcMax = Math.round(Math.max(Math.ceil(preFloorDcMin * (multMax / multMin)), sumPreFloorMax * multMax));
+      dcDetails = { isDead: false, multMin, multMax, sumMin, sumMax, sumDailyAvg, leadTime, leadTimeMin };
     }
 
     res[skuId] = {
       meta: { ...meta, priceTag: prTag, t150Tag },
       stores,
-      dc: { min: dcMin, max: dcMax, preFloorMin: preFloorDcMin, preFloorMax: preFloorDcMax, mvTag: dcStats.mvTag, nonZeroDays: dcStats.nonZeroDays },
+      dc: { min: dcMin, max: dcMax, preFloorMin: preFloorDcMin, preFloorMax: preFloorDcMax, mvTag: dcStats.mvTag, nonZeroDays: dcStats.nonZeroDays, dcDetails },
     };
   });
 
