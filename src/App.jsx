@@ -2153,14 +2153,14 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
   );
 };
 
-const DCCard = ({ dcData, meta, params }) => {
+const DCCard = ({ dcData, meta, params, horizontal }) => {
   const dc = dcData || {};
   const det = dc.dcDetails || null;
   const mvTag = dc.mvTag || "Super Slow";
 
-  const row = (label, val) => (
-    <div style={{display:"flex",justifyContent:"space-between",fontSize:10,padding:"2px 0"}}>
-      <span style={{color:HR.muted}}>{label}</span>
+  const pill = (label, val) => (
+    <div style={{fontSize:10,padding:"3px 0"}}>
+      <span style={{color:HR.muted}}>{label}: </span>
       <span style={{fontWeight:600,color:DC_COLOR.text}}>{val}</span>
     </div>
   );
@@ -2168,45 +2168,50 @@ const DCCard = ({ dcData, meta, params }) => {
   return (
     <div style={{background:DC_COLOR.bg,borderRadius:10,border:`1px solid ${DC_COLOR.header}33`,overflow:"hidden"}}>
       <div style={{background:DC_COLOR.header,color:"#fff",padding:"6px 10px",fontSize:12,fontWeight:700}}>DC</div>
-      <div style={{padding:10}}>
-        <div style={{marginBottom:8}}><MovTag value={mvTag} /></div>
-        <div style={{display:"flex",gap:16,marginBottom:8}}>
-          <div>
-            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Min</div>
-            <div style={{fontSize:22,fontWeight:800,color:DC_COLOR.header}}>{dc.min ?? "—"}</div>
-          </div>
-          <div>
-            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Max</div>
-            <div style={{fontSize:22,fontWeight:800,color:DC_COLOR.text}}>{dc.max ?? "—"}</div>
+      <div style={{padding:horizontal?"10px 14px":"10px",display:horizontal?"flex":"block",gap:horizontal?24:0,alignItems:"flex-start",flexWrap:"wrap"}}>
+        {/* Left: Min/Max + movement */}
+        <div style={{display:"flex",gap:16,alignItems:"center",marginBottom:horizontal?0:8,minWidth:horizontal?180:0}}>
+          <MovTag value={mvTag} />
+          <div style={{display:"flex",gap:16}}>
+            <div>
+              <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Min</div>
+              <div style={{fontSize:22,fontWeight:800,color:DC_COLOR.header}}>{dc.min ?? "—"}</div>
+            </div>
+            <div>
+              <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Max</div>
+              <div style={{fontSize:22,fontWeight:800,color:DC_COLOR.text}}>{dc.max ?? "—"}</div>
+            </div>
           </div>
         </div>
+        {/* Details */}
         {det ? (
-          <>
-            {row("Non-Zero Days", det.nonZeroDays ?? dc.nonZeroDays ?? "—")}
-            {row("Sum DS Mins", det.sumMin ?? "—")}
-            {row("Sum DS Maxes", det.sumMax ?? "—")}
-            {row("Sum Daily Avg", det.sumDailyAvg != null ? det.sumDailyAvg.toFixed(2) : "—")}
-            {row("Brand Lead Time", `${det.leadTime ?? 2}D`)}
-            {det.isDead ? (
-              <>
-                {row("Dead Stock Mult Min", det.multMin ?? "—")}
-                {row("Dead Stock Mult Max", det.multMax ?? "—")}
-              </>
-            ) : (
-              <>
-                {row("DC Mult Min", det.multMin ?? "—")}
-                {row("DC Mult Max", det.multMax ?? "—")}
-                {det.leadTimeMin != null && row("Lead Time Min", det.leadTimeMin)}
-                {row("DC Min formula", `max(leadTimeMin, sumDSMin × multMin) = ${dc.min}`)}
-                {row("DC Max formula", `max(ceil(dcMin × multMax/multMin), sumDSMax × multMax) = ${dc.max}`)}
-              </>
+          <div style={{display:horizontal?"flex":"block",gap:horizontal?20:0,flexWrap:"wrap",flex:1}}>
+            <div style={{minWidth:140}}>
+              {pill("Non-Zero Days", det.nonZeroDays ?? dc.nonZeroDays ?? "—")}
+              {pill("Sum DS Mins", det.sumMin ?? "—")}
+              {pill("Sum DS Maxes", det.sumMax ?? "—")}
+            </div>
+            <div style={{minWidth:160}}>
+              {pill("Sum Daily Avg", det.sumDailyAvg != null ? det.sumDailyAvg.toFixed(2) : "—")}
+              {pill("Brand Lead Time", `${det.leadTime ?? 2}D`)}
+              {det.isDead
+                ? <>{pill("Dead Mult", `${det.multMin}/${det.multMax}`)}</>
+                : <>{pill("DC Mult", `${det.multMin}/${det.multMax}`)}</>
+              }
+            </div>
+            {!det.isDead && (
+              <div style={{minWidth:200}}>
+                {det.leadTimeMin != null && pill("Lead Time Min", det.leadTimeMin)}
+                {pill("DC Min", `max(${det.leadTimeMin ?? "?"}, ${det.sumMin} × ${det.multMin}) = ${dc.min}`)}
+                {pill("DC Max", `max(⌈${dc.min} × ${(det.multMax/det.multMin).toFixed(2)}⌉, ${det.sumMax} × ${det.multMax}) = ${dc.max}`)}
+              </div>
             )}
-          </>
+          </div>
         ) : (
-          <>
-            {row("Non-Zero Days", dc.nonZeroDays ?? "—")}
+          <div>
+            {pill("Non-Zero Days", dc.nonZeroDays ?? "—")}
             <div style={{fontSize:10,color:HR.muted,fontStyle:"italic",marginTop:4}}>No DC details available</div>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -2218,9 +2223,9 @@ const DateOrderChart = ({ data, dsView }) => {
   const maxQty = Math.max(...data.map(d => d.qty), 1);
   const padL = 44, padB = 36, padT = 20;
   const chartH = 180;
-  const barW = Math.max(8, Math.min(24, Math.floor(480 / data.length)));
-  const innerW = data.length * (barW + 2);
-  const svgW = Math.max(innerW + padL + 16, 500);
+  const svgW = 600;
+  const innerW = svgW - padL - 16;
+  const barW = Math.max(2, Math.floor(innerW / data.length) - 2);
   const svgH = chartH + padB + padT;
   const di = DS_LIST.indexOf(dsView);
   const color = di >= 0 ? DS_COLORS[di].header : HR.yellowDark;
@@ -2230,8 +2235,8 @@ const DateOrderChart = ({ data, dsView }) => {
 
   return (
     <div>
-      <div style={{overflowX:"auto"}}>
-        <svg width={svgW} height={svgH} style={{display:"block"}}>
+      <div>
+        <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{display:"block",width:"100%",height:"auto"}}>
           {yTicks.map((tick, i) => {
             const y = padT + chartH - (maxQty > 0 ? (tick / maxQty) * chartH : 0);
             return (
@@ -2487,8 +2492,8 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
               return <StrategyCard key={ds} dsId={ds} dsIndex={di} storeData={res.stores?.[ds]} meta={res.meta} params={params} />;
             })}
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr",gap:10,maxWidth:280}}>
-            <DCCard dcData={res.dc} meta={res.meta} params={params} />
+          <div style={{marginBottom:12}}>
+            <DCCard dcData={res.dc} meta={res.meta} params={params} horizontal />
           </div>
         </>
       )}
