@@ -2047,106 +2047,76 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
   const logicTag = s.logicTag || "Base Logic";
   const steps = s.postBlendSteps || [];
 
-  const row = (label, val) => (
-    <div style={{display:"flex",justifyContent:"space-between",fontSize:10,padding:"2px 0"}}>
-      <span style={{color:HR.muted}}>{label}</span>
-      <span style={{fontWeight:600,color:dc.text}}>{val}</span>
-    </div>
-  );
-
-  const sectionHead = (text) => (
-    <div style={{fontSize:10,fontWeight:700,color:dc.header,marginTop:8,marginBottom:4,borderBottom:`1px solid ${dc.header}22`,paddingBottom:2}}>{text}</div>
-  );
+  const v = (val, suffix = "") => <span style={{fontWeight:700, color:dc.text}}>{val}{suffix}</span>;
+  const line = (...children) => <div style={{fontSize:10, color:HR.muted, padding:"1.5px 0", lineHeight:1.5}}>{children}</div>;
+  const head = (text) => <div style={{fontSize:10, fontWeight:700, color:dc.header, marginTop:6, marginBottom:3}}>{text}</div>;
 
   return (
-    <div style={{background:dc.bg,borderRadius:10,border:`1px solid ${dc.header}33`,overflow:"hidden"}}>
-      <div style={{background:dc.header,color:"#fff",padding:"6px 10px",fontSize:12,fontWeight:700}}>{dsId}</div>
-      <div style={{padding:10}}>
-        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
-          <MovTag value={mvTag} />
-          <TagPill value={priceTag} colorMap={PRICE_TAG_COLORS} />
-          {spTag && spTag !== "No Spike" && <TagPill value={spTag} colorMap={SPIKE_TAG_COLORS} />}
-        </div>
-        <div style={{display:"flex",gap:16,marginBottom:8}}>
-          <div>
-            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Min</div>
-            <div style={{fontSize:22,fontWeight:800,color:dc.header}}>{s.min ?? "—"}</div>
+    <div style={{background:dc.bg, borderRadius:10, border:`1px solid ${dc.header}33`, overflow:"hidden"}}>
+      <div style={{background:dc.header, color:"#fff", padding:"6px 10px", fontSize:12, fontWeight:700, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+        <span>{dsId}</span>
+        <span style={{fontSize:10, fontWeight:500, opacity:0.85}}>Daily Avg: {s.dailyAvg != null ? s.dailyAvg.toFixed(2) : "—"}</span>
+      </div>
+      <div style={{padding:"8px 10px"}}>
+        {/* Tags + Min/Max row */}
+        <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap"}}>
+          <div style={{display:"flex", gap:12}}>
+            <span style={{fontSize:18, fontWeight:800, color:dc.header}}>Min {s.min ?? "—"}</span>
+            <span style={{fontSize:18, fontWeight:800, color:dc.text}}>Max {s.max ?? "—"}</span>
           </div>
-          <div>
-            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Max</div>
-            <div style={{fontSize:22,fontWeight:800,color:dc.text}}>{s.max ?? "—"}</div>
-          </div>
-          <div style={{marginLeft:"auto",textAlign:"right"}}>
-            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Daily Avg</div>
-            <div style={{fontSize:13,fontWeight:700,color:dc.text}}>{s.dailyAvg != null ? s.dailyAvg.toFixed(2) : "—"}</div>
+          <div style={{display:"flex", gap:3, marginLeft:"auto"}}>
+            <MovTag value={mvTag} />
+            <TagPill value={priceTag} colorMap={PRICE_TAG_COLORS} />
+            {spTag && spTag !== "No Spike" && <TagPill value={spTag} colorMap={SPIKE_TAG_COLORS} />}
           </div>
         </div>
 
-        {stratTag === "standard" && det && (
-          <>
-            {sectionHead("Standard Strategy")}
-            {row("Long Period", `${det.longDays ?? "—"}D`)}
-            {row("  Daily Avg", det.sLong?.dailyAvg != null ? det.sLong.dailyAvg.toFixed(2) : "—")}
-            {row("  NZD", det.sLong?.nonZeroDays ?? "—")}
-            {row("  Spike Median", det.sLong?.spikeMedian != null ? det.sLong.spikeMedian.toFixed(1) : "—")}
-            {row("  Min / Max", `${det.rLong?.minQty ?? "—"} / ${det.rLong?.maxQty ?? "—"}`)}
-            {row("Recent Period", `${det.recentDays ?? "—"}D`)}
-            {row("  Daily Avg", det.sRecent?.dailyAvg != null ? det.sRecent.dailyAvg.toFixed(2) : "—")}
-            {row("  NZD", det.sRecent?.nonZeroDays ?? "—")}
-            {row("  Spike Median", det.sRecent?.spikeMedian != null ? det.sRecent.spikeMedian.toFixed(1) : "—")}
-            {row("  Min / Max", `${det.rRecent?.minQty ?? "—"} / ${det.rRecent?.maxQty ?? "—"}`)}
-            {sectionHead("Blending")}
-            {row("Recency Weight", `${mvTag} → ${det.wt ?? "—"}×`)}
-            {row("Blended Min / Max", `${det.blendedMin ?? "—"} / ${det.blendedMax ?? "—"}`)}
-          </>
-        )}
+        {/* Standard strategy — narrative flow */}
+        {stratTag === "standard" && det && (<>
+          {head("Standard Strategy")}
+          {line("Long Period (", v(det.longDays, "D"), "): avg ", v(det.sLong?.dailyAvg?.toFixed(2)), "/day, ", v(det.sLong?.nonZeroDays), " non-zero days, spike median ", v(det.sLong?.spikeMedian?.toFixed(1)))}
+          {line("→ Long Min ", v(det.rLong?.minQty), " / Max ", v(det.rLong?.maxQty))}
+          {line("Recent Period (", v(det.recentDays, "D"), "): avg ", v(det.sRecent?.dailyAvg?.toFixed(2)), "/day, ", v(det.sRecent?.nonZeroDays), " non-zero days, spike median ", v(det.sRecent?.spikeMedian?.toFixed(1)))}
+          {line("→ Recent Min ", v(det.rRecent?.minQty), " / Max ", v(det.rRecent?.maxQty))}
+          {line("Blending: weight ", v(`${det.wt}×`), " (", mvTag, ") → Min ", v(det.blendedMin), " / Max ", v(det.blendedMax))}
+        </>)}
 
-        {stratTag === "percentile_cover" && det && (
-          <>
-            {sectionHead("Percentile Cover Strategy")}
-            {row("Full Period", `${det.periodDays ?? "—"}D`)}
-            {row("Non-Zero Days", det.nonZeroCount ?? "—")}
-            {row(`Price (${priceTag})`, `→ P${det.pctUsed ?? "—"}`)}
-            {row(`P${det.pctUsed ?? "?"} value`, det.pctQty != null ? det.pctQty.toFixed(2) : "—")}
-            {row(`Movement (${mvTag})`, `→ Cover: ${det.coverDays ?? "—"}D`)}
-            {row("Min = ceil(pctQty × coverDays)", det.pctQty != null && det.coverDays != null ? Math.ceil(det.pctQty * det.coverDays) : "—")}
-            {row("Max = ceil(Min + dailyAvg × buffer)", det.pctQty != null ? Math.ceil(Math.ceil(det.pctQty * (det.coverDays || 1)) + (det.dailyAvg || 0) * (det.buffer || 2)) : "—")}
-          </>
-        )}
+        {/* Percentile Cover — narrative flow */}
+        {stratTag === "percentile_cover" && det && (<>
+          {head("Percentile Cover")}
+          {line("Full period ", v(det.periodDays, "D"), ", ", v(det.nonZeroCount), " non-zero days")}
+          {line("Price ", v(priceTag), " → ", v(`P${det.pctUsed}`), ", Movement ", v(mvTag), " → Cover ", v(det.coverDays, "D"))}
+          {line("P", det.pctUsed, " value = ", v(det.pctQty?.toFixed(2)), " → Min = ⌈", det.pctQty?.toFixed(2), " × ", det.coverDays, "⌉ = ", v(Math.ceil((det.pctQty || 0) * (det.coverDays || 1))))}
+          {line("Max = ⌈Min + ", det.dailyAvg?.toFixed(2), " avg × ", det.buffer, " buffer⌉ = ", v(Math.ceil(Math.ceil((det.pctQty || 0) * (det.coverDays || 1)) + (det.dailyAvg || 0) * (det.buffer || 2))))}
+        </>)}
 
-        {stratTag === "fixed_unit_floor" && det && (
-          <>
-            {sectionHead("Fixed Unit Floor Strategy")}
-            {row("Orders in period", det.orderCount ?? "—")}
-            {row(`P${det.pctile ?? 90} of order qtys`, det.pctQty != null ? det.pctQty.toFixed(2) : "—")}
-            {row("Min = ceil(pctQty)", det.pctQty != null ? Math.ceil(det.pctQty) : "—")}
-            {row("Max = ceil(max(Min+add, Min×mult))", det.pctQty != null ? Math.ceil(Math.max(Math.ceil(det.pctQty) + (det.maxAdd || 1), Math.ceil(det.pctQty) * (det.maxMult || 1.5))) : "—")}
-          </>
-        )}
+        {/* Fixed Unit Floor — narrative flow */}
+        {stratTag === "fixed_unit_floor" && det && (<>
+          {head("Fixed Unit Floor")}
+          {line(v(det.orderCount), " orders in period")}
+          {line("P", det.pctile, " of order quantities = ", v(det.pctQty?.toFixed(2)), " → Min = ", v(Math.ceil(det.pctQty || 0)))}
+          {line("Max = ⌈max(", Math.ceil(det.pctQty || 0), "+", det.maxAdd, ", ", Math.ceil(det.pctQty || 0), "×", det.maxMult, ")⌉ = ", v(Math.ceil(Math.max(Math.ceil(det.pctQty || 0) + (det.maxAdd || 1), Math.ceil(det.pctQty || 0) * (det.maxMult || 1.5)))))}
+        </>)}
 
-        {!det && (
-          <>
-            {sectionHead(stratTag === "percentile_cover" ? "Percentile Cover" : stratTag === "fixed_unit_floor" ? "Fixed Unit Floor" : "Standard")}
-            <div style={{fontSize:10,color:HR.muted,fontStyle:"italic"}}>No strategy details available</div>
-          </>
-        )}
+        {!det && (<>
+          {head(stratTag === "percentile_cover" ? "Percentile Cover" : stratTag === "fixed_unit_floor" ? "Fixed Unit Floor" : "Standard")}
+          <div style={{fontSize:10, color:HR.muted, fontStyle:"italic"}}>No details available</div>
+        </>)}
 
-        {steps.length > 0 && (
-          <>
-            {sectionHead("Adjustments Applied")}
-            {steps.map((step, i) => (
-              <div key={i} style={{fontSize:10,color:dc.text,padding:"1px 0"}}>
-                {step.rule === "New DS Floor" && `New DS Floor: floor ${step.floor} > computed ${step.beforeMin} → Min=Max=${step.floor}`}
-                {step.rule === "Brand Buffer" && `Brand Buffer: +${step.bufDays}D (DOH ${step.dohMin?.toFixed?.(1) ?? "?"}D) → Min=Max=${s.min}`}
-                {step.rule === "SKU Floor" && `SKU Floor: floor Min ${step.floorMin} / Max ${step.floorMax} > computed ${step.beforeMin}/${step.beforeMax}`}
-                {!["New DS Floor","Brand Buffer","SKU Floor"].includes(step.rule) && `${step.rule}`}
-              </div>
-            ))}
-          </>
-        )}
+        {/* Post-blend adjustments */}
+        {steps.length > 0 && (<>
+          {head("Adjustments")}
+          {steps.map((step, i) => (
+            <div key={i} style={{fontSize:10, color:dc.text, padding:"1px 0"}}>
+              {step.rule === "New DS Floor" && <>New DS Floor: floor {v(step.floor)} {">"} computed {step.beforeMin} → Min=Max={v(step.floor)}</>}
+              {step.rule === "Brand Buffer" && <>Brand Buffer: +{v(step.bufDays, "D")} (DOH {step.dohMin?.toFixed(1)}D) → Min=Max={v(s.min)}</>}
+              {step.rule === "SKU Floor" && <>SKU Floor: {v(`${step.floorMin}/${step.floorMax}`)} {">"} computed {step.beforeMin}/{step.beforeMax}</>}
+            </div>
+          ))}
+        </>)}
 
         {logicTag && logicTag !== "Base Logic" && (
-          <div style={{marginTop:6}}><LogicTag value={logicTag} /></div>
+          <div style={{marginTop:4}}><LogicTag value={logicTag} /></div>
         )}
       </div>
     </div>
