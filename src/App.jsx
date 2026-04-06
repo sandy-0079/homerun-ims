@@ -187,9 +187,15 @@ const StatStrip=({items})=>(
 /* MovDistBar removed — unused */
 /* ── Recharts-based chart components ──────────────────────────────────── */
 const SingleFreqChart = ({ freq, color, minVal, maxVal }) => {
-  const entries = Object.entries(freq).map(([q, c]) => ({ qty: parseFloat(q), count: c })).sort((a, b) => a.qty - b.qty);
+  let entries = Object.entries(freq).map(([q, c]) => ({ qty: parseFloat(q), count: c })).sort((a, b) => a.qty - b.qty);
   if (!entries.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
   const col = color || HR.yellowDark;
+  // Add min/max as zero-count entries if not present, so ReferenceLine x= can find them
+  [minVal, maxVal].forEach(v => {
+    if (v != null && !entries.find(e => e.qty === v)) entries.push({ qty: v, count: 0 });
+  });
+  entries.sort((a, b) => a.qty - b.qty);
+  const sameMinMax = minVal != null && maxVal != null && minVal === maxVal;
 
   return (
     <ResponsiveContainer width="100%" height={220}>
@@ -199,8 +205,9 @@ const SingleFreqChart = ({ freq, color, minVal, maxVal }) => {
         <YAxis tick={{fontSize:10, fill:"#666"}} allowDecimals={false} />
         <Tooltip formatter={(value, name, props) => [`${value} orders of qty ${props.payload.qty}`, null]} labelFormatter={() => ""} />
         <Bar dataKey="count" fill={col} radius={[2,2,0,0]} maxBarSize={40} isAnimationActive={false} />
-        {minVal != null && <ReferenceLine x={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min ${minVal}`, fill:"#C0392B", fontSize:9, position:"top"}} />}
-        {maxVal != null && maxVal !== minVal && <ReferenceLine x={maxVal} stroke="#2D7A3A" strokeDasharray="5 3" label={{value:`Max ${maxVal}`, fill:"#2D7A3A", fontSize:9, position:"top"}} />}
+        {sameMinMax && <ReferenceLine x={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min=Max=${minVal}`, fill:"#C0392B", fontSize:9, position:"top"}} />}
+        {!sameMinMax && minVal != null && <ReferenceLine x={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min ${minVal}`, fill:"#C0392B", fontSize:9, position:"top"}} />}
+        {!sameMinMax && maxVal != null && <ReferenceLine x={maxVal} stroke="#2D7A3A" strokeDasharray="5 3" label={{value:`Max ${maxVal}`, fill:"#2D7A3A", fontSize:9, position:"top"}} />}
       </BarChart>
     </ResponsiveContainer>
   );
@@ -2215,19 +2222,21 @@ const DateOrderChart = ({ data, color, minVal, maxVal }) => {
   if (!data || !data.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
   const col = color || HR.yellowDark;
   const maxQty = Math.max(...data.map(d => d.qty), 1);
-  const yDomainMax = Math.max(maxQty, minVal || 0, maxVal || 0);
+  const yDomainMax = Math.max(maxQty, minVal || 0, maxVal || 0) * 1.08; // 8% headroom for labels
   const tickInterval = data.length <= 15 ? 0 : data.length <= 30 ? 1 : data.length <= 60 ? 4 : 6;
+  const sameMinMax = minVal != null && maxVal != null && minVal === maxVal;
 
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <BarChart data={data} margin={{top:5, right:10, left:0, bottom:5}}>
+      <BarChart data={data} margin={{top:5, right:60, left:0, bottom:5}}>
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E8E8D8" />
         <XAxis dataKey="date" tickFormatter={v => v.slice(5)} tick={{fontSize:8, fill:"#666", angle:-45, textAnchor:"end"}} interval={tickInterval} />
         <YAxis tick={{fontSize:10, fill:"#666"}} allowDecimals={false} domain={[0, yDomainMax]} />
         <Tooltip formatter={(value) => [`Qty: ${value}`, null]} labelFormatter={(label) => `Date: ${label}`} />
         <Bar dataKey="qty" fill={col} radius={[1,1,0,0]} maxBarSize={16} isAnimationActive={false} />
-        {minVal != null && <ReferenceLine y={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min ${minVal}`, fill:"#C0392B", fontSize:9, position:"right"}} />}
-        {maxVal != null && maxVal !== minVal && <ReferenceLine y={maxVal} stroke="#2D7A3A" strokeDasharray="5 3" label={{value:`Max ${maxVal}`, fill:"#2D7A3A", fontSize:9, position:"right"}} />}
+        {sameMinMax && <ReferenceLine y={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min=Max=${minVal}`, fill:"#C0392B", fontSize:9, position:"right"}} />}
+        {!sameMinMax && minVal != null && <ReferenceLine y={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min ${minVal}`, fill:"#C0392B", fontSize:9, position:"right"}} />}
+        {!sameMinMax && maxVal != null && <ReferenceLine y={maxVal} stroke="#2D7A3A" strokeDasharray="5 3" label={{value:`Max ${maxVal}`, fill:"#2D7A3A", fontSize:9, position:"right"}} />}
       </BarChart>
     </ResponsiveContainer>
   );
