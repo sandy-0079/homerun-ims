@@ -2732,13 +2732,11 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
                 <th style={{...thS, textAlign:"left"}}>SKU</th>
                 <th style={thS}>Movement</th>
                 <th style={thS}>Price Tag</th>
-                <th style={thS}>Daily Avg</th>
-                <th style={thS}>ABQ</th>
                 <th style={thS}>Sold Val/Day</th>
                 <th style={thS}>Inv Min</th>
                 <th style={thS}>Inv Max</th>
-                <th style={thS}>Cov Min</th>
-                <th style={thS}>Cov Max</th>
+                <th style={thS}>Coverage Days Min</th>
+                <th style={thS}>Coverage Days Max</th>
               </tr>
             ) : (
               <tr>
@@ -2771,8 +2769,6 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
                     </td>
                     <td style={tdC}><MovTag value={row.mvTag} /></td>
                     <td style={tdC}><TagPill value={row.priceTag} colorMap={PRICE_TAG_COLORS} /></td>
-                    <td style={tdC}>{row.dailyAvg > 0 ? row.dailyAvg.toFixed(1) : "—"}</td>
-                    <td style={tdC}>{row.abq > 0 ? row.abq.toFixed(1) : "—"}</td>
                     <td style={tdC}>{fmtVal(soldPerDay)}</td>
                     <td style={tdC}>{fmtVal(row.invMin)}</td>
                     <td style={tdC}>{fmtVal(row.invMax)}</td>
