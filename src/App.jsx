@@ -2426,7 +2426,7 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             { label: "Orders", value: stats.instances.toLocaleString(), color: HR.yellowDark },
             { label: "Quantity Sold", value: stats.qty.toLocaleString(), color: HR.green },
             { label: "Rate of Sale (qty sold on avg per day)", value: dateData.length > 0 ? (stats.qty / dateData.length).toFixed(2) : "—", color: HR.yellowDark },
-            { label: "ABQ", value: stats.abq, color: HR.yellowDark },
+            { label: "ABQ (qty sold on avg per order)", value: stats.abq, color: HR.yellowDark },
             { label: "Active Days", value: stats.activeDays, color: HR.yellowDark },
           ]} />
 
