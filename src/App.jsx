@@ -246,7 +246,7 @@ const SingleFreqChart = ({ freq, color, minVal, maxVal }) => {
         return <g key={i}>
           <rect x={x} y={y} width={barW} height={barH} fill={col} opacity={0.85} rx={1} />
           <text x={x + barW / 2} y={y - 2} textAnchor="middle" fill={col} fontSize={CF - 2} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{e.cnt}</text>
-          <text x={x + barW / 2} y={CP.t + CH + 12} textAnchor="middle" fill="#555548" fontSize={CF - 2} fontWeight="600" fontFamily="Inter,system-ui,sans-serif">{e.qty}</text>
+          <text x={x + barW / 2} y={CP.t + CH + 12} textAnchor="end" fill="#555548" fontSize={CF - 2} fontWeight="600" fontFamily="Inter,system-ui,sans-serif" transform={`rotate(-45,${x + barW / 2},${CP.t + CH + 12})`}>{e.qty}</text>
         </g>;
       })}
       {/* Min/Max vertical reference lines */}
