@@ -14,13 +14,17 @@ export function calcPeriodMinMax(stats, prTag, spTag, mvTag, abqMaxMult, maxDays
   const bufQty = maxDaysBuffer * stats.dailyAvg;
   let minQty = useRatio ? Math.ceil(Math.max(baseMinQty, stats.spikeMedian)) : Math.ceil(baseMinQty);
   let maxQty = useRatio ? Math.ceil(Math.max(baseMinQty + bufQty, stats.spikeMedian + bufQty)) : Math.ceil(baseMinQty + bufQty);
+  let abqApplied = false;
   if (isSlow && ["Medium", "Low", "Super Low"].includes(prTag) && stats.abq > 0) {
     const abqCeil = Math.ceil(stats.abq);
-    if (abqCeil >= minQty) { minQty = Math.ceil(abqCeil); maxQty = Math.ceil(minQty * abqMaxMult); }
+    if (abqCeil >= minQty) { minQty = Math.ceil(abqCeil); maxQty = Math.ceil(minQty * abqMaxMult); abqApplied = true; }
   }
   minQty = Math.ceil(minQty);
   maxQty = Math.ceil(Math.max(maxQty, minQty));
-  return { minQty, maxQty };
+  return {
+    minQty, maxQty,
+    explain: { base, baseMinQty, bufQty, useRatio, buffer: maxDaysBuffer, abqApplied, abq: stats.abq, abqMaxMult, mvTag, spTag },
+  };
 }
 
 export function standardStrategy(opts) {
