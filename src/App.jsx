@@ -2228,8 +2228,7 @@ const DateOrderChart = ({ data, dsView }) => {
   const showAllLabels = data.length <= 30;
 
   return (
-    <div style={{background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${color}44`}}>
-      <div style={{fontSize:12,fontWeight:700,color,marginBottom:8}}>Daily Order Qty</div>
+    <div>
       <div style={{overflowX:"auto"}}>
         <svg width={svgW} height={svgH} style={{display:"block"}}>
           {yTicks.map((tick, i) => {
@@ -2459,12 +2458,13 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
           ]} />
 
           {/* Charts side by side */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
-            <div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16,alignItems:"start"}}>
+            <div style={{...S.card}}>
               <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Order Qty Frequency</div>
               <SingleFreqChart freq={freqData} ds={dsView === "All" ? "All DS Combined" : dsView} />
             </div>
-            <div>
+            <div style={{...S.card}}>
+              <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Daily Order Qty</div>
               <DateOrderChart data={dateData} dsView={dsView} />
             </div>
           </div>
