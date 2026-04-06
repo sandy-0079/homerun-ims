@@ -9,6 +9,8 @@ import {
   parseCSV, getPriceTag,
 } from "./engine/index.js";
 
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
+
 const HR = {
   yellow:"#F5C400",yellowDark:"#D4A800",black:"#1A1A1A",white:"#FFFFFF",
   bg:"#F5F5F0",surface:"#FFFFFF",surfaceLight:"#F0F0E8",border:"#E0E0D0",
@@ -183,87 +185,24 @@ const StatStrip=({items})=>(
   </div>
 );
 /* MovDistBar removed — unused */
-/* ── Unified chart system ─────────────────────────────────────────────── */
-const CW = 500;          // viewBox width — SAME for both charts
-const CH = 160;          // plot area height
-const CP = { l: 36, r: 8, t: 28, b: 40 };  // padding: left (y-axis), right, top (title+gap), bottom (x-labels)
-const CF = 9;            // base font size (all text scales from this)
-
-function chartGrid(svgW, maxVal, yLabel) {
-  const ticks = [0, 1, 2, 3].map(i => Math.round((maxVal / 3) * i));
-  return <>
-    {ticks.map((tick, i) => {
-      const y = CP.t + CH - (maxVal > 0 ? (tick / maxVal) * CH : 0);
-      return <g key={i}>
-        <line x1={CP.l} y1={y} x2={svgW - CP.r} y2={y} stroke={i === 0 ? "#C0C0B0" : "#E4E4D8"} strokeWidth={i === 0 ? 1 : 0.5} strokeDasharray={i === 0 ? "" : "3,2"} />
-        <text x={CP.l - 4} y={y + 3} textAnchor="end" fill="#666658" fontSize={CF - 1} fontFamily="Inter,system-ui,sans-serif">{tick}</text>
-      </g>;
-    })}
-    {/* Y-axis line */}
-    <line x1={CP.l} y1={CP.t} x2={CP.l} y2={CP.t + CH} stroke="#999980" strokeWidth={0.8} />
-    {/* X-axis line */}
-    <line x1={CP.l} y1={CP.t + CH} x2={svgW - CP.r} y2={CP.t + CH} stroke="#999980" strokeWidth={0.8} />
-    {/* Y-axis label */}
-    <text x={8} y={CP.t + CH / 2} textAnchor="middle" fill="#666658" fontSize={CF - 1} fontWeight="600" fontFamily="Inter,system-ui,sans-serif" transform={`rotate(-90,8,${CP.t + CH / 2})`}>{yLabel}</text>
-  </>;
-}
-
-function refLineH(val, maxVal, svgW, label, lineColor) {
-  if (val == null || maxVal <= 0) return null;
-  const y = CP.t + CH - (val / maxVal) * CH;
-  if (y < CP.t - 2 || y > CP.t + CH + 2) return null;
-  return <g>
-    <line x1={CP.l} y1={y} x2={svgW - CP.r} y2={y} stroke={lineColor} strokeWidth={0.9} strokeDasharray="5,3" opacity={0.8} />
-    <text x={svgW - CP.r - 2} y={y - 3} textAnchor="end" fill={lineColor} fontSize={CF - 2} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{label}</text>
-  </g>;
-}
-
-function refLineV(xPos, label, lineColor) {
-  if (xPos == null) return null;
-  return <g>
-    <line x1={xPos} y1={CP.t} x2={xPos} y2={CP.t + CH} stroke={lineColor} strokeWidth={0.9} strokeDasharray="5,3" opacity={0.8} />
-    <text x={xPos + 2} y={CP.t + 10} fill={lineColor} fontSize={CF - 2} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{label}</text>
-  </g>;
-}
-
-const SingleFreqChart = ({ freq, color, minVal, maxVal, title }) => {
-  const entries = Object.entries(freq).map(([q, c]) => ({ qty: parseFloat(q), cnt: c })).sort((a, b) => a.qty - b.qty);
+/* ── Recharts-based chart components ──────────────────────────────────── */
+const SingleFreqChart = ({ freq, color, minVal, maxVal }) => {
+  const entries = Object.entries(freq).map(([q, c]) => ({ qty: parseFloat(q), count: c })).sort((a, b) => a.qty - b.qty);
   if (!entries.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
-  const plotW = CW - CP.l - CP.r;
-  const gap = 3;
-  const barW = Math.max(4, (plotW / entries.length) - gap);
-  const maxCnt = Math.max(...entries.map(e => e.cnt));
   const col = color || HR.yellowDark;
-  const svgH = CH + CP.t + CP.b;
 
   return (
-    <svg viewBox={`0 0 ${CW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", width: "100%", height: "auto" }}>
-      {title && <text x={CP.l} y={14} fill={HR.text} fontSize={CF + 1} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{title}</text>}
-      {chartGrid(CW, maxCnt, "Orders")}
-      {entries.map((e, i) => {
-        const barH = maxCnt > 0 ? Math.max(1.5, (e.cnt / maxCnt) * CH) : 1.5;
-        const x = CP.l + i * (barW + gap) + gap / 2;
-        const y = CP.t + CH - barH;
-        return <g key={i}>
-          <rect x={x} y={y} width={barW} height={barH} fill={col} opacity={0.85} rx={1} />
-          <text x={x + barW / 2} y={y - 2} textAnchor="middle" fill={col} fontSize={CF - 2} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{e.cnt}</text>
-          <text x={x + barW / 2} y={CP.t + CH + 12} textAnchor="end" fill="#555548" fontSize={CF - 2} fontWeight="600" fontFamily="Inter,system-ui,sans-serif" transform={`rotate(-45,${x + barW / 2},${CP.t + CH + 12})`}>{e.qty}</text>
-        </g>;
-      })}
-      {/* Min/Max vertical reference lines */}
-      {minVal != null && (() => {
-        const idx = entries.findIndex(e => e.qty >= minVal);
-        if (idx < 0) return null;
-        const x = CP.l + idx * (barW + gap) + gap / 2;
-        return refLineV(x, `Min ${minVal}`, "#C0392B");
-      })()}
-      {maxVal != null && maxVal !== minVal && (() => {
-        const idx = entries.findIndex(e => e.qty >= maxVal);
-        if (idx < 0) return null;
-        const x = CP.l + idx * (barW + gap) + gap / 2;
-        return refLineV(x, `Max ${maxVal}`, "#2D7A3A");
-      })()}
-    </svg>
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={entries} margin={{top:5, right:10, left:0, bottom:5}}>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E8E8D8" />
+        <XAxis dataKey="qty" tick={{fontSize:10, fill:"#666"}} />
+        <YAxis tick={{fontSize:10, fill:"#666"}} allowDecimals={false} />
+        <Tooltip formatter={(value, name, props) => [`${value} orders of qty ${props.payload.qty}`, null]} labelFormatter={() => ""} />
+        <Bar dataKey="count" fill={col} radius={[2,2,0,0]} maxBarSize={40} isAnimationActive={false} />
+        {minVal != null && <ReferenceLine x={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min ${minVal}`, fill:"#C0392B", fontSize:9, position:"top"}} />}
+        {maxVal != null && maxVal !== minVal && <ReferenceLine x={maxVal} stroke="#2D7A3A" strokeDasharray="5 3" label={{value:`Max ${maxVal}`, fill:"#2D7A3A", fontSize:9, position:"top"}} />}
+      </BarChart>
+    </ResponsiveContainer>
   );
 };
 /* Old InsightsTab and sub-components (OrgLevel, CategoryLevel, BrandLevel, SKULevel) removed — replaced by SKUDetailTab */
@@ -2272,41 +2211,25 @@ const DCCard = ({ dcData, meta, params, horizontal }) => {
   );
 };
 
-const DateOrderChart = ({ data, color, minVal, maxVal, title }) => {
+const DateOrderChart = ({ data, color, minVal, maxVal }) => {
   if (!data || !data.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
-  const maxQty = Math.max(...data.map(d => d.qty), 1);
-  const plotW = CW - CP.l - CP.r;
-  const gap = 1;
-  const barW = Math.max(1.5, (plotW / data.length) - gap);
   const col = color || HR.yellowDark;
-  const svgH = CH + CP.t + CP.b;
-  const labelEvery = data.length <= 15 ? 1 : data.length <= 30 ? 2 : data.length <= 45 ? 3 : data.length <= 60 ? 5 : 7;
+  const maxQty = Math.max(...data.map(d => d.qty), 1);
+  const yDomainMax = Math.max(maxQty, minVal || 0, maxVal || 0);
+  const tickInterval = data.length <= 15 ? 0 : data.length <= 30 ? 1 : data.length <= 60 ? 4 : 6;
 
   return (
-    <svg viewBox={`0 0 ${CW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", width: "100%", height: "auto" }}>
-      {title && <text x={CP.l} y={14} fill={HR.text} fontSize={CF + 1} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{title}</text>}
-      {chartGrid(CW, maxQty, "Qty")}
-      {/* Min/Max horizontal reference lines */}
-      {refLineH(minVal, Math.max(maxQty, minVal || 0, maxVal || 0), CW, `Min ${minVal}`, "#C0392B")}
-      {maxVal != null && maxVal !== minVal && refLineH(maxVal, Math.max(maxQty, maxVal || 0), CW, `Max ${maxVal}`, "#2D7A3A")}
-      {data.map((d, i) => {
-        const effMax = Math.max(maxQty, minVal || 0, maxVal || 0);
-        const barH = effMax > 0 ? Math.max(d.qty > 0 ? 1 : 0, (d.qty / effMax) * CH) : 0;
-        const x = CP.l + i * (barW + gap) + gap / 2;
-        const y = CP.t + CH - barH;
-        const showLabel = i === 0 || i === data.length - 1 || i % labelEvery === 0;
-        const showDataLabel = d.qty > 0 && barW >= 6;
-        return <g key={i}>
-          <rect x={x} y={y} width={barW} height={barH} fill={col} opacity={0.85} rx={0.5} />
-          {showDataLabel && <text x={x + barW / 2} y={y - 2} textAnchor="middle" fill={col} fontSize={CF - 2} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{d.qty}</text>}
-          {showLabel && (
-            <text x={x + barW / 2} y={CP.t + CH + 12} textAnchor="end" fill="#555548" fontSize={CF - 2} fontWeight="500" fontFamily="Inter,system-ui,sans-serif" transform={`rotate(-45,${x + barW / 2},${CP.t + CH + 12})`}>
-              {d.date.slice(5)}
-            </text>
-          )}
-        </g>;
-      })}
-    </svg>
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={data} margin={{top:5, right:10, left:0, bottom:5}}>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E8E8D8" />
+        <XAxis dataKey="date" tickFormatter={v => v.slice(5)} tick={{fontSize:8, fill:"#666", angle:-45, textAnchor:"end"}} interval={tickInterval} />
+        <YAxis tick={{fontSize:10, fill:"#666"}} allowDecimals={false} domain={[0, yDomainMax]} />
+        <Tooltip formatter={(value) => [`Qty: ${value}`, null]} labelFormatter={(label) => `Date: ${label}`} />
+        <Bar dataKey="qty" fill={col} radius={[1,1,0,0]} maxBarSize={16} isAnimationActive={false} />
+        {minVal != null && <ReferenceLine y={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min ${minVal}`, fill:"#C0392B", fontSize:9, position:"right"}} />}
+        {maxVal != null && maxVal !== minVal && <ReferenceLine y={maxVal} stroke="#2D7A3A" strokeDasharray="5 3" label={{value:`Max ${maxVal}`, fill:"#2D7A3A", fontSize:9, position:"right"}} />}
+      </BarChart>
+    </ResponsiveContainer>
   );
 };
 
@@ -2529,8 +2452,14 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
                   <span style={{fontSize:11,color:HR.muted}}>{totalOrders} instances · ABQ {abq}</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-                  <SingleFreqChart freq={freqData} color={chartColor} minVal={storeMin} maxVal={storeMax} title="Order Qty Frequency" />
-                  <DateOrderChart data={dateData} color={chartColor} minVal={storeMin} maxVal={storeMax} title="Daily Order Qty" />
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:HR.text,marginBottom:4}}>Order Qty Frequency</div>
+                    <SingleFreqChart freq={freqData} color={chartColor} minVal={storeMin} maxVal={storeMax} />
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:HR.text,marginBottom:4}}>Daily Order Qty</div>
+                    <DateOrderChart data={dateData} color={chartColor} minVal={storeMin} maxVal={storeMax} />
+                  </div>
                 </div>
               </div>
             );
