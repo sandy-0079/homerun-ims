@@ -2458,17 +2458,8 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             { label: "Active Days", value: stats.activeDays, color: HR.yellowDark },
           ]} />
 
-          {/* DS Computation Cards + DC Card */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(260px, 1fr))",gap:12,marginBottom:16}}>
-            {dsCards.map(ds => {
-              const di = DS_LIST.indexOf(ds);
-              return <StrategyCard key={ds} dsId={ds} dsIndex={di} storeData={res.stores?.[ds]} meta={res.meta} params={params} />;
-            })}
-            <DCCard dcData={res.dc} meta={res.meta} params={params} />
-          </div>
-
           {/* Charts side by side */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
             <div>
               <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Order Qty Frequency</div>
               <SingleFreqChart freq={freqData} ds={dsView === "All" ? "All DS Combined" : dsView} />
@@ -2476,6 +2467,17 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             <div>
               <DateOrderChart data={dateData} dsView={dsView} />
             </div>
+          </div>
+
+          {/* DS Computation Cards + DC Card — all 5 DS in one row */}
+          <div style={{display:"grid",gridTemplateColumns:`repeat(${dsCards.length}, 1fr)`,gap:10,marginBottom:12}}>
+            {dsCards.map(ds => {
+              const di = DS_LIST.indexOf(ds);
+              return <StrategyCard key={ds} dsId={ds} dsIndex={di} storeData={res.stores?.[ds]} meta={res.meta} params={params} />;
+            })}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr",gap:10,maxWidth:280}}>
+            <DCCard dcData={res.dc} meta={res.meta} params={params} />
           </div>
         </>
       )}
