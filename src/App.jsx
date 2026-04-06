@@ -2515,7 +2515,7 @@ function ImpactPreviewPanelV2({
 }
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App(){
-  const [tab,setTab]=useState("dashboard"),[pendingTab,setPending]=useState(null);
+  const [tab,setTab]=useState("overview"),[pendingTab,setPending]=useState(null);
   const [invoiceData,setInv]=useState([]),[skuMaster,setSKU]=useState({});
   const [minReqQty,setMRQ]=useState({}),[newSKUQty,setNSQ]=useState({});
   const [deadStock,setDead]=useState(new Set()),[priceData,setPrice]=useState({});
@@ -2551,6 +2551,19 @@ export default function App(){
   const [insightsDrill,    setInsightsDrill]    = useState(null);
   const [insightsCatFilter,setInsightsCatFilter]= useState("");
   const [insightsSearch,   setInsightsSearch]   = useState("");
+  // ── Overview tab state ────────────────────────────────────────────────────
+  const [ovPeriod, setOvPeriod] = useState("L90D");
+  const [ovDateFrom, setOvDateFrom] = useState("");
+  const [ovDateTo, setOvDateTo] = useState("");
+  const [ovStore, setOvStore] = useState("All");
+  const [ovDrill, setOvDrill] = useState(null);
+  // ── SKU Detail tab state ──────────────────────────────────────────────────
+  const [sdSku, setSdSku] = useState("");
+  const [sdSearch, setSdSearch] = useState("");
+  const [sdPeriod, setSdPeriod] = useState("L90D");
+  const [sdDateFrom, setSdDateFrom] = useState("");
+  const [sdDateTo, setSdDateTo] = useState("");
+  const [sdDsView, setSdDsView] = useState("All");
   const [previewState, setPreviewState] = useState("idle");
   const runPreviewRef = useRef(()=>{});
   const runPreviewFn = runPreviewRef.current;
@@ -2687,7 +2700,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
           merged[skuId]={...merged[skuId],stores:newStores};
         });
         setResults(merged);
-        setTab("dashboard");
+        setTab("overview");
       }catch(err){console.error(err);alert("Model error: "+err.message);}
       setLoading(false);
     },50);
@@ -2788,7 +2801,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
             merged[sku] = { ...merged[sku], stores: newStores };
           });
           setResults(merged);
-          setTab("dashboard");
+          setTab("overview");
         } catch (err) { console.error(err); alert("Model error: " + err.message); }
         setLoading(false);
       }, 50);
@@ -2841,6 +2854,12 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   });
   return idx;
 }, [allResultsWithSKU]);
+
+const invoiceDateRange = useMemo(() => {
+  if (!invoiceData || !invoiceData.length) return { min: "", max: "", dates: [] };
+  const dates = [...new Set(invoiceData.map(r => r.date))].sort();
+  return { min: dates[0], max: dates[dates.length - 1], dates };
+}, [invoiceData]);
 
 const skusByMov = useMemo(() => {
   const idx = {};
@@ -2931,8 +2950,8 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
   const rw2=params.recencyWt||RECENCY_WT_DEFAULT,dcM=params.dcMult||DC_MULT_DEFAULT;
   const movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"],priceColors=["#B91C1C","#C2410C","#A16207","#475569","#64748B"];
 
-  const ADMIN_TABS=[["dashboard","Dashboard"],["insights","SKU Order Behaviour"],,["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
-  const PUBLIC_TABS=[["dashboard","Dashboard"],["insights","SKU Order Behaviour"],,["simulation","OOS Simulation"],["output","Tool Output Download"]];
+  const ADMIN_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
+  const PUBLIC_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["simulation","OOS Simulation"],["output","Tool Output Download"]];
   const NAV_TABS=isAdmin?ADMIN_TABS:PUBLIC_TABS;
 
   // Sync status indicator
