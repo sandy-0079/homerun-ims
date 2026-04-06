@@ -45,5 +45,33 @@ export function standardStrategy(opts) {
   const minQty = Math.ceil((rLong.minQty + rRecent.minQty * wt) / (1 + wt));
   const maxQty = Math.ceil((rLong.maxQty + rRecent.maxQty * wt) / (1 + wt));
 
-  return { minQty, maxQty };
+  const details = {
+    longDays: op - rw,
+    recentDays: rw,
+    sLong: {
+      dailyAvg: sLong.dailyAvg,
+      spikeMedian: sLong.spikeMedian,
+      nonZeroDays: sLong.nonZeroDays,
+      abq: sLong.abq,
+      spikeDays: sLong.spikeDays,
+    },
+    sRecent: {
+      dailyAvg: sRecent.dailyAvg,
+      spikeMedian: sRecent.spikeMedian,
+      nonZeroDays: sRecent.nonZeroDays,
+      abq: sRecent.abq,
+      spikeDays: sRecent.spikeDays,
+    },
+    mvTagLong,
+    spTagLong,
+    mvTagRecent,
+    spTagRecent,
+    rLong,
+    rRecent,
+    wt,
+    blendedMin: minQty,
+    blendedMax: maxQty,
+  };
+
+  return { minQty, maxQty, details };
 }

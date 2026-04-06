@@ -30,7 +30,19 @@ export function percentileCoverStrategy(opts) {
   const nonZeroQtys = q90.filter(q => q > 0).sort((a, b) => a - b);
 
   if (nonZeroQtys.length === 0) {
-    return { minQty: 0, maxQty: 0 };
+    return {
+      minQty: 0,
+      maxQty: 0,
+      details: {
+        pctUsed: pctValue,
+        pctQty: 0,
+        coverDays,
+        dailyAvg: 0,
+        buffer: p.maxDaysBuffer || 2,
+        nonZeroCount: 0,
+        periodDays: q90.length,
+      },
+    };
   }
 
   const pctQty = percentile(nonZeroQtys, pctValue);
@@ -40,5 +52,17 @@ export function percentileCoverStrategy(opts) {
   const minQty = Math.ceil(pctQty * coverDays);
   const maxQty = Math.ceil(minQty + dailyAvg * buffer);
 
-  return { minQty, maxQty };
+  return {
+    minQty,
+    maxQty,
+    details: {
+      pctUsed: pctValue,
+      pctQty,
+      coverDays,
+      dailyAvg,
+      buffer,
+      nonZeroCount: nonZeroQtys.length,
+      periodDays: q90.length,
+    },
+  };
 }

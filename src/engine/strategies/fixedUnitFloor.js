@@ -27,5 +27,15 @@ export function fixedUnitFloorStrategy(opts) {
   const minQty = Math.ceil(pctQty);
   const maxQty = Math.ceil(Math.max(minQty + maxAdd, minQty * maxMult));
 
-  return { minQty, maxQty };
+  return {
+    minQty,
+    maxQty,
+    details: {
+      pctile,
+      pctQty,
+      orderCount: orderQtys.length,
+      maxMult,
+      maxAdd,
+    },
+  };
 }
