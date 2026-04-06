@@ -2524,6 +2524,18 @@ const OV_PERIODS = [
   { key: "CUSTOM", label: "Custom" },
 ];
 
+// ─── SKU Detail Tab Helpers ─────────────────────────────────────────────────
+const SD_PERIODS = [
+  { key: "L90D", label: "L90D", days: 90 },
+  { key: "L60D", label: "L60D", days: 60 },
+  { key: "L45D", label: "L45D", days: 45 },
+  { key: "L30D", label: "L30D", days: 30 },
+  { key: "L15D", label: "L15D", days: 15 },
+  { key: "L7D",  label: "L7D",  days: 7 },
+  { key: "CUSTOM", label: "Custom" },
+];
+const SD_DS_OPTS = ["All", "DS01", "DS02", "DS03", "DS04", "DS05"];
+
 function filterInvoiceByPeriod(invoiceData, periodKey, dateFrom, dateTo, invoiceDateRange) {
   if (!invoiceData || !invoiceData.length) return [];
   const allDates = invoiceDateRange.dates;
@@ -2547,6 +2559,463 @@ function fmtVal(v) {
 function fmtCov(v) {
   if (v == null) return "No Sale";
   return v.toFixed(1) + "D";
+}
+
+// ─── SKU Detail Tab Components ──────────────────────────────────────────────
+
+const SPIKE_TAG_COLORS = {
+  "Frequent":{bg:"#FEE2E2",color:"#B91C1C",border:"#FECACA"},
+  "Once in a while":{bg:"#FFEDD5",color:"#C2410C",border:"#FED7AA"},
+  "Rare":{bg:"#FEF9C3",color:"#A16207",border:"#FDE68A"},
+  "No Spike":{bg:"#F1F5F9",color:"#64748B",border:"#CBD5E1"},
+};
+
+const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
+  const dc = DS_COLORS[dsIndex] || DS_COLORS[0];
+  const s = storeData || {};
+  const det = s.strategyDetails || null;
+  const stratTag = s.strategyTag || "standard";
+  const mvTag = s.mvTag || "Super Slow";
+  const priceTag = meta?.priceTag || "No Price";
+  const spTag = s.spTag || "No Spike";
+  const logicTag = s.logicTag || "Base Logic";
+  const steps = s.postBlendSteps || [];
+
+  const row = (label, val) => (
+    <div style={{display:"flex",justifyContent:"space-between",fontSize:10,padding:"2px 0"}}>
+      <span style={{color:HR.muted}}>{label}</span>
+      <span style={{fontWeight:600,color:dc.text}}>{val}</span>
+    </div>
+  );
+
+  const sectionHead = (text) => (
+    <div style={{fontSize:10,fontWeight:700,color:dc.header,marginTop:8,marginBottom:4,borderBottom:`1px solid ${dc.header}22`,paddingBottom:2}}>{text}</div>
+  );
+
+  return (
+    <div style={{background:dc.bg,borderRadius:10,border:`1px solid ${dc.header}33`,overflow:"hidden"}}>
+      <div style={{background:dc.header,color:"#fff",padding:"6px 10px",fontSize:12,fontWeight:700}}>{dsId}</div>
+      <div style={{padding:10}}>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
+          <MovTag value={mvTag} />
+          <TagPill value={priceTag} colorMap={PRICE_TAG_COLORS} />
+          {spTag && spTag !== "No Spike" && <TagPill value={spTag} colorMap={SPIKE_TAG_COLORS} />}
+        </div>
+        <div style={{display:"flex",gap:16,marginBottom:8}}>
+          <div>
+            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Min</div>
+            <div style={{fontSize:22,fontWeight:800,color:dc.header}}>{s.min ?? "—"}</div>
+          </div>
+          <div>
+            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Max</div>
+            <div style={{fontSize:22,fontWeight:800,color:dc.text}}>{s.max ?? "—"}</div>
+          </div>
+          <div style={{marginLeft:"auto",textAlign:"right"}}>
+            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Daily Avg</div>
+            <div style={{fontSize:13,fontWeight:700,color:dc.text}}>{s.dailyAvg != null ? s.dailyAvg.toFixed(2) : "—"}</div>
+          </div>
+        </div>
+
+        {stratTag === "standard" && det && (
+          <>
+            {sectionHead("Standard Strategy")}
+            {row("Long Period", `${det.longDays || "—"}D`)}
+            {row("  Daily Avg", det.longDailyAvg != null ? det.longDailyAvg.toFixed(2) : "—")}
+            {row("  NZD", det.longNZD ?? "—")}
+            {row("  Spike Median", det.longSpikeMedian != null ? det.longSpikeMedian.toFixed(1) : "—")}
+            {row("  Min / Max", `${det.longMin ?? "—"} / ${det.longMax ?? "—"}`)}
+            {row("Recent Period", `${det.recentDays || "—"}D`)}
+            {row("  Daily Avg", det.recentDailyAvg != null ? det.recentDailyAvg.toFixed(2) : "—")}
+            {row("  NZD", det.recentNZD ?? "—")}
+            {row("  Spike Median", det.recentSpikeMedian != null ? det.recentSpikeMedian.toFixed(1) : "—")}
+            {row("  Min / Max", `${det.recentMin ?? "—"} / ${det.recentMax ?? "—"}`)}
+            {sectionHead("Blending")}
+            {row("Recency Weight", `${mvTag} → ${det.recencyWeight ?? "—"}×`)}
+            {row("Blended Min / Max", `${det.blendedMin ?? "—"} / ${det.blendedMax ?? "—"}`)}
+          </>
+        )}
+
+        {stratTag === "percentile_cover" && det && (
+          <>
+            {sectionHead("Percentile Cover Strategy")}
+            {row("Full Period", `${det.periodDays ?? "—"}D`)}
+            {row("Non-Zero Days", det.nonZeroCount ?? "—")}
+            {row(`Price (${priceTag})`, `→ P${det.pctUsed ?? "—"}`)}
+            {row(`P${det.pctUsed ?? "?"} value`, det.pctQty != null ? det.pctQty.toFixed(2) : "—")}
+            {row(`Movement (${mvTag})`, `→ Cover: ${det.coverDays ?? "—"}D`)}
+            {row("Min = ceil(pctQty × coverDays)", det.rawMin ?? s.min ?? "—")}
+            {row("Max = ceil(Min + dailyAvg × buffer)", det.rawMax ?? s.max ?? "—")}
+          </>
+        )}
+
+        {stratTag === "fixed_unit_floor" && det && (
+          <>
+            {sectionHead("Fixed Unit Floor Strategy")}
+            {row("Orders in period", det.orderCount ?? "—")}
+            {row(`P${det.pctile ?? 90} of order qtys`, det.pctQty != null ? det.pctQty.toFixed(2) : "—")}
+            {row("Min = ceil(pctQty)", det.rawMin ?? s.min ?? "—")}
+            {row("Max = ceil(max(Min+add, Min×mult))", det.rawMax ?? s.max ?? "—")}
+          </>
+        )}
+
+        {!det && (
+          <>
+            {sectionHead(stratTag === "percentile_cover" ? "Percentile Cover" : stratTag === "fixed_unit_floor" ? "Fixed Unit Floor" : "Standard")}
+            <div style={{fontSize:10,color:HR.muted,fontStyle:"italic"}}>No strategy details available</div>
+          </>
+        )}
+
+        {steps.length > 0 && (
+          <>
+            {sectionHead("Adjustments Applied")}
+            {steps.map((step, i) => (
+              <div key={i} style={{fontSize:10,color:dc.text,padding:"1px 0"}}>
+                {step.rule === "newDSFloor" && `New DS Floor applied: Min=Max=${step.floorVal}`}
+                {step.rule === "brandBuffer" && `Brand Buffer: +${step.bufferDays}D → Min=${step.newMin}, Max=${step.newMax}`}
+                {step.rule === "skuFloor" && `SKU Floor: Min→${step.newMin}, Max→${step.newMax}`}
+                {step.rule === "deadStock" && "Dead Stock: Max capped to Min"}
+                {!["newDSFloor","brandBuffer","skuFloor","deadStock"].includes(step.rule) && `${step.rule}: ${JSON.stringify(step)}`}
+              </div>
+            ))}
+          </>
+        )}
+
+        {logicTag && logicTag !== "Base Logic" && (
+          <div style={{marginTop:6}}><LogicTag value={logicTag} /></div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const DCCard = ({ dcData, meta, params }) => {
+  const dc = dcData || {};
+  const det = dc.dcDetails || null;
+  const mvTag = dc.mvTag || "Super Slow";
+
+  const row = (label, val) => (
+    <div style={{display:"flex",justifyContent:"space-between",fontSize:10,padding:"2px 0"}}>
+      <span style={{color:HR.muted}}>{label}</span>
+      <span style={{fontWeight:600,color:DC_COLOR.text}}>{val}</span>
+    </div>
+  );
+
+  return (
+    <div style={{background:DC_COLOR.bg,borderRadius:10,border:`1px solid ${DC_COLOR.header}33`,overflow:"hidden"}}>
+      <div style={{background:DC_COLOR.header,color:"#fff",padding:"6px 10px",fontSize:12,fontWeight:700}}>DC</div>
+      <div style={{padding:10}}>
+        <div style={{marginBottom:8}}><MovTag value={mvTag} /></div>
+        <div style={{display:"flex",gap:16,marginBottom:8}}>
+          <div>
+            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Min</div>
+            <div style={{fontSize:22,fontWeight:800,color:DC_COLOR.header}}>{dc.min ?? "—"}</div>
+          </div>
+          <div>
+            <div style={{fontSize:9,color:HR.muted,fontWeight:600}}>Max</div>
+            <div style={{fontSize:22,fontWeight:800,color:DC_COLOR.text}}>{dc.max ?? "—"}</div>
+          </div>
+        </div>
+        {det ? (
+          <>
+            {row("Non-Zero Days", det.nonZeroDays ?? dc.nonZeroDays ?? "—")}
+            {row("Sum DS Mins", det.sumDSMin ?? "—")}
+            {row("Sum DS Maxes", det.sumDSMax ?? "—")}
+            {row("Sum Daily Avg", det.sumDailyAvg != null ? det.sumDailyAvg.toFixed(2) : "—")}
+            {row("Brand Lead Time", `${det.brandLeadTimeDays ?? 2}D`)}
+            {det.isDead ? (
+              <>
+                {row("Dead Stock Mult Min", det.dcMultMin ?? "—")}
+                {row("Dead Stock Mult Max", det.dcMultMax ?? "—")}
+              </>
+            ) : (
+              <>
+                {row("DC Mult Min", det.dcMultMin ?? "—")}
+                {row("DC Mult Max", det.dcMultMax ?? "—")}
+                {det.leadTimeMin != null && row("Lead Time Min", det.leadTimeMin)}
+                {row("DC Min formula", `max(leadTimeMin, sumDSMin × multMin) = ${dc.min}`)}
+                {row("DC Max formula", `max(ceil(dcMin × multMax/multMin), sumDSMax × multMax) = ${dc.max}`)}
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            {row("Non-Zero Days", dc.nonZeroDays ?? "—")}
+            <div style={{fontSize:10,color:HR.muted,fontStyle:"italic",marginTop:4}}>No DC details available</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const DateOrderChart = ({ data, dsView }) => {
+  if (!data || !data.length) return <div style={{color:HR.muted,fontSize:11,padding:20,textAlign:"center"}}>No order data</div>;
+  const maxQty = Math.max(...data.map(d => d.qty), 1);
+  const padL = 44, padB = 36, padT = 20;
+  const chartH = 180;
+  const barW = Math.max(8, Math.min(24, Math.floor(480 / data.length)));
+  const innerW = data.length * (barW + 2);
+  const svgW = Math.max(innerW + padL + 16, 500);
+  const svgH = chartH + padB + padT;
+  const di = DS_LIST.indexOf(dsView);
+  const color = di >= 0 ? DS_COLORS[di].header : HR.yellowDark;
+  const yTicks = [0, 1, 2, 3].map(i => Math.round((maxQty / 3) * i));
+  const showAllLabels = data.length <= 30;
+
+  return (
+    <div style={{background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${color}44`}}>
+      <div style={{fontSize:12,fontWeight:700,color,marginBottom:8}}>Daily Order Qty</div>
+      <div style={{overflowX:"auto"}}>
+        <svg width={svgW} height={svgH} style={{display:"block"}}>
+          {yTicks.map((tick, i) => {
+            const y = padT + chartH - (maxQty > 0 ? (tick / maxQty) * chartH : 0);
+            return (
+              <g key={i}>
+                <line x1={padL} y1={y} x2={svgW - 8} y2={y} stroke={i === 0 ? "#C8C8B0" : "#E8E8D8"} strokeWidth={i === 0 ? 1.5 : 1} strokeDasharray={i === 0 ? "0" : "3,3"} />
+                <text x={padL - 6} y={y + 4} textAnchor="end" fill="#777760" fontSize={10}>{tick}</text>
+              </g>
+            );
+          })}
+          <text x={14} y={padT + chartH / 2} textAnchor="middle" fill="#777760" fontSize={10} fontWeight="600" transform={`rotate(-90,14,${padT + chartH / 2})`}>Qty</text>
+          <line x1={padL} y1={padT} x2={padL} y2={padT + chartH} stroke="#A8A888" strokeWidth={1.5} />
+          <line x1={padL} y1={padT + chartH} x2={svgW - 8} y2={padT + chartH} stroke="#A8A888" strokeWidth={1.5} />
+          {data.map((d, i) => {
+            const barH = maxQty > 0 ? Math.max(d.qty > 0 ? 2 : 0, (d.qty / maxQty) * chartH) : 0;
+            const x = padL + i * (barW + 2) + 1;
+            const y = padT + chartH - barH;
+            return (
+              <g key={i}>
+                <rect x={x} y={y} width={barW} height={barH} fill={color} opacity={0.8} rx={1} />
+                {d.qty > 0 && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fill={color} fontSize={8} fontWeight="700">{d.qty}</text>}
+                {showAllLabels && (
+                  <text x={x + barW / 2} y={padT + chartH + 14} textAnchor="end" fill="#555548" fontSize={7} fontWeight="500" transform={`rotate(-45,${x + barW / 2},${padT + chartH + 14})`}>
+                    {d.date.slice(5)}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          {!showAllLabels && data.length > 1 && (
+            <>
+              <text x={padL + 4} y={svgH - 4} textAnchor="start" fill="#555548" fontSize={9}>{data[0].date.slice(5)}</text>
+              <text x={padL + (data.length - 1) * (barW + 2)} y={svgH - 4} textAnchor="end" fill="#555548" fontSize={9}>{data[data.length - 1].date.slice(5)}</text>
+            </>
+          )}
+          <text x={padL + innerW / 2} y={svgH - 2} textAnchor="middle" fill="#777760" fontSize={10} fontWeight="600">Date</text>
+        </svg>
+      </div>
+    </div>
+  );
+};
+
+function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRange,
+  skuId, setSkuId, searchVal, setSearchVal,
+  period, setPeriod, dateFrom, setDateFrom, dateTo, setDateTo,
+  dsView, setDsView }) {
+
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const searchRef = useRef(null);
+
+  const skuList = useMemo(() => {
+    if (!skuMaster || !skuMaster.length) return [];
+    return skuMaster.map(s => ({ sku: s.SKU || s.sku, name: s.Name || s.name || "" }));
+  }, [skuMaster]);
+
+  const matches = useMemo(() => {
+    if (!searchVal || searchVal.length < 1) return [];
+    const q = searchVal.toLowerCase();
+    return skuList.filter(s => s.sku?.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q)).slice(0, 8);
+  }, [searchVal, skuList]);
+
+  const doSearch = useCallback((val) => {
+    const v = (val || searchVal || "").trim();
+    if (!v) return;
+    const exact = skuList.find(s => s.sku === v);
+    if (exact) { setSkuId(v); setDropdownOpen(false); return; }
+    const match = skuList.find(s => s.sku?.toLowerCase() === v.toLowerCase() || s.name?.toLowerCase() === v.toLowerCase());
+    if (match) { setSkuId(match.sku); setSearchVal(match.sku); setDropdownOpen(false); return; }
+    if (matches.length > 0) { setSkuId(matches[0].sku); setSearchVal(matches[0].sku); setDropdownOpen(false); return; }
+    setSkuId(v);
+    setDropdownOpen(false);
+  }, [searchVal, skuList, matches, setSkuId, setSearchVal]);
+
+  const res = skuId ? results?.[skuId] : null;
+
+  const filteredInv = useMemo(() => {
+    if (!invoiceData || !skuId) return [];
+    let rows = invoiceData.filter(r => r.sku === skuId);
+    if (dsView !== "All") rows = rows.filter(r => r.ds === dsView);
+    return filterInvoiceByPeriod(rows, period, dateFrom, dateTo, invoiceDateRange);
+  }, [invoiceData, skuId, dsView, period, dateFrom, dateTo, invoiceDateRange]);
+
+  const stats = useMemo(() => {
+    if (!filteredInv.length) return { instances: 0, qty: 0, abq: "—", activeDays: 0 };
+    const instances = filteredInv.length;
+    const qty = filteredInv.reduce((a, r) => a + (r.qty || 0), 0);
+    const abq = instances > 0 ? (qty / instances).toFixed(1) : "—";
+    const activeDays = new Set(filteredInv.map(r => r.date)).size;
+    return { instances, qty, abq, activeDays };
+  }, [filteredInv]);
+
+  const freqData = useMemo(() => {
+    const freq = {};
+    filteredInv.forEach(r => { const q = r.qty || 0; freq[q] = (freq[q] || 0) + 1; });
+    return freq;
+  }, [filteredInv]);
+
+  const dateData = useMemo(() => {
+    if (!invoiceDateRange?.dates?.length) return [];
+    const allDates = invoiceDateRange.dates;
+    let dates = allDates;
+    if (period === "CUSTOM" && dateFrom && dateTo) {
+      dates = allDates.filter(d => d >= dateFrom && d <= dateTo);
+    } else {
+      const preset = SD_PERIODS.find(p => p.key === period);
+      if (preset && preset.days) dates = allDates.slice(-preset.days);
+    }
+    const qtyByDate = {};
+    filteredInv.forEach(r => { qtyByDate[r.date] = (qtyByDate[r.date] || 0) + (r.qty || 0); });
+    return dates.map(d => ({ date: d, qty: qtyByDate[d] || 0 }));
+  }, [invoiceDateRange, period, dateFrom, dateTo, filteredInv]);
+
+  const dsCards = useMemo(() => {
+    if (dsView === "All") return DS_LIST;
+    return [dsView];
+  }, [dsView]);
+
+  return (
+    <div>
+      {/* Search bar */}
+      <div style={{display:"flex",gap:8,marginBottom:16,position:"relative"}}>
+        <div style={{position:"relative",flex:1,maxWidth:420}}>
+          <input
+            ref={searchRef}
+            value={searchVal}
+            onChange={e => { setSearchVal(e.target.value); setDropdownOpen(true); }}
+            onKeyDown={e => { if (e.key === "Enter") doSearch(); }}
+            onFocus={() => { if (searchVal) setDropdownOpen(true); }}
+            onBlur={() => setTimeout(() => setDropdownOpen(false), 200)}
+            placeholder="Search by SKU ID or name..."
+            style={{...S.input, width:"100%", paddingRight:36}}
+          />
+          {dropdownOpen && matches.length > 0 && (
+            <div style={{position:"absolute",top:"100%",left:0,right:0,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,zIndex:10,boxShadow:"0 4px 12px rgba(0,0,0,0.1)",maxHeight:240,overflowY:"auto"}}>
+              {matches.map(m => (
+                <div key={m.sku}
+                  onMouseDown={() => { setSearchVal(m.sku); setSkuId(m.sku); setDropdownOpen(false); }}
+                  style={{padding:"6px 10px",cursor:"pointer",fontSize:11,borderBottom:`1px solid ${HR.border}`,display:"flex",justifyContent:"space-between"}}
+                >
+                  <span style={{fontWeight:600,color:HR.text}}>{m.sku}</span>
+                  <span style={{color:HR.muted,fontSize:10,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <button onClick={() => doSearch()} style={{...S.btn(true),padding:"5px 16px"}}>Search</button>
+      </div>
+
+      {/* Empty states */}
+      {!skuId && (
+        <div style={{textAlign:"center",padding:60,color:HR.muted}}>
+          <div style={{fontSize:32,marginBottom:8}}>🔍</div>
+          <div style={{fontSize:14}}>Enter a SKU ID or name to see details</div>
+        </div>
+      )}
+
+      {skuId && !res && (
+        <div style={{textAlign:"center",padding:60,color:HR.muted}}>
+          <div style={{fontSize:32,marginBottom:8}}>⚠️</div>
+          <div style={{fontSize:14}}>SKU not found in results</div>
+          <div style={{fontSize:11,marginTop:4}}>Check the SKU ID or try searching again</div>
+        </div>
+      )}
+
+      {skuId && res && (
+        <>
+          {/* SKU Header */}
+          <div style={{...S.card,marginBottom:12,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{fontSize:16,fontWeight:800,color:HR.text}}>{res.meta?.name || skuId}</div>
+              <div style={{fontSize:11,color:HR.muted,marginTop:2}}>
+                {res.meta?.sku || skuId}
+                {res.meta?.category && <> · {res.meta.category}</>}
+                {res.meta?.brand && <> · {res.meta.brand}</>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:4}}>
+              {res.meta?.priceTag && <TagPill value={res.meta.priceTag} colorMap={PRICE_TAG_COLORS} />}
+              {res.meta?.t150Tag && <TagPill value={res.meta.t150Tag} colorMap={TOPN_TAG_COLORS} />}
+            </div>
+          </div>
+
+          {/* Period + DS pickers */}
+          <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+            <div style={{display:"flex",borderRadius:6,overflow:"hidden",border:`1px solid ${HR.border}`}}>
+              {SD_PERIODS.filter(p => p.key !== "CUSTOM").map(p => (
+                <button key={p.key} onClick={() => setPeriod(p.key)}
+                  style={{padding:"4px 9px",background:period===p.key?HR.yellow:HR.white,color:period===p.key?HR.black:HR.muted,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700}}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {period === "CUSTOM" && (
+              <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{...S.input,fontSize:10,padding:"3px 6px"}} />
+                <span style={{color:HR.muted,fontSize:10}}>→</span>
+                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{...S.input,fontSize:10,padding:"3px 6px"}} />
+              </div>
+            )}
+            <button onClick={() => setPeriod(period === "CUSTOM" ? "L90D" : "CUSTOM")}
+              style={S.btn(period === "CUSTOM")}>
+              Custom
+            </button>
+            <div style={{width:1,height:20,background:HR.border,margin:"0 4px"}} />
+            <div style={{display:"flex",borderRadius:6,overflow:"hidden",border:`1px solid ${HR.border}`}}>
+              {SD_DS_OPTS.map(d => {
+                const di = DS_LIST.indexOf(d), col = di >= 0 ? DS_COLORS[di].header : HR.muted;
+                const isActive = dsView === d;
+                return (
+                  <button key={d} onClick={() => setDsView(d)}
+                    style={{padding:"4px 9px",background:isActive?(di>=0?DS_COLORS[di].header:HR.yellow):HR.white,color:isActive?HR.white:col,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700}}>
+                    {d}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Stats strip */}
+          <StatStrip items={[
+            { label: "Instances", value: stats.instances.toLocaleString(), color: HR.yellowDark },
+            { label: "Qty Sold", value: stats.qty.toLocaleString(), color: HR.green },
+            { label: "Avg Order Qty", value: stats.abq, color: HR.yellowDark },
+            { label: "Active Days", value: stats.activeDays, color: HR.yellowDark },
+          ]} />
+
+          {/* DS Computation Cards + DC Card */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(260px, 1fr))",gap:12,marginBottom:16}}>
+            {dsCards.map(ds => {
+              const di = DS_LIST.indexOf(ds);
+              return <StrategyCard key={ds} dsId={ds} dsIndex={di} storeData={res.stores?.[ds]} meta={res.meta} params={params} />;
+            })}
+            <DCCard dcData={res.dc} meta={res.meta} params={params} />
+          </div>
+
+          {/* Charts side by side */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Order Qty Frequency</div>
+              <SingleFreqChart freq={freqData} ds={dsView === "All" ? "All DS Combined" : dsView} />
+            </div>
+            <div>
+              <DateOrderChart data={dateData} dsView={dsView} />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange,
@@ -3613,6 +4082,30 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
               store={ovStore} setStore={setOvStore}
               drill={ovDrill} setDrill={setOvDrill}
               onNavigateToSKU={(skuId) => { setSdSku(skuId); setSdSearch(skuId); setTab("skuDetail"); }}
+            />
+          )
+        )}
+
+        {tab==="skuDetail"&&(
+          !dataLoaded?(
+            <div style={{textAlign:"center",padding:60}}>
+              <div style={{fontSize:36,marginBottom:10}}>🔍</div>
+              <div style={{color:HR.muted,fontSize:14,marginBottom:6}}>No data loaded yet</div>
+              {isAdmin
+                ?<button onClick={()=>setTab("upload")} style={{...S.runBtn,width:"auto",padding:"7px 20px"}}>Upload Data →</button>
+                :<div style={{color:HR.muted,fontSize:12}}>Data is being prepared. Check back soon.</div>
+              }
+            </div>
+          ):(
+            <SKUDetailTab
+              invoiceData={invoiceData} skuMaster={skuMaster} results={results} params={params}
+              invoiceDateRange={invoiceDateRange}
+              skuId={sdSku} setSkuId={setSdSku}
+              searchVal={sdSearch} setSearchVal={setSdSearch}
+              period={sdPeriod} setPeriod={setSdPeriod}
+              dateFrom={sdDateFrom} setDateFrom={setSdDateFrom}
+              dateTo={sdDateTo} setDateTo={setSdDateTo}
+              dsView={sdDsView} setDsView={setSdDsView}
             />
           )
         )}
