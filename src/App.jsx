@@ -5,8 +5,8 @@ import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
   DC_MULT_DEFAULT, DC_DEAD_MULT_DEFAULT, RECENCY_WT_DEFAULT,
   BASE_MIN_DAYS_DEFAULT, DEFAULT_BRAND_BUFFER, DEFAULT_PARAMS,
-  runEngine, calcPeriodMinMax,
-  parseCSV, getPriceTag, getMovTag, getSpikeTag, computeStats, getInvSlice, aggStats,
+  runEngine,
+  parseCSV, getPriceTag,
 } from "./engine/index.js";
 
 const HR = {
@@ -80,15 +80,9 @@ const S={
   pageWrap:{flex:1,overflowY:"auto",overflowX:"hidden",padding:"16px 20px"},
 };
 
-const COL_ITEM_W  = 150;
-const COL_CAT_W   = 90;
-const COL_PRICE_W = 72;
-const COL_TOPN_W  = 76;
-const COL_LOGIC_W = 90;
-const FROZEN_TOTAL = COL_ITEM_W + COL_CAT_W + COL_PRICE_W + COL_TOPN_W + COL_LOGIC_W;
+/* Old dashboard frozen column width constants removed */
 
-const frozenTh=(extra={})=>({...S.th,position:"sticky",top:0,zIndex:4,background:HR.surfaceLight,...extra});
-const frozenTd=(left,bg,extra={})=>({...S.td,position:"sticky",left,background:bg,zIndex:2,...extra});
+/* Old dashboard frozenTh/frozenTd helpers removed */
 
 const LOGIC_TAG_STYLES={
   "Base Logic":     {bg:"#DCFCE7",color:"#15803D",border:"#BBF7D0"},
@@ -109,29 +103,7 @@ const LogicTag=({value})=>{
   );
 };
 
-const DSCols=React.memo(({r,displayDS,coreOverrides})=>displayDS.map(ds=>{
-  const s=r.stores[ds]||{min:0,max:0,dailyAvg:0,abq:0,mvTag:"—",logicTag:"Base Logic"};
-  const di=DS_LIST.indexOf(ds),dc=DS_COLORS[di>=0?di:0];
-  const logicTag=coreOverrides?.[r.meta?.sku]?.[ds]?"Manual Override":(s.logicTag||"Base Logic");
-  const strategyTag = s.strategyTag || "standard";
-  return[
-    <td key={ds+"mv"} style={{padding:"3px 6px",borderTop:`1px solid ${HR.border}`,textAlign:"center",background:dc.bg,borderLeft:`1px solid ${dc.header}22`}}>
-      <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
-        <MovTag value={s.mvTag}/>
-        {strategyTag && strategyTag !== "standard" && (
-          <span style={{fontSize:7,color:"#6366F1",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>
-            {strategyTag === "percentile_cover" ? "PCT" : strategyTag === "fixed_unit_floor" ? "FLOOR" : strategyTag.toUpperCase()}
-          </span>
-        )}
-        <LogicTag value={logicTag}/>
-      </div>
-    </td>,
-    <td key={ds+"da"} style={{padding:"3px 6px",borderTop:`1px solid ${HR.border}`,textAlign:"center",color:dc.text,fontSize:10,background:dc.bg}}>{s.dailyAvg>0?s.dailyAvg.toFixed(1):"—"}</td>,
-    <td key={ds+"ab"} style={{padding:"3px 6px",borderTop:`1px solid ${HR.border}`,textAlign:"center",color:dc.text,fontSize:10,background:dc.bg}}>{s.abq>0?s.abq.toFixed(1):"—"}</td>,
-    <td key={ds+"mn"} style={{padding:"3px 6px",borderTop:`1px solid ${HR.border}`,textAlign:"center",color:dc.text,fontWeight:700,background:dc.bg}}>{s.min}</td>,
-    <td key={ds+"mx"} style={{padding:"3px 6px",borderTop:`1px solid ${HR.border}`,textAlign:"center",color:dc.text,fontWeight:700,background:dc.bg}}>{s.max}</td>,
-];
-}));
+/* DSCols component removed — was only used by old Dashboard tab */
 
 const Section=({title,icon,summary,children,accent="#B8860B"})=>{
   const [open,setOpen]=useState(false);
@@ -210,19 +182,7 @@ const StatStrip=({items})=>(
     ))}
   </div>
 );
-const MovDistBar=({rows,skuMaster,results,dsView})=>{
-  const skus=[...new Set(rows.map(r=>r.sku))],counts={"Super Fast":0,"Fast":0,"Moderate":0,"Slow":0,"Super Slow":0};
-  skus.forEach(s=>{const tag=(dsView&&dsView!=="All"&&dsView!=="Compare")?(results[s]?.stores[dsView]?.mvTag||"Super Slow"):(results[s]?.dc?.mvTag||"Super Slow");if(counts[tag]!==undefined)counts[tag]++;});
-  const total=skus.length||1,movLabels=Object.keys(counts),movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"];
-  return(
-    <div style={{marginBottom:16}}>
-      <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Movement Tag Distribution — {skus.length} SKUs</div>
-      <div style={{display:"flex",gap:3,height:16,borderRadius:4,overflow:"hidden",border:`1px solid ${HR.border}`}}>
-        {movLabels.map((l,i)=>{const pct=(counts[l]/total)*100;if(!pct)return null;return <div key={l} title={`${l}: ${counts[l]}`} style={{flex:pct,background:movColors[i]}}/>;})}</div>
-      <div style={{display:"flex",gap:10,marginTop:4,flexWrap:"wrap"}}>{movLabels.map((l,i)=><span key={l} style={{fontSize:10,color:movColors[i],fontWeight:700}}>{l}: {counts[l]}</span>)}</div>
-    </div>
-  );
-};
+/* MovDistBar removed — unused */
 const SingleFreqChart=({freq,ds,compact=false})=>{
   const entries=Object.entries(freq).map(([q,c])=>({qty:parseFloat(q),cnt:c})).sort((a,b)=>a.qty-b.qty);
   if(!entries.length)return <div style={{color:HR.muted,fontSize:11,padding:20,textAlign:"center"}}>No orders for {ds}</div>;
@@ -251,502 +211,8 @@ const SingleFreqChart=({freq,ds,compact=false})=>{
     </div>
   );
 };
-const SKUFreqChart=({freqByDs,selectedDs})=>{
-  const dsToShow=selectedDs==="Compare"?DS_LIST:selectedDs==="All"?DS_LIST:[selectedDs];
-  if(selectedDs==="Compare")return <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{dsToShow.map(ds=><SingleFreqChart key={ds} freq={freqByDs[ds]||{}} ds={ds} compact/>)}</div>;
-  if(selectedDs==="All"){const merged={};dsToShow.forEach(ds=>{Object.entries(freqByDs[ds]||{}).forEach(([qty,cnt])=>{merged[qty]=(merged[qty]||0)+cnt;});});return <SingleFreqChart freq={merged} ds="All DS Combined"/>;}
-  return <SingleFreqChart freq={freqByDs[selectedDs]||{}} ds={selectedDs}/>;
-};
-const PERIOD_OPTS=[{key:"90D",label:"90D"},{key:"75D",label:"75D (Long)"},{key:"15D",label:"15D (Recent)"}];
-const DS_VIEW_OPTS=["All","DS01","DS02","DS03","DS04","DS05","Compare"];
-
-function InsightsTab({
-  invoiceData, skuMaster, results, params,
-  period, setPeriod, customDays, setCustomDays,
-  dsView, setDsView, drill, setDrill,
-  catFilter, setCatFilter, globalSearch, setGlobalSearch,
-}) {
-  const rw = params.recencyWindow || 15;
-
-  // Build the effective slice based on period
-  const slice = useMemo(() => {
-    if (period === "CUSTOM") {
-      const allDates = [...new Set(invoiceData.map(r => r.date))].sort();
-      const last = allDates.slice(-Math.min(customDays, params.overallPeriod || 90));
-      return invoiceData.filter(r => last.includes(r.date));
-    }
-    return getInvSlice(invoiceData, period, rw, params.overallPeriod);
-  }, [invoiceData, period, customDays, rw]);
-
-  const sliceForDs = useMemo(
-    () => dsView === "All" || dsView === "Compare" ? slice : slice.filter(r => r.ds === dsView),
-    [slice, dsView]
-  );
-  const st = useMemo(() => aggStats(sliceForDs), [sliceForDs]);
-  const skuCount = useMemo(() => [...new Set(sliceForDs.map(r => r.sku))].length, [sliceForDs]);
-
-  const movCounts = useMemo(() => {
-    const skus = [...new Set(sliceForDs.map(r => r.sku))];
-    const counts = { "Super Fast": 0, "Fast": 0, "Moderate": 0, "Slow": 0, "Super Slow": 0 };
-    skus.forEach(s => {
-      const tag = (dsView && dsView !== "All" && dsView !== "Compare")
-        ? (results[s]?.stores[dsView]?.mvTag || "Super Slow")
-        : (results[s]?.dc?.mvTag || "Super Slow");
-      if (counts[tag] !== undefined) counts[tag]++;
-    });
-    return counts;
-  }, [sliceForDs, dsView, results]);
-
-  // Global SKU search — jumps straight to SKU detail
-  const allSKUs = useMemo(() => {
-    const seen = new Set();
-    return Object.values(skuMaster)
-      .filter(s => { if (seen.has(s.sku)) return false; seen.add(s.sku); return true; })
-      .map(s => ({ sku: s.sku, name: s.name || s.sku }));
-  }, [skuMaster]);
-
-  const searchResults = useMemo(() => {
-    if (!globalSearch.trim()) return [];
-    const q = globalSearch.toLowerCase();
-    return allSKUs.filter(s =>
-      s.sku.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
-    ).slice(0, 8);
-  }, [globalSearch, allSKUs]);
-
-  const handleSearchSelect = skuId => {
-    setGlobalSearch("");
-    setDrill({ type: "sku", value: skuId, skuName: skuMaster[skuId]?.name || skuId,
-      brand: skuMaster[skuId]?.brand || "", category: skuMaster[skuId]?.category || "" });
-  };
-
-  // Breadcrumb + back button
-  const crumbs = [
-    { label: "All Categories", onClick: () => { setDrill(null); setCatFilter(""); } },
-    ...(drill?.type === "category" || drill?.type === "brand" || drill?.type === "sku"
-      ? [{ label: drill.category || drill.value, onClick: () => setDrill({ type: "category", value: drill.category || drill.value, category: drill.category || drill.value }) }]
-      : []),
-    ...(drill?.type === "brand" || drill?.type === "sku"
-      ? [{ label: drill.brand || drill.value, onClick: () => setDrill({ type: "brand", value: drill.brand || drill.value, brand: drill.brand || drill.value, category: drill.category }) }]
-      : []),
-    ...(drill?.type === "sku" ? [{ label: drill.skuName || drill.value }] : []),
-  ];
-
-  const handleBack = () => {
-    if (!drill) return;
-    if (drill.type === "sku")      setDrill({ type: "brand",    value: drill.brand,    brand: drill.brand,    category: drill.category });
-    else if (drill.type === "brand")    setDrill({ type: "category", value: drill.category, category: drill.category });
-    else if (drill.type === "category") { setDrill(null); setCatFilter(""); }
-  };
-
-  const movColors = ["#16a34a", "#2D7A3A", "#B8860B", "#C05A00", "#C0392B"];
-  const movLabels = Object.keys(movCounts);
-  const total = skuCount || 1;
-
-  if (!invoiceData.length) return (
-    <div style={{ textAlign: "center", padding: 80 }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>📊</div>
-      <div style={{ color: HR.muted, fontSize: 14 }}>No data available</div>
-    </div>
-  );
-
-  const periodLabel = period === "CUSTOM" ? `Last ${customDays}d` : period;
-
-  return (
-    <div>
-      {/* ── Sticky control bar ── */}
-      <div style={{ position: "sticky", top: -16, zIndex: 10, background: HR.bg, marginBottom: 12, paddingTop: 4, paddingBottom: 8, borderBottom: `1px solid ${HR.border}` }}>
-
-        {/* Row 1 — period / DS / stats / search */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-
-          {/* Period selector */}
-<div style={{ display: "flex", gap: 0, border: `1px solid ${HR.border}`, borderRadius: 5, overflow: "visible", flexShrink: 0, position: "relative" }}>
-  {[{ key: "90D", label: "90D" }, { key: "75D", label: "75D" }, { key: "15D", label: "15D" }].map(p => (
-    <button key={p.key} onClick={() => setPeriod(p.key)}
-      style={{ padding: "4px 10px", background: period === p.key ? HR.yellow : HR.white, color: period === p.key ? HR.black : HR.muted, border: "none", borderRight: `1px solid ${HR.border}`, cursor: "pointer", fontSize: 11, fontWeight: 700, lineHeight: 1.4 }}>
-      {p.label}
-    </button>
-  ))}
-  <div style={{ position: "relative", display: "flex", alignItems: "stretch", cursor: "text" }}
-    onClick={e => { e.currentTarget.querySelector("input")?.focus(); }}>
-    <span style={{ position: "absolute", top: -11, left: "50%", transform: "translateX(-50%)", fontSize: 8, fontWeight: 500, color: period === "CUSTOM" ? "#C05A00" : HR.muted, letterSpacing: "0.6px", whiteSpace: "nowrap" }}>CUSTOM</span>
-    <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "4px 10px", background: period === "CUSTOM" ? "#FFFBEA" : HR.white, borderLeft: `1px solid ${HR.border}`, borderRadius: "0 5px 5px 0" }}>
-      <span style={{ fontSize: 11, fontWeight: 700, color: period === "CUSTOM" ? HR.yellowDark : HR.muted }}>Last</span>
-<input type="number" min={1} max={90} value={customDays}
-  onChange={e => { const v = Math.min(90, Math.max(1, parseInt(e.target.value) || 1)); setCustomDays(v); setPeriod("CUSTOM"); }}
-  onFocus={e => { setPeriod("CUSTOM"); e.target.select(); }}
-  style={{ width: 18, border: "none", background: "transparent", fontSize: 11, fontWeight: 700, color: period === "CUSTOM" ? HR.yellowDark : HR.muted, textAlign: "center", outline: "none", padding: 0, margin: 0, MozAppearance: "textfield" }} />
-      <span style={{ fontSize: 11, fontWeight: 700, color: period === "CUSTOM" ? HR.yellowDark : HR.muted }}>D</span>
-    </div>
-  </div>
-</div>
-            
-
-          {/* DS selector */}
-          <div style={{ display: "flex", gap: 0, border: `1px solid ${HR.border}`, borderRadius: 5, overflow: "hidden", flexShrink: 0 }}>
-            {DS_VIEW_OPTS.map(d => {
-              const di = DS_LIST.indexOf(d), col = di >= 0 ? DS_COLORS[di].header : HR.muted, isActive = dsView === d;
-              return (
-                <button key={d} onClick={() => setDsView(d)}
-                  style={{ padding: "4px 9px", background: isActive ? (di >= 0 ? DS_COLORS[di].header : HR.yellow) : HR.white, color: isActive ? HR.white : col, border: "none", borderRight: `1px solid ${HR.border}`, cursor: "pointer", fontSize: 11, fontWeight: 700, lineHeight: 1.4 }}>
-                  {d}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Stats pills */}
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginLeft: 4 }}>
-            {[
-              { label: "SKUs", value: skuCount.toLocaleString(), color: HR.green },
-              { label: "Instances", value: st.totalOrders.toLocaleString(), color: HR.yellowDark },
-              { label: "Qty", value: st.totalQty.toLocaleString(), color: "#0077A8" },
-              { label: "ABQ", value: st.avgOrderQty.toFixed(1), color: "#7A3DBF" },
-            ].map(c => (
-              <div key={c.label} style={{ background: HR.surface, border: `1px solid ${HR.border}`, borderRadius: 5, padding: "3px 10px", display: "flex", gap: 5, alignItems: "baseline" }}>
-                <span style={{ fontWeight: 800, fontSize: 13, color: c.color }}>{c.value}</span>
-                <span style={{ fontSize: 10, color: HR.muted }}>{c.label}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Global SKU search */}
-          <div style={{ position: "relative", marginLeft: "auto" }}>
-            <input
-              placeholder="🔍 Search SKU or item name…"
-              value={globalSearch}
-              onChange={e => setGlobalSearch(e.target.value)}
-              style={{ ...S.input, width: 220, fontSize: 11, padding: "4px 10px" }}
-            />
-            {searchResults.length > 0 && (
-              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: HR.white, border: `1px solid ${HR.border}`, borderRadius: 6, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 20, marginTop: 2 }}>
-                {searchResults.map(s => (
-                  <div key={s.sku} onClick={() => handleSearchSelect(s.sku)}
-                    style={{ padding: "7px 12px", cursor: "pointer", borderBottom: `1px solid ${HR.border}` }}
-                    onMouseEnter={e => e.currentTarget.style.background = "#FFFBEA"}
-                    onMouseLeave={e => e.currentTarget.style.background = HR.white}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: HR.text }}>{s.name}</div>
-                    <div style={{ fontSize: 9, color: HR.muted }}>{s.sku}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Row 2 — movement bar + breadcrumb/back */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ flex: "0 0 260px", minWidth: 0 }}>
-            <div style={{ display: "flex", gap: 2, height: 10, borderRadius: 3, overflow: "hidden", border: `1px solid ${HR.border}` }}>
-              {movLabels.map((l, i) => { const pct = (movCounts[l] / total) * 100; if (!pct) return null; return <div key={l} title={`${l}: ${movCounts[l]}`} style={{ flex: pct, background: movColors[i] }} />; })}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 3, flexWrap: "wrap" }}>
-              {movLabels.map((l, i) => movCounts[l] > 0 && <span key={l} style={{ fontSize: 9, color: movColors[i], fontWeight: 700 }}>{l.replace("Super ", "S.")}: {movCounts[l]}</span>)}
-            </div>
-          </div>
-
-          {/* Back button + breadcrumb */}
-          {drill && (
-            <button onClick={handleBack}
-              style={{ background: HR.white, border: `1px solid ${HR.border}`, borderRadius: 5, padding: "3px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700, color: HR.yellowDark, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-              ← Back
-            </button>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-            {crumbs.map((c, i) => (
-              <span key={i} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                {i > 0 && <span style={{ color: HR.muted, fontSize: 11 }}>›</span>}
-                <span onClick={c.onClick} style={{ fontSize: 11, color: c.onClick ? HR.yellowDark : HR.text, cursor: c.onClick ? "pointer" : "default", fontWeight: i === crumbs.length - 1 ? 700 : 400, textDecoration: c.onClick ? "underline" : "none" }}>
-                  {c.label}
-                </span>
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Drill levels ── */}
-      {!drill && (
-        <OrgLevel
-          slice={sliceForDs} skuMaster={skuMaster} results={results}
-          dsView={dsView} catFilter={catFilter} setCatFilter={setCatFilter}
-          onDrillCategory={cat => setDrill({ type: "category", value: cat, category: cat })}
-        />
-      )}
-      {drill?.type === "category" && (
-        <CategoryLevel slice={sliceForDs} skuMaster={skuMaster} results={results}
-          category={drill.value} dsView={dsView}
-          onDrillBrand={brand => setDrill({ type: "brand", value: brand, brand, category: drill.value })} />
-      )}
-      {drill?.type === "brand" && (
-        <BrandLevel slice={sliceForDs} skuMaster={skuMaster} results={results}
-          brand={drill.value} category={drill.category} dsView={dsView}
-          onDrillSku={skuId => setDrill({ type: "sku", value: skuId, skuName: skuMaster[skuId]?.name || skuId, brand: drill.value, category: drill.category })} />
-      )}
-      {drill?.type === "sku" && (
-        <SKULevel slice={sliceForDs} skuMaster={skuMaster} results={results} skuId={drill.value} dsView={dsView} />
-      )}
-    </div>
-  );
-}
-
-function OrgLevel({ slice, skuMaster, results, dsView, catFilter, setCatFilter, onDrillCategory }) {
-  const [localSearch, setLocalSearch] = useState("");
-  const categories = useMemo(() => [...new Set(slice.map(r => skuMaster[r.sku]?.category || "Unknown"))].sort(), [slice, skuMaster]);
-
-  const filtered = useMemo(() => {
-    let cats = catFilter.trim()
-      ? categories.filter(c => c.toLowerCase().includes(catFilter.toLowerCase()))
-      : categories;
-    if (localSearch.trim()) {
-      const q = localSearch.toLowerCase();
-      cats = cats.filter(c => {
-        const catRows = slice.filter(r => (skuMaster[r.sku]?.category || "Unknown") === c);
-        return catRows.some(r => r.sku.toLowerCase().includes(q) || (skuMaster[r.sku]?.name || "").toLowerCase().includes(q));
-      });
-    }
-    return cats;
-  }, [categories, catFilter, localSearch, slice, skuMaster]);
-
-  return (
-    <div>
-      {/* Category filter */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-  <input
-    placeholder="Search SKU or name..."
-    value={localSearch} onChange={e => setLocalSearch(e.target.value)}
-    style={{ ...S.input, fontSize: 11, padding: "4px 10px", width: 180 }}
-  />
-  <select
-    value={catFilter}
-    onChange={e => { setCatFilter(e.target.value); if (e.target.value) onDrillCategory(e.target.value); }}
-    style={{ ...S.input, fontSize: 11, padding: "4px 8px", minWidth: 160 }}
-  >
-    <option value="">All Categories</option>
-    {categories.map(c => <option key={c} value={c}>{c}</option>)}
-  </select>
-  {(catFilter || localSearch) && (
-    <button onClick={() => { setCatFilter(""); setLocalSearch(""); }}
-      style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", padding: "4px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-      ✕ Clear
-    </button>
-  )}
-  <span style={{ fontSize: 11, color: HR.muted }}>{filtered.length} categories</span>
-</div>
-
-      <div style={{ fontSize: 12, fontWeight: 700, color: HR.text, marginBottom: 8 }}>Drill into a Category</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
-        {filtered.map(cat => {
-          const catRows = slice.filter(r => (skuMaster[r.sku]?.category || "Unknown") === cat);
-          const cs = aggStats(catRows);
-          return (
-            <div key={cat} onClick={() => onDrillCategory(cat)}
-              style={{ ...S.card, cursor: "pointer", borderColor: HR.border }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = HR.yellow}
-              onMouseLeave={e => e.currentTarget.style.borderColor = HR.border}>
-              <div style={{ fontWeight: 700, color: HR.text, fontSize: 12, marginBottom: 4 }}>{cat}</div>
-              <div style={{ fontSize: 10, color: HR.muted }}>{cs.skuCount} SKUs · {cs.totalOrders.toLocaleString()} instances</div>
-              <div style={{ fontSize: 10, color: HR.muted }}>Qty: {cs.totalQty.toLocaleString()} · ABQ: {cs.avgOrderQty.toFixed(1)}</div>
-              <div style={{ fontSize: 10, color: HR.yellowDark, marginTop: 4, fontWeight: 600 }}>Drill in →</div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function CategoryLevel({ slice, skuMaster, results, category, dsView, onDrillBrand }) {
-  const [search, setSearch] = useState("");
-  const catRows = slice.filter(r => (skuMaster[r.sku]?.category || "Unknown") === category);
-  const st = aggStats(catRows);
-  const brands = [...new Set(catRows.map(r => skuMaster[r.sku]?.brand || "Unknown"))].sort();
-
-  const filteredBrands = useMemo(() =>
-    search.trim()
-      ? brands.filter(b => {
-          // show brand if any of its SKUs match the search
-          const skusInBrand = catRows.filter(r => (skuMaster[r.sku]?.brand || "Unknown") === b);
-          return b.toLowerCase().includes(search.toLowerCase()) ||
-            skusInBrand.some(r => r.sku.toLowerCase().includes(search.toLowerCase()) || (skuMaster[r.sku]?.name || "").toLowerCase().includes(search.toLowerCase()));
-        })
-      : brands,
-    [brands, search, catRows, skuMaster]
-  );
-
-  return (
-    <div>
-      <StatStrip items={[
-        { label: "Unique SKUs", value: st.skuCount, color: HR.green },
-        { label: "Total Instances", value: st.totalOrders.toLocaleString(), color: HR.yellowDark },
-        { label: "Total Qty", value: st.totalQty.toLocaleString(), color: "#0077A8" },
-        { label: "Avg Order Qty", value: st.avgOrderQty.toFixed(1), color: "#7A3DBF" },
-      ]} />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <input placeholder="Search brand or SKU…" value={search} onChange={e => setSearch(e.target.value)}
-          style={{ ...S.input, width: 220, fontSize: 11, padding: "4px 10px" }} />
-        {search && <button onClick={() => setSearch("")} style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", padding: "4px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>✕</button>}
-        <span style={{ fontSize: 11, color: HR.muted }}>{filteredBrands.length} brand{filteredBrands.length !== 1 ? "s" : ""}</span>
-      </div>
-      <div style={{ fontSize: 12, fontWeight: 700, color: HR.text, marginBottom: 8 }}>Drill into a Brand</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
-        {filteredBrands.map(brand => {
-          const bRows = catRows.filter(r => (skuMaster[r.sku]?.brand || "Unknown") === brand);
-          const bs = aggStats(bRows);
-          return (
-            <div key={brand} onClick={() => onDrillBrand(brand)}
-              style={{ ...S.card, cursor: "pointer", borderColor: HR.border }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = HR.yellow}
-              onMouseLeave={e => e.currentTarget.style.borderColor = HR.border}>
-              <div style={{ fontWeight: 700, color: HR.text, fontSize: 12, marginBottom: 4 }}>{brand}</div>
-              <div style={{ fontSize: 10, color: HR.muted }}>{bs.skuCount} SKUs · {bs.totalOrders.toLocaleString()} instances</div>
-              <div style={{ fontSize: 10, color: HR.muted }}>Qty: {bs.totalQty.toLocaleString()} · ABQ: {bs.avgOrderQty.toFixed(1)}</div>
-              <div style={{ fontSize: 10, color: HR.yellowDark, marginTop: 4, fontWeight: 600 }}>Drill in →</div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function BrandLevel({ slice, skuMaster, results, brand, category, dsView, onDrillSku }) {
-  const [search, setSearch] = useState("");
-  const bRows = slice.filter(r =>
-    (skuMaster[r.sku]?.brand || "Unknown") === brand &&
-    (skuMaster[r.sku]?.category || "Unknown") === category
-  );
-  const st = aggStats(bRows);
-  const skus = [...new Set(bRows.map(r => r.sku))].sort((a, b) => {
-    const qa = bRows.filter(r => r.sku === a).reduce((s, r) => s + r.qty, 0);
-    const qb = bRows.filter(r => r.sku === b).reduce((s, r) => s + r.qty, 0);
-    return qb - qa;
-  });
-
-  const filteredSkus = useMemo(() =>
-    search.trim()
-      ? skus.filter(s => s.toLowerCase().includes(search.toLowerCase()) || (skuMaster[s]?.name || "").toLowerCase().includes(search.toLowerCase()))
-      : skus,
-    [skus, search, skuMaster]
-  );
-
-  return (
-    <div>
-      <StatStrip items={[
-        { label: "SKUs", value: st.skuCount, color: HR.green },
-        { label: "Total Instances", value: st.totalOrders.toLocaleString(), color: HR.yellowDark },
-        { label: "Total Qty", value: st.totalQty.toLocaleString(), color: "#0077A8" },
-        { label: "Avg Order Qty", value: st.avgOrderQty.toFixed(1), color: "#7A3DBF" },
-      ]} />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <input placeholder="Search SKU or item name…" value={search} onChange={e => setSearch(e.target.value)}
-          style={{ ...S.input, width: 220, fontSize: 11, padding: "4px 10px" }} />
-        {search && <button onClick={() => setSearch("")} style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", padding: "4px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>✕</button>}
-        <span style={{ fontSize: 11, color: HR.muted }}>{filteredSkus.length} SKU{filteredSkus.length !== 1 ? "s" : ""}</span>
-      </div>
-      <div style={{ fontSize: 12, fontWeight: 700, color: HR.text, marginBottom: 8 }}>SKUs — click to see ordering behaviour</div>
-      <div style={{ ...S.card, padding: 0, overflow: "auto", maxHeight: "50vh" }}>
-        <table style={S.table}>
-          <thead style={{ position: "sticky", top: 0 }}>
-            <tr style={{ background: HR.surfaceLight }}>
-              <th style={S.th}>SKU</th>
-              <th style={{ ...S.th, textAlign: "center" }}>Movement</th>
-              <th style={{ ...S.th, textAlign: "center" }}>Orders</th>
-              <th style={{ ...S.th, textAlign: "center" }}>Total Qty</th>
-              <th style={{ ...S.th, textAlign: "center" }}>ABQ</th>
-              <th style={{ ...S.th, textAlign: "center" }}>Min</th>
-              <th style={{ ...S.th, textAlign: "center" }}>Max</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredSkus.map((skuId, i) => {
-              const skuRows = bRows.filter(r => r.sku === skuId);
-              const ss = aggStats(skuRows);
-              const res = results[skuId];
-              const mvTag = res ? Object.values(res.stores).find(s => s.mvTag !== "Super Slow")?.mvTag || "Super Slow" : "—";
-              const dsMin = dsView === "All" || dsView === "Compare" ? DS_LIST.map(d => res?.stores[d]?.min || 0).reduce((a, b) => a + b, 0) : res?.stores[dsView]?.min || 0;
-              const dsMax = dsView === "All" || dsView === "Compare" ? DS_LIST.map(d => res?.stores[d]?.max || 0).reduce((a, b) => a + b, 0) : res?.stores[dsView]?.max || 0;
-              return (
-                <tr key={skuId} style={{ background: i % 2 === 0 ? HR.white : HR.surfaceLight, cursor: "pointer" }}
-                  onClick={() => onDrillSku(skuId)}>
-                  <td style={S.td}>
-                    <div style={{ fontWeight: 600, color: HR.text, fontSize: 11 }}>{skuMaster[skuId]?.name || skuId}</div>
-                    <div style={{ fontSize: 9, color: HR.muted }}>{skuId}</div>
-                  </td>
-                  <td style={{ ...S.td, textAlign: "center" }}><MovTag value={mvTag} /></td>
-                  <td style={{ ...S.td, textAlign: "center", color: HR.yellowDark, fontWeight: 700 }}>{ss.totalOrders}</td>
-                  <td style={{ ...S.td, textAlign: "center" }}>{ss.totalQty}</td>
-                  <td style={{ ...S.td, textAlign: "center", color: "#7A3DBF", fontWeight: 600 }}>{ss.avgOrderQty.toFixed(1)}</td>
-                  <td style={{ ...S.td, textAlign: "center", color: "#0077A8", fontWeight: 700 }}>{dsMin}</td>
-                  <td style={{ ...S.td, textAlign: "center", color: "#0077A8", fontWeight: 700 }}>{dsMax}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function SKULevel({ slice, skuMaster, results, skuId, dsView }) {
-  const skuRows = slice.filter(r => r.sku === skuId);
-  const meta = skuMaster[skuId] || {};
-  const res = results[skuId];
-  const st = aggStats(skuRows);
-  const freqByDs = {};
-  DS_LIST.forEach(ds => {
-    const freq = {};
-    skuRows.filter(r => r.ds === ds).forEach(r => { freq[r.qty] = (freq[r.qty] || 0) + 1; });
-    freqByDs[ds] = freq;
-  });
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 6 }}>
-        <div>
-          <h3 style={{ color: HR.yellowDark, margin: 0, fontSize: 14 }}>{meta.name || skuId}</h3>
-          <div style={{ fontSize: 11, color: HR.muted, marginTop: 2 }}>{skuId} · {meta.category} · {meta.brand}</div>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {res && <TagPill value={res.meta.priceTag} colorMap={PRICE_TAG_COLORS} />}
-          {res && <TagPill value={res.meta.t150Tag} colorMap={TOPN_TAG_COLORS} />}
-        </div>
-      </div>
-      <StatStrip items={[
-        { label: "Total Instances", value: st.totalOrders, color: HR.yellowDark },
-        { label: "Total Qty Sold", value: st.totalQty, color: "#0077A8" },
-        { label: "Avg Order Qty (ABQ)", value: st.avgOrderQty.toFixed(1), color: "#7A3DBF" },
-        { label: "Active Days", value: [...new Set(skuRows.map(r => r.date))].length, color: HR.green },
-      ]} />
-      {res && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 6, marginBottom: 16 }}>
-          {DS_LIST.map((ds, di) => {
-            const s = res.stores[ds] || { min: 0, max: 0, mvTag: "—", dailyAvg: 0 };
-            const dc = DS_COLORS[di];
-            return (
-              <div key={ds} style={{ background: dc.bg, borderRadius: 8, padding: "8px 10px", border: `1px solid ${dc.header}44` }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: dc.header, marginBottom: 3 }}>{ds}</div>
-                <div style={{ fontSize: 10, color: HR.muted }}>Min <span style={{ color: dc.text, fontWeight: 700 }}>{s.min}</span> · Max <span style={{ color: dc.text, fontWeight: 700 }}>{s.max}</span></div>
-                <div style={{ marginTop: 3 }}><MovTag value={s.mvTag} /></div>
-                <div style={{ fontSize: 9, color: HR.muted, marginTop: 2 }}>Daily avg: {s.dailyAvg > 0 ? s.dailyAvg.toFixed(2) : "—"}</div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <div style={{ fontSize: 12, fontWeight: 700, color: HR.text, marginBottom: 10 }}>Order Qty Frequency — X: order qty · Y: number of orders</div>
-      <SKUFreqChart freqByDs={freqByDs} selectedDs={dsView} />
-      {res && (
-        <div style={{ ...S.card, marginTop: 12, borderColor: DC_COLOR.header + "44", background: DC_COLOR.bg }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: DC_COLOR.header, marginBottom: 4 }}>DC Level</div>
-          <div style={{ fontSize: 11, color: HR.textSoft }}>
-            Movement: <span style={{ color: DC_COLOR.text, fontWeight: 700 }}>{res.dc.mvTag}</span> · Non-Zero Days: <span style={{ color: DC_COLOR.text, fontWeight: 700 }}>{res.dc.nonZeroDays}</span> · Min: <span style={{ color: DC_COLOR.text, fontWeight: 700 }}>{res.dc.min}</span> · Max: <span style={{ color: DC_COLOR.text, fontWeight: 700 }}>{res.dc.max}</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+/* SKUFreqChart removed — was only used by old InsightsTab; new SKU Detail uses SingleFreqChart directly */
+/* Old InsightsTab and sub-components (OrgLevel, CategoryLevel, BrandLevel, SKULevel) removed — replaced by SKUDetailTab */
 
 function median(arr) {
   if (!arr.length) return 0;
@@ -3367,17 +2833,7 @@ export default function App(){
   const [deadStock,setDead]=useState(new Set()),[priceData,setPrice]=useState({});
   const [results,setResults]=useState(null),[loading,setLoading]=useState(false),[dataLoaded,setLoaded]=useState(false);
   const allUploaded=invoiceData.length>0&&Object.keys(skuMaster).length>0&&Object.keys(priceData).length>0&&Object.keys(minReqQty).length>0&&Object.keys(newSKUQty).length>0&&deadStock.size>0;
-  const [filterDS,setFilterDS]=useState("All");
-  const [filterCat,setFilterCat]=useState("");
-  const [filterMov,setFilterMov]=useState("All");
-  const [filterPriceTag,setFilterPriceTag]=useState("All");
-  const [filterTopN,setFilterTopN]=useState("All");
-  const [filterLogic,setFilterLogic]=useState("All");
-  const [filterStatus,setFilterStatus]=useState("All");
-  const [search,setSearch]=useState("");
-  const debouncedSearch = useDebounce(search, 300);
-  const [catOpen,setCatOpen]=useState(false);
-  const catRef=useRef(null);
+  /* Old dashboard filter state removed — old Dashboard tab code was removed */
   const [params,setParams]=useState(DEFAULT_PARAMS),[savedParams,setSaved]=useState(DEFAULT_PARAMS);
   const [newBrand,setNewBrand]=useState(""),[newBrandDays,setNBD]=useState(1);
   const [isAdmin,setIsAdmin]=useState(()=>localStorage.getItem("adminSession")==="true");
@@ -3390,13 +2846,7 @@ export default function App(){
   const [simLoading, setSimLoading] = useState(true);
   const [simDays, setSimDays] = useState(15);
   const [syncStatus,setSyncStatus]=useState("idle"); // "idle" | "saving" | "saved" | "error"
-  // ── Insights tab persistent state ──────────────────────────────────────────
-  const [insightsPeriod,   setInsightsPeriod]   = useState("90D");
-  const [insightsCustomD,  setInsightsCustomD]  = useState(30);
-  const [insightsDsView,   setInsightsDsView]   = useState("All");
-  const [insightsDrill,    setInsightsDrill]    = useState(null);
-  const [insightsCatFilter,setInsightsCatFilter]= useState("");
-  const [insightsSearch,   setInsightsSearch]   = useState("");
+  /* Old Insights tab state removed — replaced by SKU Detail tab */
   // ── Overview tab state ────────────────────────────────────────────────────
   const [ovPeriod, setOvPeriod] = useState("L90D");
   const [ovDateFrom, setOvDateFrom] = useState("");
@@ -3674,32 +3124,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   })():"No data";
   const missing=[...soldSKUs].filter(s=>!skuMaster[s]||(skuMaster[s].status||"").trim().toLowerCase()!=="active");
 
-  // ALL SKUs from master (all statuses) — so full 1920 shows when no status filter
-  const allResultsWithSKU=useMemo(()=>{
-    if(!dataLoaded)return[];
-    return Object.values(skuMaster).map(sku=>{
-      if(results&&results[sku.sku])return results[sku.sku];
-      return{
-        meta:{
-          sku:sku.sku,name:sku.name||sku.sku,
-          category:sku.category||"Unknown",brand:sku.brand||"",
-          status:(sku.status||"").trim(),
-          priceTag:getPriceTag(priceData[sku.sku]||0,params.priceTiers),
-          t150Tag:"Zero Sale",
-        },
-        stores:Object.fromEntries(DS_LIST.map(ds=>[ds,{min:0,max:0,dailyAvg:0,abq:0,mvTag:"Super Slow",spTag:"No Spike",logicTag:"Base Logic"}])),
-        dc:{min:0,max:0,mvTag:"Super Slow",nonZeroDays:0},
-      };
-    });
-  },[skuMaster,results,dataLoaded,priceData,params.priceTiers]);const skusByCategory = useMemo(() => {
-  const idx = {};
-  allResultsWithSKU.forEach(r => {
-    const cat = r.meta.category || "Unknown";
-    if (!idx[cat]) idx[cat] = new Set();
-    idx[cat].add(r.meta.sku);
-  });
-  return idx;
-}, [allResultsWithSKU]);
+  /* allResultsWithSKU, skusByCategory removed — were only used by old Dashboard filtering */
 
 const invoiceDateRange = useMemo(() => {
   if (!invoiceData || !invoiceData.length) return { min: "", max: "", dates: [] };
@@ -3707,70 +3132,8 @@ const invoiceDateRange = useMemo(() => {
   return { min: dates[0], max: dates[dates.length - 1], dates };
 }, [invoiceData]);
 
-const skusByMov = useMemo(() => {
-  const idx = {};
-  allResultsWithSKU.forEach(r => {
-    const tag = r.dc?.mvTag || "Super Slow";
-    if (!idx[tag]) idx[tag] = new Set();
-    idx[tag].add(r.meta.sku);
-  });
-  return idx;
-}, [allResultsWithSKU]);
+  /* skusByMov removed — was only used by old Dashboard filtering */
 
-  // Unique statuses for filter dropdown
-  const allStatuses=useMemo(()=>["All",...new Set(Object.values(skuMaster).map(s=>(s.status||"").trim()).filter(Boolean))].sort(),[skuMaster]);
-
-  // Autocomplete lists
-  const allCategories=useMemo(()=>[...new Set(Object.values(skuMaster).map(s=>s.category||"Unknown"))].sort(),[skuMaster]);
-  const suggestedCats=useMemo(()=>filterCat?allCategories.filter(c=>c.toLowerCase().includes(filterCat.toLowerCase())):allCategories,[filterCat,allCategories]);
-
-  // Close dropdowns on outside click
-  useEffect(()=>{
-    const handler=e=>{
-      if(catRef.current&&!catRef.current.contains(e.target))setCatOpen(false);
-    };
-    document.addEventListener("mousedown",handler);
-    return()=>document.removeEventListener("mousedown",handler);
-  },[]);
-
-  const filtered = useMemo(() => {
-  let candidates = allResultsWithSKU;
-  if (filterCat) {
-    const catSet = skusByCategory[filterCat] || new Set();
-    candidates = candidates.filter(r => catSet.has(r.meta.sku));
-  }
-  if (filterMov !== "All") {
-    const movSet = skusByMov[filterMov] || new Set();
-    candidates = candidates.filter(r => movSet.has(r.meta.sku));
-  }
-  return candidates.filter(r => {
-    if (debouncedSearch && !r.meta.sku.toLowerCase().includes(debouncedSearch.toLowerCase())
-      && !r.meta.name.toLowerCase().includes(debouncedSearch.toLowerCase())) return false;
-    if (filterCat && r.meta.category.toLowerCase() !== filterCat.toLowerCase()) return false;
-    if (filterStatus !== "All" && (r.meta.status||"").trim() !== filterStatus) return false;
-    if (filterPriceTag !== "All" && r.meta.priceTag !== filterPriceTag) return false;
-    if (filterTopN !== "All" && r.meta.t150Tag !== filterTopN) return false;
-    if (filterLogic !== "All") {
-      const skuLogicTags = new Set(DS_LIST.map(ds =>
-        coreOverrides[r.meta.sku]?.[ds] ? "Manual Override" : (r.stores[ds]?.logicTag || "Base Logic")
-      ));
-      if (!skuLogicTags.has(filterLogic)) return false;
-    }
-    return true;
-  });
-}, [allResultsWithSKU, skusByCategory, skusByMov, debouncedSearch,
-    filterCat, filterStatus, filterPriceTag, filterTopN, filterMov, filterLogic, coreOverrides]);
-
-    const [scrollTop, setScrollTop] = useState(0);
-const ROW_HEIGHT = 44;
-const VISIBLE_ROWS = 20;
-const BUFFER = 5;
-
-const visibleFiltered = useMemo(() => {
-  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER);
-  const end = Math.min(filtered.length, start + VISIBLE_ROWS + BUFFER * 2);
-  return { rows: filtered.slice(start, end), startIndex: start };
-}, [filtered, scrollTop]);
 const outputRows = useMemo(() => results ? Object.values(results) : [], [results]);
 const [outputScrollTop, setOutputScrollTop] = useState(0);
 const visibleOutput = useMemo(() => {
@@ -3778,18 +3141,7 @@ const visibleOutput = useMemo(() => {
   const start = Math.max(0, Math.floor(outputScrollTop / ROW_HEIGHT_OUT) - 5);
   const end = Math.min(outputRows.length, start + 30);
   return { rows: outputRows.slice(start, end), startIndex: start };
-}, [outputRows, outputScrollTop]);  
-const displayDS=filterDS==="All"?DS_LIST:[filterDS];
-
-  // Frozen column widths — add Status col
-  const COL_STATUS_W=64;
-  const FROZEN_COLS_LEFT={
-    item:0,
-    cat:COL_ITEM_W,
-    status:COL_ITEM_W+COL_CAT_W,
-    price:COL_ITEM_W+COL_CAT_W+COL_STATUS_W,
-    topn:COL_ITEM_W+COL_CAT_W+COL_STATUS_W+COL_PRICE_W,
-  };
+}, [outputRows, outputScrollTop]);
 
 
   const mi=params.movIntervals||[2,4,7,10],pt=params.priceTiers||[3000,1500,400,100],bb=params.brandBuffer||DEFAULT_BRAND_BUFFER;
@@ -4110,195 +3462,7 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
           )
         )}
 
-        {tab==="dashboard"&&(
-          !dataLoaded?(
-            <div style={{textAlign:"center",padding:60}}>
-              <div style={{fontSize:36,marginBottom:10}}>⚡</div>
-              <div style={{color:HR.muted,fontSize:14,marginBottom:6}}>No data loaded yet</div>
-              {isAdmin
-                ?<button onClick={()=>setTab("upload")} style={{...S.runBtn,width:"auto",padding:"7px 20px"}}>Upload Data →</button>
-                :<div style={{color:HR.muted,fontSize:12}}>Data is being prepared. Check back soon.</div>
-              }
-            </div>
-          ):(
-            <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-
-              {/* ── KPI Strip ── */}
-              {(()=>{
-                const invMin=results?Math.round(Object.entries(results).reduce((tot,[sku,r])=>{const p=priceData[sku]||0;return tot+DS_LIST.reduce((s,ds)=>s+(r.stores[ds]?.min||0)*p,0)+(r.dc.min||0)*p;},0)):0;
-                const invMax=results?Math.round(Object.entries(results).reduce((tot,[sku,r])=>{const p=priceData[sku]||0;return tot+DS_LIST.reduce((s,ds)=>s+(r.stores[ds]?.max||0)*p,0)+(r.dc.max||0)*p;},0)):0;
-                return(
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginBottom:8}}>
-                    {[
-                      {label:"Active SKUs",value:activeMaster.length,color:HR.green},
-                      {label:"Active SKUs Sold",value:uniqueSold,color:HR.yellowDark},
-                      {label:"Zero Sale SKUs",value:zeroSale,color:"#C05A00"},
-                      {label:"Dead Stock SKUs",value:deadStock.size,color:"#B91C1C"},
-                      {label:"Inv Value Min",value:fmtInr(invMin),color:"#0077A8"},
-                      {label:"Inv Value Max",value:fmtInr(invMax),color:"#7A3DBF"},
-                    ].map(c=>(
-                      <div key={c.label} style={{...S.card,borderLeft:`3px solid ${c.color}`,padding:"6px 10px"}}>
-                        <div style={{fontSize:18,fontWeight:800,color:c.color}}>{typeof c.value==="number"?c.value.toLocaleString():c.value}</div>
-                        <div style={{fontSize:9,color:HR.muted,marginTop:1}}>{c.label}</div>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
-
-              {/* ── Filter Bar ── */}
-              <div style={{display:"flex",gap:4,marginBottom:6,flexWrap:"wrap",alignItems:"center"}}>
-
-                <input placeholder="Search SKU or name..." value={search} onChange={e=>setSearch(e.target.value)}
-                  style={{...S.input,width:148,fontSize:11,padding:"3px 8px"}}/>
-
-                {/* Category — dropdown */}
-                <select value={filterCat} onChange={e=>setFilterCat(e.target.value)} style={{...S.input,fontSize:11,padding:"3px 6px"}}>
-                  <option value="">All Categories</option>
-                  {allCategories.map(c=><option key={c} value={c}>{c}</option>)}
-                </select>
-
-                {/* Status */}
-                <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} style={{...S.input,fontSize:11,padding:"3px 6px"}}>
-                  {allStatuses.map(s=><option key={s}>{s}</option>)}
-                </select>
-
-                {/* Store */}
-                <select value={filterDS} onChange={e=>setFilterDS(e.target.value)} style={{...S.input,fontSize:11,padding:"3px 6px"}}>
-                  <option value="All">All Stores</option>
-                  {DS_LIST.map(d=><option key={d}>{d}</option>)}
-                </select>
-
-                {/* Price Tag */}
-                <select value={filterPriceTag} onChange={e=>setFilterPriceTag(e.target.value)} style={{...S.input,fontSize:11,padding:"3px 6px"}}>
-                  <option value="All">All Price Tags</option>
-                  {["Premium","High","Medium","Low","Super Low","No Price"].map(t=><option key={t}>{t}</option>)}
-                </select>
-
-                {/* Top N */}
-                <select value={filterTopN} onChange={e=>setFilterTopN(e.target.value)} style={{...S.input,fontSize:11,padding:"3px 6px"}}>
-                  <option value="All">All Top N</option>
-                  {["T50","T150","T250","No","Zero Sale"].map(t=><option key={t} value={t}>{TOPN_DISPLAY[t]||t}</option>)}
-                </select>
-
-                {/* Movement */}
-                <select value={filterMov} onChange={e=>setFilterMov(e.target.value)} style={{...S.input,fontSize:11,padding:"3px 6px"}}>
-                  <option value="All">All Movement</option>
-                  {["Super Fast","Fast","Moderate","Slow","Super Slow"].map(t=><option key={t}>{t}</option>)}
-                </select>
-
-                {/* Logic */}
-                <select value={filterLogic} onChange={e=>setFilterLogic(e.target.value)} style={{...S.input,fontSize:11,padding:"3px 6px"}}>
-                  <option value="All">All Logic</option>
-                  {["Base Logic","New DS Floor","SKU Floor","Brand Buffer","Manual Override"].map(t=><option key={t}>{t}</option>)}
-                </select>
-
-                {(search||filterCat||filterStatus!=="All"||filterDS!=="All"||filterPriceTag!=="All"||filterTopN!=="All"||filterMov!=="All"||filterLogic!=="All")&&(
-                  <button onClick={()=>{setSearch("");setFilterCat("");setFilterStatus("All");setFilterDS("All");setFilterPriceTag("All");setFilterTopN("All");setFilterMov("All");setFilterLogic("All");}}
-                    style={{...S.btn(false),fontSize:10,padding:"3px 8px",color:"#B91C1C",borderColor:"#FECACA",background:"#FEE2E2"}}>✕ Clear</button>
-                )}
-
-                <span style={{fontSize:10,color:HR.muted}}>{filtered.length} SKUs</span>
-              </div>
-
-              {/* ── Table ── */}
-              <div style={{...S.card,padding:0,overflow:"auto",flex:1,minHeight:0}}
-  onScroll={e => setScrollTop(e.currentTarget.scrollTop)}
-ref={el => { if(el && scrollTop === 0) el.scrollTop = 0; }}>
-                <table style={{...S.table,fontSize:10,tableLayout:"fixed"}}>
-                  <colgroup>
-  <col style={{width:150}}/>
-  <col style={{width:90}}/>
-  <col style={{width:64}}/>
-  <col style={{width:72}}/>
-  <col style={{width:76}}/>
-  {displayDS.map(ds=>[
-    <col key={ds+"mv"} style={{width:90}}/>,
-    <col key={ds+"da"} style={{width:50}}/>,
-    <col key={ds+"ab"} style={{width:50}}/>,
-    <col key={ds+"mn"} style={{width:50}}/>,
-    <col key={ds+"mx"} style={{width:50}}/>,
-  ])}
-  <col style={{width:80}}/>
-  <col style={{width:50}}/>
-  <col style={{width:50}}/>
-  <col style={{width:50}}/>
-</colgroup>
-                  <thead style={{position:"sticky",top:0,zIndex:4}}>
-                    <tr style={{background:HR.surfaceLight}}>
-                      {/* Frozen cols — now includes Status */}
-                      <th style={{...frozenTh({zIndex:6}),left:FROZEN_COLS_LEFT.item,minWidth:COL_ITEM_W,maxWidth:COL_ITEM_W}} rowSpan={2}>Item</th>
-                      <th style={{...frozenTh({zIndex:6}),left:FROZEN_COLS_LEFT.cat,minWidth:COL_CAT_W,maxWidth:COL_CAT_W}} rowSpan={2}>Category</th>
-                      <th style={{...frozenTh({zIndex:6}),left:FROZEN_COLS_LEFT.status,minWidth:COL_STATUS_W,maxWidth:COL_STATUS_W}} rowSpan={2}>Status</th>
-                      <th style={{...frozenTh({zIndex:6}),left:FROZEN_COLS_LEFT.price,minWidth:COL_PRICE_W}} rowSpan={2}>Price</th>
-                      <th style={{...frozenTh({zIndex:6}),left:FROZEN_COLS_LEFT.topn,minWidth:COL_TOPN_W,boxShadow:"2px 0 6px rgba(0,0,0,0.10)"}} rowSpan={2}>Top N</th>
-                      {displayDS.map(ds=>{const di=DS_LIST.indexOf(ds),dc=DS_COLORS[di>=0?di:0];return <th key={ds} style={{...S.th,textAlign:"center",background:dc.bg,color:dc.header,borderLeft:`2px solid ${dc.header}44`,fontSize:10}} colSpan={5}>{ds}</th>;})}
-                      <th style={{...S.th,textAlign:"center",background:DC_COLOR.bg,color:DC_COLOR.header,borderLeft:`2px solid ${DC_COLOR.header}44`,fontSize:10}} colSpan={4}>DC</th>
-                    </tr>
-                    <tr style={{background:HR.surfaceLight}}>
-                      {displayDS.map(ds=>{const di=DS_LIST.indexOf(ds),dc=DS_COLORS[di>=0?di:0];return[
-                        <th key={ds+"mv"} style={{...S.th,textAlign:"center",color:dc.header,background:dc.bg,borderLeft:`2px solid ${dc.header}44`,position:"sticky",top:24,zIndex:3,fontSize:9}}>Mov / Logic</th>,
-                        <th key={ds+"da"} style={{...S.th,textAlign:"center",color:dc.header,background:dc.bg,position:"sticky",top:24,zIndex:3,fontSize:9}}>DAvg</th>,
-                        <th key={ds+"ab"} style={{...S.th,textAlign:"center",color:dc.header,background:dc.bg,position:"sticky",top:24,zIndex:3,fontSize:9}}>ABQ</th>,
-                        <th key={ds+"mn"} style={{...S.th,textAlign:"center",color:dc.header,background:dc.bg,position:"sticky",top:24,zIndex:3,fontSize:9}}>Min</th>,
-                        <th key={ds+"mx"} style={{...S.th,textAlign:"center",color:dc.header,background:dc.bg,position:"sticky",top:24,zIndex:3,fontSize:9}}>Max</th>,
-                      ];})}
-                      <th style={{...S.th,textAlign:"center",color:DC_COLOR.header,background:DC_COLOR.bg,borderLeft:`2px solid ${DC_COLOR.header}44`,position:"sticky",top:24,zIndex:3,fontSize:9}}>Mov</th>
-                      <th style={{...S.th,textAlign:"center",color:DC_COLOR.header,background:DC_COLOR.bg,position:"sticky",top:24,zIndex:3,fontSize:9}}>NZD</th>
-                      <th style={{...S.th,textAlign:"center",color:DC_COLOR.header,background:DC_COLOR.bg,position:"sticky",top:24,zIndex:3,fontSize:9}}>Min</th>
-                      <th style={{...S.th,textAlign:"center",color:DC_COLOR.header,background:DC_COLOR.bg,position:"sticky",top:24,zIndex:3,fontSize:9}}>Max</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-  <tr style={{height: visibleFiltered.startIndex * ROW_HEIGHT}}><td colSpan={999}/></tr>
-  {visibleFiltered.rows.map((r,i)=>{
-    const actualIndex = visibleFiltered.startIndex + i;
-                      const isDead=deadStock.has(r.meta.sku),rowBg=actualIndex%2===0?HR.white:HR.surfaceLight;
-                      const status=(r.meta.status||"").trim();
-                      const statusColor=status.toLowerCase()==="active"?HR.green:status.toLowerCase()==="inactive"?"#B91C1C":"#92400E";
-                      return(
-                        <tr key={r.meta.sku} style={{background:rowBg,opacity:isDead?0.65:1}}>
-                          {/* Item */}
-                          <td style={{...frozenTd(FROZEN_COLS_LEFT.item,rowBg),minWidth:COL_ITEM_W,maxWidth:COL_ITEM_W,padding:"3px 6px"}}>
-                            <div style={{color:HR.text,fontWeight:500,fontSize:10,lineHeight:1.3,whiteSpace:"normal"}}>{r.meta.name||r.meta.sku}</div>
-                            <div style={{fontSize:8,marginTop:1,display:"flex",gap:3,alignItems:"center"}}>
-                              <span style={{color:HR.muted}}>{r.meta.sku}</span>
-                              {isDead&&<span style={{...TAG_STYLE,fontSize:8,background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}}>Dead</span>}
-                            </div>
-                          </td>
-                          {/* Category */}
-                          <td style={{...frozenTd(FROZEN_COLS_LEFT.cat,rowBg),minWidth:COL_CAT_W,maxWidth:COL_CAT_W,color:HR.muted,fontSize:9,padding:"3px 6px"}}>{r.meta.category}</td>
-                          {/* Status */}
-                          <td style={{...frozenTd(FROZEN_COLS_LEFT.status,rowBg),minWidth:COL_STATUS_W,maxWidth:COL_STATUS_W,padding:"3px 6px"}}>
-                            <span style={{fontSize:9,fontWeight:700,color:statusColor}}>{status||"—"}</span>
-                          </td>
-                          {/* Price Tag */}
-                          <td style={{...frozenTd(FROZEN_COLS_LEFT.price,rowBg),minWidth:COL_PRICE_W,padding:"3px 6px"}}><TagPill value={r.meta.priceTag} colorMap={PRICE_TAG_COLORS}/></td>
-                          {/* Top N */}
-                          <td style={{...frozenTd(FROZEN_COLS_LEFT.topn,rowBg),minWidth:COL_TOPN_W,boxShadow:"2px 0 4px rgba(0,0,0,0.06)",padding:"3px 6px"}}><TagPill value={r.meta.t150Tag} colorMap={TOPN_TAG_COLORS}/></td>
-                          {/* DS Columns — logic tag now lives inside each DS cell */}
-                          <DSCols r={r} displayDS={displayDS} coreOverrides={coreOverrides}/>
-                          {/* DC */}
-                          <td style={{...S.td,padding:"3px 6px",textAlign:"center",background:DC_COLOR.bg,borderLeft:`1px solid ${DC_COLOR.header}22`}}><MovTag value={r.dc.mvTag}/></td>
-                          <td style={{...S.td,padding:"3px 6px",textAlign:"center",color:DC_COLOR.text,fontSize:9,background:DC_COLOR.bg}}>{r.dc.nonZeroDays||"—"}</td>
-                          <td style={{...S.td,padding:"3px 6px",textAlign:"center",color:DC_COLOR.text,fontWeight:700,background:DC_COLOR.bg}}>{r.dc.min}</td>
-                          <td style={{...S.td,padding:"3px 6px",textAlign:"center",color:DC_COLOR.text,fontWeight:700,background:DC_COLOR.bg}}>{r.dc.max}</td>
-                        </tr>
-                      );
-                    })}
-  <tr style={{height: (filtered.length - visibleFiltered.startIndex - visibleFiltered.rows.length) * ROW_HEIGHT}}><td colSpan={999}/></tr>
-</tbody>
-                </table>
-                {filtered.length>1500&&(
-                  <div style={{padding:5,textAlign:"center",color:HR.muted,fontSize:9}}>
-                    Showing all {filtered.length} SKUs — use filters to narrow down for better performance.
-                  </div>
-                )}
-              </div>
-
-            </div>
-          )
-        )}
+        {/* Old dashboard tab removed — replaced by OverviewTab */}
         {tab==="output"&&(
           !results?<div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>Loading data, please wait...</div>:(
             <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
@@ -4430,21 +3594,9 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
             </div>
           )
         )}
-        {/* dashboard keep-alive: no change needed yet */}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
   <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}/>
 </div>
-        {tab==="insights"&&(
-        <InsightsTab
-          invoiceData={invoiceData} skuMaster={skuMaster} results={results||{}} params={params}
-          period={insightsPeriod}         setPeriod={setInsightsPeriod}
-          customDays={insightsCustomD}    setCustomDays={setInsightsCustomD}
-          dsView={insightsDsView}         setDsView={setInsightsDsView}
-          drill={insightsDrill}           setDrill={setInsightsDrill}
-          catFilter={insightsCatFilter}   setCatFilter={setInsightsCatFilter}
-          globalSearch={insightsSearch}   setGlobalSearch={setInsightsSearch}
-        />
-      )}
 
         {tab==="logic"&&isAdmin&&(
   <div style={{display:"flex",flexDirection:"column",gap:0}}>
