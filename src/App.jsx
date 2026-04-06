@@ -2078,18 +2078,18 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
         {stratTag === "standard" && det && (
           <>
             {sectionHead("Standard Strategy")}
-            {row("Long Period", `${det.longDays || "—"}D`)}
-            {row("  Daily Avg", det.longDailyAvg != null ? det.longDailyAvg.toFixed(2) : "—")}
-            {row("  NZD", det.longNZD ?? "—")}
-            {row("  Spike Median", det.longSpikeMedian != null ? det.longSpikeMedian.toFixed(1) : "—")}
-            {row("  Min / Max", `${det.longMin ?? "—"} / ${det.longMax ?? "—"}`)}
-            {row("Recent Period", `${det.recentDays || "—"}D`)}
-            {row("  Daily Avg", det.recentDailyAvg != null ? det.recentDailyAvg.toFixed(2) : "—")}
-            {row("  NZD", det.recentNZD ?? "—")}
-            {row("  Spike Median", det.recentSpikeMedian != null ? det.recentSpikeMedian.toFixed(1) : "—")}
-            {row("  Min / Max", `${det.recentMin ?? "—"} / ${det.recentMax ?? "—"}`)}
+            {row("Long Period", `${det.longDays ?? "—"}D`)}
+            {row("  Daily Avg", det.sLong?.dailyAvg != null ? det.sLong.dailyAvg.toFixed(2) : "—")}
+            {row("  NZD", det.sLong?.nonZeroDays ?? "—")}
+            {row("  Spike Median", det.sLong?.spikeMedian != null ? det.sLong.spikeMedian.toFixed(1) : "—")}
+            {row("  Min / Max", `${det.rLong?.minQty ?? "—"} / ${det.rLong?.maxQty ?? "—"}`)}
+            {row("Recent Period", `${det.recentDays ?? "—"}D`)}
+            {row("  Daily Avg", det.sRecent?.dailyAvg != null ? det.sRecent.dailyAvg.toFixed(2) : "—")}
+            {row("  NZD", det.sRecent?.nonZeroDays ?? "—")}
+            {row("  Spike Median", det.sRecent?.spikeMedian != null ? det.sRecent.spikeMedian.toFixed(1) : "—")}
+            {row("  Min / Max", `${det.rRecent?.minQty ?? "—"} / ${det.rRecent?.maxQty ?? "—"}`)}
             {sectionHead("Blending")}
-            {row("Recency Weight", `${mvTag} → ${det.recencyWeight ?? "—"}×`)}
+            {row("Recency Weight", `${mvTag} → ${det.wt ?? "—"}×`)}
             {row("Blended Min / Max", `${det.blendedMin ?? "—"} / ${det.blendedMax ?? "—"}`)}
           </>
         )}
@@ -2102,8 +2102,8 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
             {row(`Price (${priceTag})`, `→ P${det.pctUsed ?? "—"}`)}
             {row(`P${det.pctUsed ?? "?"} value`, det.pctQty != null ? det.pctQty.toFixed(2) : "—")}
             {row(`Movement (${mvTag})`, `→ Cover: ${det.coverDays ?? "—"}D`)}
-            {row("Min = ceil(pctQty × coverDays)", det.rawMin ?? s.min ?? "—")}
-            {row("Max = ceil(Min + dailyAvg × buffer)", det.rawMax ?? s.max ?? "—")}
+            {row("Min = ceil(pctQty × coverDays)", det.pctQty != null && det.coverDays != null ? Math.ceil(det.pctQty * det.coverDays) : "—")}
+            {row("Max = ceil(Min + dailyAvg × buffer)", det.pctQty != null ? Math.ceil(Math.ceil(det.pctQty * (det.coverDays || 1)) + (det.dailyAvg || 0) * (det.buffer || 2)) : "—")}
           </>
         )}
 
@@ -2112,8 +2112,8 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
             {sectionHead("Fixed Unit Floor Strategy")}
             {row("Orders in period", det.orderCount ?? "—")}
             {row(`P${det.pctile ?? 90} of order qtys`, det.pctQty != null ? det.pctQty.toFixed(2) : "—")}
-            {row("Min = ceil(pctQty)", det.rawMin ?? s.min ?? "—")}
-            {row("Max = ceil(max(Min+add, Min×mult))", det.rawMax ?? s.max ?? "—")}
+            {row("Min = ceil(pctQty)", det.pctQty != null ? Math.ceil(det.pctQty) : "—")}
+            {row("Max = ceil(max(Min+add, Min×mult))", det.pctQty != null ? Math.ceil(Math.max(Math.ceil(det.pctQty) + (det.maxAdd || 1), Math.ceil(det.pctQty) * (det.maxMult || 1.5))) : "—")}
           </>
         )}
 
