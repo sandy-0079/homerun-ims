@@ -183,70 +183,88 @@ const StatStrip=({items})=>(
   </div>
 );
 /* MovDistBar removed — unused */
-const CHART_PAD = { l: 40, b: 32, t: 12, r: 12 };
-const CHART_H = 170;
-const CHART_FONT = { axis: 9, label: 8, tick: 9 };
+/* ── Unified chart system ─────────────────────────────────────────────── */
+const CW = 500;          // viewBox width — SAME for both charts
+const CH = 160;          // plot area height
+const CP = { l: 36, r: 8, t: 14, b: 40 };  // padding: left (y-axis), right, top, bottom (x-labels)
+const CF = 9;            // base font size (all text scales from this)
+
+function chartGrid(svgW, maxVal, yLabel) {
+  const ticks = [0, 1, 2, 3].map(i => Math.round((maxVal / 3) * i));
+  return <>
+    {ticks.map((tick, i) => {
+      const y = CP.t + CH - (maxVal > 0 ? (tick / maxVal) * CH : 0);
+      return <g key={i}>
+        <line x1={CP.l} y1={y} x2={svgW - CP.r} y2={y} stroke={i === 0 ? "#C0C0B0" : "#E4E4D8"} strokeWidth={i === 0 ? 1 : 0.5} strokeDasharray={i === 0 ? "" : "3,2"} />
+        <text x={CP.l - 4} y={y + 3} textAnchor="end" fill="#666658" fontSize={CF - 1} fontFamily="Inter,system-ui,sans-serif">{tick}</text>
+      </g>;
+    })}
+    {/* Y-axis line */}
+    <line x1={CP.l} y1={CP.t} x2={CP.l} y2={CP.t + CH} stroke="#999980" strokeWidth={0.8} />
+    {/* X-axis line */}
+    <line x1={CP.l} y1={CP.t + CH} x2={svgW - CP.r} y2={CP.t + CH} stroke="#999980" strokeWidth={0.8} />
+    {/* Y-axis label */}
+    <text x={8} y={CP.t + CH / 2} textAnchor="middle" fill="#666658" fontSize={CF - 1} fontWeight="600" fontFamily="Inter,system-ui,sans-serif" transform={`rotate(-90,8,${CP.t + CH / 2})`}>{yLabel}</text>
+  </>;
+}
+
+function refLineH(val, maxVal, svgW, label, lineColor) {
+  if (val == null || maxVal <= 0) return null;
+  const y = CP.t + CH - (val / maxVal) * CH;
+  if (y < CP.t - 2 || y > CP.t + CH + 2) return null;
+  return <g>
+    <line x1={CP.l} y1={y} x2={svgW - CP.r} y2={y} stroke={lineColor} strokeWidth={0.9} strokeDasharray="5,3" opacity={0.8} />
+    <text x={svgW - CP.r - 2} y={y - 3} textAnchor="end" fill={lineColor} fontSize={CF - 2} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{label}</text>
+  </g>;
+}
+
+function refLineV(xPos, label, lineColor) {
+  if (xPos == null) return null;
+  return <g>
+    <line x1={xPos} y1={CP.t} x2={xPos} y2={CP.t + CH} stroke={lineColor} strokeWidth={0.9} strokeDasharray="5,3" opacity={0.8} />
+    <text x={xPos + 2} y={CP.t + 10} fill={lineColor} fontSize={CF - 2} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{label}</text>
+  </g>;
+}
 
 const SingleFreqChart = ({ freq, color, minVal, maxVal }) => {
   const entries = Object.entries(freq).map(([q, c]) => ({ qty: parseFloat(q), cnt: c })).sort((a, b) => a.qty - b.qty);
   if (!entries.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
-  const { l: padL, b: padB, t: padT, r: padR } = CHART_PAD;
-  const svgW = 440, svgH = CHART_H + padB + padT;
-  const innerW = svgW - padL - padR;
-  const barW = Math.max(6, Math.floor(innerW / entries.length) - 4);
+  const plotW = CW - CP.l - CP.r;
+  const gap = 3;
+  const barW = Math.max(4, (plotW / entries.length) - gap);
   const maxCnt = Math.max(...entries.map(e => e.cnt));
-  const yTicks = [0, 1, 2, 3].map(i => Math.round((maxCnt / 3) * i));
   const col = color || HR.yellowDark;
-
-  // Find bar index for min/max reference lines
-  const minIdx = minVal != null ? entries.findIndex(e => e.qty >= minVal) : -1;
-  const maxIdx = maxVal != null ? entries.findIndex(e => e.qty >= maxVal) : -1;
+  const svgH = CH + CP.t + CP.b;
 
   return (
-    <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{ display: "block", width: "100%", height: "auto" }}>
-      {yTicks.map((tick, i) => {
-        const y = padT + CHART_H - (maxCnt > 0 ? (tick / maxCnt) * CHART_H : 0);
-        return <g key={i}>
-          <line x1={padL} y1={y} x2={svgW - padR} y2={y} stroke={i === 0 ? "#C8C8B0" : "#E8E8D8"} strokeWidth={i === 0 ? 1 : 0.5} strokeDasharray={i === 0 ? "0" : "3,3"} />
-          <text x={padL - 5} y={y + 3} textAnchor="end" fill="#777760" fontSize={CHART_FONT.tick}>{tick}</text>
-        </g>;
-      })}
-      <text x={10} y={padT + CHART_H / 2} textAnchor="middle" fill="#777760" fontSize={CHART_FONT.axis} fontWeight="600" transform={`rotate(-90,10,${padT + CHART_H / 2})`}>Orders</text>
-      <line x1={padL} y1={padT} x2={padL} y2={padT + CHART_H} stroke="#A8A888" strokeWidth={1} />
-      <line x1={padL} y1={padT + CHART_H} x2={svgW - padR} y2={padT + CHART_H} stroke="#A8A888" strokeWidth={1} />
+    <svg viewBox={`0 0 ${CW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", width: "100%", height: "auto" }}>
+      {chartGrid(CW, maxCnt, "Orders")}
       {entries.map((e, i) => {
-        const barH = maxCnt > 0 ? Math.max(2, (e.cnt / maxCnt) * CHART_H) : 2;
-        const x = padL + i * (barW + 4) + 2, y = padT + CHART_H - barH;
+        const barH = maxCnt > 0 ? Math.max(1.5, (e.cnt / maxCnt) * CH) : 1.5;
+        const x = CP.l + i * (barW + gap) + gap / 2;
+        const y = CP.t + CH - barH;
         return <g key={i}>
-          <rect x={x} y={y} width={barW} height={barH} fill={col} opacity={0.8} rx={1} />
-          <text x={x + barW / 2} y={y - 3} textAnchor="middle" fill={col} fontSize={CHART_FONT.label} fontWeight="700">{e.cnt}</text>
-          <text x={x + barW / 2} y={padT + CHART_H + 13} textAnchor="middle" fill="#555548" fontSize={CHART_FONT.label} fontWeight="600">{e.qty}</text>
+          <rect x={x} y={y} width={barW} height={barH} fill={col} opacity={0.85} rx={1} />
+          <text x={x + barW / 2} y={y - 2} textAnchor="middle" fill={col} fontSize={CF - 2} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{e.cnt}</text>
+          <text x={x + barW / 2} y={CP.t + CH + 12} textAnchor="middle" fill="#555548" fontSize={CF - 2} fontWeight="600" fontFamily="Inter,system-ui,sans-serif">{e.qty}</text>
         </g>;
       })}
       {/* Min/Max vertical reference lines */}
       {minVal != null && (() => {
         const idx = entries.findIndex(e => e.qty >= minVal);
         if (idx < 0) return null;
-        const x = padL + idx * (barW + 4) + 2;
-        return <g>
-          <line x1={x} y1={padT} x2={x} y2={padT + CHART_H} stroke="#C0392B" strokeWidth={1.2} strokeDasharray="4,3" />
-          <text x={x + 3} y={padT + 8} fill="#C0392B" fontSize={7} fontWeight="700">Min {minVal}</text>
-        </g>;
+        const x = CP.l + idx * (barW + gap) + gap / 2;
+        return refLineV(x, `Min ${minVal}`, "#C0392B");
       })()}
       {maxVal != null && maxVal !== minVal && (() => {
         const idx = entries.findIndex(e => e.qty >= maxVal);
         if (idx < 0) return null;
-        const x = padL + idx * (barW + 4) + 2;
-        return <g>
-          <line x1={x} y1={padT} x2={x} y2={padT + CHART_H} stroke="#2D7A3A" strokeWidth={1.2} strokeDasharray="4,3" />
-          <text x={x + 3} y={padT + 18} fill="#2D7A3A" fontSize={7} fontWeight="700">Max {maxVal}</text>
-        </g>;
+        const x = CP.l + idx * (barW + gap) + gap / 2;
+        return refLineV(x, `Max ${maxVal}`, "#2D7A3A");
       })()}
-      <text x={padL + innerW / 2} y={svgH - 2} textAnchor="middle" fill="#777760" fontSize={CHART_FONT.axis} fontWeight="600">Order Qty</text>
     </svg>
   );
 };
-/* SKUFreqChart removed — was only used by old InsightsTab; new SKU Detail uses SingleFreqChart directly */
 /* Old InsightsTab and sub-components (OrgLevel, CategoryLevel, BrandLevel, SKULevel) removed — replaced by SKUDetailTab */
 
 function median(arr) {
@@ -2256,60 +2274,36 @@ const DCCard = ({ dcData, meta, params, horizontal }) => {
 const DateOrderChart = ({ data, color, minVal, maxVal }) => {
   if (!data || !data.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
   const maxQty = Math.max(...data.map(d => d.qty), 1);
-  const { l: padL, b: padB, t: padT, r: padR } = CHART_PAD;
-  const svgW = 600, svgH = CHART_H + padB + padT;
-  const innerW = svgW - padL - padR;
-  const barW = Math.max(2, Math.floor(innerW / data.length) - 2);
+  const plotW = CW - CP.l - CP.r;
+  const gap = 1;
+  const barW = Math.max(1.5, (plotW / data.length) - gap);
   const col = color || HR.yellowDark;
-  const yTicks = [0, 1, 2, 3].map(i => Math.round((maxQty / 3) * i));
-  const labelEvery = data.length <= 15 ? 1 : data.length <= 30 ? 2 : data.length <= 60 ? 5 : 7;
+  const svgH = CH + CP.t + CP.b;
+  const labelEvery = data.length <= 15 ? 1 : data.length <= 30 ? 2 : data.length <= 45 ? 3 : data.length <= 60 ? 5 : 7;
 
   return (
-    <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{ display: "block", width: "100%", height: "auto" }}>
-      {yTicks.map((tick, i) => {
-        const y = padT + CHART_H - (maxQty > 0 ? (tick / maxQty) * CHART_H : 0);
-        return <g key={i}>
-          <line x1={padL} y1={y} x2={svgW - padR} y2={y} stroke={i === 0 ? "#C8C8B0" : "#E8E8D8"} strokeWidth={i === 0 ? 1 : 0.5} strokeDasharray={i === 0 ? "0" : "3,3"} />
-          <text x={padL - 5} y={y + 3} textAnchor="end" fill="#777760" fontSize={CHART_FONT.tick}>{tick}</text>
-        </g>;
-      })}
-      <text x={10} y={padT + CHART_H / 2} textAnchor="middle" fill="#777760" fontSize={CHART_FONT.axis} fontWeight="600" transform={`rotate(-90,10,${padT + CHART_H / 2})`}>Qty</text>
-      <line x1={padL} y1={padT} x2={padL} y2={padT + CHART_H} stroke="#A8A888" strokeWidth={1} />
-      <line x1={padL} y1={padT + CHART_H} x2={svgW - padR} y2={padT + CHART_H} stroke="#A8A888" strokeWidth={1} />
+    <svg viewBox={`0 0 ${CW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", width: "100%", height: "auto" }}>
+      {chartGrid(CW, maxQty, "Qty")}
       {/* Min/Max horizontal reference lines */}
-      {minVal != null && (() => {
-        const y = maxQty > 0 ? padT + CHART_H - (minVal / maxQty) * CHART_H : padT + CHART_H;
-        if (y < padT || y > padT + CHART_H) return null;
-        return <g>
-          <line x1={padL} y1={y} x2={svgW - padR} y2={y} stroke="#C0392B" strokeWidth={1} strokeDasharray="4,3" />
-          <text x={svgW - padR - 2} y={y - 3} textAnchor="end" fill="#C0392B" fontSize={7} fontWeight="700">Min {minVal}</text>
-        </g>;
-      })()}
-      {maxVal != null && maxVal !== minVal && (() => {
-        const y = maxQty > 0 ? padT + CHART_H - (maxVal / maxQty) * CHART_H : padT + CHART_H;
-        if (y < padT || y > padT + CHART_H) return null;
-        return <g>
-          <line x1={padL} y1={y} x2={svgW - padR} y2={y} stroke="#2D7A3A" strokeWidth={1} strokeDasharray="4,3" />
-          <text x={svgW - padR - 2} y={y - 3} textAnchor="end" fill="#2D7A3A" fontSize={7} fontWeight="700">Max {maxVal}</text>
-        </g>;
-      })()}
+      {refLineH(minVal, Math.max(maxQty, minVal || 0, maxVal || 0), CW, `Min ${minVal}`, "#C0392B")}
+      {maxVal != null && maxVal !== minVal && refLineH(maxVal, Math.max(maxQty, maxVal || 0), CW, `Max ${maxVal}`, "#2D7A3A")}
       {data.map((d, i) => {
-        const barH = maxQty > 0 ? Math.max(d.qty > 0 ? 2 : 0, (d.qty / maxQty) * CHART_H) : 0;
-        const x = padL + i * (barW + 2) + 1;
-        const y = padT + CHART_H - barH;
+        const effMax = Math.max(maxQty, minVal || 0, maxVal || 0);
+        const barH = effMax > 0 ? Math.max(d.qty > 0 ? 1 : 0, (d.qty / effMax) * CH) : 0;
+        const x = CP.l + i * (barW + gap) + gap / 2;
+        const y = CP.t + CH - barH;
         const showLabel = i === 0 || i === data.length - 1 || i % labelEvery === 0;
-        const showDataLabel = d.qty > 0 && barW >= 8;
+        const showDataLabel = d.qty > 0 && barW >= 6;
         return <g key={i}>
-          <rect x={x} y={y} width={barW} height={barH} fill={col} opacity={0.8} rx={1} />
-          {showDataLabel && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fill={col} fontSize={CHART_FONT.label} fontWeight="700">{d.qty}</text>}
+          <rect x={x} y={y} width={barW} height={barH} fill={col} opacity={0.85} rx={0.5} />
+          {showDataLabel && <text x={x + barW / 2} y={y - 2} textAnchor="middle" fill={col} fontSize={CF - 2} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{d.qty}</text>}
           {showLabel && (
-            <text x={x + barW / 2} y={padT + CHART_H + 13} textAnchor="end" fill="#555548" fontSize={CHART_FONT.label} fontWeight="500" transform={`rotate(-45,${x + barW / 2},${padT + CHART_H + 13})`}>
+            <text x={x + barW / 2} y={CP.t + CH + 12} textAnchor="end" fill="#555548" fontSize={CF - 2} fontWeight="500" fontFamily="Inter,system-ui,sans-serif" transform={`rotate(-45,${x + barW / 2},${CP.t + CH + 12})`}>
               {d.date.slice(5)}
             </text>
           )}
         </g>;
       })}
-      <text x={padL + innerW / 2} y={svgH - 2} textAnchor="middle" fill="#777760" fontSize={CHART_FONT.axis} fontWeight="600">Date</text>
     </svg>
   );
 };
