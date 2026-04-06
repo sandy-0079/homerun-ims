@@ -186,26 +186,29 @@ const StatStrip=({items})=>(
 const SingleFreqChart=({freq,ds,compact=false})=>{
   const entries=Object.entries(freq).map(([q,c])=>({qty:parseFloat(q),cnt:c})).sort((a,b)=>a.qty-b.qty);
   if(!entries.length)return <div style={{color:HR.muted,fontSize:11,padding:20,textAlign:"center"}}>No orders for {ds}</div>;
-  const maxCnt=Math.max(...entries.map(e=>e.cnt)),padL=compact?32:44,padB=compact?28:36,padT=compact?16:20;
-  const chartH=compact?100:180,barW=compact?Math.max(16,Math.min(40,Math.floor(220/entries.length))):Math.max(24,Math.min(60,Math.floor(480/entries.length)));
-  const innerW=entries.length*(barW+4),svgW=Math.max(innerW+padL+16,compact?260:500),svgH=chartH+padB+padT;
+  const maxCnt=Math.max(...entries.map(e=>e.cnt)),padL=44,padB=36,padT=20;
+  const chartH=180;
+  const svgW=500;
+  const innerW=svgW-padL-16;
+  const barW=Math.max(8,Math.floor(innerW/entries.length)-4);
+  const svgH=chartH+padB+padT;
   const di=DS_LIST.indexOf(ds),color=di>=0?DS_COLORS[di].header:HR.yellowDark;
   const totalOrders=entries.reduce((a,e)=>a+e.cnt,0),totalQty=entries.reduce((a,e)=>a+e.qty*e.cnt,0),abq=totalOrders>0?(totalQty/totalOrders).toFixed(1):"—";
   const yTicks=[0,1,2,3].map(i=>Math.round((maxCnt/3)*i));
   return(
-    <div style={{background:HR.surface,borderRadius:8,padding:compact?8:14,border:`1px solid ${color}44`}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:compact?4:8}}>
-        <span style={{fontSize:compact?10:12,fontWeight:700,color}}>{ds}</span>
-        {!compact&&<span style={{fontSize:10,color:HR.muted}}>{totalOrders} instances · ABQ {abq}</span>}
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <span style={{fontSize:12,fontWeight:700,color}}>{ds}</span>
+        <span style={{fontSize:10,color:HR.muted}}>{totalOrders} instances · ABQ {abq}</span>
       </div>
-      <div style={{overflowX:"auto"}}>
-        <svg width={svgW} height={svgH} style={{display:"block"}}>
-          {yTicks.map((tick,i)=>{const y=padT+chartH-(maxCnt>0?(tick/maxCnt)*chartH:0);return <g key={i}><line x1={padL} y1={y} x2={svgW-8} y2={y} stroke={i===0?"#C8C8B0":"#E8E8D8"} strokeWidth={i===0?1.5:1} strokeDasharray={i===0?"0":"3,3"}/><text x={padL-6} y={y+4} textAnchor="end" fill="#777760" fontSize={compact?8:10}>{tick}</text></g>;})}
-          <text x={compact?10:14} y={padT+chartH/2} textAnchor="middle" fill="#777760" fontSize={compact?8:10} fontWeight="600" transform={`rotate(-90,${compact?10:14},${padT+chartH/2})`}>Orders</text>
+      <div>
+        <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{display:"block",width:"100%",height:"auto"}}>
+          {yTicks.map((tick,i)=>{const y=padT+chartH-(maxCnt>0?(tick/maxCnt)*chartH:0);return <g key={i}><line x1={padL} y1={y} x2={svgW-8} y2={y} stroke={i===0?"#C8C8B0":"#E8E8D8"} strokeWidth={i===0?1.5:1} strokeDasharray={i===0?"0":"3,3"}/><text x={padL-6} y={y+4} textAnchor="end" fill="#777760" fontSize={10}>{tick}</text></g>;})}
+          <text x={14} y={padT+chartH/2} textAnchor="middle" fill="#777760" fontSize={10} fontWeight="600" transform={`rotate(-90,14,${padT+chartH/2})`}>Orders</text>
           <line x1={padL} y1={padT} x2={padL} y2={padT+chartH} stroke="#A8A888" strokeWidth={1.5}/>
           <line x1={padL} y1={padT+chartH} x2={svgW-8} y2={padT+chartH} stroke="#A8A888" strokeWidth={1.5}/>
-          {entries.map((e,i)=>{const barH=maxCnt>0?Math.max(2,(e.cnt/maxCnt)*chartH):2,x=padL+i*(barW+4)+2,y=padT+chartH-barH;return <g key={i}><rect x={x} y={y} width={barW} height={barH} fill={color} opacity={0.8} rx={2}/><text x={x+barW/2} y={y-4} textAnchor="middle" fill={color} fontSize={compact?8:10} fontWeight="700">{e.cnt}</text><text x={x+barW/2} y={padT+chartH+16} textAnchor="middle" fill="#555548" fontSize={compact?8:10} fontWeight="600">{e.qty}</text></g>;})}
-          <text x={padL+innerW/2} y={svgH-2} textAnchor="middle" fill="#777760" fontSize={compact?8:10} fontWeight="600">Order Qty</text>
+          {entries.map((e,i)=>{const barH=maxCnt>0?Math.max(2,(e.cnt/maxCnt)*chartH):2,x=padL+i*(barW+4)+2,y=padT+chartH-barH;return <g key={i}><rect x={x} y={y} width={barW} height={barH} fill={color} opacity={0.8} rx={2}/><text x={x+barW/2} y={y-4} textAnchor="middle" fill={color} fontSize={10} fontWeight="700">{e.cnt}</text><text x={x+barW/2} y={padT+chartH+16} textAnchor="middle" fill="#555548" fontSize={10} fontWeight="600">{e.qty}</text></g>;})}
+          <text x={padL+innerW/2} y={svgH-2} textAnchor="middle" fill="#777760" fontSize={10} fontWeight="600">Order Qty</text>
         </svg>
       </div>
     </div>
@@ -2254,10 +2257,11 @@ const DateOrderChart = ({ data, dsView }) => {
             const x = padL + i * (barW + 2) + 1;
             const y = padT + chartH - barH;
             const showLabel = i === 0 || i === data.length - 1 || i % labelEvery === 0;
+            const showDataLabel = d.qty > 0 && barW >= 6;
             return (
               <g key={i}>
                 <rect x={x} y={y} width={barW} height={barH} fill={color} opacity={0.8} rx={1} />
-                {d.qty > 0 && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fill={color} fontSize={8} fontWeight="700">{d.qty}</text>}
+                {showDataLabel && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fill={color} fontSize={8} fontWeight="700">{d.qty}</text>}
                 {showLabel && (
                   <text x={x + barW / 2} y={padT + chartH + 14} textAnchor="end" fill="#555548" fontSize={7} fontWeight="500" transform={`rotate(-45,${x + barW / 2},${padT + chartH + 14})`}>
                     {d.date.slice(5)}
@@ -2477,7 +2481,7 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
           <div style={{display:"grid",gridTemplateColumns:"2fr 3fr",gap:12,marginBottom:16,alignItems:"stretch"}}>
             <div style={{...S.card,display:"flex",flexDirection:"column"}}>
               <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Order Qty Frequency</div>
-              <div style={{flex:1,display:"flex",alignItems:"center"}}><SingleFreqChart freq={freqData} ds={dsView === "All" ? "All DS Combined" : dsView} /></div>
+              <div style={{flex:1}}><SingleFreqChart freq={freqData} ds={dsView === "All" ? "All DS Combined" : dsView} /></div>
             </div>
             <div style={{...S.card,display:"flex",flexDirection:"column"}}>
               <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Daily Order Qty</div>
