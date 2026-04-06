@@ -183,35 +183,67 @@ const StatStrip=({items})=>(
   </div>
 );
 /* MovDistBar removed — unused */
-const SingleFreqChart=({freq,ds,compact=false})=>{
-  const entries=Object.entries(freq).map(([q,c])=>({qty:parseFloat(q),cnt:c})).sort((a,b)=>a.qty-b.qty);
-  if(!entries.length)return <div style={{color:HR.muted,fontSize:11,padding:20,textAlign:"center"}}>No orders for {ds}</div>;
-  const maxCnt=Math.max(...entries.map(e=>e.cnt)),padL=44,padB=36,padT=20;
-  const chartH=180;
-  const svgW=500;
-  const innerW=svgW-padL-16;
-  const barW=Math.max(8,Math.floor(innerW/entries.length)-4);
-  const svgH=chartH+padB+padT;
-  const di=DS_LIST.indexOf(ds),color=di>=0?DS_COLORS[di].header:HR.yellowDark;
-  const totalOrders=entries.reduce((a,e)=>a+e.cnt,0),totalQty=entries.reduce((a,e)=>a+e.qty*e.cnt,0),abq=totalOrders>0?(totalQty/totalOrders).toFixed(1):"—";
-  const yTicks=[0,1,2,3].map(i=>Math.round((maxCnt/3)*i));
-  return(
-    <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-        <span style={{fontSize:12,fontWeight:700,color}}>{ds}</span>
-        <span style={{fontSize:10,color:HR.muted}}>{totalOrders} instances · ABQ {abq}</span>
-      </div>
-      <div>
-        <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{display:"block",width:"100%",height:"auto"}}>
-          {yTicks.map((tick,i)=>{const y=padT+chartH-(maxCnt>0?(tick/maxCnt)*chartH:0);return <g key={i}><line x1={padL} y1={y} x2={svgW-8} y2={y} stroke={i===0?"#C8C8B0":"#E8E8D8"} strokeWidth={i===0?1.5:1} strokeDasharray={i===0?"0":"3,3"}/><text x={padL-6} y={y+4} textAnchor="end" fill="#777760" fontSize={10}>{tick}</text></g>;})}
-          <text x={14} y={padT+chartH/2} textAnchor="middle" fill="#777760" fontSize={10} fontWeight="600" transform={`rotate(-90,14,${padT+chartH/2})`}>Orders</text>
-          <line x1={padL} y1={padT} x2={padL} y2={padT+chartH} stroke="#A8A888" strokeWidth={1.5}/>
-          <line x1={padL} y1={padT+chartH} x2={svgW-8} y2={padT+chartH} stroke="#A8A888" strokeWidth={1.5}/>
-          {entries.map((e,i)=>{const barH=maxCnt>0?Math.max(2,(e.cnt/maxCnt)*chartH):2,x=padL+i*(barW+4)+2,y=padT+chartH-barH;return <g key={i}><rect x={x} y={y} width={barW} height={barH} fill={color} opacity={0.8} rx={2}/><text x={x+barW/2} y={y-4} textAnchor="middle" fill={color} fontSize={10} fontWeight="700">{e.cnt}</text><text x={x+barW/2} y={padT+chartH+16} textAnchor="middle" fill="#555548" fontSize={10} fontWeight="600">{e.qty}</text></g>;})}
-          <text x={padL+innerW/2} y={svgH-2} textAnchor="middle" fill="#777760" fontSize={10} fontWeight="600">Order Qty</text>
-        </svg>
-      </div>
-    </div>
+const CHART_PAD = { l: 40, b: 32, t: 12, r: 12 };
+const CHART_H = 170;
+const CHART_FONT = { axis: 9, label: 8, tick: 9 };
+
+const SingleFreqChart = ({ freq, color, minVal, maxVal }) => {
+  const entries = Object.entries(freq).map(([q, c]) => ({ qty: parseFloat(q), cnt: c })).sort((a, b) => a.qty - b.qty);
+  if (!entries.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
+  const { l: padL, b: padB, t: padT, r: padR } = CHART_PAD;
+  const svgW = 440, svgH = CHART_H + padB + padT;
+  const innerW = svgW - padL - padR;
+  const barW = Math.max(6, Math.floor(innerW / entries.length) - 4);
+  const maxCnt = Math.max(...entries.map(e => e.cnt));
+  const yTicks = [0, 1, 2, 3].map(i => Math.round((maxCnt / 3) * i));
+  const col = color || HR.yellowDark;
+
+  // Find bar index for min/max reference lines
+  const minIdx = minVal != null ? entries.findIndex(e => e.qty >= minVal) : -1;
+  const maxIdx = maxVal != null ? entries.findIndex(e => e.qty >= maxVal) : -1;
+
+  return (
+    <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{ display: "block", width: "100%", height: "auto" }}>
+      {yTicks.map((tick, i) => {
+        const y = padT + CHART_H - (maxCnt > 0 ? (tick / maxCnt) * CHART_H : 0);
+        return <g key={i}>
+          <line x1={padL} y1={y} x2={svgW - padR} y2={y} stroke={i === 0 ? "#C8C8B0" : "#E8E8D8"} strokeWidth={i === 0 ? 1 : 0.5} strokeDasharray={i === 0 ? "0" : "3,3"} />
+          <text x={padL - 5} y={y + 3} textAnchor="end" fill="#777760" fontSize={CHART_FONT.tick}>{tick}</text>
+        </g>;
+      })}
+      <text x={10} y={padT + CHART_H / 2} textAnchor="middle" fill="#777760" fontSize={CHART_FONT.axis} fontWeight="600" transform={`rotate(-90,10,${padT + CHART_H / 2})`}>Orders</text>
+      <line x1={padL} y1={padT} x2={padL} y2={padT + CHART_H} stroke="#A8A888" strokeWidth={1} />
+      <line x1={padL} y1={padT + CHART_H} x2={svgW - padR} y2={padT + CHART_H} stroke="#A8A888" strokeWidth={1} />
+      {entries.map((e, i) => {
+        const barH = maxCnt > 0 ? Math.max(2, (e.cnt / maxCnt) * CHART_H) : 2;
+        const x = padL + i * (barW + 4) + 2, y = padT + CHART_H - barH;
+        return <g key={i}>
+          <rect x={x} y={y} width={barW} height={barH} fill={col} opacity={0.8} rx={1} />
+          <text x={x + barW / 2} y={y - 3} textAnchor="middle" fill={col} fontSize={CHART_FONT.label} fontWeight="700">{e.cnt}</text>
+          <text x={x + barW / 2} y={padT + CHART_H + 13} textAnchor="middle" fill="#555548" fontSize={CHART_FONT.label} fontWeight="600">{e.qty}</text>
+        </g>;
+      })}
+      {/* Min/Max vertical reference lines */}
+      {minVal != null && (() => {
+        const idx = entries.findIndex(e => e.qty >= minVal);
+        if (idx < 0) return null;
+        const x = padL + idx * (barW + 4) + 2;
+        return <g>
+          <line x1={x} y1={padT} x2={x} y2={padT + CHART_H} stroke="#C0392B" strokeWidth={1.2} strokeDasharray="4,3" />
+          <text x={x + 3} y={padT + 8} fill="#C0392B" fontSize={7} fontWeight="700">Min {minVal}</text>
+        </g>;
+      })()}
+      {maxVal != null && maxVal !== minVal && (() => {
+        const idx = entries.findIndex(e => e.qty >= maxVal);
+        if (idx < 0) return null;
+        const x = padL + idx * (barW + 4) + 2;
+        return <g>
+          <line x1={x} y1={padT} x2={x} y2={padT + CHART_H} stroke="#2D7A3A" strokeWidth={1.2} strokeDasharray="4,3" />
+          <text x={x + 3} y={padT + 18} fill="#2D7A3A" fontSize={7} fontWeight="700">Max {maxVal}</text>
+        </g>;
+      })()}
+      <text x={padL + innerW / 2} y={svgH - 2} textAnchor="middle" fill="#777760" fontSize={CHART_FONT.axis} fontWeight="600">Order Qty</text>
+    </svg>
   );
 };
 /* SKUFreqChart removed — was only used by old InsightsTab; new SKU Detail uses SingleFreqChart directly */
@@ -2221,58 +2253,64 @@ const DCCard = ({ dcData, meta, params, horizontal }) => {
   );
 };
 
-const DateOrderChart = ({ data, dsView }) => {
-  if (!data || !data.length) return <div style={{color:HR.muted,fontSize:11,padding:20,textAlign:"center"}}>No order data</div>;
+const DateOrderChart = ({ data, color, minVal, maxVal }) => {
+  if (!data || !data.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
   const maxQty = Math.max(...data.map(d => d.qty), 1);
-  const padL = 44, padB = 36, padT = 20;
-  const chartH = 180;
-  const svgW = 600;
-  const innerW = svgW - padL - 16;
+  const { l: padL, b: padB, t: padT, r: padR } = CHART_PAD;
+  const svgW = 600, svgH = CHART_H + padB + padT;
+  const innerW = svgW - padL - padR;
   const barW = Math.max(2, Math.floor(innerW / data.length) - 2);
-  const svgH = chartH + padB + padT;
-  const di = DS_LIST.indexOf(dsView);
-  const color = di >= 0 ? DS_COLORS[di].header : HR.yellowDark;
+  const col = color || HR.yellowDark;
   const yTicks = [0, 1, 2, 3].map(i => Math.round((maxQty / 3) * i));
-  // Show label every Nth bar so they don't overlap
   const labelEvery = data.length <= 15 ? 1 : data.length <= 30 ? 2 : data.length <= 60 ? 5 : 7;
 
   return (
-    <div>
-      <div>
-        <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{display:"block",width:"100%",height:"auto"}}>
-          {yTicks.map((tick, i) => {
-            const y = padT + chartH - (maxQty > 0 ? (tick / maxQty) * chartH : 0);
-            return (
-              <g key={i}>
-                <line x1={padL} y1={y} x2={svgW - 8} y2={y} stroke={i === 0 ? "#C8C8B0" : "#E8E8D8"} strokeWidth={i === 0 ? 1.5 : 1} strokeDasharray={i === 0 ? "0" : "3,3"} />
-                <text x={padL - 6} y={y + 4} textAnchor="end" fill="#777760" fontSize={10}>{tick}</text>
-              </g>
-            );
-          })}
-          <text x={14} y={padT + chartH / 2} textAnchor="middle" fill="#777760" fontSize={10} fontWeight="600" transform={`rotate(-90,14,${padT + chartH / 2})`}>Qty</text>
-          <line x1={padL} y1={padT} x2={padL} y2={padT + chartH} stroke="#A8A888" strokeWidth={1.5} />
-          <line x1={padL} y1={padT + chartH} x2={svgW - 8} y2={padT + chartH} stroke="#A8A888" strokeWidth={1.5} />
-          {data.map((d, i) => {
-            const barH = maxQty > 0 ? Math.max(d.qty > 0 ? 2 : 0, (d.qty / maxQty) * chartH) : 0;
-            const x = padL + i * (barW + 2) + 1;
-            const y = padT + chartH - barH;
-            const showLabel = i === 0 || i === data.length - 1 || i % labelEvery === 0;
-            const showDataLabel = d.qty > 0 && barW >= 6;
-            return (
-              <g key={i}>
-                <rect x={x} y={y} width={barW} height={barH} fill={color} opacity={0.8} rx={1} />
-                {showDataLabel && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fill={color} fontSize={8} fontWeight="700">{d.qty}</text>}
-                {showLabel && (
-                  <text x={x + barW / 2} y={padT + chartH + 14} textAnchor="end" fill="#555548" fontSize={7} fontWeight="500" transform={`rotate(-45,${x + barW / 2},${padT + chartH + 14})`}>
-                    {d.date.slice(5)}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-    </div>
+    <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{ display: "block", width: "100%", height: "auto" }}>
+      {yTicks.map((tick, i) => {
+        const y = padT + CHART_H - (maxQty > 0 ? (tick / maxQty) * CHART_H : 0);
+        return <g key={i}>
+          <line x1={padL} y1={y} x2={svgW - padR} y2={y} stroke={i === 0 ? "#C8C8B0" : "#E8E8D8"} strokeWidth={i === 0 ? 1 : 0.5} strokeDasharray={i === 0 ? "0" : "3,3"} />
+          <text x={padL - 5} y={y + 3} textAnchor="end" fill="#777760" fontSize={CHART_FONT.tick}>{tick}</text>
+        </g>;
+      })}
+      <text x={10} y={padT + CHART_H / 2} textAnchor="middle" fill="#777760" fontSize={CHART_FONT.axis} fontWeight="600" transform={`rotate(-90,10,${padT + CHART_H / 2})`}>Qty</text>
+      <line x1={padL} y1={padT} x2={padL} y2={padT + CHART_H} stroke="#A8A888" strokeWidth={1} />
+      <line x1={padL} y1={padT + CHART_H} x2={svgW - padR} y2={padT + CHART_H} stroke="#A8A888" strokeWidth={1} />
+      {/* Min/Max horizontal reference lines */}
+      {minVal != null && (() => {
+        const y = maxQty > 0 ? padT + CHART_H - (minVal / maxQty) * CHART_H : padT + CHART_H;
+        if (y < padT || y > padT + CHART_H) return null;
+        return <g>
+          <line x1={padL} y1={y} x2={svgW - padR} y2={y} stroke="#C0392B" strokeWidth={1} strokeDasharray="4,3" />
+          <text x={svgW - padR - 2} y={y - 3} textAnchor="end" fill="#C0392B" fontSize={7} fontWeight="700">Min {minVal}</text>
+        </g>;
+      })()}
+      {maxVal != null && maxVal !== minVal && (() => {
+        const y = maxQty > 0 ? padT + CHART_H - (maxVal / maxQty) * CHART_H : padT + CHART_H;
+        if (y < padT || y > padT + CHART_H) return null;
+        return <g>
+          <line x1={padL} y1={y} x2={svgW - padR} y2={y} stroke="#2D7A3A" strokeWidth={1} strokeDasharray="4,3" />
+          <text x={svgW - padR - 2} y={y - 3} textAnchor="end" fill="#2D7A3A" fontSize={7} fontWeight="700">Max {maxVal}</text>
+        </g>;
+      })()}
+      {data.map((d, i) => {
+        const barH = maxQty > 0 ? Math.max(d.qty > 0 ? 2 : 0, (d.qty / maxQty) * CHART_H) : 0;
+        const x = padL + i * (barW + 2) + 1;
+        const y = padT + CHART_H - barH;
+        const showLabel = i === 0 || i === data.length - 1 || i % labelEvery === 0;
+        const showDataLabel = d.qty > 0 && barW >= 8;
+        return <g key={i}>
+          <rect x={x} y={y} width={barW} height={barH} fill={col} opacity={0.8} rx={1} />
+          {showDataLabel && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fill={col} fontSize={CHART_FONT.label} fontWeight="700">{d.qty}</text>}
+          {showLabel && (
+            <text x={x + barW / 2} y={padT + CHART_H + 13} textAnchor="end" fill="#555548" fontSize={CHART_FONT.label} fontWeight="500" transform={`rotate(-45,${x + barW / 2},${padT + CHART_H + 13})`}>
+              {d.date.slice(5)}
+            </text>
+          )}
+        </g>;
+      })}
+      <text x={padL + innerW / 2} y={svgH - 2} textAnchor="middle" fill="#777760" fontSize={CHART_FONT.axis} fontWeight="600">Date</text>
+    </svg>
   );
 };
 
@@ -2477,17 +2515,36 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             { label: "Active Days", value: stats.activeDays, color: HR.yellowDark },
           ]} />
 
-          {/* Charts side by side — date chart wider */}
-          <div style={{display:"grid",gridTemplateColumns:"2fr 3fr",gap:12,marginBottom:16,alignItems:"stretch"}}>
-            <div style={{...S.card,display:"flex",flexDirection:"column"}}>
-              <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Order Qty Frequency</div>
-              <div style={{flex:1}}><SingleFreqChart freq={freqData} ds={dsView === "All" ? "All DS Combined" : dsView} /></div>
-            </div>
-            <div style={{...S.card,display:"flex",flexDirection:"column"}}>
-              <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Daily Order Qty</div>
-              <div style={{flex:1}}><DateOrderChart data={dateData} dsView={dsView} /></div>
-            </div>
-          </div>
+          {/* Charts section */}
+          {(() => {
+            const dsLabel = dsView === "All" ? "All DS Combined" : dsView;
+            const di = DS_LIST.indexOf(dsView);
+            const chartColor = di >= 0 ? DS_COLORS[di].header : HR.yellowDark;
+            const storeMin = dsView !== "All" && res.stores?.[dsView] ? res.stores[dsView].min : null;
+            const storeMax = dsView !== "All" && res.stores?.[dsView] ? res.stores[dsView].max : null;
+            const totalOrders = Object.values(freqData).reduce((a, b) => a + b, 0);
+            const totalQty = Object.entries(freqData).reduce((a, [q, c]) => a + parseFloat(q) * c, 0);
+            const abq = totalOrders > 0 ? (totalQty / totalOrders).toFixed(1) : "—";
+            return (
+              <div style={{...S.card,marginBottom:16}}>
+                {/* Shared chart header */}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <span style={{fontSize:13,fontWeight:700,color:chartColor}}>{dsLabel}</span>
+                  <span style={{fontSize:11,color:HR.muted}}>{totalOrders} instances · ABQ {abq}</span>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"2fr 3fr",gap:16,alignItems:"start"}}>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:HR.text,marginBottom:4}}>Order Qty Frequency</div>
+                    <SingleFreqChart freq={freqData} color={chartColor} minVal={storeMin} maxVal={storeMax} />
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:HR.text,marginBottom:4}}>Daily Order Qty</div>
+                    <DateOrderChart data={dateData} color={chartColor} minVal={storeMin} maxVal={storeMax} />
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* DS Computation Cards + DC Card — all 5 DS in one row */}
           <div style={{display:"grid",gridTemplateColumns:`repeat(${dsCards.length}, 1fr)`,gap:10,marginBottom:12}}>
