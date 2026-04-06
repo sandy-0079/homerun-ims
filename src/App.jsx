@@ -2640,7 +2640,7 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
     return [];
   }, [results, allEntries, drill, filteredInv, getSoldQty, getSoldVal, getInv, getCov, priceData, store]);
 
-  const thS = { ...S.th, cursor: "default", fontSize: 10, padding: "6px 8px", textAlign: "center" };
+  const thS = { ...S.th, cursor: "default", fontSize: 10, padding: "6px 8px", textAlign: "center", position: "sticky", top: 0, zIndex: 2, background: HR.surfaceLight };
   const tdC = { ...S.td, fontSize: 11, padding: "5px 8px", textAlign: "center", fontVariantNumeric: "tabular-nums" };
 
   // Period label for "Showing" display
