@@ -205,9 +205,9 @@ const SingleFreqChart = ({ freq, color, minVal, maxVal }) => {
         <YAxis tick={{fontSize:10, fill:"#666"}} allowDecimals={false} />
         <Tooltip formatter={(value, name, props) => [`${value} orders of qty ${props.payload.qty}`, null]} labelFormatter={() => ""} />
         <Bar dataKey="count" fill={col} radius={[2,2,0,0]} maxBarSize={40} isAnimationActive={false} />
-        {sameMinMax && <ReferenceLine x={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min=Max=${minVal}`, fill:"#C0392B", fontSize:9, position:"top"}} />}
-        {!sameMinMax && minVal != null && <ReferenceLine x={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min ${minVal}`, fill:"#C0392B", fontSize:9, position:"top"}} />}
-        {!sameMinMax && maxVal != null && <ReferenceLine x={maxVal} stroke="#2D7A3A" strokeDasharray="5 3" label={{value:`Max ${maxVal}`, fill:"#2D7A3A", fontSize:9, position:"top"}} />}
+        {sameMinMax && <ReferenceLine x={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min=Max=${minVal}`, fill:"#C0392B", fontSize:9, fontWeight:700, position:"insideTopRight"}} />}
+        {!sameMinMax && minVal != null && <ReferenceLine x={minVal} stroke="#C0392B" strokeDasharray="5 3" label={{value:`Min ${minVal}`, fill:"#C0392B", fontSize:9, fontWeight:700, position:"insideTopRight"}} />}
+        {!sameMinMax && maxVal != null && <ReferenceLine x={maxVal} stroke="#2D7A3A" strokeDasharray="5 3" label={{value:`Max ${maxVal}`, fill:"#2D7A3A", fontSize:9, fontWeight:700, position:"insideTopLeft"}} />}
       </BarChart>
     </ResponsiveContainer>
   );
