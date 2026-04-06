@@ -2136,11 +2136,10 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
             {sectionHead("Adjustments Applied")}
             {steps.map((step, i) => (
               <div key={i} style={{fontSize:10,color:dc.text,padding:"1px 0"}}>
-                {step.rule === "newDSFloor" && `New DS Floor applied: Min=Max=${step.floorVal}`}
-                {step.rule === "brandBuffer" && `Brand Buffer: +${step.bufferDays}D → Min=${step.newMin}, Max=${step.newMax}`}
-                {step.rule === "skuFloor" && `SKU Floor: Min→${step.newMin}, Max→${step.newMax}`}
-                {step.rule === "deadStock" && "Dead Stock: Max capped to Min"}
-                {!["newDSFloor","brandBuffer","skuFloor","deadStock"].includes(step.rule) && `${step.rule}: ${JSON.stringify(step)}`}
+                {step.rule === "New DS Floor" && `New DS Floor: floor ${step.floor} > computed ${step.beforeMin} → Min=Max=${step.floor}`}
+                {step.rule === "Brand Buffer" && `Brand Buffer: +${step.bufDays}D (DOH ${step.dohMin?.toFixed?.(1) ?? "?"}D) → Min=Max=${s.min}`}
+                {step.rule === "SKU Floor" && `SKU Floor: floor Min ${step.floorMin} / Max ${step.floorMax} > computed ${step.beforeMin}/${step.beforeMax}`}
+                {!["New DS Floor","Brand Buffer","SKU Floor"].includes(step.rule) && `${step.rule}`}
               </div>
             ))}
           </>
@@ -2184,19 +2183,19 @@ const DCCard = ({ dcData, meta, params }) => {
         {det ? (
           <>
             {row("Non-Zero Days", det.nonZeroDays ?? dc.nonZeroDays ?? "—")}
-            {row("Sum DS Mins", det.sumDSMin ?? "—")}
-            {row("Sum DS Maxes", det.sumDSMax ?? "—")}
+            {row("Sum DS Mins", det.sumMin ?? "—")}
+            {row("Sum DS Maxes", det.sumMax ?? "—")}
             {row("Sum Daily Avg", det.sumDailyAvg != null ? det.sumDailyAvg.toFixed(2) : "—")}
-            {row("Brand Lead Time", `${det.brandLeadTimeDays ?? 2}D`)}
+            {row("Brand Lead Time", `${det.leadTime ?? 2}D`)}
             {det.isDead ? (
               <>
-                {row("Dead Stock Mult Min", det.dcMultMin ?? "—")}
-                {row("Dead Stock Mult Max", det.dcMultMax ?? "—")}
+                {row("Dead Stock Mult Min", det.multMin ?? "—")}
+                {row("Dead Stock Mult Max", det.multMax ?? "—")}
               </>
             ) : (
               <>
-                {row("DC Mult Min", det.dcMultMin ?? "—")}
-                {row("DC Mult Max", det.dcMultMax ?? "—")}
+                {row("DC Mult Min", det.multMin ?? "—")}
+                {row("DC Mult Max", det.multMax ?? "—")}
                 {det.leadTimeMin != null && row("Lead Time Min", det.leadTimeMin)}
                 {row("DC Min formula", `max(leadTimeMin, sumDSMin × multMin) = ${dc.min}`)}
                 {row("DC Max formula", `max(ceil(dcMin × multMax/multMin), sumDSMax × multMax) = ${dc.max}`)}
@@ -2283,8 +2282,8 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
   const searchRef = useRef(null);
 
   const skuList = useMemo(() => {
-    if (!skuMaster || !skuMaster.length) return [];
-    return skuMaster.map(s => ({ sku: s.SKU || s.sku, name: s.Name || s.name || "" }));
+    if (!skuMaster || typeof skuMaster !== "object") return [];
+    return Object.values(skuMaster).map(s => ({ sku: s.SKU || s.sku, name: s.Name || s.name || "" }));
   }, [skuMaster]);
 
   const matches = useMemo(() => {
@@ -2598,7 +2597,7 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
         });
         const covMin = getCov(invMin, soldVal);
         const covMax = getCov(invMax, soldVal);
-        return { key: cat, label: cat, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax };
+        return { key: c.category, label: c.category, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax };
       }).sort((a, b) => b.invMax - a.invMax);
     }
 
@@ -2624,7 +2623,7 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
         });
         const covMin = getCov(invMin, soldVal);
         const covMax = getCov(invMax, soldVal);
-        return { key: brand, label: brand, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax };
+        return { key: b.brand, label: b.brand, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax };
       }).sort((a, b) => b.invMax - a.invMax);
     }
 
