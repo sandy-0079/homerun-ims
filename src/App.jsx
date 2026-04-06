@@ -2513,6 +2513,383 @@ function ImpactPreviewPanelV2({
     </div>
   );
 }
+// ─── Overview Tab Helpers ────────────────────────────────────────────────────
+const OV_PERIODS = [
+  { key: "L90D", label: "L90D", days: 90 },
+  { key: "L60D", label: "L60D", days: 60 },
+  { key: "L45D", label: "L45D", days: 45 },
+  { key: "L30D", label: "L30D", days: 30 },
+  { key: "L15D", label: "L15D", days: 15 },
+  { key: "L7D",  label: "L7D",  days: 7 },
+  { key: "CUSTOM", label: "Custom" },
+];
+
+function filterInvoiceByPeriod(invoiceData, periodKey, dateFrom, dateTo, invoiceDateRange) {
+  if (!invoiceData || !invoiceData.length) return [];
+  const allDates = invoiceDateRange.dates;
+  if (periodKey === "CUSTOM" && dateFrom && dateTo) {
+    return invoiceData.filter(r => r.date >= dateFrom && r.date <= dateTo);
+  }
+  const preset = OV_PERIODS.find(p => p.key === periodKey);
+  if (preset && preset.days) {
+    const last = allDates.slice(-preset.days);
+    return invoiceData.filter(r => last.includes(r.date));
+  }
+  return invoiceData;
+}
+
+function fmtVal(v) {
+  if (v == null || isNaN(v)) return "–";
+  if (v >= 100000) return "₹" + (v / 100000).toFixed(1) + "L";
+  if (v >= 1000) return "₹" + (v / 1000).toFixed(1) + "K";
+  return "₹" + Math.round(v);
+}
+function fmtCov(v) {
+  if (v == null) return "No Sale";
+  return v.toFixed(1) + "D";
+}
+
+function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange,
+  period, setPeriod, dateFrom, setDateFrom, dateTo, setDateTo,
+  store, setStore, drill, setDrill, onNavigateToSKU }) {
+
+  const filteredInv = useMemo(() =>
+    filterInvoiceByPeriod(invoiceData, period, dateFrom, dateTo, invoiceDateRange),
+    [invoiceData, period, dateFrom, dateTo, invoiceDateRange]);
+
+  const periodDays = useMemo(() => {
+    const dates = new Set(filteredInv.map(r => r.date));
+    return dates.size;
+  }, [filteredInv]);
+
+  // Build sold qty/value maps from filtered invoices
+  const soldMaps = useMemo(() => {
+    const qtyBySku = {}, valBySku = {}, qtyBySkuDs = {};
+    filteredInv.forEach(r => {
+      const key = r.sku;
+      qtyBySku[key] = (qtyBySku[key] || 0) + r.qty;
+      valBySku[key] = (valBySku[key] || 0) + r.qty * (priceData[key] || 0);
+      const dsKey = key + "||" + r.ds;
+      qtyBySkuDs[dsKey] = (qtyBySkuDs[dsKey] || 0) + r.qty;
+    });
+    return { qtyBySku, valBySku, qtyBySkuDs };
+  }, [filteredInv, priceData]);
+
+  // All result entries as array
+  const allEntries = useMemo(() => {
+    if (!results) return [];
+    return Object.entries(results).map(([sku, r]) => ({ sku, ...r }));
+  }, [results]);
+
+  // Active SKUs from engine results
+  const activeSkus = useMemo(() =>
+    allEntries.filter(r => (r.meta?.status || "").trim().toLowerCase() === "active"),
+    [allEntries]);
+
+  // KPI computations
+  const kpis = useMemo(() => {
+    const activeCt = activeSkus.length;
+    const soldSkus = new Set(filteredInv.map(r => r.sku));
+    const skusSold = activeSkus.filter(r => soldSkus.has(r.sku)).length;
+    const zeroSale = activeCt - skusSold;
+
+    let invMin = 0, invMax = 0;
+    if (results) {
+      Object.entries(results).forEach(([sku, r]) => {
+        const p = priceData[sku] || 0;
+        DS_LIST.forEach(ds => {
+          invMin += (r.stores[ds]?.min || 0) * p;
+          invMax += (r.stores[ds]?.max || 0) * p;
+        });
+        invMin += (r.dc?.min || 0) * p;
+        invMax += (r.dc?.max || 0) * p;
+      });
+    }
+    return { activeCt, skusSold, zeroSale, invMin: Math.round(invMin), invMax: Math.round(invMax) };
+  }, [activeSkus, filteredInv, results, priceData]);
+
+  // Helper: get inv min/max for a SKU given store selection
+  const getInv = useCallback((r, field) => {
+    if (!r) return 0;
+    if (store === "DC") return r.dc?.[field] || 0;
+    if (store !== "All") return r.stores[store]?.[field] || 0;
+    return DS_LIST.reduce((s, ds) => s + (r.stores[ds]?.[field] || 0), 0);
+  }, [store]);
+
+  // Helper: get sold qty for a SKU given store selection
+  const getSoldQty = useCallback((sku) => {
+    if (store === "DC") return 0; // DC has no direct sales
+    if (store !== "All") return soldMaps.qtyBySkuDs[sku + "||" + store] || 0;
+    return soldMaps.qtyBySku[sku] || 0;
+  }, [store, soldMaps]);
+
+  // Helper: get sold value for a SKU given store selection
+  const getSoldVal = useCallback((sku) => {
+    if (store === "DC") return 0;
+    if (store !== "All") return (soldMaps.qtyBySkuDs[sku + "||" + store] || 0) * (priceData[sku] || 0);
+    return soldMaps.valBySku[sku] || 0;
+  }, [store, soldMaps, priceData]);
+
+  // Coverage helper
+  const getCov = useCallback((invVal, soldVal) => {
+    if (!soldVal || soldVal <= 0 || !periodDays) return null;
+    const dailySoldVal = soldVal / periodDays;
+    return invVal / dailySoldVal;
+  }, [periodDays]);
+
+  // Build table rows based on drill level
+  const tableData = useMemo(() => {
+    if (!results) return [];
+
+    if (drill === null) {
+      // Category level
+      const catMap = {};
+      allEntries.forEach(r => {
+        const cat = r.meta?.category || "Unknown";
+        if (!catMap[cat]) catMap[cat] = { category: cat, skus: [] };
+        catMap[cat].skus.push(r);
+      });
+      return Object.values(catMap).map(c => {
+        const activeSks = c.skus.filter(r => (r.meta?.status || "").trim().toLowerCase() === "active");
+        const soldSkuSet = new Set(filteredInv.map(r => r.sku));
+        const skusSold = activeSks.filter(r => soldSkuSet.has(r.sku)).length;
+        const zeroSale = activeSks.length - skusSold;
+        let soldQty = 0, soldVal = 0, invMin = 0, invMax = 0;
+        c.skus.forEach(r => {
+          soldQty += getSoldQty(r.sku);
+          soldVal += getSoldVal(r.sku);
+          invMin += getInv(r, "min") * (priceData[r.sku] || 0);
+          invMax += getInv(r, "max") * (priceData[r.sku] || 0);
+        });
+        const covMin = getCov(invMin, soldVal);
+        const covMax = getCov(invMax, soldVal);
+        return { key: cat, label: cat, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax };
+      }).sort((a, b) => b.invMax - a.invMax);
+    }
+
+    if (drill.type === "category") {
+      // Brand level within a category
+      const brandMap = {};
+      allEntries.filter(r => (r.meta?.category || "Unknown") === drill.value).forEach(r => {
+        const brand = r.meta?.brand || "Unknown";
+        if (!brandMap[brand]) brandMap[brand] = { brand, skus: [] };
+        brandMap[brand].skus.push(r);
+      });
+      return Object.values(brandMap).map(b => {
+        const activeSks = b.skus.filter(r => (r.meta?.status || "").trim().toLowerCase() === "active");
+        const soldSkuSet = new Set(filteredInv.map(r => r.sku));
+        const skusSold = activeSks.filter(r => soldSkuSet.has(r.sku)).length;
+        const zeroSale = activeSks.length - skusSold;
+        let soldQty = 0, soldVal = 0, invMin = 0, invMax = 0;
+        b.skus.forEach(r => {
+          soldQty += getSoldQty(r.sku);
+          soldVal += getSoldVal(r.sku);
+          invMin += getInv(r, "min") * (priceData[r.sku] || 0);
+          invMax += getInv(r, "max") * (priceData[r.sku] || 0);
+        });
+        const covMin = getCov(invMin, soldVal);
+        const covMax = getCov(invMax, soldVal);
+        return { key: brand, label: brand, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax };
+      }).sort((a, b) => b.invMax - a.invMax);
+    }
+
+    if (drill.type === "brand") {
+      // SKU level within a brand+category
+      return allEntries
+        .filter(r => (r.meta?.category || "Unknown") === drill.category && (r.meta?.brand || "Unknown") === drill.value)
+        .map(r => {
+          const soldQty = getSoldQty(r.sku);
+          const soldVal = getSoldVal(r.sku);
+          const invMin = getInv(r, "min") * (priceData[r.sku] || 0);
+          const invMax = getInv(r, "max") * (priceData[r.sku] || 0);
+          const covMin = getCov(invMin, soldVal);
+          const covMax = getCov(invMax, soldVal);
+          const dailyAvg = store === "DC" ? 0 : store !== "All" ? (r.stores[store]?.dailyAvg || 0) : DS_LIST.reduce((s, ds) => s + (r.stores[ds]?.dailyAvg || 0), 0);
+          const abq = store !== "All" && store !== "DC" ? (r.stores[store]?.abq || 0) : 0;
+          const mvTag = store === "DC" ? (r.dc?.mvTag || "—") : store !== "All" ? (r.stores[store]?.mvTag || "—") : (r.dc?.mvTag || "—");
+          return { key: r.sku, sku: r.sku, label: r.meta?.name || r.sku, meta: r.meta, mvTag, priceTag: r.meta?.priceTag || "No Price", dailyAvg, abq, soldQty, soldVal, invMin, invMax, covMin, covMax, stores: r.stores, dc: r.dc };
+        }).sort((a, b) => b.invMax - a.invMax);
+    }
+    return [];
+  }, [results, allEntries, drill, filteredInv, getSoldQty, getSoldVal, getInv, getCov, priceData, store]);
+
+  const thS = { ...S.th, cursor: "default", fontSize: 10, padding: "6px 8px" };
+  const tdS = { ...S.td, fontSize: 11, padding: "5px 8px" };
+  const tdR = { ...tdS, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* KPI Strip */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 6, marginBottom: 8 }}>
+        {[
+          { label: "Active SKUs", value: kpis.activeCt, color: HR.green },
+          { label: "SKUs Sold", value: kpis.skusSold, color: HR.yellowDark },
+          { label: "Zero Sale SKUs", value: kpis.zeroSale, color: "#C0392B" },
+          { label: "Inv Value Min", value: fmtVal(kpis.invMin), color: HR.green },
+          { label: "Inv Value Max", value: fmtVal(kpis.invMax), color: HR.yellowDark },
+        ].map(c => (
+          <div key={c.label} style={{ background: HR.surface, borderRadius: 8, padding: "12px 14px", border: `1px solid ${HR.border}` }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: c.color }}>{c.value}</div>
+            <div style={{ fontSize: 11, color: HR.muted, marginTop: 2 }}>{c.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Period picker row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        {OV_PERIODS.filter(p => p.key !== "CUSTOM").map(p => (
+          <button key={p.key} onClick={() => setPeriod(p.key)}
+            style={S.btn(period === p.key)}>{p.label}</button>
+        ))}
+        <button onClick={() => setPeriod("CUSTOM")} style={S.btn(period === "CUSTOM")}>Custom</button>
+        {period === "CUSTOM" && (
+          <>
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              style={{ ...S.input, fontSize: 11, padding: "3px 6px" }} />
+            <span style={{ color: HR.muted, fontSize: 11 }}>to</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              style={{ ...S.input, fontSize: 11, padding: "3px 6px" }} />
+          </>
+        )}
+        <span style={{ fontSize: 10, color: HR.muted, marginLeft: 4 }}>
+          Data: {invoiceDateRange.min || "—"} → {invoiceDateRange.max || "—"}
+        </span>
+        <select value={store} onChange={e => setStore(e.target.value)}
+          style={{ ...S.input, fontSize: 11, padding: "4px 8px", marginLeft: "auto" }}>
+          <option value="All">All Stores</option>
+          {DS_LIST.map(ds => <option key={ds} value={ds}>{ds}</option>)}
+          <option value="DC">DC</option>
+        </select>
+        <span style={{ fontSize: 10, color: HR.muted, fontWeight: 600 }}>{periodDays}D</span>
+      </div>
+
+      {/* Breadcrumb */}
+      {drill !== null && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 12 }}>
+          <button onClick={() => setDrill(null)}
+            style={{ ...S.btn(false), padding: "2px 8px", fontSize: 11 }}>← Back</button>
+          <span style={{ color: HR.muted, cursor: "pointer" }} onClick={() => setDrill(null)}>All Categories</span>
+          {drill.type === "category" && (
+            <><span style={{ color: HR.muted }}>›</span><span style={{ fontWeight: 600 }}>{drill.value}</span></>
+          )}
+          {drill.type === "brand" && (
+            <>
+              <span style={{ color: HR.muted }}>›</span>
+              <span style={{ color: HR.muted, cursor: "pointer" }} onClick={() => setDrill({ type: "category", value: drill.category })}>{drill.category}</span>
+              <span style={{ color: HR.muted }}>›</span>
+              <span style={{ fontWeight: 600 }}>{drill.value}</span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Table */}
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "auto", borderRadius: 8, border: `1px solid ${HR.border}` }}>
+        <table style={S.table}>
+          <thead>
+            {drill?.type === "brand" ? (
+              <tr>
+                <th style={thS}>SKU</th>
+                <th style={thS}>Movement</th>
+                <th style={thS}>Price Tag</th>
+                <th style={{ ...thS, textAlign: "right" }}>Daily Avg</th>
+                <th style={{ ...thS, textAlign: "right" }}>ABQ</th>
+                <th style={{ ...thS, textAlign: "right" }}>Sold Qty</th>
+                <th style={{ ...thS, textAlign: "right" }}>Sold Value</th>
+                <th style={{ ...thS, textAlign: "right" }}>Inv Min</th>
+                <th style={{ ...thS, textAlign: "right" }}>Inv Max</th>
+                <th style={{ ...thS, textAlign: "right" }}>Cov Min</th>
+                <th style={{ ...thS, textAlign: "right" }}>Cov Max</th>
+              </tr>
+            ) : (
+              <tr>
+                <th style={thS}>{drill === null ? "Category" : "Brand"}</th>
+                <th style={{ ...thS, textAlign: "right" }}>Active SKUs</th>
+                <th style={{ ...thS, textAlign: "right" }}>SKUs Sold</th>
+                <th style={{ ...thS, textAlign: "right" }}>Zero Sale</th>
+                <th style={{ ...thS, textAlign: "right" }}>Sold Qty</th>
+                <th style={{ ...thS, textAlign: "right" }}>Sold Value</th>
+                <th style={{ ...thS, textAlign: "right" }}>Inv Min</th>
+                <th style={{ ...thS, textAlign: "right" }}>Inv Max</th>
+                <th style={{ ...thS, textAlign: "right" }}>Cov Min</th>
+                <th style={{ ...thS, textAlign: "right" }}>Cov Max</th>
+              </tr>
+            )}
+          </thead>
+          <tbody>
+            {tableData.length === 0 && (
+              <tr><td colSpan={11} style={{ ...tdS, textAlign: "center", color: HR.muted, padding: 30 }}>No data available</td></tr>
+            )}
+            {drill?.type === "brand" ? (
+              tableData.map(row => (
+                <React.Fragment key={row.key}>
+                  <tr style={{ cursor: "pointer" }} onClick={() => onNavigateToSKU(row.sku)}
+                    onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
+                    onMouseLeave={e => e.currentTarget.style.background = ""}>
+                    <td style={tdS}>
+                      <div style={{ fontWeight: 600, fontSize: 11, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.label}</div>
+                      <div style={{ fontSize: 9, color: HR.muted }}>{row.sku}</div>
+                    </td>
+                    <td style={tdS}><MovTag value={row.mvTag} /></td>
+                    <td style={tdS}><TagPill value={row.priceTag} colorMap={PRICE_TAG_COLORS} /></td>
+                    <td style={tdR}>{row.dailyAvg > 0 ? row.dailyAvg.toFixed(1) : "—"}</td>
+                    <td style={tdR}>{row.abq > 0 ? row.abq.toFixed(1) : "—"}</td>
+                    <td style={tdR}>{row.soldQty || "—"}</td>
+                    <td style={tdR}>{fmtVal(row.soldVal)}</td>
+                    <td style={tdR}>{fmtVal(row.invMin)}</td>
+                    <td style={tdR}>{fmtVal(row.invMax)}</td>
+                    <td style={tdR}>{fmtCov(row.covMin)}</td>
+                    <td style={tdR}>{fmtCov(row.covMax)}</td>
+                  </tr>
+                  {/* Per-store breakdown */}
+                  <tr>
+                    <td colSpan={11} style={{ padding: "2px 8px 6px", borderTop: "none", background: HR.surfaceLight }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 10 }}>
+                        {DS_LIST.map((ds, i) => {
+                          const st = row.stores[ds] || {};
+                          return (
+                            <span key={ds} style={{ color: DS_COLORS[i].header, fontWeight: 600 }}>
+                              {ds}: {st.min || 0}/{st.max || 0}
+                            </span>
+                          );
+                        })}
+                        <span style={{ color: DC_COLOR.header, fontWeight: 600 }}>
+                          DC: {row.dc?.min || 0}/{row.dc?.max || 0}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                </React.Fragment>
+              ))
+            ) : (
+              tableData.map(row => (
+                <tr key={row.key} style={{ cursor: "pointer" }}
+                  onClick={() => {
+                    if (drill === null) setDrill({ type: "category", value: row.key });
+                    else if (drill.type === "category") setDrill({ type: "brand", value: row.key, category: drill.value });
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
+                  onMouseLeave={e => e.currentTarget.style.background = ""}>
+                  <td style={{ ...tdS, fontWeight: 600 }}>{row.label}</td>
+                  <td style={tdR}>{row.activeSks}</td>
+                  <td style={tdR}>{row.skusSold}</td>
+                  <td style={{ ...tdR, color: row.zeroSale > 0 ? "#C0392B" : HR.muted }}>{row.zeroSale}</td>
+                  <td style={tdR}>{row.soldQty || "—"}</td>
+                  <td style={tdR}>{fmtVal(row.soldVal)}</td>
+                  <td style={tdR}>{fmtVal(row.invMin)}</td>
+                  <td style={tdR}>{fmtVal(row.invMax)}</td>
+                  <td style={tdR}>{fmtCov(row.covMin)}</td>
+                  <td style={tdR}>{fmtCov(row.covMax)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App(){
   const [tab,setTab]=useState("overview"),[pendingTab,setPending]=useState(null);
@@ -3215,6 +3592,30 @@ const displayDS=filterDS==="All"?DS_LIST:[filterDS];
     </div>
   </div>
 )}
+
+        {tab==="overview"&&(
+          !dataLoaded?(
+            <div style={{textAlign:"center",padding:60}}>
+              <div style={{fontSize:36,marginBottom:10}}>⚡</div>
+              <div style={{color:HR.muted,fontSize:14,marginBottom:6}}>No data loaded yet</div>
+              {isAdmin
+                ?<button onClick={()=>setTab("upload")} style={{...S.runBtn,width:"auto",padding:"7px 20px"}}>Upload Data →</button>
+                :<div style={{color:HR.muted,fontSize:12}}>Data is being prepared. Check back soon.</div>
+              }
+            </div>
+          ):(
+            <OverviewTab
+              invoiceData={invoiceData} results={results} priceData={priceData} params={params}
+              invoiceDateRange={invoiceDateRange}
+              period={ovPeriod} setPeriod={setOvPeriod}
+              dateFrom={ovDateFrom} setDateFrom={setOvDateFrom}
+              dateTo={ovDateTo} setDateTo={setOvDateTo}
+              store={ovStore} setStore={setOvStore}
+              drill={ovDrill} setDrill={setOvDrill}
+              onNavigateToSKU={(skuId) => { setSdSku(skuId); setSdSearch(skuId); setTab("skuDetail"); }}
+            />
+          )
+        )}
 
         {tab==="dashboard"&&(
           !dataLoaded?(
