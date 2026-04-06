@@ -2225,7 +2225,8 @@ const DateOrderChart = ({ data, dsView }) => {
   const di = DS_LIST.indexOf(dsView);
   const color = di >= 0 ? DS_COLORS[di].header : HR.yellowDark;
   const yTicks = [0, 1, 2, 3].map(i => Math.round((maxQty / 3) * i));
-  const showAllLabels = data.length <= 30;
+  // Show label every Nth bar so they don't overlap
+  const labelEvery = data.length <= 15 ? 1 : data.length <= 30 ? 2 : data.length <= 60 ? 5 : 7;
 
   return (
     <div>
@@ -2247,11 +2248,12 @@ const DateOrderChart = ({ data, dsView }) => {
             const barH = maxQty > 0 ? Math.max(d.qty > 0 ? 2 : 0, (d.qty / maxQty) * chartH) : 0;
             const x = padL + i * (barW + 2) + 1;
             const y = padT + chartH - barH;
+            const showLabel = i === 0 || i === data.length - 1 || i % labelEvery === 0;
             return (
               <g key={i}>
                 <rect x={x} y={y} width={barW} height={barH} fill={color} opacity={0.8} rx={1} />
                 {d.qty > 0 && <text x={x + barW / 2} y={y - 3} textAnchor="middle" fill={color} fontSize={8} fontWeight="700">{d.qty}</text>}
-                {showAllLabels && (
+                {showLabel && (
                   <text x={x + barW / 2} y={padT + chartH + 14} textAnchor="end" fill="#555548" fontSize={7} fontWeight="500" transform={`rotate(-45,${x + barW / 2},${padT + chartH + 14})`}>
                     {d.date.slice(5)}
                   </text>
@@ -2259,13 +2261,6 @@ const DateOrderChart = ({ data, dsView }) => {
               </g>
             );
           })}
-          {!showAllLabels && data.length > 1 && (
-            <>
-              <text x={padL + 4} y={svgH - 4} textAnchor="start" fill="#555548" fontSize={9}>{data[0].date.slice(5)}</text>
-              <text x={padL + (data.length - 1) * (barW + 2)} y={svgH - 4} textAnchor="end" fill="#555548" fontSize={9}>{data[data.length - 1].date.slice(5)}</text>
-            </>
-          )}
-          <text x={padL + innerW / 2} y={svgH - 2} textAnchor="middle" fill="#777760" fontSize={10} fontWeight="600">Date</text>
         </svg>
       </div>
     </div>
@@ -2346,6 +2341,15 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
     if (dsView === "All") return DS_LIST;
     return [dsView];
   }, [dsView]);
+
+  // Compute period label showing actual date range
+  const periodLabel = useMemo(() => {
+    if (!dateData.length) return "";
+    const fmt = d => { const dt = new Date(d + "T00:00:00"); return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }); };
+    const from = fmt(dateData[0].date);
+    const to = fmt(dateData[dateData.length - 1].date);
+    return `${from} → ${to} (${dateData.length}D)`;
+  }, [dateData]);
 
   return (
     <div>
@@ -2449,6 +2453,13 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             </div>
           </div>
 
+          {/* Period range label */}
+          {periodLabel && (
+            <div style={{fontSize:11,color:HR.muted,marginBottom:8,fontWeight:500}}>
+              Showing: {periodLabel}
+            </div>
+          )}
+
           {/* Stats strip */}
           <StatStrip items={[
             { label: "Instances", value: stats.instances.toLocaleString(), color: HR.yellowDark },
@@ -2457,15 +2468,15 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             { label: "Active Days", value: stats.activeDays, color: HR.yellowDark },
           ]} />
 
-          {/* Charts side by side */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16,alignItems:"start"}}>
-            <div style={{...S.card}}>
+          {/* Charts side by side — date chart wider */}
+          <div style={{display:"grid",gridTemplateColumns:"2fr 3fr",gap:12,marginBottom:16,alignItems:"stretch"}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column"}}>
               <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Order Qty Frequency</div>
-              <SingleFreqChart freq={freqData} ds={dsView === "All" ? "All DS Combined" : dsView} />
+              <div style={{flex:1,display:"flex",alignItems:"center"}}><SingleFreqChart freq={freqData} ds={dsView === "All" ? "All DS Combined" : dsView} /></div>
             </div>
-            <div style={{...S.card}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column"}}>
               <div style={{fontSize:12,fontWeight:700,color:HR.text,marginBottom:6}}>Daily Order Qty</div>
-              <DateOrderChart data={dateData} dsView={dsView} />
+              <div style={{flex:1}}><DateOrderChart data={dateData} dsView={dsView} /></div>
             </div>
           </div>
 
