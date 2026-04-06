@@ -186,7 +186,7 @@ const StatStrip=({items})=>(
 /* ── Unified chart system ─────────────────────────────────────────────── */
 const CW = 500;          // viewBox width — SAME for both charts
 const CH = 160;          // plot area height
-const CP = { l: 36, r: 8, t: 14, b: 40 };  // padding: left (y-axis), right, top, bottom (x-labels)
+const CP = { l: 36, r: 8, t: 28, b: 40 };  // padding: left (y-axis), right, top (title+gap), bottom (x-labels)
 const CF = 9;            // base font size (all text scales from this)
 
 function chartGrid(svgW, maxVal, yLabel) {
@@ -226,7 +226,7 @@ function refLineV(xPos, label, lineColor) {
   </g>;
 }
 
-const SingleFreqChart = ({ freq, color, minVal, maxVal }) => {
+const SingleFreqChart = ({ freq, color, minVal, maxVal, title }) => {
   const entries = Object.entries(freq).map(([q, c]) => ({ qty: parseFloat(q), cnt: c })).sort((a, b) => a.qty - b.qty);
   if (!entries.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
   const plotW = CW - CP.l - CP.r;
@@ -238,6 +238,7 @@ const SingleFreqChart = ({ freq, color, minVal, maxVal }) => {
 
   return (
     <svg viewBox={`0 0 ${CW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", width: "100%", height: "auto" }}>
+      {title && <text x={CP.l} y={14} fill={HR.text} fontSize={CF + 1} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{title}</text>}
       {chartGrid(CW, maxCnt, "Orders")}
       {entries.map((e, i) => {
         const barH = maxCnt > 0 ? Math.max(1.5, (e.cnt / maxCnt) * CH) : 1.5;
@@ -2271,7 +2272,7 @@ const DCCard = ({ dcData, meta, params, horizontal }) => {
   );
 };
 
-const DateOrderChart = ({ data, color, minVal, maxVal }) => {
+const DateOrderChart = ({ data, color, minVal, maxVal, title }) => {
   if (!data || !data.length) return <div style={{ color: HR.muted, fontSize: 11, padding: 20, textAlign: "center" }}>No order data</div>;
   const maxQty = Math.max(...data.map(d => d.qty), 1);
   const plotW = CW - CP.l - CP.r;
@@ -2283,6 +2284,7 @@ const DateOrderChart = ({ data, color, minVal, maxVal }) => {
 
   return (
     <svg viewBox={`0 0 ${CW} ${svgH}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", width: "100%", height: "auto" }}>
+      {title && <text x={CP.l} y={14} fill={HR.text} fontSize={CF + 1} fontWeight="700" fontFamily="Inter,system-ui,sans-serif">{title}</text>}
       {chartGrid(CW, maxQty, "Qty")}
       {/* Min/Max horizontal reference lines */}
       {refLineH(minVal, Math.max(maxQty, minVal || 0, maxVal || 0), CW, `Min ${minVal}`, "#C0392B")}
@@ -2526,15 +2528,9 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
                   <span style={{fontSize:13,fontWeight:700,color:chartColor}}>{dsLabel}</span>
                   <span style={{fontSize:11,color:HR.muted}}>{totalOrders} instances · ABQ {abq}</span>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"2fr 3fr",gap:16,alignItems:"start"}}>
-                  <div>
-                    <div style={{fontSize:11,fontWeight:600,color:HR.text,marginBottom:4}}>Order Qty Frequency</div>
-                    <SingleFreqChart freq={freqData} color={chartColor} minVal={storeMin} maxVal={storeMax} />
-                  </div>
-                  <div>
-                    <div style={{fontSize:11,fontWeight:600,color:HR.text,marginBottom:4}}>Daily Order Qty</div>
-                    <DateOrderChart data={dateData} color={chartColor} minVal={storeMin} maxVal={storeMax} />
-                  </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+                  <SingleFreqChart freq={freqData} color={chartColor} minVal={storeMin} maxVal={storeMax} title="Order Qty Frequency" />
+                  <DateOrderChart data={dateData} color={chartColor} minVal={storeMin} maxVal={storeMax} title="Daily Order Qty" />
                 </div>
               </div>
             );
