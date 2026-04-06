@@ -2018,9 +2018,14 @@ function filterInvoiceByPeriod(invoiceData, periodKey, dateFrom, dateTo, invoice
 
 function fmtVal(v) {
   if (v == null || isNaN(v)) return "–";
+  if (v >= 10000000) return "₹" + (v / 10000000).toFixed(2) + "Cr";
   if (v >= 100000) return "₹" + (v / 100000).toFixed(1) + "L";
   if (v >= 1000) return "₹" + (v / 1000).toFixed(1) + "K";
-  return "₹" + Math.round(v);
+  return "₹" + Math.round(v).toLocaleString();
+}
+function fmtNum(v) {
+  if (v == null || isNaN(v)) return "–";
+  return Number(v).toLocaleString();
 }
 function fmtCov(v) {
   if (v == null) return "No Sale";
@@ -2635,9 +2640,17 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
     return [];
   }, [results, allEntries, drill, filteredInv, getSoldQty, getSoldVal, getInv, getCov, priceData, store]);
 
-  const thS = { ...S.th, cursor: "default", fontSize: 10, padding: "6px 8px" };
-  const tdS = { ...S.td, fontSize: 11, padding: "5px 8px" };
-  const tdR = { ...tdS, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+  const thS = { ...S.th, cursor: "default", fontSize: 10, padding: "6px 8px", textAlign: "center" };
+  const tdC = { ...S.td, fontSize: 11, padding: "5px 8px", textAlign: "center", fontVariantNumeric: "tabular-nums" };
+
+  // Period label for "Showing" display
+  const ovPeriodLabel = useMemo(() => {
+    if (!filteredInv.length) return "";
+    const dates = [...new Set(filteredInv.map(r => r.date))].sort();
+    if (!dates.length) return "";
+    const fmt = d => { const dt = new Date(d + "T00:00:00"); return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }); };
+    return `${fmt(dates[0])} → ${fmt(dates[dates.length - 1])} (${dates.length}D)`;
+  }, [filteredInv]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -2685,6 +2698,11 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
         <span style={{ fontSize: 10, color: HR.muted, fontWeight: 600 }}>{periodDays}D</span>
       </div>
 
+      {/* Showing period label */}
+      {ovPeriodLabel && (
+        <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:500}}>Showing: {ovPeriodLabel}</div>
+      )}
+
       {/* Breadcrumb */}
       {drill !== null && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 12 }}>
@@ -2711,99 +2729,81 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
           <thead>
             {drill?.type === "brand" ? (
               <tr>
-                <th style={thS}>SKU</th>
+                <th style={{...thS, textAlign:"left"}}>SKU</th>
                 <th style={thS}>Movement</th>
                 <th style={thS}>Price Tag</th>
-                <th style={{ ...thS, textAlign: "right" }}>Daily Avg</th>
-                <th style={{ ...thS, textAlign: "right" }}>ABQ</th>
-                <th style={{ ...thS, textAlign: "right" }}>Sold Qty</th>
-                <th style={{ ...thS, textAlign: "right" }}>Sold Value</th>
-                <th style={{ ...thS, textAlign: "right" }}>Inv Min</th>
-                <th style={{ ...thS, textAlign: "right" }}>Inv Max</th>
-                <th style={{ ...thS, textAlign: "right" }}>Cov Min</th>
-                <th style={{ ...thS, textAlign: "right" }}>Cov Max</th>
+                <th style={thS}>Daily Avg</th>
+                <th style={thS}>ABQ</th>
+                <th style={thS}>Sold Val/Day</th>
+                <th style={thS}>Inv Min</th>
+                <th style={thS}>Inv Max</th>
+                <th style={thS}>Cov Min</th>
+                <th style={thS}>Cov Max</th>
               </tr>
             ) : (
               <tr>
-                <th style={thS}>{drill === null ? "Category" : "Brand"}</th>
-                <th style={{ ...thS, textAlign: "right" }}>Active SKUs</th>
-                <th style={{ ...thS, textAlign: "right" }}>SKUs Sold</th>
-                <th style={{ ...thS, textAlign: "right" }}>Zero Sale</th>
-                <th style={{ ...thS, textAlign: "right" }}>Sold Qty</th>
-                <th style={{ ...thS, textAlign: "right" }}>Sold Value</th>
-                <th style={{ ...thS, textAlign: "right" }}>Inv Min</th>
-                <th style={{ ...thS, textAlign: "right" }}>Inv Max</th>
-                <th style={{ ...thS, textAlign: "right" }}>Cov Min</th>
-                <th style={{ ...thS, textAlign: "right" }}>Cov Max</th>
+                <th style={{...thS, textAlign:"left"}}>{drill === null ? "Category" : "Brand"}</th>
+                <th style={thS}>Active SKUs</th>
+                <th style={thS}>SKUs Sold</th>
+                <th style={thS}>Zero Sale</th>
+                <th style={thS}>Sold Val/Day</th>
+                <th style={thS}>Inv Min</th>
+                <th style={thS}>Inv Max</th>
+                <th style={thS}>Cov Min</th>
+                <th style={thS}>Cov Max</th>
               </tr>
             )}
           </thead>
           <tbody>
             {tableData.length === 0 && (
-              <tr><td colSpan={11} style={{ ...tdS, textAlign: "center", color: HR.muted, padding: 30 }}>No data available</td></tr>
+              <tr><td colSpan={10} style={{ ...tdC, color: HR.muted, padding: 30 }}>No data available</td></tr>
             )}
             {drill?.type === "brand" ? (
-              tableData.map(row => (
-                <React.Fragment key={row.key}>
-                  <tr style={{ cursor: "pointer" }} onClick={() => onNavigateToSKU(row.sku)}
+              tableData.map(row => {
+                const soldPerDay = periodDays > 0 ? row.soldVal / periodDays : 0;
+                return (
+                  <tr key={row.key} style={{ cursor: "pointer" }} onClick={() => onNavigateToSKU(row.sku)}
                     onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
                     onMouseLeave={e => e.currentTarget.style.background = ""}>
-                    <td style={tdS}>
-                      <div style={{ fontWeight: 600, fontSize: 11, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.label}</div>
+                    <td style={{...tdC, textAlign:"left"}}>
+                      <div style={{ fontWeight: 600, fontSize: 11 }}>{row.label}</div>
                       <div style={{ fontSize: 9, color: HR.muted }}>{row.sku}</div>
                     </td>
-                    <td style={tdS}><MovTag value={row.mvTag} /></td>
-                    <td style={tdS}><TagPill value={row.priceTag} colorMap={PRICE_TAG_COLORS} /></td>
-                    <td style={tdR}>{row.dailyAvg > 0 ? row.dailyAvg.toFixed(1) : "—"}</td>
-                    <td style={tdR}>{row.abq > 0 ? row.abq.toFixed(1) : "—"}</td>
-                    <td style={tdR}>{row.soldQty || "—"}</td>
-                    <td style={tdR}>{fmtVal(row.soldVal)}</td>
-                    <td style={tdR}>{fmtVal(row.invMin)}</td>
-                    <td style={tdR}>{fmtVal(row.invMax)}</td>
-                    <td style={tdR}>{fmtCov(row.covMin)}</td>
-                    <td style={tdR}>{fmtCov(row.covMax)}</td>
+                    <td style={tdC}><MovTag value={row.mvTag} /></td>
+                    <td style={tdC}><TagPill value={row.priceTag} colorMap={PRICE_TAG_COLORS} /></td>
+                    <td style={tdC}>{row.dailyAvg > 0 ? row.dailyAvg.toFixed(1) : "—"}</td>
+                    <td style={tdC}>{row.abq > 0 ? row.abq.toFixed(1) : "—"}</td>
+                    <td style={tdC}>{fmtVal(soldPerDay)}</td>
+                    <td style={tdC}>{fmtVal(row.invMin)}</td>
+                    <td style={tdC}>{fmtVal(row.invMax)}</td>
+                    <td style={tdC}>{fmtCov(row.covMin)}</td>
+                    <td style={tdC}>{fmtCov(row.covMax)}</td>
                   </tr>
-                  {/* Per-store breakdown */}
-                  <tr>
-                    <td colSpan={11} style={{ padding: "2px 8px 6px", borderTop: "none", background: HR.surfaceLight }}>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 10 }}>
-                        {DS_LIST.map((ds, i) => {
-                          const st = row.stores[ds] || {};
-                          return (
-                            <span key={ds} style={{ color: DS_COLORS[i].header, fontWeight: 600 }}>
-                              {ds}: {st.min || 0}/{st.max || 0}
-                            </span>
-                          );
-                        })}
-                        <span style={{ color: DC_COLOR.header, fontWeight: 600 }}>
-                          DC: {row.dc?.min || 0}/{row.dc?.max || 0}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                </React.Fragment>
-              ))
+                );
+              })
             ) : (
-              tableData.map(row => (
-                <tr key={row.key} style={{ cursor: "pointer" }}
-                  onClick={() => {
-                    if (drill === null) setDrill({ type: "category", value: row.key });
-                    else if (drill.type === "category") setDrill({ type: "brand", value: row.key, category: drill.value });
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
-                  onMouseLeave={e => e.currentTarget.style.background = ""}>
-                  <td style={{ ...tdS, fontWeight: 600 }}>{row.label}</td>
-                  <td style={tdR}>{row.activeSks}</td>
-                  <td style={tdR}>{row.skusSold}</td>
-                  <td style={{ ...tdR, color: row.zeroSale > 0 ? "#C0392B" : HR.muted }}>{row.zeroSale}</td>
-                  <td style={tdR}>{row.soldQty || "—"}</td>
-                  <td style={tdR}>{fmtVal(row.soldVal)}</td>
-                  <td style={tdR}>{fmtVal(row.invMin)}</td>
-                  <td style={tdR}>{fmtVal(row.invMax)}</td>
-                  <td style={tdR}>{fmtCov(row.covMin)}</td>
-                  <td style={tdR}>{fmtCov(row.covMax)}</td>
-                </tr>
-              ))
+              tableData.map(row => {
+                const soldPerDay = periodDays > 0 ? row.soldVal / periodDays : 0;
+                return (
+                  <tr key={row.key} style={{ cursor: "pointer" }}
+                    onClick={() => {
+                      if (drill === null) setDrill({ type: "category", value: row.key });
+                      else if (drill.type === "category") setDrill({ type: "brand", value: row.key, category: drill.value });
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
+                    onMouseLeave={e => e.currentTarget.style.background = ""}>
+                    <td style={{ ...tdC, fontWeight: 600, textAlign:"left" }}>{row.label}</td>
+                    <td style={tdC}>{fmtNum(row.activeSks)}</td>
+                    <td style={tdC}>{fmtNum(row.skusSold)}</td>
+                    <td style={{ ...tdC, color: row.zeroSale > 0 ? "#C0392B" : HR.muted }}>{fmtNum(row.zeroSale)}</td>
+                    <td style={tdC}>{fmtVal(soldPerDay)}</td>
+                    <td style={tdC}>{fmtVal(row.invMin)}</td>
+                    <td style={tdC}>{fmtVal(row.invMax)}</td>
+                    <td style={tdC}>{fmtCov(row.covMin)}</td>
+                    <td style={tdC}>{fmtCov(row.covMax)}</td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
