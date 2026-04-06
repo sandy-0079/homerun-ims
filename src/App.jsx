@@ -2423,9 +2423,10 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
 
           {/* Stats strip */}
           <StatStrip items={[
-            { label: "Instances", value: stats.instances.toLocaleString(), color: HR.yellowDark },
-            { label: "Qty Sold", value: stats.qty.toLocaleString(), color: HR.green },
-            { label: "Avg Order Qty", value: stats.abq, color: HR.yellowDark },
+            { label: "Orders", value: stats.instances.toLocaleString(), color: HR.yellowDark },
+            { label: "Quantity Sold", value: stats.qty.toLocaleString(), color: HR.green },
+            { label: "Rate of Sale", value: dateData.length > 0 ? (stats.qty / dateData.length).toFixed(2) + "/day" : "—", color: HR.yellowDark },
+            { label: "ABQ", value: stats.abq, color: HR.yellowDark },
             { label: "Active Days", value: stats.activeDays, color: HR.yellowDark },
           ]} />
 
