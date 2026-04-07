@@ -2384,7 +2384,7 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             <div style={{flex:1,minWidth:200}}>
               <div style={{fontSize:16,fontWeight:800,color:HR.text}}>{res.meta?.name || skuId}</div>
               <div style={{fontSize:11,color:HR.muted,marginTop:2}}>
-                {res.meta?.sku || skuId} <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(res.meta?.sku || skuId); }} style={{cursor:"pointer",opacity:0.4,verticalAlign:"middle",marginLeft:2}} title="Copy SKU ID"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                {res.meta?.sku || skuId} <span onClick={e => { e.stopPropagation(); copyText(res.meta?.sku || skuId); }} style={{cursor:"pointer",opacity:0.4,verticalAlign:"middle",marginLeft:2}} title="Copy SKU ID"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
                 {res.meta?.category && <> · {res.meta.category}</>}
                 {res.meta?.brand && <> · {res.meta.brand}</>}
               </div>
@@ -2792,7 +2792,7 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
                     onMouseLeave={e => e.currentTarget.style.background = ""}>
                     <td style={{...tdC, textAlign:"left"}}>
                       <div style={{ fontWeight: 600, fontSize: 11 }}>{row.label}</div>
-                      <div style={{ fontSize: 9, color: HR.muted }}>{row.sku} <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(row.sku); }} style={{cursor:"pointer",opacity:0.4,verticalAlign:"middle",marginLeft:2}} title="Copy SKU ID"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span></div>
+                      <div style={{ fontSize: 9, color: HR.muted }}>{row.sku} <span onClick={e => { e.stopPropagation(); copyText(row.sku); }} style={{cursor:"pointer",opacity:0.4,verticalAlign:"middle",marginLeft:2}} title="Copy SKU ID"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span></div>
                     </td>
                     <td style={tdC}><MovTag value={row.mvTag} /></td>
                     <td style={tdC}><TagPill value={row.priceTag} colorMap={PRICE_TAG_COLORS} /></td>
@@ -2835,8 +2835,18 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
+// Lightweight copy-to-clipboard with toast feedback
+let _toastTimer = null;
+let _setToastMsg = null;
+function copyText(text) {
+  navigator.clipboard.writeText(text);
+  if (_setToastMsg) { _setToastMsg("Copied to clipboard"); clearTimeout(_toastTimer); _toastTimer = setTimeout(() => _setToastMsg(""), 1500); }
+}
+
 export default function App(){
   const [tab,setTab]=useState("overview"),[pendingTab,setPending]=useState(null);
+  const [toastMsg, setToastMsg] = useState("");
+  _setToastMsg = setToastMsg;
   const [invoiceData,setInv]=useState([]),[skuMaster,setSKU]=useState({});
   const [minReqQty,setMRQ]=useState({}),[newSKUQty,setNSQ]=useState({});
   const [deadStock,setDead]=useState(new Set()),[priceData,setPrice]=useState({});
@@ -4224,6 +4234,10 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
 )}{/* end logic tab */}
 {tab==="overrides"&&isAdmin&&<OverridesTab coreOverrides={coreOverrides} saveCoreOverrides={saveCoreOverrides} priceData={priceData} results={results} newSKUQty={newSKUQty} skuMaster={skuMaster} params={params}/>}
       </div>{/* end pageWrap */}
+      {/* Toast notification */}
+      {toastMsg && (
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:HR.black,color:HR.white,padding:"8px 20px",borderRadius:8,fontSize:12,fontWeight:600,zIndex:9999,boxShadow:"0 4px 12px rgba(0,0,0,0.2)"}}>{toastMsg}</div>
+      )}
     </div>
   );
 }
