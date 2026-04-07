@@ -155,6 +155,20 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
         const r = percentileCoverStrategy({ q90, prTag, mvTag90, params: p });
         ({ minQty, maxQty } = r);
         strategyDetails = r.details || {};
+        // DOC cap for configured price tags
+        const capDays = p.pctDocCap || 0;
+        const capTags = p.pctDocCapPriceTags || [];
+        if (capDays > 0 && capTags.includes(prTag) && s90.dailyAvg > 0) {
+          const capMin = Math.ceil(s90.dailyAvg * capDays);
+          if (minQty > capMin) {
+            const uncappedMin = minQty, uncappedMax = maxQty;
+            minQty = capMin;
+            maxQty = Math.ceil(capMin + s90.dailyAvg * (p.maxDaysBuffer || 2));
+            strategyDetails.docCap = { applied: true, capDays, priceTag: prTag, uncappedMin, uncappedMax, cappedMin: minQty, cappedMax: maxQty };
+          } else {
+            strategyDetails.docCap = { applied: false, capDays, priceTag: prTag };
+          }
+        }
       } else if (strategy === "fixed_unit_floor") {
         const result = fixedUnitFloorStrategy({ orderQtys: collectOrderQtys(invSliced, skuId, dsId), params: p });
         if (result) {

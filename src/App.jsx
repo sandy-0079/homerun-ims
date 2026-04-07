@@ -2103,6 +2103,11 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
           {line("Price ", v(priceTag), " → ", v(`P${det.pctUsed}`), ", Movement ", v(mvTag), " → Cover ", v(det.coverDays, "D"))}
           {line("P", det.pctUsed, " value = ", v(det.pctQty?.toFixed(2)), " → Min = ⌈", det.pctQty?.toFixed(2), " × ", det.coverDays, "⌉ = ", v(Math.ceil((det.pctQty || 0) * (det.coverDays || 1))))}
           {line("Max = ⌈Min + ", det.dailyAvg?.toFixed(2), " avg × ", det.buffer, " buffer⌉ = ", v(Math.ceil(Math.ceil((det.pctQty || 0) * (det.coverDays || 1)) + (det.dailyAvg || 0) * (det.buffer || 2))))}
+          {det.docCap?.applied && line(
+            "DOC Cap (", v(det.docCap.capDays, "D"), ", ", det.docCap.priceTag, "): Min capped ",
+            v(det.docCap.uncappedMin), " → ", v(det.docCap.cappedMin),
+            ", Max recalculated ", v(det.docCap.uncappedMax), " → ", v(det.docCap.cappedMax)
+          )}
         </>)}
 
         {/* Fixed Unit Floor — narrative flow */}
@@ -4016,6 +4021,44 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                       ))}
                     </tbody>
                   </table>
+                </div>
+              </Section>
+            );
+          })()}
+
+          {/* Section B2: PCT DOC Cap */}
+          {(()=>{
+            const capDays = params.pctDocCap ?? 30;
+            const capTags = params.pctDocCapPriceTags || ["High","Premium"];
+            const allPriceTags = ["Premium","High","Medium","Low","Super Low","No Price"];
+            return(
+              <Section title="PCT DOC Cap" icon="📏" accent="#C0392B"
+                summary={`${capDays}D cap on ${capTags.join(", ") || "none"}`}>
+                <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>
+                  Caps PCT Min at daily avg × DOC days for selected price tags. Prevents over-stocking on expensive items with sparse/spiky demand.
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:12}}>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DOC Cap (days)</div>
+                    <NumInput value={capDays} min={0} max={90} step={1}
+                      onChange={v=>saveParams({...params,pctDocCap:v})}
+                      style={{width:"100%",fontWeight:700,color:"#C0392B"}}/>
+                    <div style={{fontSize:9,color:HR.muted,marginTop:4}}>0 = disabled</div>
+                  </div>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Apply to Price Tags</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {allPriceTags.map(tag=>{
+                        const isOn = capTags.includes(tag);
+                        return <button key={tag} onClick={()=>{
+                          const next = isOn ? capTags.filter(t=>t!==tag) : [...capTags, tag];
+                          saveParams({...params,pctDocCapPriceTags:next});
+                        }} style={{padding:"4px 8px",borderRadius:4,fontSize:10,fontWeight:600,cursor:"pointer",
+                          border:`1px solid ${isOn?"#C0392B":HR.border}`,
+                          background:isOn?"#FEE2E2":"#fff",color:isOn?"#C0392B":HR.muted}}>{tag}</button>;
+                      })}
+                    </div>
+                  </div>
                 </div>
               </Section>
             );
