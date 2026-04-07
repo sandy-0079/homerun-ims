@@ -2239,6 +2239,7 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
   dsView, setDsView }) {
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [hlIdx, setHlIdx] = useState(-1);
   const searchRef = useRef(null);
 
   const skuList = useMemo(() => {
@@ -2325,19 +2326,30 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
           <input
             ref={searchRef}
             value={searchVal}
-            onChange={e => { setSearchVal(e.target.value); setDropdownOpen(true); }}
-            onKeyDown={e => { if (e.key === "Enter") doSearch(); }}
-            onFocus={() => { if (searchVal) setDropdownOpen(true); }}
+            onChange={e => { setSearchVal(e.target.value); setDropdownOpen(true); setHlIdx(-1); }}
+            onKeyDown={e => {
+              if (e.key === "ArrowDown") { e.preventDefault(); setHlIdx(i => Math.min(i + 1, matches.length - 1)); }
+              else if (e.key === "ArrowUp") { e.preventDefault(); setHlIdx(i => Math.max(i - 1, -1)); }
+              else if (e.key === "Enter") {
+                if (hlIdx >= 0 && hlIdx < matches.length) {
+                  setSearchVal(matches[hlIdx].sku); setSkuId(matches[hlIdx].sku); setDropdownOpen(false); setHlIdx(-1);
+                } else { doSearch(); }
+              }
+              else if (e.key === "Escape") { setDropdownOpen(false); setHlIdx(-1); }
+            }}
+            onFocus={() => { if (searchRef.current) searchRef.current.select(); if (searchVal) setDropdownOpen(true); }}
             onBlur={() => setTimeout(() => setDropdownOpen(false), 200)}
             placeholder="Search by SKU ID or name..."
             style={{...S.input, width:"100%", paddingRight:36}}
           />
           {dropdownOpen && matches.length > 0 && (
             <div style={{position:"absolute",top:"100%",left:0,right:0,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,zIndex:10,boxShadow:"0 4px 12px rgba(0,0,0,0.1)",maxHeight:240,overflowY:"auto"}}>
-              {matches.map(m => (
+              {matches.map((m, i) => (
                 <div key={m.sku}
-                  onMouseDown={() => { setSearchVal(m.sku); setSkuId(m.sku); setDropdownOpen(false); }}
-                  style={{padding:"6px 10px",cursor:"pointer",fontSize:11,borderBottom:`1px solid ${HR.border}`,display:"flex",justifyContent:"space-between"}}
+                  onMouseDown={() => { setSearchVal(m.sku); setSkuId(m.sku); setDropdownOpen(false); setHlIdx(-1); }}
+                  onMouseEnter={() => setHlIdx(i)}
+                  style={{padding:"6px 10px",cursor:"pointer",fontSize:11,borderBottom:`1px solid ${HR.border}`,display:"flex",justifyContent:"space-between",
+                    background: i === hlIdx ? HR.surfaceLight : ""}}
                 >
                   <span style={{fontWeight:600,color:HR.text}}>{m.sku}</span>
                   <span style={{color:HR.muted,fontSize:10,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</span>
@@ -2346,7 +2358,7 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             </div>
           )}
         </div>
-        <button onClick={() => doSearch()} style={{...S.btn(true),padding:"5px 16px"}}>Search</button>
+        <button onClick={() => { if (searchRef.current) searchRef.current.select(); doSearch(); }} style={{...S.btn(true),padding:"5px 16px"}}>Search</button>
       </div>
 
       {/* Empty states */}
@@ -2372,7 +2384,7 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             <div style={{flex:1,minWidth:200}}>
               <div style={{fontSize:16,fontWeight:800,color:HR.text}}>{res.meta?.name || skuId}</div>
               <div style={{fontSize:11,color:HR.muted,marginTop:2}}>
-                {res.meta?.sku || skuId}
+                {res.meta?.sku || skuId} <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(res.meta?.sku || skuId); }} style={{cursor:"pointer",opacity:0.5,fontSize:10}} title="Copy SKU ID">📋</span>
                 {res.meta?.category && <> · {res.meta.category}</>}
                 {res.meta?.brand && <> · {res.meta.brand}</>}
               </div>
@@ -2485,6 +2497,9 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
   period, setPeriod, dateFrom, setDateFrom, dateTo, setDateTo,
   store, setStore, drill, setDrill, onNavigateToSKU }) {
 
+  const [sortKey, setSortKey] = useState("invMax");
+  const [sortAsc, setSortAsc] = useState(false);
+
   const filteredInv = useMemo(() =>
     filterInvoiceByPeriod(invoiceData, period, dateFrom, dateTo, invoiceDateRange),
     [invoiceData, period, dateFrom, dateTo, invoiceDateRange]);
@@ -2595,8 +2610,8 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
         });
         const covMin = getCov(invMin, soldVal);
         const covMax = getCov(invMax, soldVal);
-        return { key: c.category, label: c.category, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax };
-      }).sort((a, b) => b.invMax - a.invMax);
+        return { key: c.category, label: c.category, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax, soldPerDay: periodDays > 0 ? soldVal / periodDays : 0 };
+      }).sort((a, b) => { const av = a[sortKey] ?? 0, bv = b[sortKey] ?? 0; return sortAsc ? av - bv : bv - av; });
     }
 
     if (drill.type === "category") {
@@ -2621,8 +2636,8 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
         });
         const covMin = getCov(invMin, soldVal);
         const covMax = getCov(invMax, soldVal);
-        return { key: b.brand, label: b.brand, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax };
-      }).sort((a, b) => b.invMax - a.invMax);
+        return { key: b.brand, label: b.brand, activeSks: activeSks.length, skusSold, zeroSale, soldQty, soldVal, invMin, invMax, covMin, covMax, soldPerDay: periodDays > 0 ? soldVal / periodDays : 0 };
+      }).sort((a, b) => { const av = a[sortKey] ?? 0, bv = b[sortKey] ?? 0; return sortAsc ? av - bv : bv - av; });
     }
 
     if (drill.type === "brand") {
@@ -2639,13 +2654,18 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
           const dailyAvg = store === "DC" ? 0 : store !== "All" ? (r.stores[store]?.dailyAvg || 0) : DS_LIST.reduce((s, ds) => s + (r.stores[ds]?.dailyAvg || 0), 0);
           const abq = store !== "All" && store !== "DC" ? (r.stores[store]?.abq || 0) : 0;
           const mvTag = store === "DC" ? (r.dc?.mvTag || "—") : store !== "All" ? (r.stores[store]?.mvTag || "—") : (r.dc?.mvTag || "—");
-          return { key: r.sku, sku: r.sku, label: r.meta?.name || r.sku, meta: r.meta, mvTag, priceTag: r.meta?.priceTag || "No Price", dailyAvg, abq, soldQty, soldVal, invMin, invMax, covMin, covMax, stores: r.stores, dc: r.dc };
-        }).sort((a, b) => b.invMax - a.invMax);
+          return { key: r.sku, sku: r.sku, label: r.meta?.name || r.sku, meta: r.meta, mvTag, priceTag: r.meta?.priceTag || "No Price", dailyAvg, abq, soldQty, soldVal, invMin, invMax, covMin, covMax, stores: r.stores, dc: r.dc, soldPerDay: periodDays > 0 ? soldVal / periodDays : 0 };
+        }).sort((a, b) => { const av = a[sortKey] ?? 0, bv = b[sortKey] ?? 0; return sortAsc ? av - bv : bv - av; });
     }
     return [];
-  }, [results, allEntries, drill, filteredInv, getSoldQty, getSoldVal, getInv, getCov, priceData, store]);
+  }, [results, allEntries, drill, filteredInv, getSoldQty, getSoldVal, getInv, getCov, priceData, store, sortKey, sortAsc]);
 
-  const thS = { ...S.th, cursor: "default", fontSize: 10, padding: "6px 8px", textAlign: "center", position: "sticky", top: 0, zIndex: 2, background: HR.surfaceLight };
+  const thS = { ...S.th, fontSize: 10, padding: "6px 8px", textAlign: "center", position: "sticky", top: 0, zIndex: 2, background: "#F5E6C8", color: HR.text, borderBottom: "2px solid " + HR.yellow };
+  const sortTh = (label, key) => (
+    <th style={{...thS, cursor: "pointer"}} onClick={() => { if (sortKey === key) setSortAsc(!sortAsc); else { setSortKey(key); setSortAsc(false); } }}>
+      {label} {sortKey === key ? (sortAsc ? "▲" : "▼") : ""}
+    </th>
+  );
   const tdC = { ...S.td, fontSize: 11, padding: "5px 8px", textAlign: "center", fontVariantNumeric: "tabular-nums" };
 
   // Period label for "Showing" display
@@ -2710,19 +2730,22 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
 
       {/* Breadcrumb */}
       {drill !== null && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 12 }}>
-          <button onClick={() => setDrill(null)}
-            style={{ ...S.btn(false), padding: "2px 8px", fontSize: 11 }}>← Back</button>
-          <span style={{ color: HR.muted, cursor: "pointer" }} onClick={() => setDrill(null)}>All Categories</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 13 }}>
+          <button onClick={() => {
+            if (drill.type === "brand") setDrill({ type: "category", value: drill.category });
+            else setDrill(null);
+          }}
+            style={{ padding: "4px 12px", borderRadius: 6, border: `1px solid ${HR.yellow}`, background: HR.yellow, color: HR.black, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>← Back</button>
+          <span style={{ color: HR.yellowDark, cursor: "pointer", fontWeight: 600 }} onClick={() => setDrill(null)}>All Categories</span>
           {drill.type === "category" && (
-            <><span style={{ color: HR.muted }}>›</span><span style={{ fontWeight: 600 }}>{drill.value}</span></>
+            <><span style={{ color: HR.muted, fontSize: 16 }}>›</span><span style={{ fontWeight: 700, color: HR.text }}>{drill.value}</span></>
           )}
           {drill.type === "brand" && (
             <>
-              <span style={{ color: HR.muted }}>›</span>
-              <span style={{ color: HR.muted, cursor: "pointer" }} onClick={() => setDrill({ type: "category", value: drill.category })}>{drill.category}</span>
-              <span style={{ color: HR.muted }}>›</span>
-              <span style={{ fontWeight: 600 }}>{drill.value}</span>
+              <span style={{ color: HR.muted, fontSize: 16 }}>›</span>
+              <span style={{ color: HR.yellowDark, cursor: "pointer", fontWeight: 600 }} onClick={() => setDrill({ type: "category", value: drill.category })}>{drill.category}</span>
+              <span style={{ color: HR.muted, fontSize: 16 }}>›</span>
+              <span style={{ fontWeight: 700, color: HR.text }}>{drill.value}</span>
             </>
           )}
         </div>
@@ -2737,23 +2760,23 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
                 <th style={{...thS, textAlign:"left"}}>SKU</th>
                 <th style={thS}>Movement</th>
                 <th style={thS}>Price Tag</th>
-                <th style={thS}>Sold Val/Day</th>
-                <th style={thS}>Inv Min</th>
-                <th style={thS}>Inv Max</th>
-                <th style={thS}>Coverage Days Min</th>
-                <th style={thS}>Coverage Days Max</th>
+                {sortTh("Sold Val/Day", "soldPerDay")}
+                {sortTh("Inv Min", "invMin")}
+                {sortTh("Inv Max", "invMax")}
+                {sortTh("Cov Min", "covMin")}
+                {sortTh("Cov Max", "covMax")}
               </tr>
             ) : (
               <tr>
                 <th style={{...thS, textAlign:"left"}}>{drill === null ? "Category" : "Brand"}</th>
-                <th style={thS}>Active SKUs</th>
-                <th style={thS}>SKUs Sold</th>
-                <th style={thS}>Zero Sale</th>
-                <th style={thS}>Sold Val/Day</th>
-                <th style={thS}>Inv Min</th>
-                <th style={thS}>Inv Max</th>
-                <th style={thS}>Cov Min</th>
-                <th style={thS}>Cov Max</th>
+                {sortTh("Active SKUs", "activeSks")}
+                {sortTh("SKUs Sold", "skusSold")}
+                {sortTh("Zero Sale", "zeroSale")}
+                {sortTh("Sold Val/Day", "soldPerDay")}
+                {sortTh("Inv Min", "invMin")}
+                {sortTh("Inv Max", "invMax")}
+                {sortTh("Cov Min", "covMin")}
+                {sortTh("Cov Max", "covMax")}
               </tr>
             )}
           </thead>
@@ -2763,18 +2786,17 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
             )}
             {drill?.type === "brand" ? (
               tableData.map(row => {
-                const soldPerDay = periodDays > 0 ? row.soldVal / periodDays : 0;
                 return (
                   <tr key={row.key} style={{ cursor: "pointer" }} onClick={() => onNavigateToSKU(row.sku)}
                     onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
                     onMouseLeave={e => e.currentTarget.style.background = ""}>
                     <td style={{...tdC, textAlign:"left"}}>
                       <div style={{ fontWeight: 600, fontSize: 11 }}>{row.label}</div>
-                      <div style={{ fontSize: 9, color: HR.muted }}>{row.sku}</div>
+                      <div style={{ fontSize: 9, color: HR.muted }}>{row.sku} <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(row.sku); }} style={{cursor:"pointer",opacity:0.5}} title="Copy SKU ID">📋</span></div>
                     </td>
                     <td style={tdC}><MovTag value={row.mvTag} /></td>
                     <td style={tdC}><TagPill value={row.priceTag} colorMap={PRICE_TAG_COLORS} /></td>
-                    <td style={tdC}>{fmtVal(soldPerDay)}</td>
+                    <td style={tdC}>{fmtVal(row.soldPerDay)}</td>
                     <td style={tdC}>{fmtVal(row.invMin)}</td>
                     <td style={tdC}>{fmtVal(row.invMax)}</td>
                     <td style={tdC}>{fmtCov(row.covMin)}</td>
@@ -2784,7 +2806,6 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
               })
             ) : (
               tableData.map(row => {
-                const soldPerDay = periodDays > 0 ? row.soldVal / periodDays : 0;
                 return (
                   <tr key={row.key} style={{ cursor: "pointer" }}
                     onClick={() => {
@@ -2797,7 +2818,7 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
                     <td style={tdC}>{fmtNum(row.activeSks)}</td>
                     <td style={tdC}>{fmtNum(row.skusSold)}</td>
                     <td style={{ ...tdC, color: row.zeroSale > 0 ? "#C0392B" : HR.muted }}>{fmtNum(row.zeroSale)}</td>
-                    <td style={tdC}>{fmtVal(soldPerDay)}</td>
+                    <td style={tdC}>{fmtVal(row.soldPerDay)}</td>
                     <td style={tdC}>{fmtVal(row.invMin)}</td>
                     <td style={tdC}>{fmtVal(row.invMax)}</td>
                     <td style={tdC}>{fmtCov(row.covMin)}</td>
