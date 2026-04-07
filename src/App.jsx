@@ -2060,7 +2060,6 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
     <div style={{background:dc.bg, borderRadius:10, border:`1px solid ${dc.header}33`, overflow:"hidden"}}>
       <div style={{background:dc.header, color:"#fff", padding:"6px 10px", fontSize:12, fontWeight:700, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
         <span>{dsId}</span>
-        <span style={{fontSize:10, fontWeight:500, opacity:0.85}}>Daily Avg: {s.dailyAvg != null ? s.dailyAvg.toFixed(2) : "—"}</span>
       </div>
       <div style={{padding:"8px 10px"}}>
         {/* Tags + Min/Max row */}
@@ -2445,7 +2444,6 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
                 {/* Shared chart header */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                   <span style={{fontSize:13,fontWeight:700,color:chartColor}}>{dsLabel}</span>
-                  <span style={{fontSize:11,color:HR.muted}}>{totalOrders} instances · ABQ {abq}</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
                   <div>
