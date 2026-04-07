@@ -1177,14 +1177,14 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
             <span style={{ fontWeight: 800, fontSize: 14, color: HR.yellowDark, whiteSpace: "nowrap" }}>OOS Simulation</span>
             <div style={{ display: "flex", alignItems: "center", gap: 0, border: `2px solid ${HR.yellow}`, borderRadius: 6, background: "#FFFBEA", overflow: "hidden", flexShrink: 0 }}>
               <span style={{ padding: "3px 8px", fontSize: 11, fontWeight: 700, color: HR.yellowDark, borderRight: `1px solid ${HR.yellow}`, whiteSpace: "nowrap" }}>Last</span>
-              <input type="number" min={1} max={90} value={simDaysInput} onFocus={e => e.target.select()}
+              <input type="number" min={1} max={params.overallPeriod||90} value={simDaysInput} onFocus={e => e.target.select()}
                 onChange={e => setSimDaysInput(e.target.value)}
-                onBlur={e => { const v=Math.min(90,Math.max(1,parseInt(e.target.value)||15)); setSimDaysInput(String(v)); setSimDays(v); setDrill(null); }}
-                onKeyDown={e => { if(e.key==="Enter"){ const v=Math.min(90,Math.max(1,parseInt(e.target.value)||15)); setSimDaysInput(String(v)); setSimDays(v); setDrill(null); e.target.blur(); }}}
+                onBlur={e => { const mx=params.overallPeriod||90; const v=Math.min(mx,Math.max(1,parseInt(e.target.value)||15)); setSimDaysInput(String(v)); setSimDays(v); setDrill(null); }}
+                onKeyDown={e => { if(e.key==="Enter"){ const mx=params.overallPeriod||90; const v=Math.min(mx,Math.max(1,parseInt(e.target.value)||15)); setSimDaysInput(String(v)); setSimDays(v); setDrill(null); e.target.blur(); }}}
                 style={{ width: 38, border: "none", background: "transparent", fontSize: 13, fontWeight: 800, color: HR.yellowDark, textAlign: "center", outline: "none", padding: "3px 2px", MozAppearance: "textfield" }}
               />
               <span style={{ padding: "3px 8px", fontSize: 11, fontWeight: 700, color: HR.yellowDark, borderLeft: `1px solid ${HR.yellow}`, whiteSpace: "nowrap" }}>days <span style={{ fontSize: 9, fontWeight: 500, color: HR.muted }}>(max 90)</span></span>
-              <button onClick={() => { const v=Math.min(90,Math.max(1,parseInt(simDaysInput)||15)); setSimDaysInput(String(v)); setSimDays(v); setDrill(null); }}
+              <button onClick={() => { const mx=params.overallPeriod||90; const v=Math.min(mx,Math.max(1,parseInt(simDaysInput)||15)); setSimDaysInput(String(v)); setSimDays(v); setDrill(null); }}
                 style={{ padding:"0 10px", background:HR.yellow, color:HR.black, border:"none", fontWeight:700, fontSize:11, cursor:"pointer", alignSelf:"stretch" }}>▶ Run</button>
             </div>
             {allDates.length > 0 && <span style={{ fontSize: 10, color: HR.muted }}>{allDates[0]} → {allDates[allDates.length - 1]}</span>}
