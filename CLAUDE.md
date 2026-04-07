@@ -16,7 +16,7 @@ The tool currently lives at a Vercel URL, is built in React + Vite, syncs state 
 
 | Layer | Technology |
 |---|---|
-| Frontend | React + Vite |
+| Frontend | React + Vite + Recharts |
 | Hosting | Vercel (auto-deploy from GitHub on push) |
 | Database | Supabase (PostgreSQL — three tables: `params`, `overrides`, `team_data`) |
 | Source Control | GitHub (sandy-0079/homerun-ims) |
@@ -51,8 +51,8 @@ RLS is enabled. Public read + anon write policies on all three tables.
 
 | Feature | Admin | Public |
 |---|---|---|
-| Dashboard | ✅ | ✅ |
-| SKU Order Behaviour (Insights) | ✅ | ✅ |
+| Overview | ✅ | ✅ |
+| SKU Detail | ✅ | ✅ |
 | OOS Simulation | ✅ | ✅ |
 | Tool Output Download | ✅ | ✅ |
 | Upload Data | ✅ | ❌ |
@@ -216,25 +216,51 @@ Default DC multipliers:
 - Period display: "Period Considered: 15 Feb '26 → 31 Mar '26 (45D)" — positioned left of nav buttons, reflects the Overall Period setting from Logic Tweaker
 - All period-dependent displays (date range, KPIs, Insights slicing) respect the selected overall period
 
-### 3.5 Dashboard Tab
+### 3.5 Overview Tab (replaced Dashboard — April 2026)
 
-- KPI strip: Active SKUs, Active SKUs Sold, Zero Sale SKUs, Dead Stock, Inv Value Min, Inv Value Max — SKUs Sold and Zero Sale computed within the selected overall period
-- Filter bar: search, category, status, store, price tag, top-N, movement, logic tag
-- Virtualised table (renders only visible rows) with frozen left columns: Item, Category, Status, Price Tag, Top N
-- Per DS: Movement tag, Logic tag, Daily Avg, ABQ, Min, Max
-- Per DC: Movement, Non-Zero Days, Min, Max
-- Logic tags: Base Logic / New DS Floor / SKU Floor / Brand Buffer / Manual Override
+Category-level inventory overview with drill-down to Brand and SKU levels.
+
+- **KPI strip:** Active SKUs, SKUs Sold, Zero Sale SKUs, Inv Value Min, Inv Value Max
+  - SKUs Sold and Zero Sale respect the period picker; Inv values are engine-based
+- **Period picker:** Presets L90D, L60D, L45D, L30D, L15D, L7D + custom date range
+  - Shows "Data: {earliest} → {latest}" from invoice data
+  - "Showing: {date1} → {date2} (XD)" label below picker
+  - Does NOT impact engine Min/Max — only affects sold value and coverage calculations
+- **Store picker:** Dropdown — All Stores (DS01–DS05 aggregated), individual DS, or DC
+- **Drill-down:** Category → Brand → SKU
+  - Breadcrumb trail with prominent yellow Back button
+  - Category/Brand level columns: Active SKUs, SKUs Sold, Zero Sale, Sold Val/Day, Inv Min, Inv Max, Coverage Days Min, Coverage Days Max
+  - SKU level columns: Movement, Price Tag, Sold Val/Day, Inv Min, Inv Max, Coverage Days Min, Coverage Days Max
+  - Click SKU row → navigates to SKU Detail tab with that SKU pre-loaded
+- **Sortable columns:** Click any value column header to sort ascending/descending (▲/▼ indicators)
+- **Sticky table headers** — stay visible when scrolling
+- **Copy SKU ID:** Small copy icon next to SKU ID at SKU level
+- All values center-aligned; currency formatted with ₹K/L/Cr tiers; commas on numbers
 
 ---
 
-### 3.6 Insights Tab (SKU Order Behaviour)
+### 3.6 SKU Detail Tab (replaced SKU Order Behaviour — April 2026)
 
-- Period toggle: 90D / 75D / 15D / Custom (1–90 days)
-- DS view: All / DS01–DS05 / Compare
-- Stats strip: SKUs, Instances, Qty, ABQ
-- Movement distribution bar
-- Drilldown: Org → Category → Brand → SKU
-- SKU level: per-DS cards, DC card, order qty frequency chart (X = order qty, Y = order count)
+Deep-dive into individual SKU behaviour and Min/Max computation breakdown.
+
+- **Entry points:** Direct SKU search (type ID or name, arrow-key navigation in dropdown), or jump from Overview SKU row
+- **Search bar:** Auto-complete dropdown (up to 8 matches), arrow keys to navigate, Enter to select, clicking Search selects all text
+- **Period picker:** L90D, L60D, L45D, L30D, L15D, L7D + custom date range. "Showing: {date1} → {date2}" label. Does NOT change engine Min/Max.
+- **DS picker:** All, DS01–DS05 (no Compare mode). Both charts and cards follow this picker.
+- **KPI strip:** Orders, Quantity Sold, Rate of Sale (qty sold on avg per day), ABQ (qty sold on avg per order), Active Days
+- **Two charts side by side** (Recharts library, equal 1fr/1fr grid):
+  - **Order Qty Frequency:** Bar chart (X = order qty, Y = count). When DS selected: vertical dashed Min/Max reference lines. Tooltip on hover.
+  - **Daily Order Qty:** Bar chart (X = dates, Y = qty). When DS selected: horizontal dashed Min/Max reference lines. Min=Max shows single line labeled "Min=Max=X".
+  - Shared DS label header above both charts
+- **Per-DS computation cards** (all 5 in one row when "All" selected, single card when DS selected):
+  - Narrative flow layout — values inline with labels, reads top-to-bottom
+  - **Standard strategy:** Long period stats (avg, NZD, spike median) → Long Min/Max with formula (base days × avg, spike override) → Recent period → Recent Min/Max → Blending (weight, blended values)
+  - **Percentile Cover:** Full period, NZD, Price→Percentile, Movement→Cover days, Pxx value, Min/Max formulas. DOC Cap shown if applied.
+  - **Fixed Unit Floor:** Order count, P90 of order qtys, Min/Max formulas
+  - Post-blend adjustments: New DS Floor, Brand Buffer, SKU Floor — each shows before/after values
+  - Logic tag badge
+- **DC card** (horizontal, full width): Movement, Min/Max, Sum DS values, lead time, multipliers, formulas
+- **Copy SKU ID:** Copy icon next to SKU ID in header, toast "Copied to clipboard"
 
 ---
 
@@ -277,7 +303,7 @@ Replays last N trading days (default 15, up to 90) of invoice data against model
 
 3-column layout:
 - **Col 1:** Analysis period, recency window, recency weights, DC multipliers, active DS count
-- **Col 2:** Base min days, movement boundaries, price boundaries, spike params, max days buffer, ABQ multiplier, brand buffer days, new DS logic, **Category Strategy Engine** (category→strategy assignment, percentile cover params, fixed unit floor params, brand lead time days)
+- **Col 2:** Base min days, movement boundaries, price boundaries, spike params, max days buffer, ABQ multiplier, brand buffer days, new DS logic, **Category Strategy Engine** (category→strategy assignment, percentile cover params, **PCT Guards** (min NZD threshold, DOC cap days, DOC cap price tags), fixed unit floor params, brand lead time days)
 - **Col 3:** Impact Preview — shadow model run, shows SKUs affected, ₹ delta by movement tag / store / category
 
 Sticky bar when unsaved changes: Reset / Run Preview / Apply & Re-run. Navigation guard intercepts tab switches with unsaved changes.
@@ -317,6 +343,9 @@ Shows **one row per SKU** with all DS + DC columns for any SKU that has an OOS S
 | New DS list | DS04, DS05 |
 | Movement intervals | ≤2 / ≤4 / ≤7 / ≤10 days |
 | Price tiers | ₹3,000 / ₹1,500 / ₹400 / ₹100 |
+| PCT min NZD | 2 |
+| PCT DOC cap | 30 days |
+| PCT DOC cap price tags | High, Premium |
 
 ---
 
@@ -356,6 +385,15 @@ Instead of averages, stocks based on the **Xth percentile of non-zero daily quan
 
 - **Formula:** Min = CEILING(Pxx of non-zero daily qty × cover days), Max = CEILING(Min + daily avg × maxDaysBuffer)
 
+**PCT Guards (SHIPPED — April 2026):**
+
+Analysis of 2,264 PCT SKU×DS combos revealed that PCT produces degenerate results (DOC > 60 days) when non-zero days is very low — 100% degenerate at NZD=1, 33% at NZD=2. Two configurable guards were added:
+
+1. **Min NZD threshold** (default 2): PCT categories with NZD < threshold fall back to Standard strategy. With 1 observation there's no distribution to compute a percentile from.
+2. **DOC Cap** (default 30 days, applies to High + Premium price tags only): Caps PCT Min at `ceil(dailyAvg × capDays)`. Prevents capital lock-up on expensive items with sparse/spiky demand. Low-priced items are intentionally uncapped — better to overstock cheap items than scramble.
+
+Config stored in Supabase `params` table: `pctMinNZD`, `pctDocCap`, `pctDocCapPriceTags`. Editable in Logic Tweaker under "PCT Guards" section.
+
 #### Fixed Unit Floor (new)
 For categories where order timing is erratic but order size is predictable (e.g., Wires — always 1-2 qty).
 
@@ -386,15 +424,17 @@ DC Max = MAX(CEILING(dcMin × dcMultiplier.max/min), sumDSMax × dcMultiplier.ma
 For each SKU × DS:
   1. Run all tagging (Movement, Spike, Price, T150) — same as before
   2. Look up SKU's category → assigned strategy
-  3. Dispatch to strategy's Min/Max formula
-  4. Apply post-blend adjustments in strict order:
+  3. PCT guard check: if strategy is PCT and NZD < pctMinNZD → fall back to Standard
+  4. Dispatch to strategy's Min/Max formula
+  5. PCT DOC cap: if strategy is PCT and price tag in pctDocCapPriceTags → cap Min at dailyAvg × pctDocCap
+  6. Apply post-blend adjustments in strict order:
      a. New DS Floor (if applicable)
      b. Brand Buffer (if applicable)
      c. SKU Floor Override (if applicable)
      d. Dead Stock cap (if applicable)
      e. Final rounding
-  5. Record Strategy Tag (PCT / FLOOR / standard)
-  6. Record Logic Tag (which post-blend rule modified it)
+  7. Record Strategy Tag (PCT / FLOOR / standard)
+  8. Record Logic Tag (which post-blend rule modified it)
 ```
 
 ### 4.6 Configuration
@@ -405,7 +445,7 @@ All strategy config is editable in Logic Tweaker (Column 2, "Category Strategy E
 - Fixed Unit Floor params (order qty percentile, max multiplier, max additive)
 - Brand Lead Time Days (per-brand, with default)
 
-Config stored in Supabase `params` table under keys: `categoryStrategies`, `percentileCover`, `fixedUnitFloor`, `brandLeadTimeDays`.
+Config stored in Supabase `params` table under keys: `categoryStrategies`, `percentileCover`, `pctMinNZD`, `pctDocCap`, `pctDocCapPriceTags`, `fixedUnitFloor`, `brandLeadTimeDays`.
 
 ### 4.7 Validated Impact (April 2026)
 
@@ -494,6 +534,9 @@ The new version should allow the inventory manager to directly edit Min/Max for 
 - **Max formula:** Min + daily avg × buffer days (not a multiplier of Min)
 - **Strategy assignment:** Lives in Logic Tweaker, Column 2
 - **Category assignments:** Determined from 90-day demand analysis — see section 4.3
+- **PCT outlier handling:** DOC cap at 30D for High/Premium items + NZD≥2 threshold. Analysis showed 100% of NZD=1 combos were degenerate (DOC=90). DOC cap alone insufficient for NZD=1 (still produces 30 units for once-in-90-days sellers). Combined approach eliminates 97%+ of degenerate cases.
+- **Dashboard → Overview redesign:** Category→Brand→SKU drill-down replaces flat SKU table. Period picker for sold value/coverage analysis (independent of engine). Store picker slices all metrics.
+- **Insights → SKU Detail redesign:** Direct SKU search replaces 4-level drilldown. Computation cards show full formula breakdown per DS. Recharts-based charts with Min/Max reference lines.
 
 ---
 
@@ -501,7 +544,7 @@ The new version should allow the inventory manager to directly edit Min/Max for 
 
 ```
 src/
-  App.jsx                              — UI: all tabs, state, components (~3,800 lines)
+  App.jsx                              — UI: all tabs, state, components (~4,200 lines)
   supabase.js                          — Supabase client, loadFromSupabase, saveToSupabase
   simWorker.js                         — Web Worker for OOS simulation
   engine/
@@ -551,3 +594,6 @@ Engine logic lives in `src/engine/`. UI, state management, and tab components re
 | Fixed Unit Floor | Strategy using P90 of individual order quantities as Min |
 | CV | Coefficient of Variation — std(demand) / mean(demand), measures demand lumpiness |
 | Lead Time | Days for DC to receive supplier replenishment (default 2, configurable per brand) |
+| DOC Cap | Days-of-cover cap for PCT strategy — limits Min to dailyAvg × capDays for configured price tags |
+| PCT Fallback | When PCT category SKU has NZD < threshold, falls back to Standard strategy |
+| Rate of Sale | Average quantity sold per day across all days in selected period |
