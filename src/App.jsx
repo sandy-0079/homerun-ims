@@ -365,21 +365,32 @@ const DSBadgeSim = ({ ds }) => {
 };
 
 function SimSummaryCards({ toolRows, ovrRows, ovrRowsFull, totInst, totSkus, hasOverrides, priceData }) {
-  const toolOos  = toolRows.reduce((s, r) => s + r.oosInstances, 0);
+  const toolStockedOos = toolRows.reduce((s, r) => s + r.oosInstances - (r.unstockedOos || 0), 0);
+  const toolUnstockedOos = toolRows.reduce((s, r) => s + (r.unstockedOos || 0), 0);
+  const toolOos = toolStockedOos + toolUnstockedOos;
   const ovrOos   = ovrRows.reduce((s,  r) => s + r.oosInstances, 0);
   const toolFail = new Set(toolRows.filter(r => r.oosInstances > 0).map(r => r.skuId)).size;
   const ovrFail  = new Set(ovrRows.filter(r  => r.oosInstances > 0).map(r => r.skuId)).size;
-  const toolRate = totInst > 0 ? ((toolOos / totInst) * 100).toFixed(1) : "0.0";
-  const ovrRate  = totInst > 0 ? ((ovrOos  / totInst) * 100).toFixed(1) : "0.0";
+  const totInstAll = totInst + toolUnstockedOos; // total including unstocked orders
+  const toolRate = totInstAll > 0 ? ((toolOos / totInstAll) * 100).toFixed(1) : "0.0";
+  const stockedRate = totInst > 0 ? ((toolStockedOos / totInst) * 100).toFixed(1) : "0.0";
+  const ovrRate  = totInstAll > 0 ? ((ovrOos  / totInstAll) * 100).toFixed(1) : "0.0";
   const tAcc = oosColor(toolRate), oAcc = oosColor(ovrRate);
   const rateDelta = (parseFloat(ovrRate) - parseFloat(toolRate)).toFixed(1);
   const invDelta = calcInvValueDelta(ovrRowsFull, priceData);
   return (
-    <div style={{ display: "grid", gridTemplateColumns: hasOverrides ? "1fr 1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginBottom: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: hasOverrides ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
       <div style={{ background: "#FFF", borderRadius: 8, padding: "12px 14px", border: `1px solid ${tAcc}44`, borderLeft: `4px solid ${tAcc}` }}>
-        <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, marginBottom: 2 }}>OOS RATE {hasOverrides ? "(TOOL)" : ""}</div>
-        <div style={{ fontSize: 28, fontWeight: 900, color: tAcc }}>{toolRate}%</div>
-        <div style={{ fontSize: 10, color: HR.muted, marginTop: 2 }}>{toolOos} OOS / {totInst} total</div>
+        <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, marginBottom: 2 }}>OOS RATE (STOCKED){hasOverrides ? " — TOOL" : ""}</div>
+        <div style={{ fontSize: 28, fontWeight: 900, color: oosColor(stockedRate) }}>{stockedRate}%</div>
+        <div style={{ fontSize: 10, color: HR.muted, marginTop: 2 }}>{toolStockedOos} OOS / {totInst} orders</div>
+        <div style={{ fontSize: 9, color: HR.muted, marginTop: 1 }}>SKUs with Min/Max {">"} 0</div>
+      </div>
+      <div style={{ background: "#FFF", borderRadius: 8, padding: "12px 14px", border: "1px solid #7A3DBF44", borderLeft: "4px solid #7A3DBF" }}>
+        <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, marginBottom: 2 }}>UNSTOCKED OOS</div>
+        <div style={{ fontSize: 28, fontWeight: 900, color: "#7A3DBF" }}>{toolUnstockedOos}</div>
+        <div style={{ fontSize: 10, color: HR.muted, marginTop: 2 }}>Orders at DS where Min=Max=0</div>
+        <div style={{ fontSize: 9, color: HR.muted, marginTop: 1 }}>SKU not stocked at that location</div>
       </div>
       <div style={{ background: "#FFF", borderRadius: 8, padding: "12px 14px", border: "1px solid #C05A0044", borderLeft: "4px solid #C05A00" }}>
         <div style={{ fontSize: 9, color: HR.muted, fontWeight: 600, marginBottom: 2 }}>FAILING SKUs {hasOverrides ? "(TOOL)" : ""}</div>

@@ -22,13 +22,15 @@ function runSim(invoiceData, results, overrides, simDays = 15) {
     DS_LIST.forEach(dsId => {
       const toolMin = res.stores[dsId]?.min || 0;
       const toolMax = res.stores[dsId]?.max || 0;
-      if (!toolMax) return;
       const ov = overrides[skuId]?.[dsId];
       const useMin = (ov?.min !== null && ov?.min !== undefined) ? ov.min : toolMin;
       const useMax = (ov?.max !== null && ov?.max !== undefined) ? ov.max : toolMax;
       const isOverridden = ov !== undefined && (ov.min !== null || ov.max !== null);
       const simLines = simIndex[`${skuId}||${dsId}`] || [];
-      let stock = useMax, oosInstances = 0;
+      const isUnstocked = !toolMax && !isOverridden;
+      // Skip if Max=0 AND no orders at this DS in sim window
+      if (isUnstocked && !simLines.length) return;
+      let stock = useMax, oosInstances = 0, unstockedOos = 0;
       const shortQtys = [], orderLog = [];
       simDates.forEach(date => {
         const dayLines = simLines.filter(l => l.date === date);
@@ -37,10 +39,10 @@ function runSim(invoiceData, results, overrides, simDays = 15) {
           const fulfilled = Math.min(line.qty, stock);
           const shortQty = line.qty - fulfilled;
           const oos = shortQty > 0;
-          if (oos) { oosInstances++; shortQtys.push(shortQty); }
+          if (oos) { oosInstances++; shortQtys.push(shortQty); if (isUnstocked) unstockedOos++; }
           stock = Math.max(0, stock - line.qty);
           const isLastOfDay = li === dayLines.length - 1;
-          const replenished = isLastOfDay && stock <= useMin;
+          const replenished = isLastOfDay && stock <= useMin && useMax > 0;
           orderLog.push({ date: line.date, qty: line.qty, stockBefore, fulfilled, shortQty, oos, stockAfter: stock, replenished });
           if (replenished) stock = useMax;
         });
@@ -55,6 +57,8 @@ function runSim(invoiceData, results, overrides, simDays = 15) {
           mvTag: res.stores[dsId]?.mvTag || "—",
           toolMin, toolMax, useMin, useMax, isOverridden,
           oosInstances,
+          unstockedOos,
+          isUnstocked,
           totalInstances: simLines.length,
           medianShort: Math.ceil(median(shortQtys)),
           maxShort: shortQtys.length ? Math.max(...shortQtys) : 0,
