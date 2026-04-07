@@ -2089,6 +2089,7 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
             </>;
           };
           return <>
+            {det.pctFallback && line("⚠ PCT fallback: NZD ", v(det.pctFallback.nzd), " < threshold ", v(det.pctFallback.threshold), " → using Standard")}
             {head("Standard Strategy")}
             {renderPeriod("Long", det.longDays, det.sLong, det.rLong)}
             {renderPeriod("Recent", det.recentDays, det.sRecent, det.rRecent)}
@@ -4026,18 +4027,26 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
             );
           })()}
 
-          {/* Section B2: PCT DOC Cap */}
+          {/* Section B2: PCT Guards */}
           {(()=>{
             const capDays = params.pctDocCap ?? 30;
             const capTags = params.pctDocCapPriceTags || ["High","Premium"];
+            const minNZD = params.pctMinNZD ?? 2;
             const allPriceTags = ["Premium","High","Medium","Low","Super Low","No Price"];
             return(
-              <Section title="PCT DOC Cap" icon="📏" accent="#C0392B"
-                summary={`${capDays}D cap on ${capTags.join(", ") || "none"}`}>
+              <Section title="PCT Guards" icon="📏" accent="#C0392B"
+                summary={`Min NZD ${minNZD} · ${capDays}D DOC cap on ${capTags.join(", ") || "none"}`}>
                 <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>
-                  Caps PCT Min at daily avg × DOC days for selected price tags. Prevents over-stocking on expensive items with sparse/spiky demand.
+                  Guards against PCT over-stocking: NZD threshold falls back to Standard for sparse data. DOC cap limits inventory days for selected price tags.
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:12}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:12}}>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Min NZD for PCT</div>
+                    <NumInput value={minNZD} min={1} max={10} step={1}
+                      onChange={v=>saveParams({...params,pctMinNZD:v})}
+                      style={{width:"100%",fontWeight:700,color:"#C0392B"}}/>
+                    <div style={{fontSize:9,color:HR.muted,marginTop:4}}>Below this → Standard fallback</div>
+                  </div>
                   <div style={S.card}>
                     <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DOC Cap (days)</div>
                     <NumInput value={capDays} min={0} max={90} step={1}
@@ -4046,7 +4055,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                     <div style={{fontSize:9,color:HR.muted,marginTop:4}}>0 = disabled</div>
                   </div>
                   <div style={S.card}>
-                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Apply to Price Tags</div>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DOC Cap Price Tags</div>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                       {allPriceTags.map(tag=>{
                         const isOn = capTags.includes(tag);

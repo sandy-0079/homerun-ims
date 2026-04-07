@@ -34,4 +34,5 @@ export const DEFAULT_PARAMS = {
   brandLeadTimeDays:{_default:2},
   pctDocCap:30,
   pctDocCapPriceTags:["High","Premium"],
+  pctMinNZD:2,
 };

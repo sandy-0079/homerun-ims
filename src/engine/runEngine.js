@@ -151,7 +151,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       let strategyTag = strategy;
       let strategyDetails = {};
 
-      if (strategy === "percentile_cover") {
+      if (strategy === "percentile_cover" && s90.nonZeroDays >= (p.pctMinNZD || 2)) {
         const r = percentileCoverStrategy({ q90, prTag, mvTag90, params: p });
         ({ minQty, maxQty } = r);
         strategyDetails = r.details || {};
@@ -169,6 +169,13 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
             strategyDetails.docCap = { applied: false, capDays, priceTag: prTag };
           }
         }
+      } else if (strategy === "percentile_cover" && s90.nonZeroDays < (p.pctMinNZD || 2)) {
+        // PCT assigned but NZD too low — fall back to standard
+        const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
+        ({ minQty, maxQty } = r);
+        strategyDetails = r.details || {};
+        strategyDetails.pctFallback = { reason: "NZD", nzd: s90.nonZeroDays, threshold: p.pctMinNZD || 2 };
+        strategyTag = "standard";
       } else if (strategy === "fixed_unit_floor") {
         const result = fixedUnitFloorStrategy({ orderQtys: collectOrderQtys(invSliced, skuId, dsId), params: p });
         if (result) {
