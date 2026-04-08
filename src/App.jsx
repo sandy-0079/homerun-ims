@@ -4108,8 +4108,18 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
             stockLoading={stockLoading}
             onSyncNow={async()=>{
               setStockLoading(true);
-              await callZoho("zoho-incremental");
-              await fetchStockLive();
+              try {
+                // Queue all batches
+                await callZoho("zoho-items-list");
+                // Process batches sequentially until queue empty
+                for (let i = 0; i < 25; i++) {
+                  const r = await fetch(`${SUPABASE_URL}/functions/v1/zoho-batch-stock`, {
+                    method: "POST", headers: { Authorization: `Bearer ${SUPABASE_ANON}`, "Content-Type": "application/json" }, body: "{}"
+                  }).then(r => r.json());
+                  if (r.message === "No pending batches") break;
+                }
+                await fetchStockLive();
+              } catch(e) { console.error("Sync error:", e); setStockLoading(false); }
             }}
             results={results}
             params={params}
