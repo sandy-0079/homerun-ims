@@ -566,10 +566,16 @@ Connect to Zoho Inventory API to replace manual CSV uploads and enable live stoc
 | F4 | stock_snapshots read path prepared (for Phase 3) | ⬜ Pending |
 | F5 | Data transformers: Zoho invoice/SKU master/prices → tool state format | ✅ Done |
 
+**Active SKU filtering:**
+- `zoho-items-list` and `zoho-batch-stock`: filter `status=active` — stock monitoring only for active SKUs (~1,417 vs 1,949 total)
+- `zoho-skumaster`: no filter — pulls all SKUs (complete catalogue including inactive/confirmation-pending)
+- `zoho-incremental`: naturally active-only — only fetches items that had orders today
+
 **Known issues / Pending testing:**
 - Zoho daily API call limit (7,500/day) was exhausted during development testing. Resets at midnight IST. **Production cron uses ~2,000 calls/day — well within limit.**
 - CORS headers added to all Edge Functions after browser-fetch failures.
-- "Sync Stock Now" in Stock Health tab does full snapshot (items-list + all batches). **Needs testing with real data after limit resets.**
+- "Sync Stock Now" in Stock Health tab does full snapshot (items-list + all batches). **Needs testing with real data after limit resets tomorrow morning.**
+- **Stock Health tab needs thorough end-to-end testing** once stock_live is populated with real data from tomorrow's 7:45 AM cron.
 
 #### 5.1.7 Model Refresh vs Live Stock
 
