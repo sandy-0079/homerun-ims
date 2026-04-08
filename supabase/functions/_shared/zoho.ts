@@ -63,7 +63,11 @@ export async function zohoGet(path: string, params: Record<string, string> = {})
 export function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    },
   });
 }
 

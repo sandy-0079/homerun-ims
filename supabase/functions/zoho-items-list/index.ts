@@ -7,7 +7,10 @@ import { zohoGet, jsonResponse, errorResponse } from "../_shared/zoho.ts";
 
 const BATCH_SIZE = 100;
 
-serve(async () => {
+const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Authorization, Content-Type" };
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   try {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
