@@ -2864,6 +2864,11 @@ export default function App(){
   const [simResults, setSimResults] = useState({ tool: [], ovr: [] });
   const [simLoading, setSimLoading] = useState(true);
   const [simDays, setSimDays] = useState(15);
+  const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
+  const [zohoInvFrom, setZohoInvFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 5); return d.toISOString().slice(0,10);
+  });
+  const [zohoInvTo, setZohoInvTo] = useState(() => new Date().toISOString().slice(0,10));
   const [syncStatus,setSyncStatus]=useState("idle"); // "idle" | "saving" | "saved" | "error"
   /* Old Insights tab state removed — replaced by SKU Detail tab */
   // ── Overview tab state ────────────────────────────────────────────────────
@@ -3079,6 +3084,103 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));e.target.value="";},[]);
   const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));e.target.value="";},[]);
 
+  // ── Zoho sync constants ──────────────────────────────────────────────────
+  const SUPABASE_URL = "https://rgyupnrogkbugsadwlye.supabase.co";
+  const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  const callZoho = useCallback(async (fn, params = {}) => {
+    const url = new URL(`${SUPABASE_URL}/functions/v1/${fn}`);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    const res = await fetch(url.toString(), {
+      method: params && Object.keys(params).length ? "GET" : "POST",
+      headers: { Authorization: `Bearer ${SUPABASE_ANON}`, "Content-Type": "application/json" },
+      body: Object.keys(params).length ? undefined : "{}",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }, [SUPABASE_ANON]);
+
+  // F5 + F1: Sync invoice data from Zoho, merge with existing
+  const syncZohoInvoices = useCallback(async () => {
+    if (!zohoInvFrom || !zohoInvTo) return;
+    setZohoSync(s => ({ ...s, invoices: { status: "syncing", message: "Fetching from Zoho…" } }));
+    setLoading(true);
+    try {
+      const data = await callZoho("zoho-invoices", { from: zohoInvFrom, to: zohoInvTo });
+      if (!data.success) throw new Error(data.error || "Sync failed");
+
+      // F5: Transform → tool format (same as CSV parse in handleInvoice)
+      const newRows = (data.invoices || []).map(r => ({
+        date: r.date, sku: r.sku,
+        ds: r.ds, // already mapped by edge function
+        qty: r.qty,
+      })).filter(r => r.date && r.sku && r.qty > 0);
+
+      // Merge: replace same-date+sku+ds combos from Zoho (Zoho is authoritative)
+      const newKey = r => `${r.date}||${r.sku}||${r.ds}`;
+      const newSet = new Set(newRows.map(newKey));
+      const merged = [...invoiceData.filter(r => !newSet.has(newKey(r))), ...newRows];
+
+      // Apply rolling window cap
+      const dates = [...new Set(merged.map(r => r.date))].sort();
+      const cutoff = dates.length > ROLLING_DAYS ? dates[dates.length - ROLLING_DAYS] : dates[0];
+      const filtered = merged.filter(r => r.date >= cutoff);
+
+      setInv(filtered);
+      LS.set("invoiceData", JSON.stringify(filtered));
+      setZohoSync(s => ({ ...s, invoices: { status: "ok", message: `✓ ${newRows.length} rows synced`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
+    } catch (err) {
+      setZohoSync(s => ({ ...s, invoices: { status: "error", message: `✗ ${err.message}` } }));
+    }
+    setLoading(false);
+  }, [zohoInvFrom, zohoInvTo, invoiceData, callZoho]);
+
+  // F5 + F1: Sync SKU master from Zoho items list
+  const syncZohoSKUMaster = useCallback(async () => {
+    setZohoSync(s => ({ ...s, skuMaster: { status: "syncing", message: "Fetching from Zoho…" } }));
+    setLoading(true);
+    try {
+      const data = await callZoho("zoho-skumaster");
+      if (!data.success) throw new Error(data.error || "Sync failed");
+
+      // F5: Transform → skuMaster object keyed by SKU
+      const master = {};
+      for (const item of (data.items || [])) {
+        master[item.sku] = {
+          sku: item.sku, name: item.name,
+          category: item.category, brand: item.brand,
+          status: item.status === "active" ? "Active" : "Inactive",
+          inventorisedAt: "DS",
+        };
+      }
+      setSKU(master);
+      LS.set("skuMaster", JSON.stringify(master));
+      setZohoSync(s => ({ ...s, skuMaster: { status: "ok", message: `✓ ${Object.keys(master).length} SKUs`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
+    } catch (err) {
+      setZohoSync(s => ({ ...s, skuMaster: { status: "error", message: `✗ ${err.message}` } }));
+    }
+    setLoading(false);
+  }, [callZoho]);
+
+  // F5 + F1: Sync purchase prices from Zoho
+  const syncZohoPrices = useCallback(async () => {
+    setZohoSync(s => ({ ...s, prices: { status: "syncing", message: "Fetching L12M prices…" } }));
+    setLoading(true);
+    try {
+      const data = await callZoho("zoho-prices");
+      if (!data.success) throw new Error(data.error || "Sync failed");
+
+      // F5: prices response is already {sku: avg_price} — directly usable
+      const pd = data.prices || {};
+      setPrice(pd);
+      LS.set("priceData", JSON.stringify(pd));
+      setZohoSync(s => ({ ...s, prices: { status: "ok", message: `✓ ${Object.keys(pd).length} SKUs`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
+    } catch (err) {
+      setZohoSync(s => ({ ...s, prices: { status: "error", message: `✗ ${err.message}` } }));
+    }
+    setLoading(false);
+  }, [callZoho]);
+
   const clearData=useCallback(async(key)=>{
     if(key==="invoiceData"){setInv([]);LS.delete("invoiceData");setLoaded(false);setResults(null);}
     if(key==="skuMaster"){setSKU({});LS.delete("skuMaster");setLoaded(false);setResults(null);}
@@ -3293,17 +3395,99 @@ const visibleOutput = useMemo(() => {
           newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU","DS01 Min","DS01 Max","DS02 Min","DS02 Max","DS03 Min","DS03 Max","DS04 Min","DS04 Max","DS05 Min","DS05 Max"],rows:[["SKU001",3,5,2,3,0,0,5,7,0,0],["SKU002",0,0,1,2,2,3,0,0,3,4]]},
           deadStock:  {file:"Dead_Stock_Template.csv",  headers:["Dead Stock"],rows:[["SKU001"],["SKU002"]]},
         };
-        const cards=[
-          {label:"Invoice Dump L90D",desc:"Columns: Invoice Date, SKU, Line Item Location Name, Quantity",handler:handleInvoice,count:`${invoiceData.length.toLocaleString()} rows`,key:"invoiceData",required:true,hasData:invoiceData.length>0},
-          {label:"SKU Master",desc:"Columns: Name, SKU, Category, Brand, Status, Inventorised At",handler:handleSKU,count:`${Object.keys(skuMaster).length.toLocaleString()} SKUs`,key:"skuMaster",required:true,hasData:Object.keys(skuMaster).length>0},
-          {label:"Average Purchase Price of SKU",desc:"Columns: sku, average_price",handler:handlePrice,count:`${Object.keys(priceData).length.toLocaleString()} SKUs`,key:"priceData",required:true,hasData:Object.keys(priceData).length>0},
+        const csvOnlyCards=[
           {label:"Newly Launched Dark Store Floor Qty",desc:"Columns: SKU, Qty",handler:handleMRQ,count:`${Object.keys(minReqQty).length.toLocaleString()} SKUs`,key:"minReqQty",required:true,hasData:Object.keys(minReqQty).length>0},
           {label:"SKU Floors - DS Level",desc:"Per-store manual Min/Max floors. Columns: SKU, DS01 Min, DS01 Max, ..., DS05 Max",handler:handleNSQ,count:`${Object.keys(newSKUQty).length.toLocaleString()} SKUs`,key:"newSKUQty",required:true,hasData:Object.keys(newSKUQty).length>0},
-          {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,count:`${deadStock.size.toLocaleString()} SKUs`,key:"deadStock",required:true,hasData:deadStock.size>0},
+          {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,count:`${deadStock.size.toLocaleString()} SKUs`,key:"deadStock",required:false,hasData:deadStock.size>0},
         ];
-        return(
+
+        const ZohoStatusBadge = ({syncState}) => {
+          if (!syncState) return null;
+          const color = syncState.status === "ok" ? HR.green : syncState.status === "error" ? "#B91C1C" : HR.yellowDark;
+          return <div style={{fontSize:10,color,marginTop:4,fontWeight:500}}>{syncState.message}{syncState.ts && <span style={{color:HR.muted,fontWeight:400}}> · {syncState.ts}</span>}</div>;
+        };
+
+        const csvBtns = (key, handler, hasData) => (
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:8,paddingTop:8,borderTop:`1px dashed ${HR.border}`}}>
+            <div style={{fontSize:9,color:HR.muted,width:"100%",marginBottom:2}}>CSV fallback</div>
+            <label style={{background:HR.green,color:HR.white,padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>
+              ⬆ Upload CSV <input type="file" accept=".csv" onChange={handler} style={{display:"none"}}/>
+            </label>
+            <button onClick={()=>{const t=templates[key];dlTemplate(t.file,t.headers,t.rows);}}
+              style={{background:"#EAF9FF",color:"#0077A8",border:"1px solid #A5F3FC",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>
+              ⬇ Template
+            </button>
+            {hasData&&<button onClick={()=>{const csv=buildDataCSV(key);if(csv)dlCSV(key+"_data.csv",csv);}}
+              style={{background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>
+              ⬇ Data
+            </button>}
+            {hasData&&<button onClick={()=>clearData(key)}
+              style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>
+              🗑 Clear
+            </button>}
+          </div>
+        );
+
+        return(<>
+          {/* ── Zoho-synced cards ── */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:10}}>
+            {/* Invoice Data */}
+            <div style={{...S.card}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                <div style={{fontWeight:700,color:HR.text,fontSize:12}}>Invoice Data <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span></div>
+                <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{invoiceData.length.toLocaleString()} rows</div>
+              </div>
+              {invoiceDateRange.min && <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>Current data: {invoiceDateRange.min} → {invoiceDateRange.max}</div>}
+              <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>Sync from Zoho (Zoho overwrites same-date records):</div>
+              <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+                <input type="date" value={zohoInvFrom} onChange={e=>setZohoInvFrom(e.target.value)}
+                  style={{...S.input,fontSize:10,padding:"3px 6px",flex:1,minWidth:110}}/>
+                <span style={{fontSize:10,color:HR.muted}}>→</span>
+                <input type="date" value={zohoInvTo} onChange={e=>setZohoInvTo(e.target.value)}
+                  style={{...S.input,fontSize:10,padding:"3px 6px",flex:1,minWidth:110}}/>
+                <button onClick={syncZohoInvoices} disabled={!zohoInvFrom||!zohoInvTo||zohoSync.invoices?.status==="syncing"}
+                  style={{background:HR.yellow,color:HR.black,border:"none",padding:"4px 10px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
+                  {zohoSync.invoices?.status==="syncing"?"Syncing…":"⟳ Sync"}
+                </button>
+              </div>
+              <ZohoStatusBadge syncState={zohoSync.invoices}/>
+              {csvBtns("invoiceData", handleInvoice, invoiceData.length>0)}
+            </div>
+
+            {/* SKU Master */}
+            <div style={{...S.card}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                <div style={{fontWeight:700,color:HR.text,fontSize:12}}>SKU Master <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span></div>
+                <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{Object.keys(skuMaster).length.toLocaleString()} SKUs</div>
+              </div>
+              <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>Live snapshot from Zoho items list</div>
+              <button onClick={syncZohoSKUMaster} disabled={zohoSync.skuMaster?.status==="syncing"}
+                style={{background:HR.yellow,color:HR.black,border:"none",padding:"5px 12px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:700}}>
+                {zohoSync.skuMaster?.status==="syncing"?"Syncing…":"⟳ Sync from Zoho"}
+              </button>
+              <ZohoStatusBadge syncState={zohoSync.skuMaster}/>
+              {csvBtns("skuMaster", handleSKU, Object.keys(skuMaster).length>0)}
+            </div>
+
+            {/* Purchase Prices */}
+            <div style={{...S.card}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                <div style={{fontWeight:700,color:HR.text,fontSize:12}}>Purchase Prices <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span></div>
+                <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{Object.keys(priceData).length.toLocaleString()} SKUs</div>
+              </div>
+              <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>Last 12 months from Zoho "Purchases by Item" report</div>
+              <button onClick={syncZohoPrices} disabled={zohoSync.prices?.status==="syncing"}
+                style={{background:HR.yellow,color:HR.black,border:"none",padding:"5px 12px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:700}}>
+                {zohoSync.prices?.status==="syncing"?"Syncing…":"⟳ Sync from Zoho"}
+              </button>
+              <ZohoStatusBadge syncState={zohoSync.prices}/>
+              {csvBtns("priceData", handlePrice, Object.keys(priceData).length>0)}
+            </div>
+          </div>
+
+          {/* ── CSV-only cards (unchanged) ── */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
-            {cards.map(item=>(
+            {csvOnlyCards.map(item=>(
               <div key={item.label} style={{...S.card}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:2}}>
                   <div style={{fontWeight:700,color:HR.text,fontSize:12,lineHeight:1.3,paddingRight:8}}>
@@ -3337,7 +3521,7 @@ const visibleOutput = useMemo(() => {
               </div>
             ))}
           </div>
-        );
+        </>);
       })()}
 
       {/* ── Errors: missing SKUs ── */}
