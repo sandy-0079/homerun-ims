@@ -4110,16 +4110,23 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
               setStockLoading(true);
               try {
                 // Queue all batches
-                await callZoho("zoho-items-list");
+                const queued = await callZoho("zoho-items-list");
+                if (queued.error) throw new Error(queued.error);
                 // Process batches sequentially until queue empty
                 for (let i = 0; i < 25; i++) {
-                  const r = await fetch(`${SUPABASE_URL}/functions/v1/zoho-batch-stock`, {
+                  const res = await fetch(`${SUPABASE_URL}/functions/v1/zoho-batch-stock`, {
                     method: "POST", headers: { Authorization: `Bearer ${SUPABASE_ANON}`, "Content-Type": "application/json" }, body: "{}"
-                  }).then(r => r.json());
+                  });
+                  const r = await res.json();
                   if (r.message === "No pending batches") break;
                 }
                 await fetchStockLive();
-              } catch(e) { console.error("Sync error:", e); setStockLoading(false); }
+              } catch(e) {
+                console.error("Sync error:", e);
+                alert("Sync failed: " + e.message);
+              } finally {
+                setStockLoading(false);
+              }
             }}
             results={results}
             params={params}
