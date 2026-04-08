@@ -606,20 +606,50 @@ New tab showing live stock status for all SKU×DS combos. Primary working surfac
 
 Two simulation modes in OOS Simulation tab:
 
-**Mode 1 ("Perfect Restock" — existing):** Stock starts at Max every day. Tests Min/Max adequacy.
+**Mode 1 ("Perfect Restock" — existing):** Stock starts at Max every day. Tests Min/Max adequacy. Supports both "Last X days" and custom date range. For custom date range: uses already-loaded invoice data where available, fetches missing dates from Zoho on demand (zoho-invoices edge function).
 
-**Mode 2 ("Actual Stock" — new):** Stock starts at 8 AM Zoho snapshot. Shows what actually happened on the ground.
+**Mode 2 ("Actual Stock" — new):** Stock starts at 8 AM Zoho snapshot from `stock_snapshots` table. Shows what actually happened on the ground. Requires at least one daily snapshot (available from the day after the first 7:45 AM cron runs). Custom date range also supported.
+
+**Replenishment logic (critical for root cause classification):**
+- End-of-day trigger: if closing stock ≤ Min → restock to Max overnight from DC
+- If closing stock > Min → no restock triggered, next day opens with same stock
+- Therefore, by 8 AM there are only two valid opening states:
+  1. Restocked to Max (previous day closed ≤ Min — correct ops)
+  2. Same as previous day close (previous day closed > Min — no restock needed)
 
 **OOS Root Cause Categories (Mode 2):**
 
-| Root Cause | Detection Logic |
-|---|---|
-| Ops Failure | Opening stock < Max (wasn't restocked) AND order would have been fulfilled at Max |
-| Tool Failure | Opening stock = Max AND order > Max (Min/Max too low) |
-| Unstocked | Min=Max=0 for this SKU×DS (zero sale in analysis period) |
-| Outlier Order | Order > P95 of historical order sizes for this SKU×DS |
+| Root Cause | Detection Logic | Meaning |
+|---|---|---|
+| **Ops Failure** | Opening stock ≤ Min (restock should have happened but didn't) AND OOS occurs | Previous day closed ≤ Min, trigger fired, but DC didn't replenish. Ops process broke down. |
+| **Tool Failure** | Opening stock > Min (no restock needed) AND OOS occurs | Min/Max was set correctly per rules, but order exceeded available stock. Model is undersized for this demand. |
+| **Unstocked** | Min=Max=0 for this SKU×DS | Zero sale in engine period — SKU not stocked at this location at all. |
 
-**"Could have been saved" flag:** If OOS occurs AND `physical_stock + in_transit_qty >= order_qty`, flag as "would have been saved if TO arrived before 8 AM." Only flag when combined stock is sufficient.
+**Key rule:** The question for classification is "should a restock have been triggered the previous night?" — not "was Max sufficient for this order?"
+- If opening stock ≤ Min → ops should have restocked → Ops Failure if OOS occurs
+- If opening stock > Min → ops correctly did not restock → Tool Failure if OOS occurs
+
+**"Could have been saved" flag:** If OOS occurs AND `physical_stock + in_transit_qty >= order_qty`, flag as "would have been saved if TO arrived before 8 AM." Only flag when combined stock is sufficient to fully cover the order.
+
+**UI changes for Phase 3:**
+- Simulation period picker: "Last X days" (existing) OR "Custom date range" (new)
+- Mode toggle: Mode 1 (Perfect Restock) / Mode 2 (Actual Stock)
+- On-demand data fetch: if custom range extends beyond loaded invoice data, fetch from Zoho with "Fetching from Zoho…" status message
+- Mode 2 KPI cards: OOS Rate | Ops Failure count | Tool Failure count | Unstocked | Could Have Been Saved
+- Mode 2 available only for dates with stock_snapshots (validated before running)
+
+**Implementation tasks:**
+| # | Task | Dependency |
+|---|---|---|
+| S1 | Custom date range period picker | None — build now |
+| S2 | On-demand invoice data fetch (zoho-invoices) + merge with loaded data | None — build now |
+| S3 | Loading state: "Fetching from Zoho…" | None — build now |
+| S4 | Mode 1 with custom dates — pass merged data to simWorker | S1, S2 |
+| S5 | Mode 2 simulation — fetch snapshots, replay with actual opening stock | Needs stock_snapshots (from tomorrow's 7:45 AM cron) |
+| S6 | Mode 2 root cause classification per order line | S5 |
+| S7 | Mode 2 KPI cards — Ops/Tool/Unstocked/Could Have Been Saved | S5, S6 |
+
+S1–S4 can be built immediately. S5–S7 require at least one day of stock_snapshots.
 
 ### 5.4 Phase 4: Alerts + Real-Time Sales
 
