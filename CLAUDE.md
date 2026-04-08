@@ -459,45 +459,162 @@ Config stored in Supabase `params` table under keys: `categoryStrategies`, `perc
 
 ---
 
-## 5. What Still Needs to Be Built
+## 5. Roadmap — What's Being Built Next
 
-### 5.1 Demand Shaping Within Categories (v2 — next)
+### 5.0 Analysis Completed — Parked Items (April 2026)
 
-Currently each category gets one strategy with fixed params. v2 will auto-tune strategy params based on each SKU's **coefficient of variation (CV)** — high CV SKUs get more aggressive percentiles, low CV SKUs get tighter ones. This is Approach C from the design spec.
+- **Demand Shaping v2 (CV-based tuning):** Analysis showed 96.3% of SKU×DS combos have CV > 2.0 (driven by sparsity, not order size variability). No meaningful segmentation possible. Parked — not worth building.
+- **Movement-based periods:** Simulated variable overall periods by movement tag. Result: +8 OOS instances, +₹38.5L inventory. Strictly worse. Parked.
+- **Base min days adjustment:** Simulated +1 day for Slow/Super Slow Standard SKUs. Only 0.1% OOS reduction. Not worth changing.
+- **ROP (Re-Order Point):** Simulated mid-Max reorder trigger. Only 6 OOS instances saved (1.5%). Root cause: 86.5% of OOS is single order > Max, not restock timing. Parked.
+- **Cluster-based cross-DS fulfillment:** Analysis showed 65% OOS reduction (134→46) by allowing DS01+DS05, DS02+DC, DS03+DS04 to share stock. Zero inventory increase. Strong operational lever — to be built into Stock Health Monitor as a visibility feature.
 
-### 5.2 Real-Time or Near-Real-Time Sales Visibility
+### 5.1 Phase 1: Zoho Inventory Integration (IN PROGRESS)
 
-The person sitting on the tool needs to see current sales as they happen (or as close to it as possible). This means:
-- Sales data needs to flow in more frequently than once a week — ideally daily, ideally via an API or automated upload rather than a manual CSV export
-- The tool should show how today's sales compare to the expected daily average for each SKU at each DS
+Connect to Zoho Inventory API to replace manual CSV uploads and enable live stock monitoring.
 
-### 5.3 Inventory Health Monitor (the core new view)
+#### 5.1.1 Zoho API Details
 
-A live view — the primary working surface for the inventory manager — showing for each SKU × DS × DC:
+| Endpoint | Data | Use |
+|---|---|---|
+| `GET /inventory/v1/items?per_page=200` | SKU list: sku, name, category, brand, status | SKU Master sync |
+| `GET /inventory/v1/items/{id}` | Per-location stock: locations[].location_stock_on_hand, location_quantity_in_transit | Stock snapshot |
+| `GET /inventory/v1/invoices?date_start=X&date_end=Y&status=paid` | Invoice list (paginated) | Invoice data |
+| `GET /inventory/v1/invoices/{id}` | Line items: sku, quantity, location_name | Invoice line items |
+| `GET /inventory/v1/reports/purchasesbyitem?from_date=X&to_date=Y` | average_price per SKU | Purchase prices (12-month window) |
+| `GET /inventory/v1/reports/inventoryvaluation` | asset_value, quantity_available | Fallback price data |
 
-- Current stock on hand (if this can be fed in)
-- Current Min/Max from the model
-- Days of cover remaining at current daily average
-- Whether today's sales are tracking above or below the daily average
-- A clear signal: is this SKU at risk, healthy, or overstocked?
+- **Data centre:** .in (India) — base URL: https://www.zohoapis.in
+- **OAuth:** refresh token flow via https://accounts.zoho.in/oauth/v2/token
+- **Scopes:** ZohoInventory.invoices.READ, ZohoInventory.items.READ, ZohoInventory.settings.READ, ZohoInventory.reports.READ
+- **Credentials:** stored as Supabase secrets (ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORG_ID)
 
-This is the decision support layer. The person should be able to scan this view and immediately know where to act.
+#### 5.1.2 Location Mapping
 
-### 5.4 Smarter Alerts and Prioritisation
+| Zoho location_name | Tool DS |
+|---|---|
+| DS01 Sarjapur | DS01 |
+| DS02 Bileshivale | DS02 |
+| DS03 Kengeri | DS03 |
+| DS04 Chikkabanavara | DS04 |
+| DS05 Basavanapura | DS05 |
+| DC01 Rampura | DC |
+| HomeRun Bangalore | (ignore — HQ) |
 
-The inventory manager should not need to scroll through 1,500 SKUs to find problems. The tool should surface:
-- SKUs at risk of stockout within X days given current sales pace
-- SKUs where today's sales are significantly above the daily average (demand spike in progress)
-- SKUs that have been at zero stock for more than N days
-- SKUs where current stock exceeds Max (overstock flag)
+#### 5.1.3 Invoice Status Mapping
 
-These should be filterable, sortable, and actionable — the manager should be able to click through to the SKU detail and immediately see what to do.
+| Zoho Status | Engine (Min/Max computation) | OOS Simulation Mode 2 |
+|---|---|---|
+| paid | ✅ (= CSV "Closed") | ✅ |
+| overdue | ✅ (= CSV "Overdue") | ✅ |
+| sent | ❌ | ✅ (today's live orders) |
+| void / draft | ❌ | ❌ |
 
-### 5.5 Manual Override Workflow — Simplified
+#### 5.1.4 Stock Sync Architecture
 
-Currently, overrides require: run OOS simulation → download CSV → edit → re-upload → apply to core. This is too heavy for daily use.
+**Daily full snapshot (7:45 AM, before 8 AM trading start):**
+1. Pull all items via list endpoint (8 paginated calls → ~1500 item_ids)
+2. Split into batches of 100, insert into `zoho_sync_queue` table
+3. Process batches: fetch 100 item details each, write `location_stock_on_hand` + `location_quantity_in_transit` per DS to `stock_live`
+4. At 7:55 AM: copy `stock_live` → `stock_snapshots` as today's 8 AM opening snapshot
 
-The new version should allow the inventory manager to directly edit Min/Max for any SKU × DS inline in the monitoring view, with a clear audit trail showing: who changed it, when, what the tool recommendation was, and what override was applied.
+**Hourly incremental (9 AM – 8 PM):**
+1. Pull today's invoices (paid + sent + overdue) → extract unique SKUs with sales
+2. Fetch item detail only for those SKUs (~50-200 per hour)
+3. Update `stock_live` with Zoho's actual stock (no calculation — just mirror Zoho's truth)
+
+**API call budget:** ~2100-3500 calls/day. Well within Zoho limits.
+
+#### 5.1.5 Daily Operations Cycle
+
+```
+7:45 AM  — Full stock snapshot from Zoho (all SKUs × all locations)
+7:55 AM  — Snapshot saved as today's 8 AM opening (for Mode 2 simulation)
+8:00 AM  — Trading starts, orders deplete stock
+           Throughout day: items inwarded at DC (sometimes directly at DS)
+9 AM–8 PM — Hourly incremental sync (sales-active SKUs only)
+8:00 PM  — Trading ends
+~Midnight — Transfer Orders raised from DC → each DS
+           Once TO marked "In Transit": stock leaves DC, not yet at DS
+~Noon next day — TOs arrive at DS, stock credited
+```
+
+#### 5.1.6 Implementation Tasks
+
+**Backend (Supabase Edge Functions + Tables):**
+
+| # | Task | What |
+|---|---|---|
+| B1 | Supabase tables | Create `stock_live`, `stock_snapshots`, `zoho_sync_queue` |
+| B2 | Token refresh helper | Shared function: refresh token → access token |
+| B3 | `/zoho/items-list` | Pull all items, write item_ids to sync queue in batches of 100 |
+| B4 | `/zoho/batch-stock` | Process one queue batch: 100 item details → stock_live |
+| B5 | `/zoho/snapshot` | Copy stock_live → stock_snapshots as 8 AM opening |
+| B6 | `/zoho/incremental` | Today's invoices → unique SKUs → fetch those items → update stock_live |
+| B7 | `/zoho/invoices` | Pull invoice line items for date range (model refresh) |
+| B8 | `/zoho/prices` | Pull Purchases by Item report, 12-month window |
+| B9 | Cron setup | pg_cron: 7:45→B3, every 30s for 10min→B4, 7:55→B5, hourly→B6 |
+
+**Frontend:**
+
+| # | Task | What |
+|---|---|---|
+| F1 | Upload tab — "Sync from Zoho" | Button for invoice/SKU master/price sync + status |
+| F2 | Stock sync status | Last sync time, next scheduled, manual refresh button |
+| F3 | Read stock_live | For Stock Health Monitor (Phase 2) |
+| F4 | Read stock_snapshots | For Mode 2 simulation (Phase 3) |
+| F5 | Data transformer | Zoho response → existing tool state format |
+
+#### 5.1.7 Model Refresh vs Live Stock
+
+- **Min/Max values** do NOT change with Zoho syncs. They only change when Admin explicitly refreshes the model (every 5-7 days).
+- **Model refresh:** Admin pulls fresh invoice data from Zoho → sets overall period → clicks Apply & Re-run → Min/Max recomputed.
+- **Zoho stock sync:** Hourly mirror of live stock levels for monitoring and simulation. Completely independent of Min/Max.
+
+### 5.2 Phase 2: Stock Health Monitor Tab
+
+New tab showing live stock status for all SKU×DS combos. Primary working surface for inventory manager.
+
+**Colour coding:**
+
+| Stock Level | Colour | Meaning |
+|---|---|---|
+| Stock ≤ Min | 🔴 Red | At or below reorder point — needs replenishment |
+| Stock between Min and Max, bottom 30% | 🟡 Amber | Approaching reorder — watch |
+| Stock between Min and Max, healthy | 🟢 Green | Healthy |
+| Stock > Max | 🔵 Blue | Overstocked |
+
+**Columns per SKU×DS:** Physical Stock, In Transit, Effective Stock (Physical + In Transit), Min, Max, Days of Cover, Health Status.
+
+### 5.3 Phase 3: Actual Stock OOS Simulation
+
+Two simulation modes in OOS Simulation tab:
+
+**Mode 1 ("Perfect Restock" — existing):** Stock starts at Max every day. Tests Min/Max adequacy.
+
+**Mode 2 ("Actual Stock" — new):** Stock starts at 8 AM Zoho snapshot. Shows what actually happened on the ground.
+
+**OOS Root Cause Categories (Mode 2):**
+
+| Root Cause | Detection Logic |
+|---|---|
+| Ops Failure | Opening stock < Max (wasn't restocked) AND order would have been fulfilled at Max |
+| Tool Failure | Opening stock = Max AND order > Max (Min/Max too low) |
+| Unstocked | Min=Max=0 for this SKU×DS (zero sale in analysis period) |
+| Outlier Order | Order > P95 of historical order sizes for this SKU×DS |
+
+**"Could have been saved" flag:** If OOS occurs AND `physical_stock + in_transit_qty >= order_qty`, flag as "would have been saved if TO arrived before 8 AM." Only flag when combined stock is sufficient.
+
+### 5.4 Phase 4: Alerts + Real-Time Sales
+
+- SKUs below Min across locations (breach visibility)
+- Demand spike detection (today's sales > X× daily average)
+- Days-of-cover alerts (approaching 0)
+- Overstock flags
+
+### 5.5 Manual Override Workflow — Simplified (Future)
+
+Inline Min/Max editing from monitoring view with audit trail.
 
 ---
 
@@ -507,6 +624,28 @@ The new version should allow the inventory manager to directly edit Min/Max for 
 - DS Min = reorder trigger; DS Max = restock-to level
 - DC is replenished from suppliers with brand-specific lead times (configurable in Logic Tweaker, default 2 days)
 - DC Min/Max is now lead-time-aware — see section 4.4
+
+### 6.1 Daily Operations Cycle
+
+```
+7:45 AM  — Zoho stock snapshot captured (all SKUs × all locations)
+8:00 AM  — Trading starts (deliveries 8 AM – 8 PM)
+           Throughout day: items inwarded at DC (sometimes directly at DS)
+8:00 PM  — Trading ends
+~Midnight — Transfer Orders raised from DC → each DS
+           Once TO marked "In Transit": stock leaves DC, not yet at DS
+~Noon next day — TOs typically arrive at DS (varies by location and day)
+```
+
+### 6.2 Cluster Geography
+
+| Cluster | Stores | Rationale |
+|---|---|---|
+| Cluster 1 | DS01 (Sarjapur) + DS05 (Basavanapura) | Geographically close |
+| Cluster 2 | DS02 (Bileshivale) + DC (Rampura) | Geographically close |
+| Cluster 3 | DS03 (Kengeri) + DS04 (Chikkabanavara) | Geographically close |
+
+Cluster analysis showed 65% OOS reduction via cross-DS fulfillment (134→46 instances). Cluster 2 (DS02+DC) achieved 95.6% reduction due to DC's large buffer stock.
 
 ---
 
@@ -523,10 +662,9 @@ The new version should allow the inventory manager to directly edit Min/Max for 
 
 ## 8. Open Questions (remaining)
 
-1. Can we get a real-time or daily stock-on-hand feed? If not, how do we approximate days-of-cover?
-2. What does the alert threshold look like — at what days-of-cover level do we flag a SKU as "at risk"?
-3. Which brands have a 5-day DC replenishment cycle? (Configurable in Logic Tweaker now, but list needs to be populated)
-4. How should demand shaping (v2) auto-tune percentiles — by CV thresholds, or continuously scaled?
+1. What does the alert threshold look like — at what days-of-cover level do we flag a SKU as "at risk"?
+2. Which brands have a 5-day DC replenishment cycle? (Configurable in Logic Tweaker now, but list needs to be populated)
+3. Cluster-based cross-DS fulfillment — build into tool or implement as ops process?
 
 ### Resolved Questions
 - **Percentile by price:** Premium=75, High=80, Medium=85, Low/Super Low=95 (cheap items stock aggressively — hard to emergency-source)
@@ -537,6 +675,10 @@ The new version should allow the inventory manager to directly edit Min/Max for 
 - **PCT outlier handling:** DOC cap at 30D for High/Premium items + NZD≥2 threshold. Analysis showed 100% of NZD=1 combos were degenerate (DOC=90). DOC cap alone insufficient for NZD=1 (still produces 30 units for once-in-90-days sellers). Combined approach eliminates 97%+ of degenerate cases.
 - **Dashboard → Overview redesign:** Category→Brand→SKU drill-down replaces flat SKU table. Period picker for sold value/coverage analysis (independent of engine). Store picker slices all metrics.
 - **Insights → SKU Detail redesign:** Direct SKU search replaces 4-level drilldown. Computation cards show full formula breakdown per DS. Recharts-based charts with Min/Max reference lines.
+- **Stock-on-hand feed:** Resolved — Zoho Inventory API provides per-location stock via item detail endpoint. Hourly sync + daily 8 AM snapshot.
+- **Demand shaping v2:** Parked — CV analysis showed no segmentation power (96.3% of combos > CV 2.0). Not worth building.
+- **Variable periods by movement:** Parked — simulation showed worse results (+8 OOS, +₹38.5L inventory) vs flat 45D period.
+- **ROP (Re-Order Point):** Parked — 86.5% of OOS is single order > Max, not restock timing. ROP only saves 6 of 392 instances.
 
 ---
 
@@ -563,6 +705,15 @@ docs/
   superpowers/plans/                   — implementation plans
   category-analysis.md                 — demand analysis by category (from 90-day invoice data)
 .env                                   — VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_ADMIN_PASSWORD
+supabase/
+  functions/                             — Supabase Edge Functions (planned)
+    zoho/                                — Zoho Inventory API integration
+      items-list/                        — Pull all items, queue batches for stock sync
+      batch-stock/                       — Process one batch: 100 item details → stock_live
+      snapshot/                          — Copy stock_live → stock_snapshots (8 AM daily)
+      incremental/                       — Hourly: today's sales SKUs → update stock_live
+      invoices/                          — Pull invoice data for model refresh
+      prices/                            — Pull avg purchase prices (12-month)
 ```
 
 Engine logic lives in `src/engine/`. UI, state management, and tab components remain in `App.jsx`.
@@ -597,3 +748,8 @@ Engine logic lives in `src/engine/`. UI, state management, and tab components re
 | DOC Cap | Days-of-cover cap for PCT strategy — limits Min to dailyAvg × capDays for configured price tags |
 | PCT Fallback | When PCT category SKU has NZD < threshold, falls back to Standard strategy |
 | Rate of Sale | Average quantity sold per day across all days in selected period |
+| TO | Transfer Order — stock movement from DC to DS (or DS to DS) |
+| In Transit | Stock that has been dispatched (TO marked) but not yet received at destination |
+| Ops Failure | OOS caused by stock not being replenished to Max (restocking process failure) |
+| Tool Failure | OOS caused by Min/Max being too low (single order exceeds Max) |
+| Stock Health | Colour-coded status: 🔴 ≤ Min, 🟡 near Min, 🟢 healthy, 🔵 > Max |
