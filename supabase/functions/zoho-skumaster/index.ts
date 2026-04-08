@@ -14,7 +14,7 @@ serve(async (req) => {
     let page = 1;
 
     while (true) {
-      const data = await zohoGet("items", { per_page: "200", page: String(page), status: "active" }) as Record<string, unknown>;
+      const data = await zohoGet("items", { per_page: "200", page: String(page) }) as Record<string, unknown>;
       const pageItems = (data.items as Record<string, string>[]) ?? [];
       if (!pageItems.length) break;
 
