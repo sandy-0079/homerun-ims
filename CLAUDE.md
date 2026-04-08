@@ -541,29 +541,35 @@ Connect to Zoho Inventory API to replace manual CSV uploads and enable live stoc
 
 #### 5.1.6 Implementation Tasks
 
-**Backend (Supabase Edge Functions + Tables):**
+**Backend (Supabase Edge Functions + Tables) — ALL SHIPPED:**
 
-| # | Task | What |
+| # | Task | Status |
 |---|---|---|
-| B1 | Supabase tables | Create `stock_live`, `stock_snapshots`, `zoho_sync_queue` |
-| B2 | Token refresh helper | Shared function: refresh token → access token |
-| B3 | `/zoho/items-list` | Pull all items, write item_ids to sync queue in batches of 100 |
-| B4 | `/zoho/batch-stock` | Process one queue batch: 100 item details → stock_live |
-| B5 | `/zoho/snapshot` | Copy stock_live → stock_snapshots as 8 AM opening |
-| B6 | `/zoho/incremental` | Today's invoices → unique SKUs → fetch those items → update stock_live |
-| B7 | `/zoho/invoices` | Pull invoice line items for date range (model refresh) |
-| B8 | `/zoho/prices` | Pull Purchases by Item report, 12-month window |
-| B9 | Cron setup | pg_cron: 7:45→B3, every 30s for 10min→B4, 7:55→B5, hourly→B6 |
+| B1 | Supabase tables: `stock_live`, `stock_snapshots`, `zoho_sync_queue` | ✅ Done |
+| B2 | Token refresh helper (`_shared/zoho.ts`) | ✅ Done |
+| B3 | `zoho-items-list` — pull all items, queue batches of 100 | ✅ Done |
+| B4 | `zoho-batch-stock` — process one queue batch: 100 item details → stock_live | ✅ Done |
+| B5 | `zoho-snapshot` — copy stock_live → stock_snapshots at 7:55 AM | ✅ Done |
+| B6 | `zoho-incremental` — today's invoices → unique SKUs → update stock_live | ✅ Done |
+| B7 | `zoho-invoices` — pull invoice line items for date range (model refresh) | ✅ Done |
+| B8 | `zoho-prices` — pull Purchases by Item report, 12-month window | ✅ Done |
+| B8b | `zoho-skumaster` — pull all items as SKU master snapshot | ✅ Done |
+| B9 | pg_cron: 7:45→B3, every min 2:15-2:25 UTC→B4, 7:55→B5, hourly 9AM-8PM→B6 | ✅ Done |
 
-**Frontend:**
+**Frontend — ALL SHIPPED:**
 
-| # | Task | What |
+| # | Task | Status |
 |---|---|---|
-| F1 | Upload tab — "Sync from Zoho" | Button for invoice/SKU master/price sync + status |
-| F2 | Stock sync status | Last sync time, next scheduled, manual refresh button |
-| F3 | Read stock_live | For Stock Health Monitor (Phase 2) |
-| F4 | Read stock_snapshots | For Mode 2 simulation (Phase 3) |
-| F5 | Data transformer | Zoho response → existing tool state format |
+| F1 | Upload tab — two-column layout: Zoho sync panel (left) + manual CSVs (right) | ✅ Done |
+| F2 | "Sync Stock Now" button in Stock Health tab, last synced timestamp | ✅ Done |
+| F3 | Read stock_live from Supabase REST API, pivoted to {sku: {DS: {...}}} | ✅ Done |
+| F4 | stock_snapshots read path prepared (for Phase 3) | ⬜ Pending |
+| F5 | Data transformers: Zoho invoice/SKU master/prices → tool state format | ✅ Done |
+
+**Known issues / Pending testing:**
+- Zoho daily API call limit (7,500/day) was exhausted during development testing. Resets at midnight IST. **Production cron uses ~2,000 calls/day — well within limit.**
+- CORS headers added to all Edge Functions after browser-fetch failures.
+- "Sync Stock Now" in Stock Health tab does full snapshot (items-list + all batches). **Needs testing with real data after limit resets.**
 
 #### 5.1.7 Model Refresh vs Live Stock
 
@@ -571,18 +577,28 @@ Connect to Zoho Inventory API to replace manual CSV uploads and enable live stoc
 - **Model refresh:** Admin pulls fresh invoice data from Zoho → sets overall period → clicks Apply & Re-run → Min/Max recomputed.
 - **Zoho stock sync:** Hourly mirror of live stock levels for monitoring and simulation. Completely independent of Min/Max.
 
-### 5.2 Phase 2: Stock Health Monitor Tab
+### 5.2 Phase 2: Stock Health Monitor Tab (SHIPPED — needs thorough testing)
 
 New tab showing live stock status for all SKU×DS combos. Primary working surface for inventory manager.
+
+**⚠ Needs thorough testing:** Stock data was not populated during build due to Zoho API rate limit exhaustion. Test after midnight IST when limit resets — click "Sync Stock Now" to populate stock_live, then verify colour coding, filters, DOC sort, and DS card counts.
+
+**Layout:**
+- 6 sticky summary cards at top (DS01–DS05 + DC): Red/Amber/Green/Blue counts per DS
+- DS01 selected by default; click any card to switch DS
+- Filters between cards and table: search (SKU ID/name), health status, category, brand
+- SKU-level table: Physical, In Transit, Effective, Min, Max, DOC, Status
 
 **Colour coding:**
 
 | Stock Level | Colour | Meaning |
 |---|---|---|
-| Stock ≤ Min | 🔴 Red | At or below reorder point — needs replenishment |
-| Stock between Min and Max, bottom 30% | 🟡 Amber | Approaching reorder — watch |
+| Stock ≤ Min | 🔴 Red | At or below reorder point — needs replenishment now |
+| Stock between Min and Max, bottom 30% of range | 🟡 Amber | Approaching reorder — watch |
 | Stock between Min and Max, healthy | 🟢 Green | Healthy |
 | Stock > Max | 🔵 Blue | Overstocked |
+
+**Sort:** Default Red → Amber → Green → Blue, then by DOC ascending within each group. DOC column header is clickable for manual sort. DOC = "—" for zero-sale SKUs (dailyAvg = 0).
 
 **Columns per SKU×DS:** Physical Stock, In Transit, Effective Stock (Physical + In Transit), Min, Max, Days of Cover, Health Status.
 
@@ -706,14 +722,19 @@ docs/
   category-analysis.md                 — demand analysis by category (from 90-day invoice data)
 .env                                   — VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_ADMIN_PASSWORD
 supabase/
-  functions/                             — Supabase Edge Functions (planned)
-    zoho/                                — Zoho Inventory API integration
-      items-list/                        — Pull all items, queue batches for stock sync
-      batch-stock/                       — Process one batch: 100 item details → stock_live
-      snapshot/                          — Copy stock_live → stock_snapshots (8 AM daily)
-      incremental/                       — Hourly: today's sales SKUs → update stock_live
-      invoices/                          — Pull invoice data for model refresh
-      prices/                            — Pull avg purchase prices (12-month)
+  functions/                             — Supabase Edge Functions (SHIPPED)
+    _shared/zoho.ts                      — Shared: token refresh, zohoGet(), LOCATION_MAP, CORS helpers
+    zoho-items-list/                     — Queue all 1949 items in batches of 100 for stock sync
+    zoho-batch-stock/                    — Process one queue batch: 100 item details → stock_live
+    zoho-snapshot/                       — Copy stock_live → stock_snapshots (7:55 AM daily)
+    zoho-incremental/                    — Hourly: today's sales SKUs → update stock_live
+    zoho-invoices/                       — Pull invoice line items for date range (model refresh)
+    zoho-prices/                         — Pull avg purchase prices, last 12 months
+    zoho-skumaster/                      — Pull all items as SKU master snapshot
+  migrations/
+    20260408000001_zoho_tables.sql       — stock_live, stock_snapshots, zoho_sync_queue tables + RLS
+    20260408000002_zoho_queue_policy.sql — Fix service_role read policy on queue
+    20260408000003_zoho_cron.sql         — pg_cron schedules for all sync jobs
 ```
 
 Engine logic lives in `src/engine/`. UI, state management, and tab components remain in `App.jsx`.
