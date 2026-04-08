@@ -3408,7 +3408,7 @@ const visibleOutput = useMemo(() => {
         };
 
         const csvBtns = (key, handler, hasData) => (
-          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:8,paddingTop:8,borderTop:`1px dashed ${HR.border}`}}>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:"auto",paddingTop:10,borderTop:`1px dashed ${HR.border}`}}>
             <div style={{fontSize:9,color:HR.muted,width:"100%",marginBottom:2}}>CSV fallback</div>
             <label style={{background:HR.green,color:HR.white,padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>
               ⬆ Upload CSV <input type="file" accept=".csv" onChange={handler} style={{display:"none"}}/>
@@ -3432,7 +3432,7 @@ const visibleOutput = useMemo(() => {
           {/* ── Zoho-synced cards ── */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:10}}>
             {/* Invoice Data */}
-            <div style={{...S.card}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                 <div style={{fontWeight:700,color:HR.text,fontSize:12}}>Invoice Data <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span></div>
                 <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{invoiceData.length.toLocaleString()} rows</div>
@@ -3455,7 +3455,7 @@ const visibleOutput = useMemo(() => {
             </div>
 
             {/* SKU Master */}
-            <div style={{...S.card}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                 <div style={{fontWeight:700,color:HR.text,fontSize:12}}>SKU Master <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span></div>
                 <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{Object.keys(skuMaster).length.toLocaleString()} SKUs</div>
@@ -3470,7 +3470,7 @@ const visibleOutput = useMemo(() => {
             </div>
 
             {/* Purchase Prices */}
-            <div style={{...S.card}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                 <div style={{fontWeight:700,color:HR.text,fontSize:12}}>Purchase Prices <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span></div>
                 <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{Object.keys(priceData).length.toLocaleString()} SKUs</div>
