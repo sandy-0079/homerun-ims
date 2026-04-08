@@ -3342,8 +3342,8 @@ const visibleOutput = useMemo(() => {
 
     {/* ── LEFT: cards + errors ── */}
     <div style={{flex:"0 0 auto"}}>
-      <h2 style={{color:HR.yellowDark,marginBottom:4,fontSize:16}}>Upload Data</h2>
-      <p style={{color:HR.muted,fontSize:13,marginBottom:14}}>Upload CSVs to power the model. Invoice data stored as rolling 90-day window.</p>
+      <h2 style={{color:HR.yellowDark,marginBottom:4,fontSize:16}}>Data Inputs</h2>
+      <p style={{color:HR.muted,fontSize:13,marginBottom:14}}>Sync model inputs from Zoho, or upload CSVs as fallback. Syncing does not re-run the model.</p>
 
       {(()=>{
         const dlCSV=(filename,csv)=>{
@@ -3443,16 +3443,15 @@ const visibleOutput = useMemo(() => {
 
             {/* ── LEFT: Sync from Zoho ── */}
             <div style={{...S.card}}>
-              <div style={{fontWeight:800,color:"#0077A8",fontSize:13,marginBottom:2}}>⟳ Sync from Zoho</div>
-              <div style={{fontSize:11,color:HR.muted,marginBottom:12}}>Refreshes Invoice Data, SKU Master and Purchase Prices in one step. Does not re-run the model.</div>
+              <div style={{fontWeight:800,color:"#0077A8",fontSize:13,marginBottom:10}}>Sync from Zoho</div>
 
-              {/* Current data status */}
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+              {/* Current data counts */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
                 {[
                   {label:"Invoice Data", value:`${invoiceData.length.toLocaleString()} rows`, sub: invoiceDateRange.min ? `${invoiceDateRange.min} → ${invoiceDateRange.max}` : "No data"},
-                  {label:"SKU Master", value:`${Object.keys(skuMaster).length.toLocaleString()} SKUs`, sub:""},
-                  {label:"Prices", value:`${Object.keys(priceData).length.toLocaleString()} SKUs`, sub:"L12M avg"},
-                ].map(c => (
+                  {label:"SKU Master",   value:`${Object.keys(skuMaster).length.toLocaleString()} SKUs`, sub:""},
+                  {label:"Prices",       value:`${Object.keys(priceData).length.toLocaleString()} SKUs`, sub:"L12M avg"},
+                ].map(c=>(
                   <div key={c.label} style={{background:HR.surfaceLight,borderRadius:6,padding:"8px 10px"}}>
                     <div style={{fontSize:9,color:HR.muted,fontWeight:600,marginBottom:2}}>{c.label}</div>
                     <div style={{fontSize:13,fontWeight:800,color:HR.green}}>{c.value}</div>
@@ -3461,57 +3460,41 @@ const visibleOutput = useMemo(() => {
                 ))}
               </div>
 
-              {/* Date picker for invoices */}
-              <div style={{fontSize:11,color:HR.text,fontWeight:600,marginBottom:4}}>Invoice data period to sync:</div>
-              <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:12,flexWrap:"wrap"}}>
+              {/* Date picker */}
+              <div style={{fontSize:11,color:HR.text,fontWeight:600,marginBottom:6}}>Invoice period to sync:</div>
+              <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:14}}>
                 <input type="date" value={zohoInvFrom} onChange={e=>setZohoInvFrom(e.target.value)}
-                  style={{...S.input,fontSize:11,padding:"4px 8px",flex:1,minWidth:120}}/>
+                  style={{...S.input,fontSize:11,padding:"4px 8px",flex:1}}/>
                 <span style={{fontSize:11,color:HR.muted}}>→</span>
                 <input type="date" value={zohoInvTo} onChange={e=>setZohoInvTo(e.target.value)}
-                  style={{...S.input,fontSize:11,padding:"4px 8px",flex:1,minWidth:120}}/>
-              </div>
-
-              {/* What will sync */}
-              <div style={{fontSize:10,color:HR.muted,marginBottom:10,lineHeight:1.8}}>
-                This will sync:<br/>
-                {["Invoice data (merged — Zoho overwrites same-date records)","SKU Master (live snapshot)","Purchase Prices (last 12 months)"].map(t => (
-                  <span key={t} style={{display:"block",paddingLeft:8}}>✓ {t}</span>
-                ))}
+                  style={{...S.input,fontSize:11,padding:"4px 8px",flex:1}}/>
               </div>
 
               <button onClick={syncAll} disabled={!zohoInvFrom||!zohoInvTo||isSyncing}
-                style={{background:isSyncing?"#ccc":HR.yellow,color:HR.black,border:"none",padding:"8px 18px",borderRadius:6,cursor:isSyncing?"not-allowed":"pointer",fontSize:12,fontWeight:700,marginBottom:8}}>
-                {isSyncing ? "⟳ Syncing…" : "⟳ Sync All from Zoho"}
+                style={{background:isSyncing?"#ccc":HR.yellow,color:HR.black,border:"none",padding:"9px 20px",borderRadius:6,cursor:isSyncing?"not-allowed":"pointer",fontSize:12,fontWeight:700,width:"100%",marginBottom:8}}>
+                {isSyncing ? "Syncing…" : "⟳ Sync All from Zoho"}
               </button>
+              <div style={{fontSize:9,color:HR.muted,marginBottom:8,textAlign:"center"}}>Syncs invoices + SKU master + prices · Does not re-run model</div>
 
               {/* Per-item status */}
               {(anyOk||anyErr||isSyncing) && (
-                <div style={{fontSize:10,marginTop:4}}>
-                  <ZohoStatusBadge syncState={zohoSync.invoices ? {...zohoSync.invoices, message: "Invoices: "+zohoSync.invoices.message} : null}/>
-                  <ZohoStatusBadge syncState={zohoSync.skuMaster ? {...zohoSync.skuMaster, message: "SKU Master: "+zohoSync.skuMaster.message} : null}/>
-                  <ZohoStatusBadge syncState={zohoSync.prices ? {...zohoSync.prices, message: "Prices: "+zohoSync.prices.message} : null}/>
+                <div style={{marginBottom:10}}>
+                  <ZohoStatusBadge syncState={zohoSync.invoices ? {...zohoSync.invoices, message:"Invoices: "+zohoSync.invoices.message} : null}/>
+                  <ZohoStatusBadge syncState={zohoSync.skuMaster ? {...zohoSync.skuMaster, message:"SKU Master: "+zohoSync.skuMaster.message} : null}/>
+                  <ZohoStatusBadge syncState={zohoSync.prices ? {...zohoSync.prices, message:"Prices: "+zohoSync.prices.message} : null}/>
                 </div>
               )}
 
-              {/* Downloads */}
-              <div style={{borderTop:`1px dashed ${HR.border}`,paddingTop:10,marginTop:10}}>
-                <div style={{fontSize:9,color:HR.muted,marginBottom:6,fontWeight:600}}>DOWNLOAD DATA</div>
-                <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:6}}>
-                  {invoiceData.length>0&&<button onClick={()=>{const csv=buildDataCSV("invoiceData");if(csv)dlCSV("invoiceData_data.csv",csv);}}
-                    style={{background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>⬇ Invoices</button>}
-                  {Object.keys(skuMaster).length>0&&<button onClick={()=>{const csv=buildDataCSV("skuMaster");if(csv)dlCSV("skuMaster_data.csv",csv);}}
-                    style={{background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>⬇ SKU Master</button>}
-                  {Object.keys(priceData).length>0&&<button onClick={()=>{const csv=buildDataCSV("priceData");if(csv)dlCSV("priceData_data.csv",csv);}}
-                    style={{background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>⬇ Prices</button>}
-                </div>
-                <div style={{fontSize:9,color:HR.muted,marginBottom:4,fontWeight:600}}>CSV FALLBACK (if Zoho unavailable)</div>
-                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                  {[{label:"Invoice CSV",key:"invoiceData",handler:handleInvoice},{label:"SKU Master CSV",key:"skuMaster",handler:handleSKU},{label:"Prices CSV",key:"priceData",handler:handlePrice}].map(c=>(
-                    <label key={c.key} style={{background:HR.green,color:HR.white,padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>
-                      ⬆ {c.label}<input type="file" accept=".csv" onChange={c.handler} style={{display:"none"}}/>
-                    </label>
-                  ))}
-                </div>
+              {/* Downloads + CSV fallback */}
+              <div style={{borderTop:`1px dashed ${HR.border}`,paddingTop:10,marginTop:4,display:"flex",gap:5,flexWrap:"wrap"}}>
+                {invoiceData.length>0&&<button onClick={()=>{const csv=buildDataCSV("invoiceData");if(csv)dlCSV("invoiceData_data.csv",csv);}} style={{background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>⬇ Invoices</button>}
+                {Object.keys(skuMaster).length>0&&<button onClick={()=>{const csv=buildDataCSV("skuMaster");if(csv)dlCSV("skuMaster_data.csv",csv);}} style={{background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>⬇ SKU Master</button>}
+                {Object.keys(priceData).length>0&&<button onClick={()=>{const csv=buildDataCSV("priceData");if(csv)dlCSV("priceData_data.csv",csv);}} style={{background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>⬇ Prices</button>}
+                {[{label:"⬆ Invoice",key:"invoiceData",handler:handleInvoice},{label:"⬆ SKU Master",key:"skuMaster",handler:handleSKU},{label:"⬆ Prices",key:"priceData",handler:handlePrice}].map(c=>(
+                  <label key={c.key} title="CSV fallback — use if Zoho unavailable" style={{background:HR.green,color:HR.white,padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>
+                    {c.label}<input type="file" accept=".csv" onChange={c.handler} style={{display:"none"}}/>
+                  </label>
+                ))}
               </div>
             </div>
 
