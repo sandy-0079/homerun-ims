@@ -2834,6 +2834,263 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
   );
 }
 
+// ─── Stock Health Monitor ────────────────────────────────────────────────────
+const HEALTH_ORDER = { red: 0, amber: 1, green: 2, blue: 3 };
+const HEALTH_COLOR = {
+  red:   { bg: "#FEE2E2", text: "#B91C1C", label: "🔴 Below Min" },
+  amber: { bg: "#FEF3C7", text: "#92400E", label: "🟡 Approaching Min" },
+  green: { bg: "#D1FAE5", text: "#065F46", label: "🟢 Healthy" },
+  blue:  { bg: "#DBEAFE", text: "#1E40AF", label: "🔵 Overstocked" },
+};
+
+function getHealth(effective, min, max) {
+  if (effective <= min) return "red";
+  if (max > min && effective <= min + (max - min) * 0.3) return "amber";
+  if (effective > max) return "blue";
+  return "green";
+}
+
+function StockHealthTab({ stockLive, stockSyncedAt, stockLoading, onSyncNow, results, params }) {
+  const [selectedDS, setSelectedDS] = useState("DS01");
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("All");
+  const [filterCat, setFilterCat] = useState("All");
+  const [filterBrand, setFilterBrand] = useState("All");
+  const [sortField, setSortField] = useState("health");
+  const [sortAsc, setSortAsc] = useState(true);
+
+  const DS_AND_DC = [...DS_LIST, "DC"];
+
+  // Build per-DS summary counts
+  const summary = useMemo(() => {
+    const s = {};
+    for (const ds of DS_AND_DC) {
+      s[ds] = { red: 0, amber: 0, green: 0, blue: 0, total: 0 };
+    }
+    if (!results) return s;
+    for (const [sku, res] of Object.entries(results)) {
+      for (const ds of DS_LIST) {
+        const storeRes = res.stores?.[ds];
+        if (!storeRes || (!storeRes.min && !storeRes.max)) continue;
+        const liveData = stockLive[sku]?.[ds] || { stock_on_hand: 0, quantity_in_transit: 0 };
+        const effective = liveData.stock_on_hand + liveData.quantity_in_transit;
+        const h = getHealth(effective, storeRes.min, storeRes.max);
+        s[ds][h]++;
+        s[ds].total++;
+      }
+      // DC
+      const dcRes = res.dc;
+      if (dcRes?.min || dcRes?.max) {
+        const liveData = stockLive[sku]?.["DC"] || { stock_on_hand: 0, quantity_in_transit: 0 };
+        const effective = liveData.stock_on_hand + liveData.quantity_in_transit;
+        const h = getHealth(effective, dcRes.min || 0, dcRes.max || 0);
+        s["DC"][h]++;
+        s["DC"].total++;
+      }
+    }
+    return s;
+  }, [stockLive, results]);
+
+  // Build SKU rows for selected DS
+  const skuRows = useMemo(() => {
+    if (!results) return [];
+    const isDC = selectedDS === "DC";
+    const rows = [];
+    for (const [sku, res] of Object.entries(results)) {
+      const storeRes = isDC ? null : res.stores?.[selectedDS];
+      const dcRes = isDC ? res.dc : null;
+      const minMax = isDC ? dcRes : storeRes;
+      if (!minMax || (!minMax.min && !minMax.max)) continue;
+
+      const liveData = stockLive[sku]?.[selectedDS] || { stock_on_hand: 0, quantity_in_transit: 0 };
+      const physical = liveData.stock_on_hand;
+      const inTransit = liveData.quantity_in_transit;
+      const effective = physical + inTransit;
+      const dailyAvg = isDC ? 0 : (storeRes?.dailyAvg || 0);
+      const doc = dailyAvg > 0 ? effective / dailyAvg : null;
+      const health = getHealth(effective, minMax.min || 0, minMax.max || 0);
+
+      rows.push({
+        sku, health, physical, inTransit, effective,
+        min: minMax.min || 0, max: minMax.max || 0,
+        dailyAvg, doc,
+        name: res.meta?.name || sku,
+        category: res.meta?.category || "—",
+        brand: res.meta?.brand || "—",
+      });
+    }
+    return rows;
+  }, [results, selectedDS, stockLive]);
+
+  // Categories and brands for filters
+  const categories = useMemo(() => ["All", ...new Set(skuRows.map(r => r.category).filter(Boolean).sort())], [skuRows]);
+  const brands = useMemo(() => ["All", ...new Set(skuRows.map(r => r.brand).filter(Boolean).sort())], [skuRows]);
+
+  // Filter + sort
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    let rows = skuRows.filter(r => {
+      if (filterStatus !== "All" && r.health !== filterStatus.toLowerCase()) return false;
+      if (filterCat !== "All" && r.category !== filterCat) return false;
+      if (filterBrand !== "All" && r.brand !== filterBrand) return false;
+      if (q && !r.sku.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    rows.sort((a, b) => {
+      if (sortField === "health") {
+        const hDiff = HEALTH_ORDER[a.health] - HEALTH_ORDER[b.health];
+        if (hDiff !== 0) return hDiff;
+        // Within same health group, sort by DOC ascending (null = infinity)
+        const aDoc = a.doc ?? Infinity, bDoc = b.doc ?? Infinity;
+        return aDoc - bDoc;
+      }
+      if (sortField === "doc") {
+        const aDoc = a.doc ?? Infinity, bDoc = b.doc ?? Infinity;
+        return sortAsc ? aDoc - bDoc : bDoc - aDoc;
+      }
+      const av = a[sortField] ?? 0, bv = b[sortField] ?? 0;
+      return sortAsc ? av - bv : bv - av;
+    });
+    return rows;
+  }, [skuRows, search, filterStatus, filterCat, filterBrand, sortField, sortAsc]);
+
+  const toggleSort = (field) => {
+    if (sortField === field) setSortAsc(!sortAsc);
+    else { setSortField(field); setSortAsc(true); }
+  };
+  const sortArrow = (field) => sortField === field ? (sortAsc ? " ▲" : " ▼") : "";
+
+  const th = (label, field, right) => (
+    <th onClick={() => field && toggleSort(field)}
+      style={{ padding: "6px 8px", fontSize: 10, fontWeight: 600, color: HR.muted, background: "#F5E6C8",
+        textAlign: right ? "right" : "left", cursor: field ? "pointer" : "default",
+        borderBottom: "2px solid " + HR.yellow, whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 }}>
+      {label}{sortArrow(field)}
+    </th>
+  );
+
+  const syncLabel = stockSyncedAt
+    ? stockSyncedAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })
+    : "Not synced yet";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
+
+      {/* ── Sticky top: DS cards + sync status ── */}
+      <div style={{ position: "sticky", top: 0, zIndex: 10, background: HR.bg, paddingBottom: 8 }}>
+        {/* Sync status bar */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: HR.muted }}>
+            Last synced: <span style={{ fontWeight: 600, color: HR.text }}>{syncLabel}</span>
+            {!Object.keys(stockLive).length && <span style={{ color: "#B91C1C", marginLeft: 8 }}>No stock data — run a sync</span>}
+          </div>
+          <button onClick={onSyncNow} disabled={stockLoading}
+            style={{ background: HR.yellow, color: HR.black, border: "none", padding: "5px 14px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+            {stockLoading ? "Syncing…" : "⟳ Sync Stock Now"}
+          </button>
+        </div>
+
+        {/* DS summary cards */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 6 }}>
+          {DS_AND_DC.map(ds => {
+            const s = summary[ds] || { red: 0, amber: 0, green: 0, blue: 0 };
+            const isSelected = selectedDS === ds;
+            const di = DS_LIST.indexOf(ds);
+            const accent = di >= 0 ? DS_COLORS[di].header : DC_COLOR.header;
+            return (
+              <div key={ds} onClick={() => setSelectedDS(ds)}
+                style={{ background: isSelected ? accent + "18" : HR.surface, border: `2px solid ${isSelected ? accent : HR.border}`,
+                  borderRadius: 8, padding: "8px 10px", cursor: "pointer", transition: "all 0.15s" }}>
+                <div style={{ fontWeight: 800, fontSize: 12, color: accent, marginBottom: 4 }}>{ds}</div>
+                {[["red","🔴"],["amber","🟡"],["green","🟢"],["blue","🔵"]].map(([h, icon]) => (
+                  <div key={h} style={{ fontSize: 10, display: "flex", justifyContent: "space-between", lineHeight: 1.6 }}>
+                    <span>{icon}</span>
+                    <span style={{ fontWeight: s[h] > 0 && h === "red" ? 700 : 400, color: s[h] > 0 && h === "red" ? "#B91C1C" : HR.muted }}>{s[h]}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Filters ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search SKU ID or name…"
+          style={{ ...S.input, flex: 1, minWidth: 200, fontSize: 11 }} />
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...S.input, fontSize: 11 }}>
+          <option>All</option>
+          <option value="red">🔴 Below Min</option>
+          <option value="amber">🟡 Approaching</option>
+          <option value="green">🟢 Healthy</option>
+          <option value="blue">🔵 Overstocked</option>
+        </select>
+        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ ...S.input, fontSize: 11 }}>
+          {categories.map(c => <option key={c}>{c}</option>)}
+        </select>
+        <select value={filterBrand} onChange={e => setFilterBrand(e.target.value)} style={{ ...S.input, fontSize: 11 }}>
+          {brands.map(b => <option key={b}>{b}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: HR.muted, whiteSpace: "nowrap" }}>{filtered.length} SKUs</span>
+      </div>
+
+      {/* ── SKU table ── */}
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "auto", borderRadius: 8, border: `1px solid ${HR.border}` }}>
+        <table style={{ ...S.table, minWidth: 720 }}>
+          <thead>
+            <tr>
+              {th("SKU / Name", null, false)}
+              {th("Physical", "physical", true)}
+              {th("In Transit", "inTransit", true)}
+              {th("Effective", "effective", true)}
+              {th("Min", "min", true)}
+              {th("Max", "max", true)}
+              {th("DOC", "doc", true)}
+              {th("Status", "health", false)}
+            </tr>
+          </thead>
+          <tbody>
+            {!results && (
+              <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: HR.muted, fontSize: 12 }}>
+                Run the model first to see stock health data.
+              </td></tr>
+            )}
+            {results && !Object.keys(stockLive).length && (
+              <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: HR.muted, fontSize: 12 }}>
+                No stock data yet. Click "Sync Stock Now" to fetch live stock from Zoho.
+              </td></tr>
+            )}
+            {filtered.map(row => {
+              const hc = HEALTH_COLOR[row.health];
+              return (
+                <tr key={row.sku} style={{ background: "" }}
+                  onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
+                  onMouseLeave={e => e.currentTarget.style.background = ""}>
+                  <td style={{ padding: "5px 8px", borderTop: `1px solid ${HR.border}`, maxWidth: 260 }}>
+                    <div style={{ fontWeight: 600, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</div>
+                    <div style={{ fontSize: 9, color: HR.muted }}>{row.sku}</div>
+                  </td>
+                  {[row.physical, row.inTransit, row.effective, row.min, row.max].map((v, i) => (
+                    <td key={i} style={{ padding: "5px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontSize: 11, borderTop: `1px solid ${HR.border}`, fontWeight: i === 2 ? 700 : 400 }}>{v}</td>
+                  ))}
+                  <td style={{ padding: "5px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontSize: 11, borderTop: `1px solid ${HR.border}`, fontWeight: 600, color: row.doc !== null && row.doc < 1 ? "#B91C1C" : HR.text }}>
+                    {row.doc !== null ? row.doc.toFixed(1) + "D" : "—"}
+                  </td>
+                  <td style={{ padding: "5px 8px", borderTop: `1px solid ${HR.border}` }}>
+                    <span style={{ background: hc.bg, color: hc.text, padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 600, whiteSpace: "nowrap" }}>
+                      {hc.label}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 // Lightweight copy-to-clipboard with toast feedback
 let _toastTimer = null;
@@ -2866,6 +3123,11 @@ export default function App(){
   const [simDays, setSimDays] = useState(15);
   const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
   const [zohoLoading, setZohoLoading] = useState(false);
+  const [stockLive, setStockLive] = useState({}); // {sku: {DS01: {stock_on_hand, quantity_in_transit}, ...}}
+  const [stockSyncedAt, setStockSyncedAt] = useState(null);
+  const [stockLoading, setStockLoading] = useState(false);
+  // Auto-fetch stock when navigating to Stock Health tab
+  useEffect(() => { if (tab === "stockHealth" && !Object.keys(stockLive).length) fetchStockLive(); }, [tab]);
   const [zohoInvFrom, setZohoInvFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 5); return d.toISOString().slice(0,10);
   });
@@ -3182,6 +3444,37 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     setZohoLoading(false);
   }, [callZoho]);
 
+  // F3: Fetch stock_live from Supabase
+  const fetchStockLive = useCallback(async () => {
+    setStockLoading(true);
+    try {
+      const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2").catch(() => ({ createClient: null }));
+      // Use existing supabase client pattern from supabase.js
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/stock_live?select=sku,location,stock_on_hand,quantity_in_transit,synced_at`,
+        { headers: { "apikey": SUPABASE_ANON, "Authorization": `Bearer ${SUPABASE_ANON}` } }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const rows = await res.json();
+      // Pivot: {sku: {DS01: {stock_on_hand, quantity_in_transit}, ...}}
+      const pivot = {};
+      let latestTs = null;
+      for (const row of rows) {
+        if (!pivot[row.sku]) pivot[row.sku] = {};
+        pivot[row.sku][row.location] = {
+          stock_on_hand: Math.max(0, row.stock_on_hand || 0),
+          quantity_in_transit: Math.max(0, row.quantity_in_transit || 0),
+        };
+        if (!latestTs || row.synced_at > latestTs) latestTs = row.synced_at;
+      }
+      setStockLive(pivot);
+      if (latestTs) setStockSyncedAt(new Date(latestTs));
+    } catch (err) {
+      console.error("Stock fetch error:", err);
+    }
+    setStockLoading(false);
+  }, [SUPABASE_URL, SUPABASE_ANON]);
+
   const clearData=useCallback(async(key)=>{
     if(key==="invoiceData"){setInv([]);LS.delete("invoiceData");setLoaded(false);setResults(null);}
     if(key==="skuMaster"){setSKU({});LS.delete("skuMaster");setLoaded(false);setResults(null);}
@@ -3270,8 +3563,8 @@ const visibleOutput = useMemo(() => {
   const rw2=params.recencyWt||RECENCY_WT_DEFAULT,dcM=params.dcMult||DC_MULT_DEFAULT;
   const movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"],priceColors=["#B91C1C","#C2410C","#A16207","#475569","#64748B"];
 
-  const ADMIN_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
-  const PUBLIC_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["simulation","OOS Simulation"],["output","Tool Output Download"]];
+  const ADMIN_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
+  const PUBLIC_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"]];
   const NAV_TABS=isAdmin?ADMIN_TABS:PUBLIC_TABS;
 
   // Sync status indicator
@@ -3807,6 +4100,20 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
 
             </div>
           )
+        )}
+        {tab==="stockHealth"&&(
+          <StockHealthTab
+            stockLive={stockLive}
+            stockSyncedAt={stockSyncedAt}
+            stockLoading={stockLoading}
+            onSyncNow={async()=>{
+              setStockLoading(true);
+              await callZoho("zoho-incremental");
+              await fetchStockLive();
+            }}
+            results={results}
+            params={params}
+          />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
   <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}/>
