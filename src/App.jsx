@@ -3361,8 +3361,8 @@ const visibleOutput = useMemo(() => {
           }
           if(key==="skuMaster"){
             if(!Object.keys(skuMaster).length) return null;
-            const h=["Name","Inventorised At","SKU","Category","Status","Brand"];
-            const rows=Object.values(skuMaster).map(s=>[s.name||"",s.inventorisedAt||"DS",s.sku,s.category||"",s.status||"",s.brand||""].map(v=>`"${v}"`).join(","));
+            const h=["Name","SKU","Category","Brand","Status"];
+            const rows=Object.values(skuMaster).map(s=>[s.name||"",s.sku,s.category||"",s.brand||"",s.status||""].map(v=>`"${v}"`).join(","));
             return h.join(",")+"\n"+rows.join("\n");
           }
           if(key==="priceData"){
