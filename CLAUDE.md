@@ -574,8 +574,10 @@ Connect to Zoho Inventory API to replace manual CSV uploads and enable live stoc
 **Known issues / Pending testing:**
 - Zoho daily API call limit (7,500/day) was exhausted during development testing. Resets at midnight IST. **Production cron uses ~2,000 calls/day — well within limit.**
 - CORS headers added to all Edge Functions after browser-fetch failures.
-- "Sync Stock Now" in Stock Health tab does full snapshot (items-list + all batches). **Needs testing with real data after limit resets tomorrow morning.**
+- "Sync Stock Now" in Stock Health tab does full snapshot (items-list + all batches). **Needs testing with real data after limit resets.**
 - **Stock Health tab needs thorough end-to-end testing** once stock_live is populated with real data from tomorrow's 7:45 AM cron.
+- pg_cron was originally broken (used `vault.decrypted_secrets` which wasn't configured). **Fixed in migration 20260409000001** — cron now uses hardcoded anon key directly. Cron jobs should fire correctly from tonight onwards.
+- First stock snapshot manually saved for 2026-04-09. stock_live has 2,364 rows (active SKUs with DS-level stock).
 
 #### 5.1.7 Model Refresh vs Live Stock
 
