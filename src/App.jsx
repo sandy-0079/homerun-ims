@@ -3597,7 +3597,7 @@ const visibleOutput = useMemo(() => {
       {/* Data Health — horizontal strip */}
       <div style={{display:"flex",gap:0,background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8,overflow:"hidden"}}>
         {[
-          {label:"Date Range",   value:dateRange,                                       color:HR.muted,   small:true},
+          {label:"Invoice Data",  value:invoiceDateRange.min&&invoiceDateRange.max?`${invoiceDateRange.min} → ${invoiceDateRange.max}`:"No data", color:HR.muted, small:true},
           {label:"Invoice Rows", value:invoiceData.length.toLocaleString(),             color:"#0077A8"},
           {label:"Active SKUs",  value:activeMaster.length.toLocaleString(),            color:HR.green},
           {label:"SKUs Sold",    value:uniqueSold.toLocaleString(),                     color:HR.yellowDark},
