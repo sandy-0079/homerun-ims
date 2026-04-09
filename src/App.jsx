@@ -3115,6 +3115,7 @@ export default function App(){
   const [simDays, setSimDays] = useState(15);
   const [stockData, setStockData] = useState({});       // persists across tab switches
   const [stockUploadedAt, setStockUploadedAt] = useState(null);
+  const stockUploadedAtRef = useRef(null); // always current — avoids stale closure in saveTeamData
   const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
   const [invoiceUploadedThisSession, setInvoiceUploadedThisSession] = useState(false);
   const [modelDirty, setModelDirty] = useState(false); // true when data or params changed since last run
@@ -3200,7 +3201,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   if(sbData.deadStock)setDead(new Set(sbData.deadStock));
   if(sbData.priceData)setPrice(sbData.priceData);
   if(sbData.stockData)setStockData(sbData.stockData);
-  if(sbData.stockUploadedAt)setStockUploadedAt(new Date(sbData.stockUploadedAt));
+  if(sbData.stockUploadedAt){const d=new Date(sbData.stockUploadedAt);setStockUploadedAt(d);stockUploadedAtRef.current=d;}
   setLoaded(true);
 
   // Load params first, then run engine with correct params
@@ -3297,11 +3298,11 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       deadStock:   [...(overrides.deadStock ?? deadStock)],
       priceData:   overrides.priceData   ?? priceData,
       stockData:   overrides.stockData   ?? stockData,
-      stockUploadedAt: overrides.stockUploadedAt ?? stockUploadedAt?.toISOString() ?? null,
+      stockUploadedAt: overrides.stockUploadedAt ?? stockUploadedAtRef.current?.toISOString() ?? null,
       publishedAt: new Date().toISOString(),
     };
     await saveToSupabase("team_data", "global", bundle);
-  }, [invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData, stockData, stockUploadedAt]);
+  }, [invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData, stockData]); // stockUploadedAt read from ref — always current
 
   const handleInvoice=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;setLoading(true);
@@ -4092,7 +4093,9 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
           )
         )}
         {tab==="stockHealth"&&(
-          <StockHealthTab results={results} params={params} stockData={stockData} setStockData={setStockData} uploadedAt={stockUploadedAt} setUploadedAt={setStockUploadedAt} saveTeamData={saveTeamData} />
+          <StockHealthTab results={results} params={params} stockData={stockData} setStockData={setStockData} uploadedAt={stockUploadedAt}
+            setUploadedAt={(d)=>{setStockUploadedAt(d);stockUploadedAtRef.current=d;}}
+            saveTeamData={saveTeamData} />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
   <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}/>
