@@ -3118,6 +3118,8 @@ export default function App(){
   const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
   const [invoiceUploadedThisSession, setInvoiceUploadedThisSession] = useState(false);
   const [modelDirty, setModelDirty] = useState(false); // true when data or params changed since last run
+  const [showRunConfirm, setShowRunConfirm] = useState(false); // show pre-run summary modal
+  const [modelRunSuccess, setModelRunSuccess] = useState(false); // show success message after run
   const [zohoInvFrom, setZohoInvFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 5); return d.toISOString().slice(0,10);
   });
@@ -3470,7 +3472,10 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
             merged[sku] = { ...merged[sku], stores: newStores };
           });
           setResults(merged);
-          setTab("overview");
+          setModelRunSuccess(true);
+          setTimeout(() => setModelRunSuccess(false), 6000);
+          // Only redirect if not on upload tab — let upload tab show success inline
+          setTab(t => t === "upload" ? "upload" : t);
         } catch (err) { console.error(err); alert("Model error: " + err.message); }
         setLoading(false);
       }, 50);
@@ -3596,11 +3601,7 @@ const visibleOutput = useMemo(() => {
               disabled={disabled2}
               title={!hasData?"Upload invoice CSV first":isSyncing2?"Syncing SKU Master + Prices from Zoho…":!modelDirty?"No changes since last run":""}
               style={{background:disabled2?"#E5E5E5":HR.yellow,color:disabled2?"#999":HR.black,border:"none",padding:"8px 20px",borderRadius:7,cursor:disabled2?"not-allowed":"pointer",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:6}}
-              onClick={disabled2?undefined:()=>{
-                if(window.confirm(`Re-run model with:\n• ${invoiceData.length.toLocaleString()} invoice rows (${invoiceDateRange.min} → ${invoiceDateRange.max})\n• ${Object.keys(skuMaster).length.toLocaleString()} SKUs\n• ${Object.keys(priceData).length.toLocaleString()} price entries\n\nThis will update Min/Max for all users. Continue?`)){
-                  setLoaded(true); applyAndRun(params);
-                }
-              }}>
+              onClick={disabled2?undefined:()=>setShowRunConfirm(true)}>
               {isSyncing2 ? <><span style={{fontSize:14}}>⏳</span> Syncing Zoho…</> : modelDirty ? <><span>▶</span> Apply & Re-run Model</> : <><span>✓</span> Model up to date</>}
             </button>
           );
@@ -3625,6 +3626,52 @@ const visibleOutput = useMemo(() => {
         ))}
       </div>
     </div>
+
+    {/* ── Success banner ── */}
+    {modelRunSuccess && (
+      <div style={{background:"#D1FAE5",border:"1px solid #6EE7B7",borderRadius:8,padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:18}}>✅</span>
+        <div>
+          <div style={{fontWeight:700,color:"#065F46",fontSize:12}}>Model ran successfully</div>
+          <div style={{fontSize:11,color:"#047857"}}>Min/Max updated for all {Object.keys(results||{}).length.toLocaleString()} SKUs. All users will see new values on next load.</div>
+        </div>
+      </div>
+    )}
+
+    {/* ── Run confirm modal ── */}
+    {showRunConfirm && (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}>
+        <div style={{background:HR.white,borderRadius:12,padding:28,maxWidth:440,width:"90%",boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
+          <div style={{fontWeight:800,color:HR.text,fontSize:15,marginBottom:4}}>Re-run Model?</div>
+          <div style={{fontSize:12,color:HR.muted,marginBottom:16}}>This will recalculate Min/Max for all SKUs and update the values seen by all users.</div>
+          <div style={{background:HR.surfaceLight,borderRadius:8,padding:"10px 14px",marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:700,color:HR.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>Model will run with</div>
+            {[
+              {label:"Invoice Data", value:`${invoiceData.length.toLocaleString()} rows · ${invoiceDateRange.min || "—"} → ${invoiceDateRange.max || "—"}`},
+              {label:"SKU Master", value:`${Object.keys(skuMaster).length.toLocaleString()} SKUs${zohoSync.skuMaster?.ts?" · synced "+zohoSync.skuMaster.ts:""}`},
+              {label:"Purchase Prices", value:`${Object.keys(priceData).length.toLocaleString()} SKUs${zohoSync.prices?.ts?" · synced "+zohoSync.prices.ts:""}`},
+              {label:"Overall Period", value:`${params.overallPeriod || 45} days`},
+              {label:"Pending param changes", value:changedCount > 0 ? `${changedCount} change${changedCount>1?"s":""} will be applied` : "None"},
+            ].map(item => (
+              <div key={item.label} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${HR.border}`,fontSize:11}}>
+                <span style={{color:HR.muted}}>{item.label}</span>
+                <span style={{fontWeight:600,color:HR.text,textAlign:"right",maxWidth:220}}>{item.value}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={()=>{setShowRunConfirm(false);setLoaded(true);applyAndRun(params);}}
+              style={{flex:1,background:HR.yellow,color:HR.black,border:"none",padding:"10px",borderRadius:7,cursor:"pointer",fontWeight:800,fontSize:13}}>
+              ▶ Run Model
+            </button>
+            <button onClick={()=>setShowRunConfirm(false)}
+              style={{flex:1,background:HR.white,color:HR.muted,border:`1px solid ${HR.border}`,padding:"10px",borderRadius:7,cursor:"pointer",fontWeight:600,fontSize:13}}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* ── MAIN: cards area ── */}
     <div style={{flex:"0 0 auto"}}>
