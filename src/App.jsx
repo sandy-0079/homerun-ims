@@ -3450,8 +3450,8 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     if(key==="priceData"){setPrice({});LS.delete("priceData");saveTeamData({priceData:{}});}
     if(key==="minReqQty"){setMRQ({});LS.delete("minReqQty");saveTeamData({minReqQty:{}});}
     if(key==="newSKUQty"){setNSQ({});LS.delete("newSKUQty");saveTeamData({newSKUQty:{}});}
-    if(key==="deadStock"){setDead(new Set());LS.delete("deadStock");}
-  },[]);
+    if(key==="deadStock"){setDead(new Set());LS.delete("deadStock");saveTeamData({deadStock:new Set()});}
+  },[saveTeamData]);
 
   const saveParams=p=>{setParams(p);setModelDirty(true);addChange("Logic Tweaker params changed");};
 
