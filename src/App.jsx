@@ -3299,9 +3299,8 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   const handleInvoice=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;setLoading(true);
     const rows=parseCSV(await file.text());
-    const newE=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0)})).filter(r=>r.date&&r.sku&&r.qty>0);
-    const all=[...invoiceData,...newE],dates=[...new Set(all.map(r=>r.date))].sort();
-    const cutoff=dates.length>ROLLING_DAYS?dates[dates.length-ROLLING_DAYS]:dates[0],filtered=all.filter(r=>r.date>=cutoff);
+    // Replace entirely — no merge, no rolling cap. Store all data Admin provides.
+    const filtered=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0)})).filter(r=>r.date&&r.sku&&r.qty>0);
     setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
     await saveTeamData({invoiceData:filtered});
     setLoading(false);
@@ -3368,15 +3367,10 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
         qty: r.qty,
       })).filter(r => r.date && r.sku && r.qty > 0);
 
-      // Merge: replace same-date+sku+ds combos from Zoho (Zoho is authoritative)
+      // Merge: replace same-date+sku+ds combos from Zoho (Zoho is authoritative). No rolling cap.
       const newKey = r => `${r.date}||${r.sku}||${r.ds}`;
       const newSet = new Set(newRows.map(newKey));
-      const merged = [...invoiceData.filter(r => !newSet.has(newKey(r))), ...newRows];
-
-      // Apply rolling window cap
-      const dates = [...new Set(merged.map(r => r.date))].sort();
-      const cutoff = dates.length > ROLLING_DAYS ? dates[dates.length - ROLLING_DAYS] : dates[0];
-      const filtered = merged.filter(r => r.date >= cutoff);
+      const filtered = [...invoiceData.filter(r => !newSet.has(newKey(r))), ...newRows];
 
       setInv(filtered);
       LS.set("invoiceData", JSON.stringify(filtered));
