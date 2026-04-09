@@ -2850,7 +2850,7 @@ function getHealth(effective, min, max) {
   return "green";
 }
 
-function StockHealthTab({ results, params, stockData, setStockData, uploadedAt, setUploadedAt }) {
+function StockHealthTab({ results, params, stockData, setStockData, uploadedAt, setUploadedAt, saveTeamData }) {
   const [selectedDS, setSelectedDS] = useState("DS01");
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("All");
@@ -2889,11 +2889,13 @@ function StockHealthTab({ results, params, stockData, setStockData, uploadedAt, 
       newData[sku][ds] = { stock_on_hand: stockOnHand, quantity_in_transit: inTransit };
       count++;
     }
+    const ts = new Date();
     setStockData(newData);
-    setUploadedAt(new Date());
+    setUploadedAt(ts);
+    saveTeamData({ stockData: newData, stockUploadedAt: ts.toISOString() });
     e.target.value = '';
     return count;
-  }, [stockData]);
+  }, [stockData, saveTeamData]);
 
   // Build per-DS summary counts
   const summary = useMemo(() => {
@@ -3190,6 +3192,8 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   if(sbData.newSKUQty)setNSQ(sbData.newSKUQty);
   if(sbData.deadStock)setDead(new Set(sbData.deadStock));
   if(sbData.priceData)setPrice(sbData.priceData);
+  if(sbData.stockData)setStockData(sbData.stockData);
+  if(sbData.stockUploadedAt)setStockUploadedAt(new Date(sbData.stockUploadedAt));
   setLoaded(true);
 
   // Load params first, then run engine with correct params
@@ -3275,24 +3279,22 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     },50);
   };
 
-  // ── Publish: saves team data to Supabase (+ downloads JSON as backup) ───────
-  const handlePublish=async()=>{
-    setPublishStatus("saving");
-    try{
-      const bundle={invoiceData,skuMaster,minReqQty,newSKUQty,deadStock:[...deadStock],priceData,publishedAt:new Date().toISOString()};
-      // Save to Supabase
-      const ok = await saveToSupabase("team_data","global",bundle);
-      if(ok){
-        setPublishStatus("done");
-        setTimeout(()=>setPublishStatus(null),8000);
-      } else {
-        throw new Error("Supabase save failed");
-      }
-      // Also download JSON as backup
-      const blob=new Blob([JSON.stringify(bundle)],{type:"application/json"});
-      const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="team-data.json";a.click();
-    }catch(e){setPublishStatus("error");setTimeout(()=>setPublishStatus(null),5000);}
-  };
+  // ── Auto-save: saves team data to Supabase immediately on any data change ────
+  // Pass overrides for whichever field just changed (state hasn't updated yet)
+  const saveTeamData = useCallback(async (overrides = {}) => {
+    const bundle = {
+      invoiceData: overrides.invoiceData ?? invoiceData,
+      skuMaster:   overrides.skuMaster   ?? skuMaster,
+      minReqQty:   overrides.minReqQty   ?? minReqQty,
+      newSKUQty:   overrides.newSKUQty   ?? newSKUQty,
+      deadStock:   [...(overrides.deadStock ?? deadStock)],
+      priceData:   overrides.priceData   ?? priceData,
+      stockData:   overrides.stockData   ?? stockData,
+      stockUploadedAt: overrides.stockUploadedAt ?? stockUploadedAt?.toISOString() ?? null,
+      publishedAt: new Date().toISOString(),
+    };
+    await saveToSupabase("team_data", "global", bundle);
+  }, [invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData, stockData, stockUploadedAt]);
 
   const handleInvoice=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;setLoading(true);
@@ -3301,37 +3303,39 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     const all=[...invoiceData,...newE],dates=[...new Set(all.map(r=>r.date))].sort();
     const cutoff=dates.length>ROLLING_DAYS?dates[dates.length-ROLLING_DAYS]:dates[0],filtered=all.filter(r=>r.date>=cutoff);
     setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
+    await saveTeamData({invoiceData:filtered});
     setLoading(false);
     e.target.value="";
-  },[invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params]);
+  },[invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
 
   const handleSKU=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;setLoading(true);
     const rows=parseCSV(await file.text());const master={};
     rows.forEach(r=>{const s=r["SKU"]||"";if(s)master[s]={sku:s,name:r["Name"]||"",category:r["Category"]||r["Category Name"]||"",brand:r["Brand"]||"",status:r["Status"]||"Active",inventorisedAt:r["Inventorised At"]||"DS"};});
     setSKU(master);LS.set("skuMaster",JSON.stringify(master));
+    await saveTeamData({skuMaster:master});
     setLoading(false);
     e.target.value="";
-  },[invoiceData,minReqQty,newSKUQty,deadStock,priceData,params]);
+  },[invoiceData,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
 
-  const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));e.target.value="";},[]);
+  const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));saveTeamData({minReqQty:mrq});e.target.value="";},[saveTeamData]);
   const handleNSQ=useCallback(async(e)=>{
-  const file=e.target.files[0];if(!file)return;
-  const rows=parseCSV(await file.text());
-  const nsq={};
-  rows.forEach(r=>{
-    const s=r["SKU"]||"";if(!s)return;
-    nsq[s]={};
-    DS_LIST.forEach(ds=>{
-      const mn=parseFloat(r[ds+" Min"]||r[ds]||0);
-      const mx=parseFloat(r[ds+" Max"]||r[ds]||0);
-      if(mn>0||mx>0) nsq[s][ds]={min:mn,max:Math.max(mn,mx)};
+    const file=e.target.files[0];if(!file)return;
+    const rows=parseCSV(await file.text());
+    const nsq={};
+    rows.forEach(r=>{
+      const s=r["SKU"]||"";if(!s)return;
+      nsq[s]={};
+      DS_LIST.forEach(ds=>{
+        const mn=parseFloat(r[ds+" Min"]||r[ds]||0);
+        const mx=parseFloat(r[ds+" Max"]||r[ds]||0);
+        if(mn>0||mx>0) nsq[s][ds]={min:mn,max:Math.max(mn,mx)};
+      });
     });
-  });
-  setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));e.target.value="";
-},[]);
-  const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));e.target.value="";},[]);
-  const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));e.target.value="";},[]);
+    setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));saveTeamData({newSKUQty:nsq});e.target.value="";
+  },[saveTeamData]);
+  const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));saveTeamData({deadStock:ds});e.target.value="";},[saveTeamData]);
+  const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));saveTeamData({priceData:pd});e.target.value="";},[saveTeamData]);
 
   // ── Zoho sync constants ──────────────────────────────────────────────────
   const SUPABASE_URL = "https://rgyupnrogkbugsadwlye.supabase.co";
@@ -3376,6 +3380,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
 
       setInv(filtered);
       LS.set("invoiceData", JSON.stringify(filtered));
+      await saveTeamData({ invoiceData: filtered });
       setZohoSync(s => ({ ...s, invoices: { status: "ok", message: `✓ ${newRows.length} rows synced`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
     } catch (err) {
       setZohoSync(s => ({ ...s, invoices: { status: "error", message: `✗ ${err.message}` } }));
@@ -3401,11 +3406,12 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       }
       setSKU(master);
       LS.set("skuMaster", JSON.stringify(master));
+      await saveTeamData({ skuMaster: master });
       setZohoSync(s => ({ ...s, skuMaster: { status: "ok", message: `✓ ${Object.keys(master).length} SKUs`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
     } catch (err) {
       setZohoSync(s => ({ ...s, skuMaster: { status: "error", message: `✗ ${err.message}` } }));
     }
-  }, [callZoho]);
+  }, [callZoho, saveTeamData]);
 
   // F5 + F1: Sync purchase prices from Zoho
   const syncZohoPrices = useCallback(async () => {
@@ -3418,18 +3424,19 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       const pd = data.prices || {};
       setPrice(pd);
       LS.set("priceData", JSON.stringify(pd));
+      await saveTeamData({ priceData: pd });
       setZohoSync(s => ({ ...s, prices: { status: "ok", message: `✓ ${Object.keys(pd).length} SKUs`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
     } catch (err) {
       setZohoSync(s => ({ ...s, prices: { status: "error", message: `✗ ${err.message}` } }));
     }
-  }, [callZoho]);
+  }, [callZoho, saveTeamData]);
 
   const clearData=useCallback(async(key)=>{
-    if(key==="invoiceData"){setInv([]);LS.delete("invoiceData");setLoaded(false);setResults(null);}
-    if(key==="skuMaster"){setSKU({});LS.delete("skuMaster");setLoaded(false);setResults(null);}
-    if(key==="priceData"){setPrice({});LS.delete("priceData");}
-    if(key==="minReqQty"){setMRQ({});LS.delete("minReqQty");}
-    if(key==="newSKUQty"){setNSQ({});LS.delete("newSKUQty");}
+    if(key==="invoiceData"){setInv([]);LS.delete("invoiceData");setLoaded(false);setResults(null);saveTeamData({invoiceData:[]});}
+    if(key==="skuMaster"){setSKU({});LS.delete("skuMaster");setLoaded(false);setResults(null);saveTeamData({skuMaster:{}});}
+    if(key==="priceData"){setPrice({});LS.delete("priceData");saveTeamData({priceData:{}});}
+    if(key==="minReqQty"){setMRQ({});LS.delete("minReqQty");saveTeamData({minReqQty:{}});}
+    if(key==="newSKUQty"){setNSQ({});LS.delete("newSKUQty");saveTeamData({newSKUQty:{}});}
     if(key==="deadStock"){setDead(new Set());LS.delete("deadStock");}
   },[]);
 
@@ -3812,49 +3819,24 @@ const visibleOutput = useMemo(() => {
   </button>
 )}
 
-      {/* Publish to Team */}
-      {dataLoaded&&results&&(
-        <div style={{...S.card,borderColor:HR.yellow,background:"#FFFBEA",padding:"14px",flex:1,display:"flex",flexDirection:"column"}}>
-  <div style={{fontWeight:700,color:HR.yellowDark,fontSize:14,marginBottom:10}}>📤 Publish to Team</div>
-  <button onClick={handlePublish}
-    style={{background:HR.white,color:HR.yellowDark,border:`2px solid ${HR.yellow}`,padding:"9px 24px",borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:13,width:"100%",marginBottom:14}}>
-    {publishStatus==="saving"?"Saving…":"☁ Publish to Team"}
-</button>
-  {/* What gets saved */}
-  <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
-    {[
-      {icon:"🧾",label:"Invoice Rows",   value:invoiceData.length.toLocaleString(),         color:"#0077A8"},
-      {icon:"📦",label:"Active SKUs",    value:activeMaster.length.toLocaleString(),         color:HR.green},
-      {icon:"💰",label:"Price SKUs",     value:Object.keys(priceData).length.toLocaleString(),color:"#7A3DBF"},
-      {icon:"⚙️", label:"Logic Params",  value:`${changedCount>0?`${changedCount} unsaved changes`:"Up to date"}`, color:changedCount>0?"#B91C1C":HR.green},
-    ].map(c=>(
-      <div key={c.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:HR.white,borderRadius:5,padding:"6px 10px",border:`1px solid ${HR.border}`}}>
-        <span style={{fontSize:11,color:HR.muted}}>{c.icon} {c.label}</span>
-        <span style={{fontSize:12,fontWeight:700,color:c.color}}>{c.value}</span>
-      </div>
-    ))}
-  </div>
-  {/* Last published */}
-  <div style={{fontSize:11,color:HR.muted,lineHeight:1.5,marginBottom:6}}>
-    <span style={{fontWeight:600,color:HR.textSoft}}>What gets saved: </span>
-    Invoice data, SKU master, price data, dead stock list, floor qty files, and all logic parameters.
-  </div>
-  <div style={{fontSize:11,color:HR.muted,marginTop:"auto",paddingTop:10,borderTop:`1px solid ${HR.border}`}}>
-    {publishStatus==="done"
-      ? <span style={{color:"#15803D",fontWeight:700}}>✅ Last published: just now</span>
-      : <span>⏱ Not yet published this session</span>
-    }
-  </div>
-  {publishStatus==="done"&&(
-    <div style={{marginTop:8,background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:6,padding:"10px 12px",fontSize:12,color:"#15803D"}}>
-      <div style={{fontWeight:700,marginBottom:2}}>✅ Published successfully!</div>
-      <div style={{color:HR.muted}}>Team sees new data on next page load. Backup JSON downloaded.</div>
-    </div>
-  )}
-  {publishStatus==="error"&&(
-    <div style={{marginTop:8,color:"#B91C1C",fontSize:12}}>❌ Something went wrong. Check your connection and try again.</div>
-  )}
-</div>
+      {/* Data sync status — replaces Publish button */}
+      {dataLoaded&&(
+        <div style={{...S.card,padding:"12px 14px"}}>
+          <div style={{fontWeight:700,color:HR.text,fontSize:12,marginBottom:8}}>Data Sync Status</div>
+          {[
+            {icon:"🧾",label:"Invoice Rows",    value:invoiceData.length.toLocaleString(),           color:"#0077A8"},
+            {icon:"📦",label:"Active SKUs",     value:activeMaster.length.toLocaleString(),           color:HR.green},
+            {icon:"💰",label:"Price SKUs",      value:Object.keys(priceData).length.toLocaleString(), color:"#7A3DBF"},
+            {icon:"📊",label:"Stock Snapshot",  value:Object.keys(stockData).length>0?`${Object.keys(stockData).length} SKUs`:"Not uploaded", color:Object.keys(stockData).length>0?HR.green:HR.muted},
+            {icon:"⚙️",label:"Logic Params",    value:changedCount>0?`${changedCount} unsaved changes`:"Up to date", color:changedCount>0?"#B91C1C":HR.green},
+          ].map(c=>(
+            <div key={c.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${HR.border}`}}>
+              <span style={{fontSize:11,color:HR.muted}}>{c.icon} {c.label}</span>
+              <span style={{fontSize:11,fontWeight:700,color:c.color}}>{c.value}</span>
+            </div>
+          ))}
+          <div style={{fontSize:10,color:HR.muted,marginTop:8}}>All uploads save automatically to Supabase. Team sees changes on next page load.</div>
+        </div>
       )}
 
     </div>
@@ -4042,7 +4024,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
           )
         )}
         {tab==="stockHealth"&&(
-          <StockHealthTab results={results} params={params} stockData={stockData} setStockData={setStockData} uploadedAt={stockUploadedAt} setUploadedAt={setStockUploadedAt} />
+          <StockHealthTab results={results} params={params} stockData={stockData} setStockData={setStockData} uploadedAt={stockUploadedAt} setUploadedAt={setStockUploadedAt} saveTeamData={saveTeamData} />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
   <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}/>
