@@ -2850,7 +2850,7 @@ function getHealth(effective, min, max) {
   return "green";
 }
 
-function StockHealthTab({ stockLive, stockSyncedAt, stockLoading, onSyncNow, results, params }) {
+function StockHealthTab({ results, params }) {
   const [selectedDS, setSelectedDS] = useState("DS01");
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("All");
@@ -2858,136 +2858,143 @@ function StockHealthTab({ stockLive, stockSyncedAt, stockLoading, onSyncNow, res
   const [filterBrand, setFilterBrand] = useState("All");
   const [sortField, setSortField] = useState("health");
   const [sortAsc, setSortAsc] = useState(true);
+  // stockData: { sku: { DS01: {stock_on_hand, quantity_in_transit}, DS02: {...}, ... } }
+  const [stockData, setStockData] = useState({});
+  const [uploadedAt, setUploadedAt] = useState(null); // timestamp of last CSV upload
 
   const DS_AND_DC = [...DS_LIST, "DC"];
+
+  // Location name → DS mapping (for CSV parsing)
+  const LOCATION_CSV_MAP = {
+    "DS01 Sarjapur": "DS01", "DS02 Bileshivale": "DS02", "DS03 Kengeri": "DS03",
+    "DS04 Chikkabanavara": "DS04", "DS05 Basavanapura": "DS05", "DC01 Rampura": "DC",
+    "DS01": "DS01", "DS02": "DS02", "DS03": "DS03", "DS04": "DS04", "DS05": "DS05", "DC": "DC",
+  };
+
+  // Handle CSV upload — supports Zoho Inventory Summary format
+  const handleStockCSV = useCallback(async (e, dsOverride) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    const rows = parseCSV(text);
+    const newData = { ...stockData };
+    let count = 0;
+    for (const row of rows) {
+      const sku = (row['sku'] || row['SKU'] || '').trim();
+      if (!sku) continue;
+      // Determine location from row or from dsOverride
+      const locName = row['location_name'] || row['Location'] || dsOverride || '';
+      const ds = LOCATION_CSV_MAP[locName] || (dsOverride ? LOCATION_CSV_MAP[dsOverride] || dsOverride : null);
+      if (!ds) continue;
+      const stockOnHand = Math.max(0, parseFloat(row['quantity_available'] || row['stock_on_hand'] || 0));
+      const inTransit = Math.max(0, parseFloat(row['quantity_in_transit'] || 0));
+      if (!newData[sku]) newData[sku] = {};
+      newData[sku][ds] = { stock_on_hand: stockOnHand, quantity_in_transit: inTransit };
+      count++;
+    }
+    setStockData(newData);
+    setUploadedAt(new Date());
+    e.target.value = '';
+    return count;
+  }, [stockData]);
 
   // Build per-DS summary counts
   const summary = useMemo(() => {
     const s = {};
-    for (const ds of DS_AND_DC) {
-      s[ds] = { red: 0, amber: 0, green: 0, blue: 0, total: 0 };
-    }
+    for (const ds of DS_AND_DC) s[ds] = { red: 0, amber: 0, green: 0, blue: 0 };
     if (!results) return s;
     for (const [sku, res] of Object.entries(results)) {
       for (const ds of DS_LIST) {
         const storeRes = res.stores?.[ds];
         if (!storeRes || (!storeRes.min && !storeRes.max)) continue;
-        const liveData = stockLive[sku]?.[ds] || { stock_on_hand: 0, quantity_in_transit: 0 };
+        const liveData = stockData[sku]?.[ds] || { stock_on_hand: 0, quantity_in_transit: 0 };
         const effective = liveData.stock_on_hand + liveData.quantity_in_transit;
-        const h = getHealth(effective, storeRes.min, storeRes.max);
-        s[ds][h]++;
-        s[ds].total++;
+        s[ds][getHealth(effective, storeRes.min, storeRes.max)]++;
       }
-      // DC
       const dcRes = res.dc;
       if (dcRes?.min || dcRes?.max) {
-        const liveData = stockLive[sku]?.["DC"] || { stock_on_hand: 0, quantity_in_transit: 0 };
+        const liveData = stockData[sku]?.["DC"] || { stock_on_hand: 0, quantity_in_transit: 0 };
         const effective = liveData.stock_on_hand + liveData.quantity_in_transit;
-        const h = getHealth(effective, dcRes.min || 0, dcRes.max || 0);
-        s["DC"][h]++;
-        s["DC"].total++;
+        s["DC"][getHealth(effective, dcRes.min || 0, dcRes.max || 0)]++;
       }
     }
     return s;
-  }, [stockLive, results]);
+  }, [stockData, results]);
 
   // Build SKU rows for selected DS
   const skuRows = useMemo(() => {
     if (!results) return [];
     const isDC = selectedDS === "DC";
-    const rows = [];
-    for (const [sku, res] of Object.entries(results)) {
-      const storeRes = isDC ? null : res.stores?.[selectedDS];
-      const dcRes = isDC ? res.dc : null;
-      const minMax = isDC ? dcRes : storeRes;
-      if (!minMax || (!minMax.min && !minMax.max)) continue;
-
-      const liveData = stockLive[sku]?.[selectedDS] || { stock_on_hand: 0, quantity_in_transit: 0 };
+    return Object.entries(results).flatMap(([sku, res]) => {
+      const minMax = isDC ? res.dc : res.stores?.[selectedDS];
+      if (!minMax || (!minMax.min && !minMax.max)) return [];
+      const liveData = stockData[sku]?.[selectedDS] || { stock_on_hand: 0, quantity_in_transit: 0 };
       const physical = liveData.stock_on_hand;
       const inTransit = liveData.quantity_in_transit;
       const effective = physical + inTransit;
-      const dailyAvg = isDC ? 0 : (storeRes?.dailyAvg || 0);
+      const dailyAvg = isDC ? 0 : (res.stores?.[selectedDS]?.dailyAvg || 0);
       const doc = dailyAvg > 0 ? effective / dailyAvg : null;
       const health = getHealth(effective, minMax.min || 0, minMax.max || 0);
+      return [{ sku, health, physical, inTransit, effective, min: minMax.min || 0, max: minMax.max || 0, dailyAvg, doc, name: res.meta?.name || sku, category: res.meta?.category || "—", brand: res.meta?.brand || "—" }];
+    });
+  }, [results, selectedDS, stockData]);
 
-      rows.push({
-        sku, health, physical, inTransit, effective,
-        min: minMax.min || 0, max: minMax.max || 0,
-        dailyAvg, doc,
-        name: res.meta?.name || sku,
-        category: res.meta?.category || "—",
-        brand: res.meta?.brand || "—",
-      });
-    }
-    return rows;
-  }, [results, selectedDS, stockLive]);
-
-  // Categories and brands for filters
   const categories = useMemo(() => ["All", ...new Set(skuRows.map(r => r.category).filter(Boolean).sort())], [skuRows]);
   const brands = useMemo(() => ["All", ...new Set(skuRows.map(r => r.brand).filter(Boolean).sort())], [skuRows]);
 
-  // Filter + sort
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    let rows = skuRows.filter(r => {
+    return skuRows.filter(r => {
       if (filterStatus !== "All" && r.health !== filterStatus.toLowerCase()) return false;
       if (filterCat !== "All" && r.category !== filterCat) return false;
       if (filterBrand !== "All" && r.brand !== filterBrand) return false;
       if (q && !r.sku.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q)) return false;
       return true;
-    });
-    rows.sort((a, b) => {
+    }).sort((a, b) => {
       if (sortField === "health") {
         const hDiff = HEALTH_ORDER[a.health] - HEALTH_ORDER[b.health];
         if (hDiff !== 0) return hDiff;
-        // Within same health group, sort by DOC ascending (null = infinity)
-        const aDoc = a.doc ?? Infinity, bDoc = b.doc ?? Infinity;
-        return aDoc - bDoc;
-      }
-      if (sortField === "doc") {
-        const aDoc = a.doc ?? Infinity, bDoc = b.doc ?? Infinity;
-        return sortAsc ? aDoc - bDoc : bDoc - aDoc;
+        return (a.doc ?? Infinity) - (b.doc ?? Infinity);
       }
       const av = a[sortField] ?? 0, bv = b[sortField] ?? 0;
       return sortAsc ? av - bv : bv - av;
     });
-    return rows;
   }, [skuRows, search, filterStatus, filterCat, filterBrand, sortField, sortAsc]);
 
-  const toggleSort = (field) => {
-    if (sortField === field) setSortAsc(!sortAsc);
-    else { setSortField(field); setSortAsc(true); }
-  };
+  const toggleSort = (field) => { if (sortField === field) setSortAsc(!sortAsc); else { setSortField(field); setSortAsc(true); } };
   const sortArrow = (field) => sortField === field ? (sortAsc ? " ▲" : " ▼") : "";
-
   const th = (label, field, right) => (
-    <th onClick={() => field && toggleSort(field)}
-      style={{ padding: "6px 8px", fontSize: 10, fontWeight: 600, color: HR.muted, background: "#F5E6C8",
-        textAlign: right ? "right" : "left", cursor: field ? "pointer" : "default",
-        borderBottom: "2px solid " + HR.yellow, whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 }}>
+    <th onClick={() => field && toggleSort(field)} style={{ padding: "6px 8px", fontSize: 10, fontWeight: 600, color: HR.muted, background: "#F5E6C8", textAlign: right ? "right" : "left", cursor: field ? "pointer" : "default", borderBottom: "2px solid " + HR.yellow, whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 }}>
       {label}{sortArrow(field)}
     </th>
   );
 
-  const syncLabel = stockSyncedAt
-    ? stockSyncedAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })
-    : "Not synced yet";
+  const hasStock = Object.keys(stockData).length > 0;
+  const uploadLabel = uploadedAt ? uploadedAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" }) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
 
-      {/* ── Sticky top: DS cards + sync status ── */}
+      {/* ── Sticky top: DS cards + upload ── */}
       <div style={{ position: "sticky", top: 0, zIndex: 10, background: HR.bg, paddingBottom: 8 }}>
-        {/* Sync status bar */}
+        {/* Upload row */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <div style={{ fontSize: 11, color: HR.muted }}>
-            Last synced: <span style={{ fontWeight: 600, color: HR.text }}>{syncLabel}</span>
-            {!Object.keys(stockLive).length && <span style={{ color: "#B91C1C", marginLeft: 8 }}>No stock data — run a sync</span>}
+            {uploadLabel ? <>Stock snapshot: <span style={{ fontWeight: 600, color: HR.text }}>{uploadLabel}</span></> : <span style={{ color: "#B91C1C" }}>No stock data — upload Inventory Summary CSVs below</span>}
           </div>
-          <button onClick={onSyncNow} disabled={stockLoading}
-            style={{ background: HR.yellow, color: HR.black, border: "none", padding: "5px 14px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
-            {stockLoading ? "Syncing…" : "⟳ Sync Stock Now"}
-          </button>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: HR.muted }}>Upload Zoho Inventory Summary per location:</span>
+            {DS_AND_DC.map((ds) => {
+              const di = DS_LIST.indexOf(ds);
+              const accent = di >= 0 ? DS_COLORS[di].header : DC_COLOR.header;
+              return (
+                <label key={ds} title={`Upload ${ds} Inventory Summary CSV`}
+                  style={{ background: accent, color: "#fff", padding: "4px 8px", borderRadius: 5, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>
+                  ⬆ {ds}<input type="file" accept=".csv" style={{ display: "none" }} onChange={e => handleStockCSV(e, ds)} />
+                </label>
+              );
+            })}
+          </div>
         </div>
 
         {/* DS summary cards */}
@@ -2999,8 +3006,7 @@ function StockHealthTab({ stockLive, stockSyncedAt, stockLoading, onSyncNow, res
             const accent = di >= 0 ? DS_COLORS[di].header : DC_COLOR.header;
             return (
               <div key={ds} onClick={() => setSelectedDS(ds)}
-                style={{ background: isSelected ? accent + "18" : HR.surface, border: `2px solid ${isSelected ? accent : HR.border}`,
-                  borderRadius: 8, padding: "8px 10px", cursor: "pointer", transition: "all 0.15s" }}>
+                style={{ background: isSelected ? accent + "18" : HR.surface, border: `2px solid ${isSelected ? accent : HR.border}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer" }}>
                 <div style={{ fontWeight: 800, fontSize: 12, color: accent, marginBottom: 4 }}>{ds}</div>
                 {[["red","🔴"],["amber","🟡"],["green","🟢"],["blue","🔵"]].map(([h, icon]) => (
                   <div key={h} style={{ fontSize: 10, display: "flex", justifyContent: "space-between", lineHeight: 1.6 }}>
@@ -3016,8 +3022,7 @@ function StockHealthTab({ stockLive, stockSyncedAt, stockLoading, onSyncNow, res
 
       {/* ── Filters ── */}
       <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search SKU ID or name…"
-          style={{ ...S.input, flex: 1, minWidth: 200, fontSize: 11 }} />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search SKU ID or name…" style={{ ...S.input, flex: 1, minWidth: 200, fontSize: 11 }} />
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...S.input, fontSize: 11 }}>
           <option>All</option>
           <option value="red">🔴 Below Min</option>
@@ -3050,22 +3055,12 @@ function StockHealthTab({ stockLive, stockSyncedAt, stockLoading, onSyncNow, res
             </tr>
           </thead>
           <tbody>
-            {!results && (
-              <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: HR.muted, fontSize: 12 }}>
-                Run the model first to see stock health data.
-              </td></tr>
-            )}
-            {results && !Object.keys(stockLive).length && (
-              <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: HR.muted, fontSize: 12 }}>
-                No stock data yet. Click "Sync Stock Now" to fetch live stock from Zoho.
-              </td></tr>
-            )}
+            {!results && <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: HR.muted }}>Run the model first to see stock health.</td></tr>}
+            {results && !hasStock && <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: HR.muted }}>Upload Inventory Summary CSVs (one per location) to see stock health.</td></tr>}
             {filtered.map(row => {
               const hc = HEALTH_COLOR[row.health];
               return (
-                <tr key={row.sku} style={{ background: "" }}
-                  onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
-                  onMouseLeave={e => e.currentTarget.style.background = ""}>
+                <tr key={row.sku} onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight} onMouseLeave={e => e.currentTarget.style.background = ""}>
                   <td style={{ padding: "5px 8px", borderTop: `1px solid ${HR.border}`, maxWidth: 260 }}>
                     <div style={{ fontWeight: 600, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</div>
                     <div style={{ fontSize: 9, color: HR.muted }}>{row.sku}</div>
@@ -3073,13 +3068,11 @@ function StockHealthTab({ stockLive, stockSyncedAt, stockLoading, onSyncNow, res
                   {[row.physical, row.inTransit, row.effective, row.min, row.max].map((v, i) => (
                     <td key={i} style={{ padding: "5px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontSize: 11, borderTop: `1px solid ${HR.border}`, fontWeight: i === 2 ? 700 : 400 }}>{v}</td>
                   ))}
-                  <td style={{ padding: "5px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontSize: 11, borderTop: `1px solid ${HR.border}`, fontWeight: 600, color: row.doc !== null && row.doc < 1 ? "#B91C1C" : HR.text }}>
+                  <td style={{ padding: "5px 8px", textAlign: "right", fontSize: 11, borderTop: `1px solid ${HR.border}`, fontWeight: 600, color: row.doc !== null && row.doc < 1 ? "#B91C1C" : HR.text }}>
                     {row.doc !== null ? row.doc.toFixed(1) + "D" : "—"}
                   </td>
                   <td style={{ padding: "5px 8px", borderTop: `1px solid ${HR.border}` }}>
-                    <span style={{ background: hc.bg, color: hc.text, padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 600, whiteSpace: "nowrap" }}>
-                      {hc.label}
-                    </span>
+                    <span style={{ background: hc.bg, color: hc.text, padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 600, whiteSpace: "nowrap" }}>{hc.label}</span>
                   </td>
                 </tr>
               );
@@ -3122,12 +3115,6 @@ export default function App(){
   const [simLoading, setSimLoading] = useState(true);
   const [simDays, setSimDays] = useState(15);
   const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
-  const [zohoLoading, setZohoLoading] = useState(false);
-  const [stockLive, setStockLive] = useState({}); // {sku: {DS01: {stock_on_hand, quantity_in_transit}, ...}}
-  const [stockSyncedAt, setStockSyncedAt] = useState(null);
-  const [stockLoading, setStockLoading] = useState(false);
-  // Auto-fetch stock when navigating to Stock Health tab
-  useEffect(() => { if (tab === "stockHealth" && !Object.keys(stockLive).length) fetchStockLive(); }, [tab]);
   const [zohoInvFrom, setZohoInvFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 5); return d.toISOString().slice(0,10);
   });
@@ -3367,7 +3354,6 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   const syncZohoInvoices = useCallback(async () => {
     if (!zohoInvFrom || !zohoInvTo) return;
     setZohoSync(s => ({ ...s, invoices: { status: "syncing", message: "Fetching from Zoho…" } }));
-    setZohoLoading(true);
     try {
       const data = await callZoho("zoho-invoices", { from: zohoInvFrom, to: zohoInvTo });
       if (!data.success) throw new Error(data.error || "Sync failed");
@@ -3395,13 +3381,11 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     } catch (err) {
       setZohoSync(s => ({ ...s, invoices: { status: "error", message: `✗ ${err.message}` } }));
     }
-    setZohoLoading(false);
   }, [zohoInvFrom, zohoInvTo, invoiceData, callZoho]);
 
   // F5 + F1: Sync SKU master from Zoho items list
   const syncZohoSKUMaster = useCallback(async () => {
     setZohoSync(s => ({ ...s, skuMaster: { status: "syncing", message: "Fetching from Zoho…" } }));
-    setZohoLoading(true);
     try {
       const data = await callZoho("zoho-skumaster");
       if (!data.success) throw new Error(data.error || "Sync failed");
@@ -3422,13 +3406,11 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     } catch (err) {
       setZohoSync(s => ({ ...s, skuMaster: { status: "error", message: `✗ ${err.message}` } }));
     }
-    setZohoLoading(false);
   }, [callZoho]);
 
   // F5 + F1: Sync purchase prices from Zoho
   const syncZohoPrices = useCallback(async () => {
     setZohoSync(s => ({ ...s, prices: { status: "syncing", message: "Fetching L12M prices…" } }));
-    setZohoLoading(true);
     try {
       const data = await callZoho("zoho-prices");
       if (!data.success) throw new Error(data.error || "Sync failed");
@@ -3441,39 +3423,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     } catch (err) {
       setZohoSync(s => ({ ...s, prices: { status: "error", message: `✗ ${err.message}` } }));
     }
-    setZohoLoading(false);
   }, [callZoho]);
-
-  // F3: Fetch stock_live from Supabase
-  const fetchStockLive = useCallback(async () => {
-    setStockLoading(true);
-    try {
-      const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2").catch(() => ({ createClient: null }));
-      // Use existing supabase client pattern from supabase.js
-      const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/stock_live?select=sku,location,stock_on_hand,quantity_in_transit,synced_at`,
-        { headers: { "apikey": SUPABASE_ANON, "Authorization": `Bearer ${SUPABASE_ANON}` } }
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const rows = await res.json();
-      // Pivot: {sku: {DS01: {stock_on_hand, quantity_in_transit}, ...}}
-      const pivot = {};
-      let latestTs = null;
-      for (const row of rows) {
-        if (!pivot[row.sku]) pivot[row.sku] = {};
-        pivot[row.sku][row.location] = {
-          stock_on_hand: Math.max(0, row.stock_on_hand || 0),
-          quantity_in_transit: Math.max(0, row.quantity_in_transit || 0),
-        };
-        if (!latestTs || row.synced_at > latestTs) latestTs = row.synced_at;
-      }
-      setStockLive(pivot);
-      if (latestTs) setStockSyncedAt(new Date(latestTs));
-    } catch (err) {
-      console.error("Stock fetch error:", err);
-    }
-    setStockLoading(false);
-  }, [SUPABASE_URL, SUPABASE_ANON]);
 
   const clearData=useCallback(async(key)=>{
     if(key==="invoiceData"){setInv([]);LS.delete("invoiceData");setLoaded(false);setResults(null);}
@@ -3608,15 +3558,6 @@ const visibleOutput = useMemo(() => {
         </div>
       )}
 
-      {zohoLoading&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(255,255,255,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}>
-          <div style={{background:HR.white,padding:28,borderRadius:10,textAlign:"center",border:`2px solid #0077A8`,boxShadow:"0 8px 32px rgba(0,0,0,0.12)"}}>
-            <div style={{fontSize:32,marginBottom:10}}>⟳</div>
-            <div style={{color:"#0077A8",fontWeight:700,fontSize:14}}>Syncing from Zoho...</div>
-            <div style={{color:HR.muted,fontSize:12,marginTop:3}}>Fetching latest data</div>
-          </div>
-        </div>
-      )}
       {loading&&(
         <div style={{position:"fixed",inset:0,background:"rgba(255,255,255,0.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}>
           <div style={{background:HR.white,padding:28,borderRadius:10,textAlign:"center",border:`2px solid ${HR.yellow}`,boxShadow:"0 8px 32px rgba(0,0,0,0.12)"}}>
@@ -4102,35 +4043,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
           )
         )}
         {tab==="stockHealth"&&(
-          <StockHealthTab
-            stockLive={stockLive}
-            stockSyncedAt={stockSyncedAt}
-            stockLoading={stockLoading}
-            onSyncNow={async()=>{
-              setStockLoading(true);
-              try {
-                // Queue all batches
-                const queued = await callZoho("zoho-items-list");
-                if (queued.error) throw new Error(queued.error);
-                // Process batches sequentially until queue empty
-                for (let i = 0; i < 25; i++) {
-                  const res = await fetch(`${SUPABASE_URL}/functions/v1/zoho-batch-stock`, {
-                    method: "POST", headers: { Authorization: `Bearer ${SUPABASE_ANON}`, "Content-Type": "application/json" }, body: "{}"
-                  });
-                  const r = await res.json();
-                  if (r.message === "No pending batches") break;
-                }
-                await fetchStockLive();
-              } catch(e) {
-                console.error("Sync error:", e);
-                alert("Sync failed: " + e.message);
-              } finally {
-                setStockLoading(false);
-              }
-            }}
-            results={results}
-            params={params}
-          />
+          <StockHealthTab results={results} params={params} />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
   <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}/>
