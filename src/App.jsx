@@ -3116,6 +3116,7 @@ export default function App(){
   const [stockData, setStockData] = useState({});       // persists across tab switches
   const [stockUploadedAt, setStockUploadedAt] = useState(null);
   const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
+  const [invoiceUploadedThisSession, setInvoiceUploadedThisSession] = useState(false);
   const [zohoInvFrom, setZohoInvFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 5); return d.toISOString().slice(0,10);
   });
@@ -3579,16 +3580,20 @@ const visibleOutput = useMemo(() => {
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <h2 style={{color:HR.yellowDark,margin:0,fontSize:16}}>Data Inputs</h2>
         {(() => {
-          const invoiceReady2 = invoiceData.length > 0;
-          const skuReady2 = Object.keys(skuMaster).length > 0;
-          const priceReady2 = Object.keys(priceData).length > 0;
-          const allReady2 = invoiceReady2 && skuReady2 && priceReady2;
+          const hasData = invoiceData.length > 0 && Object.keys(skuMaster).length > 0 && Object.keys(priceData).length > 0;
           const isSyncing2 = zohoSync.skuMaster?.status==="syncing" || zohoSync.prices?.status==="syncing";
+          // Grey out only while Zoho is mid-sync after a fresh invoice upload
+          const disabled2 = !hasData || isSyncing2;
           return (
-            <button onClick={()=>{setLoaded(true);applyAndRun(params);}}
-              disabled={!allReady2||isSyncing2}
-              title={!invoiceReady2?"Upload invoice CSV first":isSyncing2?"Waiting for Zoho sync…":!skuReady2||!priceReady2?"Waiting for Zoho sync…":""}
-              style={{background:allReady2&&!isSyncing2?HR.yellow:"#E5E5E5",color:allReady2&&!isSyncing2?HR.black:"#999",border:"none",padding:"8px 20px",borderRadius:7,cursor:allReady2&&!isSyncing2?"pointer":"not-allowed",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:6}}>
+            <button
+              disabled={disabled2}
+              title={!hasData?"Upload invoice CSV first":isSyncing2?"Syncing SKU Master + Prices from Zoho…":""}
+              style={{background:disabled2?"#E5E5E5":HR.yellow,color:disabled2?"#999":HR.black,border:"none",padding:"8px 20px",borderRadius:7,cursor:disabled2?"not-allowed":"pointer",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:6}}
+              onClick={disabled2?undefined:()=>{
+                if(window.confirm(`Re-run model with:\n• ${invoiceData.length.toLocaleString()} invoice rows (${invoiceDateRange.min} → ${invoiceDateRange.max})\n• ${Object.keys(skuMaster).length.toLocaleString()} SKUs\n• ${Object.keys(priceData).length.toLocaleString()} price entries\n\nThis will update Min/Max for all users. Continue?`)){
+                  setLoaded(true); applyAndRun(params);
+                }
+              }}>
               {isSyncing2 ? <><span style={{fontSize:14}}>⏳</span> Syncing Zoho…</> : <><span>▶</span> Apply & Re-run Model</>}
             </button>
           );
@@ -3707,6 +3712,9 @@ const visibleOutput = useMemo(() => {
 
         // Auto-sync SKU master + prices when invoice is uploaded
         const handleInvoiceAndSync = async (e) => {
+          // Reset sync state so button greys out until Zoho completes
+          setZohoSync(s => ({ ...s, skuMaster: { status: "syncing", message: "Syncing…" }, prices: { status: "syncing", message: "Syncing…" } }));
+          setInvoiceUploadedThisSession(true);
           await handleInvoice(e);
           await Promise.all([syncZohoSKUMaster(), syncZohoPrices()]);
         };
