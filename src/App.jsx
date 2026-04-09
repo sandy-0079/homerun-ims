@@ -2850,7 +2850,7 @@ function getHealth(effective, min, max) {
   return "green";
 }
 
-function StockHealthTab({ results, params }) {
+function StockHealthTab({ results, params, stockData, setStockData, uploadedAt, setUploadedAt }) {
   const [selectedDS, setSelectedDS] = useState("DS01");
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("All");
@@ -2858,9 +2858,6 @@ function StockHealthTab({ results, params }) {
   const [filterBrand, setFilterBrand] = useState("All");
   const [sortField, setSortField] = useState("health");
   const [sortAsc, setSortAsc] = useState(true);
-  // stockData: { sku: { DS01: {stock_on_hand, quantity_in_transit}, DS02: {...}, ... } }
-  const [stockData, setStockData] = useState({});
-  const [uploadedAt, setUploadedAt] = useState(null); // timestamp of last CSV upload
 
   const DS_AND_DC = [...DS_LIST, "DC"];
 
@@ -3114,6 +3111,8 @@ export default function App(){
   const [simResults, setSimResults] = useState({ tool: [], ovr: [] });
   const [simLoading, setSimLoading] = useState(true);
   const [simDays, setSimDays] = useState(15);
+  const [stockData, setStockData] = useState({});       // persists across tab switches
+  const [stockUploadedAt, setStockUploadedAt] = useState(null);
   const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
   const [zohoInvFrom, setZohoInvFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 5); return d.toISOString().slice(0,10);
@@ -4043,7 +4042,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
           )
         )}
         {tab==="stockHealth"&&(
-          <StockHealthTab results={results} params={params} />
+          <StockHealthTab results={results} params={params} stockData={stockData} setStockData={setStockData} uploadedAt={stockUploadedAt} setUploadedAt={setStockUploadedAt} />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
   <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}/>
