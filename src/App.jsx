@@ -3117,6 +3117,7 @@ export default function App(){
   const [stockUploadedAt, setStockUploadedAt] = useState(null);
   const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
   const [invoiceUploadedThisSession, setInvoiceUploadedThisSession] = useState(false);
+  const [modelDirty, setModelDirty] = useState(false); // true when data or params changed since last run
   const [zohoInvFrom, setZohoInvFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 5); return d.toISOString().slice(0,10);
   });
@@ -3304,6 +3305,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     const filtered=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0)})).filter(r=>r.date&&r.sku&&r.qty>0);
     setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
     await saveTeamData({invoiceData:filtered});
+    setModelDirty(true);
     setLoading(false);
     e.target.value="";
   },[invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
@@ -3314,11 +3316,12 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     rows.forEach(r=>{const s=r["SKU"]||"";if(s)master[s]={sku:s,name:r["Name"]||"",category:r["Category"]||r["Category Name"]||"",brand:r["Brand"]||"",status:r["Status"]||"Active",inventorisedAt:r["Inventorised At"]||"DS"};});
     setSKU(master);LS.set("skuMaster",JSON.stringify(master));
     await saveTeamData({skuMaster:master});
+    setModelDirty(true);
     setLoading(false);
     e.target.value="";
   },[invoiceData,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
 
-  const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));saveTeamData({minReqQty:mrq});e.target.value="";},[saveTeamData]);
+  const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));saveTeamData({minReqQty:mrq});setModelDirty(true);e.target.value="";},[saveTeamData,setModelDirty]);
   const handleNSQ=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;
     const rows=parseCSV(await file.text());
@@ -3332,10 +3335,10 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
         if(mn>0||mx>0) nsq[s][ds]={min:mn,max:Math.max(mn,mx)};
       });
     });
-    setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));saveTeamData({newSKUQty:nsq});e.target.value="";
+    setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));saveTeamData({newSKUQty:nsq});setModelDirty(true);e.target.value="";
   },[saveTeamData]);
-  const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));saveTeamData({deadStock:ds});e.target.value="";},[saveTeamData]);
-  const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));saveTeamData({priceData:pd});e.target.value="";},[saveTeamData]);
+  const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));saveTeamData({deadStock:ds});setModelDirty(true);e.target.value="";},[saveTeamData,setModelDirty]);
+  const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));saveTeamData({priceData:pd});setModelDirty(true);e.target.value="";},[saveTeamData,setModelDirty]);
 
   // ── Zoho sync constants ──────────────────────────────────────────────────
   const SUPABASE_URL = "https://rgyupnrogkbugsadwlye.supabase.co";
@@ -3402,6 +3405,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       setSKU(master);
       LS.set("skuMaster", JSON.stringify(master));
       await saveTeamData({ skuMaster: master });
+      setModelDirty(true);
       setZohoSync(s => ({ ...s, skuMaster: { status: "ok", message: `✓ ${Object.keys(master).length} SKUs`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
     } catch (err) {
       setZohoSync(s => ({ ...s, skuMaster: { status: "error", message: `✗ ${err.message}` } }));
@@ -3420,6 +3424,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       setPrice(pd);
       LS.set("priceData", JSON.stringify(pd));
       await saveTeamData({ priceData: pd });
+      setModelDirty(true);
       setZohoSync(s => ({ ...s, prices: { status: "ok", message: `✓ ${Object.keys(pd).length} SKUs`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
     } catch (err) {
       setZohoSync(s => ({ ...s, prices: { status: "error", message: `✗ ${err.message}` } }));
@@ -3427,6 +3432,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   }, [callZoho, saveTeamData]);
 
   const clearData=useCallback(async(key)=>{
+    setModelDirty(true);
     if(key==="invoiceData"){setInv([]);LS.delete("invoiceData");setLoaded(false);setResults(null);saveTeamData({invoiceData:[]});}
     if(key==="skuMaster"){setSKU({});LS.delete("skuMaster");setLoaded(false);setResults(null);saveTeamData({skuMaster:{}});}
     if(key==="priceData"){setPrice({});LS.delete("priceData");saveTeamData({priceData:{}});}
@@ -3435,9 +3441,10 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     if(key==="deadStock"){setDead(new Set());LS.delete("deadStock");}
   },[]);
 
-  const saveParams=p=>setParams(p);
+  const saveParams=p=>{setParams(p);setModelDirty(true);};
 
   const applyAndRun = async (p) => {
+    setModelDirty(false); // reset — model is now up to date
     const np = p || params;
     setParams(np);
     setSaved(np);
@@ -3582,19 +3589,19 @@ const visibleOutput = useMemo(() => {
         {(() => {
           const hasData = invoiceData.length > 0 && Object.keys(skuMaster).length > 0 && Object.keys(priceData).length > 0;
           const isSyncing2 = zohoSync.skuMaster?.status==="syncing" || zohoSync.prices?.status==="syncing";
-          // Grey out only while Zoho is mid-sync after a fresh invoice upload
-          const disabled2 = !hasData || isSyncing2;
+          // Yellow only when something changed (data upload, clear, or params tweaked) and not mid-sync
+          const disabled2 = !hasData || isSyncing2 || !modelDirty;
           return (
             <button
               disabled={disabled2}
-              title={!hasData?"Upload invoice CSV first":isSyncing2?"Syncing SKU Master + Prices from Zoho…":""}
+              title={!hasData?"Upload invoice CSV first":isSyncing2?"Syncing SKU Master + Prices from Zoho…":!modelDirty?"No changes since last run":""}
               style={{background:disabled2?"#E5E5E5":HR.yellow,color:disabled2?"#999":HR.black,border:"none",padding:"8px 20px",borderRadius:7,cursor:disabled2?"not-allowed":"pointer",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:6}}
               onClick={disabled2?undefined:()=>{
                 if(window.confirm(`Re-run model with:\n• ${invoiceData.length.toLocaleString()} invoice rows (${invoiceDateRange.min} → ${invoiceDateRange.max})\n• ${Object.keys(skuMaster).length.toLocaleString()} SKUs\n• ${Object.keys(priceData).length.toLocaleString()} price entries\n\nThis will update Min/Max for all users. Continue?`)){
                   setLoaded(true); applyAndRun(params);
                 }
               }}>
-              {isSyncing2 ? <><span style={{fontSize:14}}>⏳</span> Syncing Zoho…</> : <><span>▶</span> Apply & Re-run Model</>}
+              {isSyncing2 ? <><span style={{fontSize:14}}>⏳</span> Syncing Zoho…</> : modelDirty ? <><span>▶</span> Apply & Re-run Model</> : <><span>✓</span> Model up to date</>}
             </button>
           );
         })()}
