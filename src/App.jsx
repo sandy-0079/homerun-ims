@@ -3118,8 +3118,11 @@ export default function App(){
   const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
   const [invoiceUploadedThisSession, setInvoiceUploadedThisSession] = useState(false);
   const [modelDirty, setModelDirty] = useState(false); // true when data or params changed since last run
+  const [changeLog, setChangeLog] = useState([]); // list of changes since last run
   const [showRunConfirm, setShowRunConfirm] = useState(false); // show pre-run summary modal
   const [modelRunSuccess, setModelRunSuccess] = useState(false); // show success message after run
+
+  const addChange = (msg) => setChangeLog(prev => [...prev, msg]);
   const [zohoInvFrom, setZohoInvFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 5); return d.toISOString().slice(0,10);
   });
@@ -3308,6 +3311,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
     await saveTeamData({invoiceData:filtered});
     setModelDirty(true);
+    addChange(`Invoice data uploaded: ${filtered.length.toLocaleString()} rows`);
     setLoading(false);
     e.target.value="";
   },[invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
@@ -3319,11 +3323,12 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     setSKU(master);LS.set("skuMaster",JSON.stringify(master));
     await saveTeamData({skuMaster:master});
     setModelDirty(true);
+    addChange(`SKU Master uploaded: ${Object.keys(master).length.toLocaleString()} SKUs`);
     setLoading(false);
     e.target.value="";
   },[invoiceData,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
 
-  const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));saveTeamData({minReqQty:mrq});setModelDirty(true);e.target.value="";},[saveTeamData,setModelDirty]);
+  const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));saveTeamData({minReqQty:mrq});setModelDirty(true);addChange(`New DS Floor Qty uploaded: ${Object.keys(mrq).length} SKUs`);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
   const handleNSQ=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;
     const rows=parseCSV(await file.text());
@@ -3337,10 +3342,10 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
         if(mn>0||mx>0) nsq[s][ds]={min:mn,max:Math.max(mn,mx)};
       });
     });
-    setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));saveTeamData({newSKUQty:nsq});setModelDirty(true);e.target.value="";
+    setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));saveTeamData({newSKUQty:nsq});setModelDirty(true);addChange(`SKU Floors uploaded: ${Object.keys(nsq).length} SKUs`);e.target.value="";
   },[saveTeamData]);
-  const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));saveTeamData({deadStock:ds});setModelDirty(true);e.target.value="";},[saveTeamData,setModelDirty]);
-  const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));saveTeamData({priceData:pd});setModelDirty(true);e.target.value="";},[saveTeamData,setModelDirty]);
+  const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));saveTeamData({deadStock:ds});setModelDirty(true);addChange(`Dead Stock uploaded: ${ds.size} SKUs`);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
+  const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));saveTeamData({priceData:pd});setModelDirty(true);addChange(`Purchase Prices uploaded: ${Object.keys(pd).length} SKUs`);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
 
   // ── Zoho sync constants ──────────────────────────────────────────────────
   const SUPABASE_URL = "https://rgyupnrogkbugsadwlye.supabase.co";
@@ -3408,6 +3413,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       LS.set("skuMaster", JSON.stringify(master));
       await saveTeamData({ skuMaster: master });
       setModelDirty(true);
+      addChange(`SKU Master synced from Zoho: ${Object.keys(master).length.toLocaleString()} SKUs`);
       setZohoSync(s => ({ ...s, skuMaster: { status: "ok", message: `✓ ${Object.keys(master).length} SKUs`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
     } catch (err) {
       setZohoSync(s => ({ ...s, skuMaster: { status: "error", message: `✗ ${err.message}` } }));
@@ -3427,6 +3433,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       LS.set("priceData", JSON.stringify(pd));
       await saveTeamData({ priceData: pd });
       setModelDirty(true);
+      addChange(`Purchase Prices synced from Zoho: ${Object.keys(pd).length.toLocaleString()} SKUs`);
       setZohoSync(s => ({ ...s, prices: { status: "ok", message: `✓ ${Object.keys(pd).length} SKUs`, ts: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) } }));
     } catch (err) {
       setZohoSync(s => ({ ...s, prices: { status: "error", message: `✗ ${err.message}` } }));
@@ -3435,6 +3442,8 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
 
   const clearData=useCallback(async(key)=>{
     setModelDirty(true);
+    const labels={"invoiceData":"Invoice data","skuMaster":"SKU Master","priceData":"Purchase Prices","minReqQty":"New DS Floor Qty","newSKUQty":"SKU Floors","deadStock":"Dead Stock list"};
+    addChange(`${labels[key]||key} cleared`);
     if(key==="invoiceData"){setInv([]);LS.delete("invoiceData");setLoaded(false);setResults(null);saveTeamData({invoiceData:[]});}
     if(key==="skuMaster"){setSKU({});LS.delete("skuMaster");setLoaded(false);setResults(null);saveTeamData({skuMaster:{}});}
     if(key==="priceData"){setPrice({});LS.delete("priceData");saveTeamData({priceData:{}});}
@@ -3443,10 +3452,11 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     if(key==="deadStock"){setDead(new Set());LS.delete("deadStock");}
   },[]);
 
-  const saveParams=p=>{setParams(p);setModelDirty(true);};
+  const saveParams=p=>{setParams(p);setModelDirty(true);addChange("Logic Tweaker params changed");};
 
   const applyAndRun = async (p) => {
-    setModelDirty(false); // reset — model is now up to date
+    setModelDirty(false);
+    setChangeLog([]); // reset — model is now up to date
     const np = p || params;
     setParams(np);
     setSaved(np);
@@ -3644,18 +3654,31 @@ const visibleOutput = useMemo(() => {
         <div style={{background:HR.white,borderRadius:12,padding:28,maxWidth:440,width:"90%",boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
           <div style={{fontWeight:800,color:HR.text,fontSize:15,marginBottom:4}}>Re-run Model?</div>
           <div style={{fontSize:12,color:HR.muted,marginBottom:16}}>This will recalculate Min/Max for all SKUs and update the values seen by all users.</div>
+          {/* Changes since last run */}
+          <div style={{background:HR.surfaceLight,borderRadius:8,padding:"10px 14px",marginBottom:12}}>
+            <div style={{fontSize:11,fontWeight:700,color:HR.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>Changes since last run</div>
+            {changeLog.length === 0
+              ? <div style={{fontSize:11,color:HR.muted,fontStyle:"italic"}}>No data changes — only param changes</div>
+              : changeLog.map((msg, i) => (
+                <div key={i} style={{display:"flex",alignItems:"center",gap:6,padding:"2px 0",fontSize:11,color:HR.text}}>
+                  <span style={{color:HR.green,fontSize:13}}>•</span>{msg}
+                </div>
+              ))
+            }
+          </div>
+          {/* Current model inputs summary */}
           <div style={{background:HR.surfaceLight,borderRadius:8,padding:"10px 14px",marginBottom:16}}>
             <div style={{fontSize:11,fontWeight:700,color:HR.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>Model will run with</div>
             {[
-              {label:"Invoice Data", value:`${invoiceData.length.toLocaleString()} rows · ${invoiceDateRange.min || "—"} → ${invoiceDateRange.max || "—"}`},
-              {label:"SKU Master", value:`${Object.keys(skuMaster).length.toLocaleString()} SKUs${zohoSync.skuMaster?.ts?" · synced "+zohoSync.skuMaster.ts:""}`},
-              {label:"Purchase Prices", value:`${Object.keys(priceData).length.toLocaleString()} SKUs${zohoSync.prices?.ts?" · synced "+zohoSync.prices.ts:""}`},
-              {label:"Overall Period", value:`${params.overallPeriod || 45} days`},
-              {label:"Pending param changes", value:changedCount > 0 ? `${changedCount} change${changedCount>1?"s":""} will be applied` : "None"},
-            ].map(item => (
-              <div key={item.label} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${HR.border}`,fontSize:11}}>
+              {label:"Invoice Data", value:`${invoiceData.length.toLocaleString()} rows · ${invoiceDateRange.min||"—"} → ${invoiceDateRange.max||"—"}`},
+              {label:"SKU Master",   value:`${Object.keys(skuMaster).length.toLocaleString()} SKUs`},
+              {label:"Prices",       value:`${Object.keys(priceData).length.toLocaleString()} SKUs`},
+              {label:"Dead Stock",   value:`${deadStock.size} SKUs flagged`},
+              {label:"Overall Period",value:`${params.overallPeriod||45} days`},
+            ].map(item=>(
+              <div key={item.label} style={{display:"flex",justifyContent:"space-between",padding:"2px 0",borderBottom:`1px solid ${HR.border}`,fontSize:11}}>
                 <span style={{color:HR.muted}}>{item.label}</span>
-                <span style={{fontWeight:600,color:HR.text,textAlign:"right",maxWidth:220}}>{item.value}</span>
+                <span style={{fontWeight:600,color:HR.text}}>{item.value}</span>
               </div>
             ))}
           </div>
