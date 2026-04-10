@@ -2187,14 +2187,25 @@ const DCCard = ({ dcData, meta, params, horizontal }) => {
               {pill("Brand Lead Time", `${det.leadTime ?? 2}D`)}
               {det.isDead
                 ? <>{pill("Dead Mult", `${det.multMin}/${det.multMax}`)}</>
-                : <>{pill("DC Mult", `${det.multMin}/${det.multMax}`)}</>
+                : det.isFlooredSKU
+                  ? <><div style={{fontSize:9,background:"#EAF9FF",color:"#0077A8",borderRadius:4,padding:"2px 6px",fontWeight:700,marginTop:2,display:"inline-block"}}>SKU Floor DC</div>{pill("Floor Mult", `Min ×${det.multMin} / Max ×${det.multMax}`)}</>
+                  : <>{pill("DC Mult", `${det.multMin}/${det.multMax}`)}</>
               }
             </div>
             {!det.isDead && (
               <div style={{minWidth:200}}>
-                {det.leadTimeMin != null && pill("Lead Time Min", det.leadTimeMin)}
-                {pill("DC Min", `max(${det.leadTimeMin ?? "?"}, ${det.sumMin} × ${det.multMin}) = ${dc.min}`)}
-                {pill("DC Max", `max(⌈${dc.min} × ${(det.multMax/det.multMin).toFixed(2)}⌉, ${det.sumMax} × ${det.multMax}) = ${dc.max}`)}
+                {det.isFlooredSKU ? (
+                  <>
+                    {pill("DC Min", `Σ DS Mins (${det.sumMin}) × ${det.multMin} = ${dc.min}`)}
+                    {pill("DC Max", `Σ DS Maxes (${det.sumMax}) × ${det.multMax} = ${dc.max}`)}
+                  </>
+                ) : (
+                  <>
+                    {det.leadTimeMin != null && pill("Lead Time Min", det.leadTimeMin)}
+                    {pill("DC Min", `max(${det.leadTimeMin ?? "?"}, ${det.sumMin} × ${det.multMin}) = ${dc.min}`)}
+                    {pill("DC Max", `max(⌈${dc.min} × ${(det.multMax/det.multMin).toFixed(2)}⌉, ${det.sumMax} × ${det.multMax}) = ${dc.max}`)}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -4582,6 +4593,36 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                           background:isOn?"#FEE2E2":"#fff",color:isOn?"#C0392B":HR.muted}}>{tag}</button>;
                       })}
                     </div>
+                  </div>
+                </div>
+              </Section>
+            );
+          })()}
+
+          {/* Section B3: SKU Floor DC Multipliers */}
+          {(()=>{
+            const multMin = params.skuFloorDCMultMin ?? 0.2;
+            const multMax = params.skuFloorDCMultMax ?? 0.3;
+            return(
+              <Section title="SKU Floor DC Multipliers" icon="🏭" accent="#0077A8"
+                summary={`Min ×${multMin} · Max ×${multMax} — for SKUs with manual DS floors`}>
+                <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>
+                  For SKUs in the "SKU Floors - DS Level" CSV, DC Min/Max use these multipliers instead of movement-based multipliers. Brand Buffer is also skipped for these SKUs.
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DC Min Multiplier</div>
+                    <div style={{fontSize:10,color:HR.muted,marginBottom:4}}>DC Min = Σ DS Mins × this</div>
+                    <NumInput value={multMin} min={0.05} max={1} step={0.05}
+                      onChange={v=>saveParams({...params,skuFloorDCMultMin:v})}
+                      style={{width:"100%",fontWeight:700,color:"#0077A8"}}/>
+                  </div>
+                  <div style={S.card}>
+                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DC Max Multiplier</div>
+                    <div style={{fontSize:10,color:HR.muted,marginBottom:4}}>DC Max = Σ DS Maxes × this</div>
+                    <NumInput value={multMax} min={0.05} max={1} step={0.05}
+                      onChange={v=>saveParams({...params,skuFloorDCMultMax:v})}
+                      style={{width:"100%",fontWeight:700,color:"#0077A8"}}/>
                   </div>
                 </div>
               </Section>

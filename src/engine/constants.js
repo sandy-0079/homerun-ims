@@ -35,4 +35,6 @@ export const DEFAULT_PARAMS = {
   pctDocCap:30,
   pctDocCapPriceTags:["High","Premium"],
   pctMinNZD:2,
+  skuFloorDCMultMin:0.2,
+  skuFloorDCMultMax:0.3,
 };

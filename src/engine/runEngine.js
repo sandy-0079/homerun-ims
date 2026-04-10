@@ -211,8 +211,9 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
         else maxQty = Math.max(maxQty, minQty);
       }
 
-      // 2. Brand buffer — physically overwrites minQty/maxQty
-      if (hasBuf) {
+      // 2. Brand buffer — skip for SKUs with manual DS floors (floor already encodes brand knowledge)
+      const hasManualFloor = !!(nsq && nsq[skuId]);
+      if (hasBuf && !hasManualFloor) {
         const dohMin = s90.dailyAvg > 0 ? minQty / s90.dailyAvg : 0;
         postBlendSteps.push({ rule: "Brand Buffer", bufDays, dohMin, beforeMin: minQty, beforeMax: maxQty });
         minQty = Math.ceil((dohMin + bufDays) * s90.dailyAvg);
@@ -264,6 +265,8 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
 
     let dcMin, dcMax, preFloorDcMin, preFloorDcMax;
     let dcDetails;
+    const isFlooredSKU = !!(nsq && nsq[skuId]);
+
     if (isDead) {
       const multMin = dcDeadMult.min, multMax = dcDeadMult.max;
       dcMin = Math.round(sumMin * multMin);
@@ -271,6 +274,15 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       preFloorDcMin = Math.round(sumPreFloorMin * multMin);
       preFloorDcMax = Math.round(sumPreFloorMax * multMax);
       dcDetails = { isDead: true, multMin, multMax, sumMin, sumMax, sumDailyAvg, leadTime };
+    } else if (isFlooredSKU) {
+      // SKU has manual DS floors — use configurable multipliers instead of movement-based DC calc
+      const multMin = p.skuFloorDCMultMin ?? 0.2;
+      const multMax = p.skuFloorDCMultMax ?? 0.3;
+      dcMin = Math.round(sumMin * multMin);
+      dcMax = Math.round(sumMax * multMax);
+      preFloorDcMin = Math.round(sumPreFloorMin * multMin);
+      preFloorDcMax = Math.round(sumPreFloorMax * multMax);
+      dcDetails = { isDead: false, isFlooredSKU: true, multMin, multMax, sumMin, sumMax, sumDailyAvg, leadTime };
     } else {
       const dcM = (p.dcMult || DC_MULT_DEFAULT)[dcStats.mvTag] || DC_MULT_DEFAULT[dcStats.mvTag];
       const multMin = dcM.min, multMax = dcM.max;
@@ -280,7 +292,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       const preFloorLeadTimeMin = Math.ceil(sumDailyAvg * leadTime);
       preFloorDcMin = Math.round(Math.max(preFloorLeadTimeMin, sumPreFloorMin * multMin));
       preFloorDcMax = Math.round(Math.max(Math.ceil(preFloorDcMin * (multMax / multMin)), sumPreFloorMax * multMax));
-      dcDetails = { isDead: false, multMin, multMax, sumMin, sumMax, sumDailyAvg, leadTime, leadTimeMin };
+      dcDetails = { isDead: false, isFlooredSKU: false, multMin, multMax, sumMin, sumMax, sumDailyAvg, leadTime, leadTimeMin };
     }
 
     res[skuId] = {
