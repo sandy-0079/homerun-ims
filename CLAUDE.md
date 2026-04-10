@@ -72,10 +72,20 @@ DS01 Sarjapur → DS01, DS02 Bileshivale → DS02, DS03 Kengeri → DS03, DS04 C
 - **Max formula:** Min + dailyAvg × buffer (not a multiplier of Min).
 
 ### DC Calculation
+Two paths depending on whether the SKU has manual DS floors:
+
+**Standard (no manual floors):**
 `DC Min = MAX(sumDailyAvg × brandLeadTimeDays, sumDSMin × dcMultiplier.min)` — lead-time-aware, configurable per brand (default 2 days).
 
+**Floored SKUs (SKU is in "SKU Floors - DS Level" CSV):**
+`DC Min = Σ effective DS Mins × skuFloorDCMultMin (default 0.2)`
+`DC Max = Σ effective DS Maxes × skuFloorDCMultMax (default 0.3)`
+Movement-tag DC multipliers are bypassed entirely. Both multipliers configurable in Logic Tweaker under "SKU Floor DC Multipliers".
+
 ### Post-Blend Adjustment Order (strict)
-New DS Floor → Brand Buffer → SKU Floor Override → Dead Stock cap → Final rounding
+New DS Floor → Brand Buffer (skipped if SKU has manual floor) → SKU Floor Override → Dead Stock cap → Final rounding
+
+**Brand Buffer is skipped for SKUs with manual DS floors** — the manual floor already encodes the team's knowledge about brand replenishment behaviour. Applying both would double-count.
 
 ---
 
