@@ -3516,16 +3516,15 @@ const visibleOutput = useMemo(() => {
         <h2 style={{color:HR.yellowDark,margin:0,fontSize:16}}>Data Inputs</h2>
         {(() => {
           const hasData = invoiceData.length > 0 && Object.keys(skuMaster).length > 0 && Object.keys(priceData).length > 0;
-          const isSyncing2 = zohoSync.skuMaster?.status==="syncing" || zohoSync.prices?.status==="syncing";
-          // Yellow only when something changed (data upload, clear, or params tweaked) and not mid-sync
-          const disabled2 = !hasData || isSyncing2 || !modelDirty;
+          // Yellow only when something changed (data upload, clear, or params tweaked)
+          const disabled2 = !hasData || !modelDirty;
           return (
             <button
               disabled={disabled2}
-              title={!hasData?"Upload invoice CSV first":isSyncing2?"Syncing SKU Master + Prices from Zoho…":!modelDirty?"No changes since last run":""}
+              title={!hasData?"Upload all required CSVs first":!modelDirty?"No changes since last run":""}
               style={{background:disabled2?"#E5E5E5":HR.yellow,color:disabled2?"#999":HR.black,border:"none",padding:"8px 20px",borderRadius:7,cursor:disabled2?"not-allowed":"pointer",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:6}}
               onClick={disabled2?undefined:()=>setShowRunConfirm(true)}>
-              {isSyncing2 ? <><span style={{fontSize:14}}>⏳</span> Syncing Zoho…</> : modelDirty ? <><span>▶</span> Apply & Re-run Model</> : <><span>✓</span> Model up to date</>}
+              {modelDirty ? <><span>▶</span> Apply & Re-run Model</> : <><span>✓</span> Model up to date</>}
             </button>
           );
         })()}
