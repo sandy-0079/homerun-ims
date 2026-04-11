@@ -87,6 +87,8 @@ New DS Floor → Brand Buffer (skipped if SKU has manual floor) → SKU Floor Ov
 
 **Brand Buffer is skipped for SKUs with manual DS floors** — the manual floor already encodes the team's knowledge about brand replenishment behaviour. Applying both would double-count.
 
+**SKU Floor Min and Max are checked independently** — if floor Min > engine Min, floor Min wins. If floor Max > engine Max, floor Max wins. Either can trigger without the other.
+
 ---
 
 ## Replenishment Logic (Critical for Simulation)
