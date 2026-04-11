@@ -3678,19 +3678,6 @@ const visibleOutput = useMemo(() => {
           {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,count:`${deadStock.size.toLocaleString()} SKUs`,key:"deadStock",required:false,hasData:deadStock.size>0},
         ];
 
-        const dlBtn = (key, handler, hasData, label) => (
-          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-            {hasData && <button onClick={()=>{const csv=buildDataCSV(key);if(csv)dlCSV(key+"_data.csv",csv);}}
-              style={{background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>
-              ⬇ {label||"Data"}
-            </button>}
-            {hasData && <button onClick={()=>clearData(key)}
-              style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>
-              🗑 Clear
-            </button>}
-          </div>
-        );
-
         const btnS = (color, text) => ({background:color,color:HR.white,padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,border:"none",whiteSpace:"nowrap"});
         const dlBtnS = {background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"};
         const tplBtnS = {background:"#EAF9FF",color:"#0077A8",border:"1px solid #A5F3FC",padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"};
@@ -3760,7 +3747,7 @@ const visibleOutput = useMemo(() => {
                 </div>
                 <div style={{fontSize:10,color:HR.muted,marginBottom:8,lineHeight:1.4}}>{item.desc}</div>
                 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                  <label style={{...btnS(HR.green,""),cursor:"pointer"}}> ⬆ Upload CSV<input type="file" accept=".csv" onChange={item.handler} style={{display:"none"}}/></label>
+                  <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={item.handler} style={{display:"none"}}/></label>
                   <button onClick={()=>{const t=templates[item.key];dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
                   {item.hasData&&<button onClick={()=>{const csv=buildDataCSV(item.key);if(csv)dlCSV(item.key+"_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
                   {item.hasData&&<button onClick={()=>clearData(item.key)} style={clrBtnS}>🗑 Clear</button>}
