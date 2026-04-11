@@ -3127,18 +3127,12 @@ export default function App(){
   const [stockData, setStockData] = useState({});       // persists across tab switches
   const [stockUploadedAt, setStockUploadedAt] = useState(null);
   const stockUploadedAtRef = useRef(null); // always current — avoids stale closure in saveTeamData
-  const [zohoSync, setZohoSync] = useState({ invoices: null, skuMaster: null, prices: null }); // {status, message, ts}
-  const [invoiceUploadedThisSession, setInvoiceUploadedThisSession] = useState(false);
   const [modelDirty, setModelDirty] = useState(false); // true when data or params changed since last run
   const [changeLog, setChangeLog] = useState([]); // list of changes since last run
   const [showRunConfirm, setShowRunConfirm] = useState(false); // show pre-run summary modal
   const [modelRunSuccess, setModelRunSuccess] = useState(false); // show success message after run
 
   const addChange = (msg) => setChangeLog(prev => [...prev, msg]);
-  const [zohoInvFrom, setZohoInvFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 5); return d.toISOString().slice(0,10);
-  });
-  const [zohoInvTo, setZohoInvTo] = useState(() => new Date().toISOString().slice(0,10));
   const [syncStatus,setSyncStatus]=useState("idle"); // "idle" | "saving" | "saved" | "error"
   /* Old Insights tab state removed — replaced by SKU Detail tab */
   // ── Overview tab state ────────────────────────────────────────────────────
