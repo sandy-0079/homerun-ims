@@ -15,24 +15,6 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 | Supabase Anon Key | eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJneXVwbnJvZ2tidWdzYWR3bHllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3NzgzMzgsImV4cCI6MjA4ODM1NDMzOH0.sbZh8CbmW7hhpiUCg5OoS7hQzHaNqExkaAlACEqJ9sc |
 | Admin Password | IMSAdmin123 |
 
-### Zoho Inventory API
-- Data centre: `.in` — base URL: `https://www.zohoapis.in`
-- OAuth token: `https://accounts.zoho.in/oauth/v2/token`
-- Org ID: `60044091518`
-- Client ID: `1000.PZ2TU2A1JRI4FJVX102SYYMG5GMIVF`
-- Client Secret: `a98c2f70e31504e01f8921920356f17a887c40c31f`
-- Refresh Token: `1000.e3de20ae19cf4496182a1c2ea5aca6fa.49c27527dc5e93f158cdff66a10bce73`
-- Scopes: invoices.READ, items.READ, settings.READ, reports.READ
-- Daily API limit: 7,500 calls/day
-
-### Zoho Location Mapping
-DS01 Sarjapur → DS01, DS02 Bileshivale → DS02, DS03 Kengeri → DS03, DS04 Chikkabanavara → DS04, DS05 Basavanapura → DS05, DC01 Rampura → DC, HomeRun Bangalore → ignore (HQ)
-
-### Zoho Invoice Status Mapping
-- `paid` / `overdue` → use for engine (Min/Max) + simulation
-- `sent` → simulation only (today's live orders)
-- `void` / `draft` → ignore
-
 ---
 
 ## Data Model & Key Decisions
@@ -127,24 +109,35 @@ Cluster analysis: 65% OOS reduction (134→46) via cross-DS fulfillment. Cluster
 
 ---
 
-## Roadmap
+## To-Do (Active)
 
-### Phase 3: Actual Stock Simulation (next)
-Mode 2 in OOS Simulation tab — uses 8 AM stock snapshot as opening stock instead of Max.
-- S1-S4: Custom date range picker + on-demand Zoho invoice fetch — build now
-- S5-S7: Mode 2 with root cause KPIs — needs stock snapshots (upload stock CSVs first)
-- Stock snapshots come from Stock Health tab uploads, not from any cron
+### 1. OOS Simulation Redesign
+Replace "Last N days" slider with **custom date range picker** on existing Mode 1 (uses already-loaded invoice data).
 
-### Phase 4: Alerts
-SKUs below Min, demand spikes, DOC alerts, overstock flags.
+Add new capability: **Simulate with fresh invoice CSV** (temporary — does not replace loaded data):
+- Upload invoice CSV for any period
+- Choose simulation type:
+  - **Ideal Restock:** Stock starts at Max each day. Any date range. Shows OOS breakdown.
+  - **Actual Stock (single day only):** Upload 5 stock CSVs (DS01–DS05, one per DS, same Inventory Summary format). Simulate that one day's orders against actual opening stock. Shows OOS with root cause classification (Ops Failure / Tool Failure / Unstocked / Could Have Been Saved). DC not included in simulation.
 
-### Phase 5: Simplified Override Workflow
-Inline Min/Max editing from monitoring view with audit trail.
+### 2. Remove Zoho Integration Entirely
+- Delete edge functions: `zoho-skumaster`, `zoho-prices`, `zoho-invoices`, `_shared/zoho.ts`
+- Remove auto-Zoho-sync on invoice upload from Upload tab
+- Invoice, SKU Master, Prices → plain CSV upload only (same pattern as DS Floor, SKU Floors, Dead Stock)
+- Remove `callZoho`, `syncZohoSKUMaster`, `syncZohoPrices`, `syncZohoInvoices` from App.jsx
+- Remove Zoho credentials from CLAUDE.md
+- Upload tab becomes fully CSV-driven with no Zoho dependency
 
-### Open Questions
-1. Alert threshold — at what DOC level to flag "at risk"?
-2. Which brands have 5-day DC replenishment? (Field exists in Logic Tweaker, needs populating)
-3. Cluster fulfillment — build into tool or ops process?
+### 3. Polish Stock Health Tab
+Make it more rich and actionable (specifics TBD).
+
+### 4. Check All Flows — Polish All Tabs
+Full pass across Overview, SKU Detail, OOS Simulation, Stock Health, Tool Output, Logic Tweaker, Manual Overrides, Upload Data.
+
+## Deferred
+- Upload Data tab UI polish (revisit after all active items done)
+- Cluster fulfillment — build into tool or ops process?
+- Stock Health — actionables design (TBD)
 
 ---
 
