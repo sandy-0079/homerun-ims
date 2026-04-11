@@ -3,8 +3,8 @@ import { loadFromSupabase, saveToSupabase } from "./supabase";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
-  DC_MULT_DEFAULT, DC_DEAD_MULT_DEFAULT, RECENCY_WT_DEFAULT,
-  BASE_MIN_DAYS_DEFAULT, DEFAULT_BRAND_BUFFER, DEFAULT_PARAMS,
+  DC_DEAD_MULT_DEFAULT, RECENCY_WT_DEFAULT,
+  BASE_MIN_DAYS_DEFAULT, DEFAULT_PARAMS,
   runEngine,
   parseCSV, getPriceTag,
 } from "./engine/index.js";
@@ -1672,313 +1672,6 @@ function ImpactPreviewPanel({ params, savedParams, invoiceData, skuMaster, minRe
     </div>
   );
 }
-// ─── ImpactStickyBar ──────────────────────────────────────────────────────────
-function ImpactStickyBar({ changedCount, onReset, onApply, previewState, runPreview }) {
-  const ran = previewState === "done";
-  return (
-    <div style={{
-      position:"sticky", top:-16, zIndex:20,
-      background:"#FFFBEA", border:`1px solid ${HR.yellow}`,
-      borderRadius:8, padding:"10px 16px", marginBottom:14,
-      display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
-      boxShadow:"0 2px 8px rgba(0,0,0,0.08)",
-    }}>
-      {/* Left: change count */}
-      <div style={{flexShrink:0}}>
-        <span style={{color:HR.yellowDark, fontWeight:800, fontSize:14}}>
-          ⚠ {changedCount} unsaved change{changedCount!==1?"s":""}
-        </span>
-        <div style={{fontSize:10, color:HR.muted, marginTop:1}}>
-          {ran ? "Preview ran — apply when ready" : "Run preview first to see impact, then apply"}
-        </div>
-      </div>
-
-      {/* Right: action buttons */}
-      <div style={{display:"flex", gap:8, alignItems:"center", flexShrink:0}}>
-        {/* Reset — always red/destructive */}
-        <button onClick={onReset} style={{
-          background:"#FEE2E2", color:"#B91C1C",
-          border:"1px solid #FECACA",
-          padding:"7px 16px", borderRadius:6, cursor:"pointer", fontSize:13, fontWeight:700,
-        }}>↩ Reset</button>
-
-        {/* Run Preview — primary before run, secondary after */}
-        <button onClick={runPreview} style={{
-          background: ran ? HR.white : HR.yellow,
-          color:       ran ? HR.muted : HR.black,
-          border:      ran ? `1px solid ${HR.border}` : "none",
-          padding:"7px 18px", borderRadius:6, cursor:"pointer", fontSize:13, fontWeight:700,
-          opacity: previewState === "running" ? 0.6 : 1,
-        }} disabled={previewState==="running"}>
-          {previewState==="running" ? "⚡ Running…" : ran ? "↻ Re-run Preview" : "▶ Run Preview"}
-        </button>
-
-        {/* Apply & Re-run — secondary before run, primary after */}
-        <button onClick={onApply} style={{
-          background: ran ? HR.yellow : HR.white,
-          color:       ran ? HR.black  : HR.muted,
-          border:      ran ? "none"    : `1px solid ${HR.border}`,
-          padding:"7px 20px", borderRadius:6, cursor:"pointer", fontSize:13, fontWeight:700,
-        }}>▶ Apply & Re-run</button>
-      </div>
-    </div>
-  );
-}
-
-// ─── ImpactPreviewPanelV2 ─────────────────────────────────────────────────────
-function ImpactPreviewPanelV2({
-  params, savedParams, invoiceData, skuMaster,
-  minReqQty, newSKUQty, deadStock, priceData, hasChanges,
-  previewState, setPreviewState, onSetRunFn,
-}) {
-  const [diff, setDiff] = useState(null);
-  const prevParamsRef   = useRef(null);
-
-  // Reset diff when changes are discarded
-  useEffect(() => {
-    if (!hasChanges) { setPreviewState("idle"); setDiff(null); }
-  }, [hasChanges]);
-
-  // Reset diff when params change after a completed run
-  useEffect(() => {
-    if (
-      prevParamsRef.current &&
-      JSON.stringify(prevParamsRef.current) !== JSON.stringify(params) &&
-      previewState === "done"
-    ) {
-      setPreviewState("idle"); setDiff(null);
-    }
-    prevParamsRef.current = params;
-  }, [params]);
-
-  const MOV_ORDER = ["Super Fast","Fast","Moderate","Slow","Super Slow"];
-
-  const run = useCallback(() => {
-    setPreviewState("running");
-    setTimeout(() => {
-      try {
-        const baseRes = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, savedParams);
-        const newRes  = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, params);
-
-        let skusImpacted = 0;
-        let baseInvMin = 0, newInvMin = 0, baseInvMax = 0, newInvMax = 0;
-        const byMov = {};
-        const byDS  = Object.fromEntries(DS_LIST.map(ds=>[ds,{baseMin:0,newMin:0,baseMax:0,newMax:0,skus:new Set()}]));
-        const byCat = {};
-
-        Object.entries(newRes).forEach(([sku, nr]) => {
-          const br = baseRes[sku]; if (!br) return;
-          const p   = priceData[sku] || 0;
-          const cat = skuMaster[sku]?.category || "Unknown";
-          let skuChanged = false;
-
-          DS_LIST.forEach(ds => {
-            const bs = br.stores[ds]||{min:0,max:0}, ns = nr.stores[ds]||{min:0,max:0};
-            baseInvMin += bs.min*p; baseInvMax += bs.max*p;
-            newInvMin  += ns.min*p; newInvMax  += ns.max*p;
-            byDS[ds].baseMin += bs.min*p; byDS[ds].newMin  += ns.min*p;
-            byDS[ds].baseMax += bs.max*p; byDS[ds].newMax  += ns.max*p;
-            if (bs.min!==ns.min||bs.max!==ns.max) { skuChanged=true; byDS[ds].skus.add(sku); }
-          });
-          baseInvMin += (br.dc?.min||0)*p; baseInvMax += (br.dc?.max||0)*p;
-          newInvMin  += (nr.dc?.min||0)*p; newInvMax  += (nr.dc?.max||0)*p;
-
-          if (skuChanged) {
-            skusImpacted++;
-            const mvTag = nr.dc?.mvTag||"Super Slow";
-            if (!byMov[mvTag]) byMov[mvTag]={skus:0,deltaMin:0,deltaMax:0};
-            byMov[mvTag].skus++;
-            if (!byCat[cat]) byCat[cat]={deltaMin:0,deltaMax:0,skus:0};
-            byCat[cat].skus++;
-            DS_LIST.forEach(ds=>{
-              const bs=br.stores[ds]||{min:0,max:0},ns=nr.stores[ds]||{min:0,max:0};
-              byMov[mvTag].deltaMin += (ns.min-bs.min)*p;
-              byMov[mvTag].deltaMax += (ns.max-bs.max)*p;
-              byCat[cat].deltaMin   += (ns.min-bs.min)*p;
-              byCat[cat].deltaMax   += (ns.max-bs.max)*p;
-            });
-          }
-        });
-
-        const topCats = Object.entries(byCat)
-          .map(([name,v])=>({name,...v,deltaMin:Math.round(v.deltaMin),deltaMax:Math.round(v.deltaMax)}))
-          .sort((a,b)=>Math.abs(b.deltaMax)-Math.abs(a.deltaMax)).slice(0,5);
-        const dsSummary = DS_LIST.map(ds=>({
-          ds,
-          deltaMin:Math.round(byDS[ds].newMin-byDS[ds].baseMin),
-          deltaMax:Math.round(byDS[ds].newMax-byDS[ds].baseMax),
-          skus:byDS[ds].skus.size,
-        }));
-
-        setDiff({skusImpacted,totalSKUs:Object.keys(newRes).length,
-          deltaMin:Math.round(newInvMin-baseInvMin),deltaMax:Math.round(newInvMax-baseInvMax),
-          byMov,byDS:dsSummary,topCats});
-        setPreviewState("done");
-      } catch(err) { console.error(err); setPreviewState("error"); }
-    }, 60);
-  }, [params, savedParams, invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData]);
-
-  // Expose run function to sticky bar
-  useEffect(() => { onSetRunFn && onSetRunFn(run); }, [run]);
-
-  const deltaColor = v => v>0?"#C05A00":v<0?HR.green:HR.muted;
-  const deltaFmt   = v => `${v>=0?"+":""}${fmtInr(v)}`;
-  const thS = {padding:"6px 8px",fontSize:10,fontWeight:600,color:HR.muted,background:HR.surfaceLight,textAlign:"center"};
-  const tdS = (right) => ({padding:"5px 8px",borderTop:`1px solid ${HR.border}`,fontSize:11,textAlign:right?"right":"left"});
-
-  // ── Blank ──
-  if (!hasChanges && previewState!=="done") return (
-    <div style={{textAlign:"center",padding:"40px 16px"}}>
-      <div style={{fontSize:36,marginBottom:10}}>✅</div>
-      <div style={{color:HR.muted,fontSize:13,fontWeight:600}}>No unsaved changes</div>
-      <div style={{color:HR.muted,fontSize:11,marginTop:4}}>Tweak any parameter to preview its impact here.</div>
-    </div>
-  );
-
-  if (!invoiceData.length&&hasChanges) return (
-    <div style={{textAlign:"center",padding:"40px 16px"}}>
-      <div style={{fontSize:32,marginBottom:10}}>📂</div>
-      <div style={{fontSize:12,color:HR.muted}}>Upload data first to enable preview.</div>
-    </div>
-  );
-
-  // ── Idle (changes exist, not yet run) ──
-  if (previewState==="idle"&&hasChanges) return (
-    <div style={{textAlign:"center",padding:"40px 16px"}}>
-      <div style={{fontSize:32,marginBottom:10}}>🔍</div>
-      <div style={{color:HR.muted,fontSize:13,fontWeight:600}}>Ready to preview</div>
-      <div style={{color:HR.muted,fontSize:11,marginTop:4}}>Hit <strong>Run Preview</strong> in the bar above.</div>
-    </div>
-  );
-
-  // ── Running ──
-  if (previewState==="running") return (
-    <div style={{textAlign:"center",padding:"40px 16px"}}>
-      <div style={{fontSize:28,marginBottom:8}}>⚡</div>
-      <div style={{fontSize:12,color:HR.muted}}>Running shadow model…</div>
-    </div>
-  );
-
-  // ── Error ──
-  if (previewState==="error") return (
-    <div style={{background:"#FEE2E2",borderRadius:6,padding:"12px",border:"1px solid #FECACA"}}>
-      <div style={{fontSize:12,color:"#B91C1C",marginBottom:4}}>❌ Preview failed. Check console.</div>
-    </div>
-  );
-
-  // ── Results ──
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {/* Summary cards */}
-      {[
-        {label:"SKUs Affected",icon:"📦",value:`${diff.skusImpacted}`,
-          sub:`of ${diff.totalSKUs} · ${diff.totalSKUs>0?((diff.skusImpacted/diff.totalSKUs)*100).toFixed(1):0}%`,
-          color:diff.skusImpacted>0?HR.yellowDark:HR.green},
-        {label:"Inv Value Min Δ",icon:"📉",value:deltaFmt(diff.deltaMin),
-          sub:diff.deltaMin===0?"No change":diff.deltaMin>0?"↑ increase":"↓ saving",
-          color:deltaColor(diff.deltaMin)},
-        {label:"Inv Value Max Δ",icon:"📈",value:deltaFmt(diff.deltaMax),
-          sub:diff.deltaMax===0?"No change":diff.deltaMax>0?"↑ increase":"↓ saving",
-          color:deltaColor(diff.deltaMax)},
-      ].map(c=>(
-        <div key={c.label} style={{background:HR.white,borderRadius:6,padding:"10px 12px",
-          border:`1px solid ${HR.border}`,borderLeft:`3px solid ${c.color}`}}>
-          <div style={{fontSize:9,color:HR.muted,fontWeight:600,textTransform:"uppercase",marginBottom:2}}>{c.icon} {c.label}</div>
-          <div style={{fontSize:24,fontWeight:800,color:c.color,lineHeight:1.2}}>{c.value}</div>
-          <div style={{fontSize:10,color:HR.muted,marginTop:2}}>{c.sub}</div>
-        </div>
-      ))}
-
-      {diff.skusImpacted===0&&(
-        <div style={{fontSize:11,color:HR.green,fontWeight:600,background:"#DCFCE7",
-          border:"1px solid #BBF7D0",borderRadius:6,padding:"8px 12px"}}>
-          ✅ No Min/Max values change with these parameters.
-        </div>
-      )}
-
-      {/* Movement breakdown */}
-      {Object.keys(diff.byMov).length>0&&(
-        <div>
-          <div style={{fontSize:11,fontWeight:700,color:HR.muted,textTransform:"uppercase",marginBottom:5,letterSpacing:"0.4px"}}>By Movement Tag</div>
-          <div style={{background:HR.white,borderRadius:6,border:`1px solid ${HR.border}`,overflow:"hidden"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
-              <thead><tr style={{background:HR.surfaceLight}}>
-                <th style={{...thS,textAlign:"left"}}>Tag</th>
-                <th style={thS}>SKUs</th><th style={thS}>Min Δ</th><th style={thS}>Max Δ</th>
-              </tr></thead>
-              <tbody>
-                {MOV_ORDER.filter(t=>diff.byMov[t]).map((tier,i)=>{
-                  const row=diff.byMov[tier],c=MOV_COLORS[tier]||"#64748b";
-                  return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                    <td style={{padding:"4px 8px",borderTop:`1px solid ${HR.border}`}}>
-                      <span style={{padding:"1px 5px",borderRadius:3,fontSize:9,fontWeight:600,
-                        background:c+"18",color:c,border:`1px solid ${c}33`}}>{tier}</span>
-                    </td>
-                    <td style={tdS(true)}><span style={{fontWeight:700,color:HR.yellowDark}}>{row.skus}</span></td>
-                    <td style={tdS(true)}><span style={{fontWeight:700,color:deltaColor(row.deltaMin)}}>{deltaFmt(Math.round(row.deltaMin))}</span></td>
-                    <td style={tdS(true)}><span style={{fontWeight:700,color:deltaColor(row.deltaMax)}}>{deltaFmt(Math.round(row.deltaMax))}</span></td>
-                  </tr>;
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Per-DS breakdown */}
-      <div>
-        <div style={{fontSize:11,fontWeight:700,color:HR.muted,textTransform:"uppercase",marginBottom:5,letterSpacing:"0.4px"}}>By Dark Store</div>
-        <div style={{background:HR.white,borderRadius:6,border:`1px solid ${HR.border}`,overflow:"hidden"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
-            <thead><tr style={{background:HR.surfaceLight}}>
-              <th style={{...thS,textAlign:"left"}}>Store</th>
-              <th style={thS}>SKUs Δ</th><th style={thS}>Min Δ</th><th style={thS}>Max Δ</th>
-            </tr></thead>
-            <tbody>
-              {diff.byDS.map((row,i)=>{
-                const di=DS_LIST.indexOf(row.ds),dc=DS_COLORS[di>=0?di:0];
-                return <tr key={row.ds} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                  <td style={{padding:"4px 8px",borderTop:`1px solid ${HR.border}`}}>
-                    <span style={{padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,
-                      background:dc.bg,color:dc.header,border:`1px solid ${dc.header}44`}}>{row.ds}</span>
-                  </td>
-                  <td style={tdS(true)}><span style={{fontWeight:700,color:row.skus>0?HR.yellowDark:HR.muted}}>{row.skus}</span></td>
-                  <td style={tdS(true)}><span style={{fontWeight:700,color:deltaColor(row.deltaMin)}}>{deltaFmt(row.deltaMin)}</span></td>
-                  <td style={tdS(true)}><span style={{fontWeight:700,color:deltaColor(row.deltaMax)}}>{deltaFmt(row.deltaMax)}</span></td>
-                </tr>;
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Top categories */}
-      {diff.topCats.length>0&&(
-        <div>
-          <div style={{fontSize:11,fontWeight:700,color:HR.muted,textTransform:"uppercase",marginBottom:5,letterSpacing:"0.4px"}}>Top Categories by Impact</div>
-          <div style={{background:HR.white,borderRadius:6,border:`1px solid ${HR.border}`,overflow:"hidden"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
-              <thead><tr style={{background:HR.surfaceLight}}>
-                <th style={{...thS,textAlign:"left"}}>Category</th>
-                <th style={thS}>SKUs</th><th style={thS}>Min Δ</th><th style={thS}>Max Δ</th>
-              </tr></thead>
-              <tbody>
-                {diff.topCats.map((row,i)=>(
-                  <tr key={row.name} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                    <td style={{padding:"4px 8px",borderTop:`1px solid ${HR.border}`,fontWeight:600,color:HR.text,fontSize:10}}>{row.name}</td>
-                    <td style={tdS(true)}><span style={{fontWeight:700,color:HR.yellowDark}}>{row.skus}</span></td>
-                    <td style={tdS(true)}><span style={{fontWeight:700,color:deltaColor(row.deltaMin)}}>{deltaFmt(row.deltaMin)}</span></td>
-                    <td style={tdS(true)}><span style={{fontWeight:700,color:deltaColor(row.deltaMax)}}>{deltaFmt(row.deltaMax)}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 // ─── Overview Tab Helpers ────────────────────────────────────────────────────
 const OV_PERIODS = [
   { key: "L90D", label: "L90D", days: 90 },
@@ -2189,7 +1882,7 @@ const DCCard = ({ dcData, meta, params, horizontal }) => {
                 ? <>{pill("Dead Mult", `${det.multMin}/${det.multMax}`)}</>
                 : det.isFlooredSKU
                   ? <><div style={{fontSize:9,background:"#EAF9FF",color:"#0077A8",borderRadius:4,padding:"2px 6px",fontWeight:700,marginTop:2,display:"inline-block"}}>SKU Floor DC</div>{pill("Floor Mult", `Min ×${det.multMin} / Max ×${det.multMax}`)}</>
-                  : <>{pill("DC Mult", `${det.multMin}/${det.multMax}`)}</>
+                  : null
               }
             </div>
             {!det.isDead && (
@@ -2201,9 +1894,8 @@ const DCCard = ({ dcData, meta, params, horizontal }) => {
                   </>
                 ) : (
                   <>
-                    {det.leadTimeMin != null && pill("Lead Time Min", det.leadTimeMin)}
-                    {pill("DC Min", `max(${det.leadTimeMin ?? "?"}, ${det.sumMin} × ${det.multMin}) = ${dc.min}`)}
-                    {pill("DC Max", `max(⌈${dc.min} × ${(det.multMax/det.multMin).toFixed(2)}⌉, ${det.sumMax} × ${det.multMax}) = ${dc.max}`)}
+                    {pill("DC Min", `Σ daily avg (${det.sumDailyAvg?.toFixed(2)}) × (${det.leadTime}D + 1) = ${dc.min}`)}
+                    {pill("DC Max", `${dc.min} + Σ daily avg × 2 = ${dc.max}`)}
                   </>
                 )}
               </div>
@@ -3114,7 +2806,6 @@ export default function App(){
   const allUploaded=invoiceData.length>0&&Object.keys(skuMaster).length>0&&Object.keys(priceData).length>0&&Object.keys(minReqQty).length>0&&Object.keys(newSKUQty).length>0&&deadStock.size>0;
   /* Old dashboard filter state removed — old Dashboard tab code was removed */
   const [params,setParams]=useState(DEFAULT_PARAMS),[savedParams,setSaved]=useState(DEFAULT_PARAMS);
-  const [newBrand,setNewBrand]=useState(""),[newBrandDays,setNBD]=useState(1);
   const [isAdmin,setIsAdmin]=useState(()=>localStorage.getItem("adminSession")==="true");
   const [showLoginModal,setShowLoginModal]=useState(false);
   const [publishStatus,setPublishStatus]=useState(null);
@@ -3131,6 +2822,10 @@ export default function App(){
   const [changeLog, setChangeLog] = useState([]); // list of changes since last run
   const [showRunConfirm, setShowRunConfirm] = useState(false); // show pre-run summary modal
   const [modelRunSuccess, setModelRunSuccess] = useState(false); // show success message after run
+  const [uploadedFiles, setUploadedFiles] = useState({}); // {invoiceData, skuMaster, priceData} — filenames from current session
+  const [uploading, setUploading] = useState(null); // key of card currently uploading CSV
+  const [infoCard, setInfoCard] = useState(null); // key of card whose column info tooltip is visible
+  const [modelSnapshot, setModelSnapshot] = useState(null); // stats frozen at last model run — drives data health strip
 
   const addChange = (msg) => setChangeLog(prev => [...prev, msg]);
   const [syncStatus,setSyncStatus]=useState("idle"); // "idle" | "saving" | "saved" | "error"
@@ -3148,9 +2843,8 @@ export default function App(){
   const [sdDateFrom, setSdDateFrom] = useState("");
   const [sdDateTo, setSdDateTo] = useState("");
   const [sdDsView, setSdDsView] = useState("All");
-  const [previewState, setPreviewState] = useState("idle");
-  const runPreviewRef = useRef(()=>{});
-  const runPreviewFn = runPreviewRef.current;
+  const [showLogicConfirm, setShowLogicConfirm] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // ── Supabase: load params + overrides on mount ──────────────────────────────
   useEffect(()=>{
@@ -3310,33 +3004,40 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   }, [invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData, stockData]); // stockUploadedAt read from ref — always current
 
   const handleInvoice=useCallback(async(e)=>{
-    const file=e.target.files[0];if(!file)return;setLoading(true);
+    const file=e.target.files[0];if(!file)return;
+    setUploading("invoiceData");
     const rows=parseCSV(await file.text());
     // Replace entirely — no merge, no rolling cap. Store all data Admin provides.
     const filtered=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0)})).filter(r=>r.date&&r.sku&&r.qty>0);
     setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
     await saveTeamData({invoiceData:filtered});
     setModelDirty(true);
+    setLoaded(true);
+    setUploadedFiles(prev=>({...prev,invoiceData:file.name}));
     addChange(`Invoice data uploaded: ${filtered.length.toLocaleString()} rows`);
-    setLoading(false);
+    setUploading(null);
     e.target.value="";
   },[invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
 
   const handleSKU=useCallback(async(e)=>{
-    const file=e.target.files[0];if(!file)return;setLoading(true);
+    const file=e.target.files[0];if(!file)return;
+    setUploading("skuMaster");
     const rows=parseCSV(await file.text());const master={};
     rows.forEach(r=>{const s=r["SKU"]||"";if(s)master[s]={sku:s,name:r["Name"]||"",category:r["Category"]||r["Category Name"]||"",brand:r["Brand"]||"",status:r["Status"]||"Active",inventorisedAt:r["Inventorised At"]||"DS"};});
     setSKU(master);LS.set("skuMaster",JSON.stringify(master));
     await saveTeamData({skuMaster:master});
     setModelDirty(true);
+    setLoaded(true);
+    setUploadedFiles(prev=>({...prev,skuMaster:file.name}));
     addChange(`SKU Master uploaded: ${Object.keys(master).length.toLocaleString()} SKUs`);
-    setLoading(false);
+    setUploading(null);
     e.target.value="";
   },[invoiceData,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
 
-  const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));saveTeamData({minReqQty:mrq});setModelDirty(true);addChange(`New DS Floor Qty uploaded: ${Object.keys(mrq).length} SKUs`);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
+  const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;setUploading("minReqQty");const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));await saveTeamData({minReqQty:mrq});setModelDirty(true);setUploadedFiles(prev=>({...prev,minReqQty:file.name}));addChange(`New DS Floor Qty uploaded: ${Object.keys(mrq).length} SKUs`);setUploading(null);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
   const handleNSQ=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;
+    setUploading("newSKUQty");
     const rows=parseCSV(await file.text());
     const nsq={};
     rows.forEach(r=>{
@@ -3348,13 +3049,14 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
         if(mn>0||mx>0) nsq[s][ds]={min:mn,max:Math.max(mn,mx)};
       });
     });
-    setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));saveTeamData({newSKUQty:nsq});setModelDirty(true);addChange(`SKU Floors uploaded: ${Object.keys(nsq).length} SKUs`);e.target.value="";
+    setNSQ(nsq);LS.set("newSKUQty",JSON.stringify(nsq));await saveTeamData({newSKUQty:nsq});setModelDirty(true);setUploadedFiles(prev=>({...prev,newSKUQty:file.name}));addChange(`SKU Floors uploaded: ${Object.keys(nsq).length} SKUs`);setUploading(null);e.target.value="";
   },[saveTeamData]);
-  const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));saveTeamData({deadStock:ds});setModelDirty(true);addChange(`Dead Stock uploaded: ${ds.size} SKUs`);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
-  const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));saveTeamData({priceData:pd});setModelDirty(true);addChange(`Purchase Prices uploaded: ${Object.keys(pd).length} SKUs`);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
+  const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;setUploading("deadStock");const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));await saveTeamData({deadStock:ds});setModelDirty(true);setUploadedFiles(prev=>({...prev,deadStock:file.name}));addChange(`Dead Stock uploaded: ${ds.size} SKUs`);setUploading(null);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
+  const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;setUploading("priceData");const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));await saveTeamData({priceData:pd});setModelDirty(true);setUploadedFiles(prev=>({...prev,priceData:file.name}));addChange(`Purchase Prices uploaded: ${Object.keys(pd).length} SKUs`);setUploading(null);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
 
   const clearData=useCallback(async(key)=>{
     setModelDirty(true);
+    setUploadedFiles(prev=>({...prev,[key]:null}));
     const labels={"invoiceData":"Invoice data","skuMaster":"SKU Master","priceData":"Purchase Prices","minReqQty":"New DS Floor Qty","newSKUQty":"SKU Floors","deadStock":"Dead Stock list"};
     addChange(`${labels[key]||key} cleared`);
     if(key==="invoiceData"){setInv([]);LS.delete("invoiceData");setLoaded(false);setResults(null);saveTeamData({invoiceData:[]});}
@@ -3379,7 +3081,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     const ok = await saveToSupabase("params","global",np);
     setSyncStatus(ok?"saved":"error");
     setTimeout(()=>setSyncStatus("idle"),3000);
-    if (dataLoaded) {
+    if (invoiceData.length > 0 && Object.keys(skuMaster).length > 0) {
       setLoading(true);
       setTimeout(() => {
         try {
@@ -3395,6 +3097,15 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
             merged[sku] = { ...merged[sku], stores: newStores };
           });
           setResults(merged);
+          setModelSnapshot({
+            dateMin: invoiceDateRange.min, dateMax: invoiceDateRange.max,
+            rowCount: invoiceData.length,
+            activeSkus: activeMaster.length,
+            uniqueSold, zeroSale,
+            deadStockCount: deadStock.size,
+            priceSkus: Object.keys(priceData).length,
+            missingCount: missing.length,
+          });
           setModelRunSuccess(true);
           setTimeout(() => setModelRunSuccess(false), 6000);
           // Only redirect if not on upload tab — let upload tab show success inline
@@ -3413,7 +3124,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
 };
 
   const periodDates=useMemo(()=>{const d=[...new Set(invoiceData.map(r=>r.date))].sort();return new Set(d.slice(-(params.overallPeriod||90)));},[invoiceData,params.overallPeriod]);
-  const soldSKUs=new Set(invoiceData.filter(r=>periodDates.has(r.date)).map(r=>r.sku));
+  const soldSKUs=new Set(invoiceData.map(r=>r.sku)); // all-time for data health; period filtering is engine-side
   // trim + lowercase status check to handle trailing spaces / casing issues
   const activeMaster=Object.values(skuMaster).filter(s=>(s.status||"").trim().toLowerCase()==="active");
   const uniqueSold=[...soldSKUs].filter(s=>skuMaster[s]&&(skuMaster[s].status||"").trim().toLowerCase()==="active").length;
@@ -3445,8 +3156,8 @@ const visibleOutput = useMemo(() => {
 }, [outputRows, outputScrollTop]);
 
 
-  const mi=params.movIntervals||[2,4,7,10],pt=params.priceTiers||[3000,1500,400,100],bb=params.brandBuffer||DEFAULT_BRAND_BUFFER;
-  const rw2=params.recencyWt||RECENCY_WT_DEFAULT,dcM=params.dcMult||DC_MULT_DEFAULT;
+  const mi=params.movIntervals||[2,4,7,10],pt=params.priceTiers||[3000,1500,400,100];
+  const rw2=params.recencyWt||RECENCY_WT_DEFAULT;
   const movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"],priceColors=["#B91C1C","#C2410C","#A16207","#475569","#64748B"];
 
   const ADMIN_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
@@ -3531,16 +3242,19 @@ const visibleOutput = useMemo(() => {
       </div>
       {/* Data Health — horizontal strip */}
       <div style={{display:"flex",gap:0,background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8,overflow:"hidden"}}>
-        {[
-          {label:"Invoice Data",  value:invoiceDateRange.min&&invoiceDateRange.max?`${invoiceDateRange.min} → ${invoiceDateRange.max}`:"No data", color:HR.muted, small:true},
-          {label:"Invoice Rows", value:invoiceData.length.toLocaleString(),             color:"#0077A8"},
-          {label:"Active SKUs",  value:activeMaster.length.toLocaleString(),            color:HR.green},
-          {label:"SKUs Sold",    value:uniqueSold.toLocaleString(),                     color:HR.yellowDark},
-          {label:"Zero Sale",    value:zeroSale.toLocaleString(),                       color:"#C05A00"},
-          {label:"Dead Stock",   value:deadStock.size.toLocaleString(),                 color:"#B91C1C"},
-          {label:"Price SKUs",   value:Object.keys(priceData).length.toLocaleString(),  color:"#7A3DBF"},
-          {label:"Missing SKUs", value:missing.length.toLocaleString(),                 color:missing.length>0?"#B91C1C":HR.green},
-        ].map((c,i)=>(
+        {(()=>{
+          const s=modelSnapshot;
+          const mis=s?s.missingCount:missing.length;
+          return[
+          {label:"Invoice Data",  value:s?`${s.dateMin} → ${s.dateMax}`:invoiceDateRange.min&&invoiceDateRange.max?`${invoiceDateRange.min} → ${invoiceDateRange.max}`:"No data", color:HR.muted, small:true},
+          {label:"Invoice Rows", value:(s?s.rowCount:invoiceData.length).toLocaleString(),             color:"#0077A8"},
+          {label:"Active SKUs",  value:(s?s.activeSkus:activeMaster.length).toLocaleString(),          color:HR.green},
+          {label:"SKUs Sold",    value:(s?s.uniqueSold:uniqueSold).toLocaleString(),                   color:HR.yellowDark},
+          {label:"Zero Sale",    value:(s?s.zeroSale:zeroSale).toLocaleString(),                       color:"#C05A00"},
+          {label:"Dead Stock",   value:(s?s.deadStockCount:deadStock.size).toLocaleString(),           color:"#B91C1C"},
+          {label:"Price SKUs",   value:(s?s.priceSkus:Object.keys(priceData).length).toLocaleString(),color:"#7A3DBF"},
+          {label:"Missing SKUs", value:mis.toLocaleString(),                                           color:mis>0?"#B91C1C":HR.green},
+          ];})().map((c,i)=>(
           <div key={c.label} style={{flex:1,padding:"8px 10px",borderRight:i<7?`1px solid ${HR.border}`:"none",minWidth:0}}>
             <div style={{fontSize:9,color:HR.muted,fontWeight:600,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.label}</div>
             <div style={{fontSize:c.small?9:13,fontWeight:c.small?400:700,color:c.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.value}</div>
@@ -3595,7 +3309,7 @@ const visibleOutput = useMemo(() => {
             ))}
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={()=>{setShowRunConfirm(false);setLoaded(true);applyAndRun(params);}}
+            <button onClick={()=>{setShowRunConfirm(false);applyAndRun(params);}}
               style={{flex:1,background:HR.yellow,color:HR.black,border:"none",padding:"10px",borderRadius:7,cursor:"pointer",fontWeight:800,fontSize:13}}>
               ▶ Run Model
             </button>
@@ -3628,8 +3342,8 @@ const visibleOutput = useMemo(() => {
           }
           if(key==="skuMaster"){
             if(!Object.keys(skuMaster).length) return null;
-            const h=["Name","SKU","Category","Brand","Status"];
-            const rows=Object.values(skuMaster).map(s=>[s.name||"",s.sku,s.category||"",s.brand||"",s.status||""].map(v=>`"${v}"`).join(","));
+            const h=["Name","Inventorised At","SKU","Category","Brand","Status"];
+            const rows=Object.values(skuMaster).map(s=>[s.name||"",s.inventorisedAt||"DS",s.sku,s.category||"",s.brand||"",s.status||""].map(v=>`"${v}"`).join(","));
             return h.join(",")+"\n"+rows.join("\n");
           }
           if(key==="priceData"){
@@ -3688,48 +3402,77 @@ const visibleOutput = useMemo(() => {
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:12}}>
 
             {/* Invoice card */}
-            <div style={{...S.card}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                <div style={{fontWeight:700,color:HR.text,fontSize:12}}>Invoice Data <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span></div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontWeight:700,color:HR.text,fontSize:12}}>Invoice Data</span>
+                  <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>
+                  <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
+                    <span onMouseEnter={()=>setInfoCard("invoiceData")} onMouseLeave={()=>setInfoCard(null)} style={{cursor:"help",color:HR.muted,fontSize:11,userSelect:"none"}}>ⓘ</span>
+                    {infoCard==="invoiceData"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>Invoice Date, Invoice Number, Invoice Status, PurchaseOrder, Item Name, SKU, Category Name, Quantity, Line Item Location Name</div>}
+                  </div>
+                </div>
                 <div style={{fontSize:11,color:HR.green,fontWeight:600,whiteSpace:"nowrap"}}>{invoiceData.length.toLocaleString()} rows</div>
               </div>
-              {invoiceDateRange.min && <div style={{fontSize:10,color:HR.muted,marginBottom:4}}>Period: {invoiceDateRange.min} → {invoiceDateRange.max}</div>}
-              <div style={{fontSize:10,color:HR.muted,marginBottom:8,lineHeight:1.4}}>Columns: Invoice Date, Invoice Number, Invoice Status, PurchaseOrder, Item Name, SKU, Category Name, Quantity, Line Item Location Name</div>
-              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handleInvoice} style={{display:"none"}}/></label>
-                <button onClick={()=>{const t=templates.invoiceData;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
-                {invoiceData.length>0&&<button onClick={()=>{const csv=buildDataCSV("invoiceData");if(csv)dlCSV("invoiceData_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
-                {invoiceData.length>0&&<button onClick={()=>clearData("invoiceData")} style={clrBtnS}>🗑 Clear</button>}
+              <div style={{marginTop:"auto"}}>
+                {uploadedFiles.invoiceData&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles.invoiceData}</div>}
+                {uploading==="invoiceData"&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
+                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handleInvoice} style={{display:"none"}}/></label>
+                  <button onClick={()=>{const t=templates.invoiceData;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
+                  {invoiceData.length>0&&<button onClick={()=>{const csv=buildDataCSV("invoiceData");if(csv)dlCSV("invoiceData_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
+                  {invoiceData.length>0&&<button onClick={()=>clearData("invoiceData")} style={clrBtnS}>🗑 Clear</button>}
+                </div>
               </div>
             </div>
 
             {/* SKU Master card */}
-            <div style={{...S.card}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                <div style={{fontWeight:700,color:HR.text,fontSize:12}}>SKU Master <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span></div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontWeight:700,color:HR.text,fontSize:12}}>SKU Master</span>
+                  <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>
+                  <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
+                    <span onMouseEnter={()=>setInfoCard("skuMaster")} onMouseLeave={()=>setInfoCard(null)} style={{cursor:"help",color:HR.muted,fontSize:11,userSelect:"none"}}>ⓘ</span>
+                    {infoCard==="skuMaster"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>Name, Inventorised At, SKU, Category, Status, Brand</div>}
+                  </div>
+                </div>
                 <div style={{fontSize:11,color:HR.green,fontWeight:600,whiteSpace:"nowrap"}}>{Object.keys(skuMaster).length.toLocaleString()} SKUs</div>
               </div>
-              <div style={{fontSize:10,color:HR.muted,marginBottom:8,lineHeight:1.4}}>Columns: Name, Inventorised At, SKU, Category, Status, Brand</div>
-              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handleSKU} style={{display:"none"}}/></label>
-                <button onClick={()=>{const t=templates.skuMaster;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
-                {Object.keys(skuMaster).length>0&&<button onClick={()=>{const csv=buildDataCSV("skuMaster");if(csv)dlCSV("skuMaster_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
-                {Object.keys(skuMaster).length>0&&<button onClick={()=>clearData("skuMaster")} style={clrBtnS}>🗑 Clear</button>}
+              <div style={{marginTop:"auto"}}>
+                {uploadedFiles.skuMaster&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles.skuMaster}</div>}
+                {uploading==="skuMaster"&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
+                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handleSKU} style={{display:"none"}}/></label>
+                  <button onClick={()=>{const t=templates.skuMaster;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
+                  {Object.keys(skuMaster).length>0&&<button onClick={()=>{const csv=buildDataCSV("skuMaster");if(csv)dlCSV("skuMaster_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
+                  {Object.keys(skuMaster).length>0&&<button onClick={()=>clearData("skuMaster")} style={clrBtnS}>🗑 Clear</button>}
+                </div>
               </div>
             </div>
 
             {/* Purchase Prices card */}
-            <div style={{...S.card}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                <div style={{fontWeight:700,color:HR.text,fontSize:12}}>Purchase Prices <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span></div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{fontWeight:700,color:HR.text,fontSize:12}}>Purchase Prices</span>
+                  <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>
+                  <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
+                    <span onMouseEnter={()=>setInfoCard("priceData")} onMouseLeave={()=>setInfoCard(null)} style={{cursor:"help",color:HR.muted,fontSize:11,userSelect:"none"}}>ⓘ</span>
+                    {infoCard==="priceData"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>item_id, item_name, unit, is_combo_product, quantity_purchased, amount, average_price, location_name, sku</div>}
+                  </div>
+                </div>
                 <div style={{fontSize:11,color:HR.green,fontWeight:600,whiteSpace:"nowrap"}}>{Object.keys(priceData).length.toLocaleString()} SKUs</div>
               </div>
-              <div style={{fontSize:10,color:HR.muted,marginBottom:8,lineHeight:1.4}}>Columns: item_id, item_name, unit, is_combo_product, quantity_purchased, amount, average_price, location_name, sku</div>
-              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handlePrice} style={{display:"none"}}/></label>
-                <button onClick={()=>{const t=templates.priceData;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
-                {Object.keys(priceData).length>0&&<button onClick={()=>{const csv=buildDataCSV("priceData");if(csv)dlCSV("priceData_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
-                {Object.keys(priceData).length>0&&<button onClick={()=>clearData("priceData")} style={clrBtnS}>🗑 Clear</button>}
+              <div style={{marginTop:"auto"}}>
+                {uploadedFiles.priceData&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles.priceData}</div>}
+                {uploading==="priceData"&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
+                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handlePrice} style={{display:"none"}}/></label>
+                  <button onClick={()=>{const t=templates.priceData;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
+                  {Object.keys(priceData).length>0&&<button onClick={()=>{const csv=buildDataCSV("priceData");if(csv)dlCSV("priceData_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
+                  {Object.keys(priceData).length>0&&<button onClick={()=>clearData("priceData")} style={clrBtnS}>🗑 Clear</button>}
+                </div>
               </div>
             </div>
 
@@ -3738,19 +3481,27 @@ const visibleOutput = useMemo(() => {
           {/* ── ROW 2: 3 manual CSV cards ── */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:12}}>
             {csvOnlyCards.map(item=>(
-              <div key={item.label} style={{...S.card}}>
+              <div key={item.label} style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                  <div style={{fontWeight:700,color:HR.text,fontSize:12}}>
-                    {item.label} {item.required&&<span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>}
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{fontWeight:700,color:HR.text,fontSize:12}}>{item.label}</span>
+                    {item.required&&<span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>}
+                    <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
+                      <span onMouseEnter={()=>setInfoCard(item.key)} onMouseLeave={()=>setInfoCard(null)} style={{cursor:"help",color:HR.muted,fontSize:11,userSelect:"none"}}>ⓘ</span>
+                      {infoCard===item.key&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>{item.desc}</div>}
+                    </div>
                   </div>
                   <div style={{fontSize:11,color:HR.green,fontWeight:600,whiteSpace:"nowrap"}}>{item.count}</div>
                 </div>
-                <div style={{fontSize:10,color:HR.muted,marginBottom:8,lineHeight:1.4}}>{item.desc}</div>
-                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                  <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={item.handler} style={{display:"none"}}/></label>
-                  <button onClick={()=>{const t=templates[item.key];dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
-                  {item.hasData&&<button onClick={()=>{const csv=buildDataCSV(item.key);if(csv)dlCSV(item.key+"_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
-                  {item.hasData&&<button onClick={()=>clearData(item.key)} style={clrBtnS}>🗑 Clear</button>}
+                <div style={{marginTop:"auto"}}>
+                  {uploadedFiles[item.key]&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles[item.key]}</div>}
+                  {uploading===item.key&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={item.handler} style={{display:"none"}}/></label>
+                    <button onClick={()=>{const t=templates[item.key];dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
+                    {item.hasData&&<button onClick={()=>{const csv=buildDataCSV(item.key);if(csv)dlCSV(item.key+"_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
+                    {item.hasData&&<button onClick={()=>clearData(item.key)} style={clrBtnS}>🗑 Clear</button>}
+                  </div>
                 </div>
               </div>
             ))}
@@ -3963,285 +3714,273 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
   <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}/>
 </div>
 
-        {tab==="logic"&&isAdmin&&(
-  <div style={{display:"flex",flexDirection:"column",gap:0}}>
+        {tab==="logic"&&isAdmin&&(()=>{
+  // ── Changelog: diff params vs savedParams ──
+  const logicChangelog=[];
+  const s=savedParams,c=params;
+  if(c.overallPeriod!==s.overallPeriod) logicChangelog.push(`Overall period: ${s.overallPeriod}D → ${c.overallPeriod}D`);
+  if(c.recencyWindow!==s.recencyWindow) logicChangelog.push(`Recency window: ${s.recencyWindow}D → ${c.recencyWindow}D`);
+  if(c.maxDaysBuffer!==s.maxDaysBuffer) logicChangelog.push(`Max days buffer: ${s.maxDaysBuffer}D → ${c.maxDaysBuffer}D`);
+  if(c.abqMaxMultiplier!==s.abqMaxMultiplier) logicChangelog.push(`ABQ multiplier: ${s.abqMaxMultiplier} → ${c.abqMaxMultiplier}`);
+  if(c.pctDocCap!==s.pctDocCap) logicChangelog.push(`PCT DOC cap: ${s.pctDocCap}D → ${c.pctDocCap}D`);
+  if(c.pctMinNZD!==s.pctMinNZD) logicChangelog.push(`PCT min NZD: ${s.pctMinNZD} → ${c.pctMinNZD}`);
+  if(c.spikeMultiplier!==s.spikeMultiplier) logicChangelog.push(`Spike multiplier: ${s.spikeMultiplier}× → ${c.spikeMultiplier}×`);
+  if(c.spikePctFrequent!==s.spikePctFrequent) logicChangelog.push(`Spike frequent: ${s.spikePctFrequent}% → ${c.spikePctFrequent}%`);
+  if(c.spikePctOnce!==s.spikePctOnce) logicChangelog.push(`Spike once: ${s.spikePctOnce}% → ${c.spikePctOnce}%`);
+  if(c.skuFloorDCMultMin!==s.skuFloorDCMultMin) logicChangelog.push(`SKU floor DC min mult: ${s.skuFloorDCMultMin} → ${c.skuFloorDCMultMin}`);
+  if(c.skuFloorDCMultMax!==s.skuFloorDCMultMax) logicChangelog.push(`SKU floor DC max mult: ${s.skuFloorDCMultMax} → ${c.skuFloorDCMultMax}`);
+  if(JSON.stringify(c.dcDeadMult)!==JSON.stringify(s.dcDeadMult)) logicChangelog.push(`Dead stock DC multiplier changed`);
+  if(JSON.stringify(c.movIntervals)!==JSON.stringify(s.movIntervals)) logicChangelog.push(`Movement tag boundaries changed`);
+  if(JSON.stringify(c.priceTiers)!==JSON.stringify(s.priceTiers)) logicChangelog.push(`Price tag boundaries changed`);
+  if(JSON.stringify(c.newDSList)!==JSON.stringify(s.newDSList)) logicChangelog.push(`New DS list changed`);
+  if(c.newDSFloorTopN!==s.newDSFloorTopN) logicChangelog.push(`New DS floor top N: ${s.newDSFloorTopN} → ${c.newDSFloorTopN}`);
+  const blt={...DEFAULT_PARAMS.brandLeadTimeDays,...(c.brandLeadTimeDays||{})};
+  const sblt=s.brandLeadTimeDays||{};
+  if(blt._default!==sblt._default) logicChangelog.push(`Brand lead time default: ${sblt._default??2}D → ${blt._default}D`);
+  [...new Set([...Object.keys(blt),...Object.keys(sblt)].filter(k=>k!=='_default'))].forEach(brand=>{
+    if(blt[brand]!==sblt[brand]){
+      if(!sblt[brand]) logicChangelog.push(`Lead time added: ${brand} = ${blt[brand]}D`);
+      else if(!blt[brand]) logicChangelog.push(`Lead time removed: ${brand}`);
+      else logicChangelog.push(`Lead time ${brand}: ${sblt[brand]}D → ${blt[brand]}D`);
+    }
+  });
+  const pbp=c.percentileCover?.percentileByPrice||{},spbp=s.percentileCover?.percentileByPrice||{};
+  ["Premium","High","Medium","Low","Super Low","No Price"].forEach(tag=>{if(pbp[tag]!==spbp[tag])logicChangelog.push(`PCT ${tag} percentile: ${spbp[tag]} → ${pbp[tag]}`);});
+  const cdm=c.percentileCover?.coverDaysByMovement||{},scdm=s.percentileCover?.coverDaysByMovement||{};
+  ["Super Fast","Fast","Moderate","Slow","Super Slow"].forEach(tier=>{if(cdm[tier]!==scdm[tier])logicChangelog.push(`PCT ${tier} cover days: ${scdm[tier]} → ${cdm[tier]}`);});
+  const csC=c.categoryStrategies||{},scs=s.categoryStrategies||{};
+  [...new Set([...Object.keys(csC),...Object.keys(scs)])].forEach(cat=>{const cv=csC[cat]||"standard",sv=scs[cat]||"standard";if(cv!==sv)logicChangelog.push(`${cat}: ${sv} → ${cv}`);});
+  const bmd=c.baseMinDays||{},sbmd=s.baseMinDays||{};
+  ["Super Fast","Fast","Moderate","Slow","Super Slow"].forEach(tier=>{if(bmd[tier]!==sbmd[tier])logicChangelog.push(`Base min days ${tier}: ${sbmd[tier]} → ${bmd[tier]}`);});
+  const rw=c.recencyWt||{},srw=s.recencyWt||{};
+  ["Super Fast","Fast","Moderate","Slow","Super Slow"].forEach(tier=>{if(rw[tier]!==srw[tier])logicChangelog.push(`Recency weight ${tier}: ${srw[tier]} → ${rw[tier]}`);});
+  const fu=c.fixedUnitFloor||{},sfu=s.fixedUnitFloor||{};
+  if(fu.orderQtyPercentile!==sfu.orderQtyPercentile)logicChangelog.push(`Fixed floor percentile: ${sfu.orderQtyPercentile} → ${fu.orderQtyPercentile}`);
+  if(fu.maxMultiplier!==sfu.maxMultiplier)logicChangelog.push(`Fixed floor max multiplier: ${sfu.maxMultiplier} → ${fu.maxMultiplier}`);
+  if(fu.maxAdditive!==sfu.maxAdditive)logicChangelog.push(`Fixed floor max additive: ${sfu.maxAdditive} → ${fu.maxAdditive}`);
 
-    {/* ── STICKY TOP BAR ── */}
-    {hasChanges&&(
-      <ImpactStickyBar
-        changedCount={changedCount}
-        onReset={()=>setParams(savedParams)}
-        onApply={()=>applyAndRun(params)}
-        previewState={previewState}
-        setPreviewState={setPreviewState}
-        runPreview={runPreviewFn}
-      />
-    )}
+  // ── Shared locals ──
+  const pc=params.percentileCover||DEFAULT_PARAMS.percentileCover;
+  const pbpC=pc.percentileByPrice||DEFAULT_PARAMS.percentileCover.percentileByPrice;
+  const cdmC=pc.coverDaysByMovement||DEFAULT_PARAMS.percentileCover.coverDaysByMovement;
+  const bltC={...DEFAULT_PARAMS.brandLeadTimeDays,...(params.brandLeadTimeDays||{})};
+  const fuC=params.fixedUnitFloor||DEFAULT_PARAMS.fixedUnitFloor;
+  const rw2C=params.recencyWt||RECENCY_WT_DEFAULT;
+  const miC=params.movIntervals||[2,4,7,10];
+  const ptC=params.priceTiers||[3000,1500,400,100];
+  const bmdC=params.baseMinDays||BASE_MIN_DAYS_DEFAULT;
+  const cats=[...new Set(Object.values(skuMaster).map(s=>s.category||"Unknown"))].sort();
+  const configuredBrands=Object.keys(bltC).filter(k=>k!=="_default");
+  const availableBrands=[...new Set(Object.values(skuMaster).map(s=>s.brand).filter(Boolean))].sort().filter(b=>!configuredBrands.includes(b));
+  const capDays=params.pctDocCap??30;
+  const capTags=params.pctDocCapPriceTags||["High","Premium"];
+  const minNZD=params.pctMinNZD??2;
+  const skuFloorMultMin=params.skuFloorDCMultMin??0.2;
+  const skuFloorMultMax=params.skuFloorDCMultMax??0.3;
 
-    {/* ── 3-COLUMN GRID ── */}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16,alignItems:"start"}}>
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
 
-      {/* ══════════════ COLUMN 1 ══════════════ */}
-      <div style={{display:"flex",flexDirection:"column",gap:12}}>
-
-        {/* Analysis Period */}
-        <div>
-          <div style={{
-            background:"#EAF9FF",border:"1px solid #B0E0F5",borderRadius:8,
-            padding:"12px 16px",marginBottom:4,
-            display:"flex",alignItems:"center",gap:10,
-          }}>
-            <span style={{fontSize:20}}>📅</span>
-            <span style={{fontWeight:800,fontSize:16,color:"#0077A8",letterSpacing:"-0.3px"}}>
-              Analysis Period Tweaks
-            </span>
-          </div>
-          <div>
-            <Section title="Period & Recency Window" icon="" accent="#0077A8"
-              summary={`Overall: ${params.overallPeriod}d · Recency: ${params.recencyWindow}d · Long: ${params.overallPeriod-params.recencyWindow}d`}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
-                {[{label:"Overall Period (days)",key:"overallPeriod",min:15,max:90},
-                  {label:"Recency Window (days)",key:"recencyWindow",min:7,max:null}].map(({label,key,min,max})=>{
-                  const maxVal=key==="recencyWindow"?Math.max(min,(params.overallPeriod||90)-1):max;
-                  return <div key={key}>
-                    <div style={{fontSize:11,color:HR.muted,marginBottom:4}}>{label}</div>
-                    <NumInput value={params[key]} min={min} max={maxVal} step={1}
-                      onChange={v=>saveParams({...params,[key]:v})}
-                      style={{width:"100%",boxSizing:"border-box",color:"#0077A8",fontWeight:700}}/>
-                  </div>;
-                })}
-                <div>
-                  <div style={{fontSize:11,color:HR.muted,marginBottom:4}}>Long Period (auto)</div>
-                  <div style={{...S.input,textAlign:"center",color:HR.muted,fontWeight:700,opacity:0.7}}>
-                    {params.overallPeriod-params.recencyWindow} days
+      {/* ── CONFIRM MODAL ── */}
+      {showLogicConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}>
+          <div style={{background:HR.white,borderRadius:12,padding:28,maxWidth:440,width:"90%",boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
+            <div style={{fontWeight:800,color:HR.text,fontSize:15,marginBottom:4}}>Apply Logic Changes?</div>
+            <div style={{fontSize:12,color:HR.muted,marginBottom:16}}>This will recalculate Min/Max for all SKUs using the updated parameters.</div>
+            <div style={{background:HR.surfaceLight,borderRadius:8,padding:"10px 14px",marginBottom:16,maxHeight:240,overflowY:"auto"}}>
+              <div style={{fontSize:11,fontWeight:700,color:HR.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>Changes</div>
+              {logicChangelog.length===0
+                ? <div style={{fontSize:11,color:HR.muted,fontStyle:"italic"}}>No tracked changes detected</div>
+                : logicChangelog.map((msg,i)=>(
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:6,padding:"2px 0",fontSize:11,color:HR.text}}>
+                    <span style={{color:HR.green,fontSize:13}}>•</span>{msg}
                   </div>
-                </div>
-              </div>
-            </Section>
-            <Section title="Recency Weights" icon="" accent="#0077A8"
-              summary={`SF:${rw2["Super Fast"]} F:${rw2["Fast"]} M:${rw2["Moderate"]} Sl:${rw2["Slow"]} SS:${rw2["Super Slow"]}`}>
-              <table style={S.table}>
-                <thead><tr style={{background:HR.surfaceLight}}>
-                  <th style={S.th}>Movement Tag</th>
-                  <th style={{...S.th,textAlign:"center"}}>Weight</th>
-                  <th style={{...S.th,color:HR.muted,fontSize:10,fontWeight:400}}>Blend formula</th>
-                </tr></thead>
-                <tbody>
-                  {["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{
-                    const wt=rw2[tier]||1,color=MOV_COLORS[tier];
-                    return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                      <td style={S.td}><MovTag value={tier}/></td>
-                      <td style={{...S.td,textAlign:"center"}}>
-                        <NumInput value={wt} min={0.5} max={5} step={0.25}
-                          onChange={v=>saveParams({...params,recencyWt:{...rw2,[tier]:v}})}
-                          style={{width:72,color,fontWeight:700}}/>
-                      </td>
-                      <td style={{...S.td,fontSize:10,color:HR.muted}}>
-                        {`(Long + Recent × ${wt}) ÷ ${1+wt}`}
-                      </td>
-                    </tr>;
-                  })}
-                </tbody>
-              </table>
-            </Section>
+                ))
+              }
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>{setShowLogicConfirm(false);applyAndRun(params);}}
+                style={{flex:1,background:HR.yellow,color:HR.black,border:"none",padding:"10px",borderRadius:7,cursor:"pointer",fontWeight:800,fontSize:13}}>
+                ▶ Run Model
+              </button>
+              <button onClick={()=>setShowLogicConfirm(false)}
+                style={{flex:1,background:HR.white,color:HR.muted,border:`1px solid ${HR.border}`,padding:"10px",borderRadius:7,cursor:"pointer",fontWeight:600,fontSize:13}}>
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
+      )}
 
-        {/* DC Level Logic */}
-        <div>
-          <div style={{
-            background:"#EAF9FF",border:"1px solid #B0E0F5",borderRadius:8,
-            padding:"12px 16px",marginBottom:4,
-            display:"flex",alignItems:"center",gap:10,
-          }}>
-            <span style={{fontSize:20}}>🏭</span>
-            <span style={{fontWeight:800,fontSize:16,color:"#0077A8",letterSpacing:"-0.3px"}}>
-              DC Level Logic Tweaks
-            </span>
-          </div>
-          <div>
-            <Section title="Active DS Count" icon="" accent="#0077A8"
-              summary={`Active DS: ${params.activeDSCount}`}>
-              <div style={{...S.card,padding:"12px 14px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-                  <div style={{fontWeight:600,color:HR.text,fontSize:12}}>Active DS Count</div>
-                  <div style={{fontWeight:800,color:"#0077A8",fontSize:18}}>{params.activeDSCount}</div>
-                </div>
-                <TierSlider label="" value={params.activeDSCount} min={1} max={10} step={1}
-                  color="#0077A8" onChange={v=>saveParams({...params,activeDSCount:v})}/>
-              </div>
-            </Section>
-            <Section title="Dead Stock DC Multiplier" icon="" accent="#0077A8"
-              summary={`Min: ${(params.dcDeadMult||DC_DEAD_MULT_DEFAULT).min} · Max: ${(params.dcDeadMult||DC_DEAD_MULT_DEFAULT).max}`}>
-              <div style={{...S.card,padding:0,overflow:"hidden"}}>
-                <table style={S.table}>
-                  <thead><tr style={{background:HR.surfaceLight}}>
-                    <th style={S.th}>Condition</th>
-                    <th style={{...S.th,textAlign:"center"}}>Min Mult</th>
-                    <th style={{...S.th,textAlign:"center"}}>Max Mult</th>
-                  </tr></thead>
-                  <tbody><tr style={{background:HR.white}}>
-                    <td style={S.td}>
-                      <span style={{...TAG_STYLE,background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}}>Dead Stock</span>
+      {/* ── PERIOD STRIP ── */}
+      <div style={{background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8,padding:"12px 16px",display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
+        <div style={{fontWeight:800,color:HR.text,fontSize:14,marginRight:4}}>Logic Tweaker</div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:11,color:HR.muted,fontWeight:600}}>Overall Period</span>
+          <NumInput value={params.overallPeriod} min={15} max={90} step={1}
+            onChange={v=>saveParams({...params,overallPeriod:v})}
+            style={{width:64,fontWeight:700,color:"#0077A8"}}/>
+          <span style={{fontSize:11,color:HR.muted}}>days</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:11,color:HR.muted,fontWeight:600}}>Recency Window</span>
+          <NumInput value={params.recencyWindow} min={7} max={params.overallPeriod-1} step={1}
+            onChange={v=>saveParams({...params,recencyWindow:v})}
+            style={{width:64,fontWeight:700,color:"#0077A8"}}/>
+          <span style={{fontSize:11,color:HR.muted}}>days</span>
+        </div>
+        <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
+          {hasChanges&&<button onClick={()=>setParams(savedParams)}
+            style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"7px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:700}}>
+            ↩ Reset
+          </button>}
+          <button
+            disabled={!hasChanges}
+            onClick={hasChanges?()=>setShowLogicConfirm(true):undefined}
+            style={{background:hasChanges?HR.yellow:"#E5E5E5",color:hasChanges?HR.black:"#999",border:"none",padding:"7px 20px",borderRadius:7,cursor:hasChanges?"pointer":"not-allowed",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:6}}>
+            {hasChanges?<><span>▶</span> Apply {logicChangelog.length>0?`(${logicChangelog.length} changes)`:""}</>:<><span>✓</span> Up to date</>}
+          </button>
+        </div>
+      </div>
+
+      {/* ── STRATEGY ROUTING (full width) ── */}
+      <Section title="Category → Strategy Map" icon="📋" accent="#7C3AED"
+        summary={Object.values(csC).filter(v=>v&&v!=="standard").length>0?`${Object.values(csC).filter(v=>v&&v!=="standard").length} non-standard`:"All standard"}>
+        <div style={{...S.card,padding:0,overflow:"hidden",maxHeight:320,overflowY:"auto"}}>
+          <table style={S.table}>
+            <thead><tr style={{background:HR.surfaceLight}}>
+              <th style={{...S.th,position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Category</th>
+              <th style={{...S.th,textAlign:"center",position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Strategy</th>
+            </tr></thead>
+            <tbody>
+              {cats.map((cat,i)=>(
+                <tr key={cat} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                  <td style={{...S.td,fontWeight:600,fontSize:11}}>{cat}</td>
+                  <td style={{...S.td,textAlign:"center"}}>
+                    <select value={csC[cat]||"standard"}
+                      onChange={e=>{const v=e.target.value;const next={...csC};if(v==="standard")delete next[cat];else next[cat]=v;saveParams({...params,categoryStrategies:next});}}
+                      style={{...S.input,fontSize:11,padding:"3px 6px",fontWeight:600,color:csC[cat]&&csC[cat]!=="standard"?"#7C3AED":HR.muted}}>
+                      <option value="standard">Standard</option>
+                      <option value="percentile_cover">Percentile Cover</option>
+                      <option value="fixed_unit_floor">Fixed Unit Floor</option>
+                      <option value="manual">Manual</option>
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+
+      {/* ── PRIMARY 2-COL GRID ── */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,alignItems:"start"}}>
+
+        {/* LEFT: PCT Strategy */}
+        <Section title="Percentile Cover Params" icon="📊" accent="#7C3AED"
+          summary={`P${pbpC["Medium"]||85} mid · ${cdmC["Moderate"]||1}d mod cover`}>
+          <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Percentile by Price Tag</div>
+          <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:12}}>
+            <table style={S.table}>
+              <thead><tr style={{background:HR.surfaceLight}}>
+                <th style={S.th}>Price Tag</th>
+                <th style={{...S.th,textAlign:"center"}}>Percentile</th>
+              </tr></thead>
+              <tbody>
+                {["Premium","High","Medium","Low","Super Low","No Price"].map((tag,i)=>(
+                  <tr key={tag} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                    <td style={{...S.td,fontWeight:600,fontSize:11}}><TagPill value={tag} colorMap={PRICE_TAG_COLORS}/></td>
+                    <td style={{...S.td,textAlign:"center"}}>
+                      <NumInput value={pbpC[tag]||90} min={50} max={99} step={1}
+                        onChange={v=>saveParams({...params,percentileCover:{...pc,percentileByPrice:{...pbpC,[tag]:v}}})}
+                        style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
                     </td>
-                    {["min","max"].map(field=>(
-                      <td key={field} style={{...S.td,textAlign:"center"}}>
-                        <NumInput value={(params.dcDeadMult||DC_DEAD_MULT_DEFAULT)[field]}
-                          min={0} max={1} step={0.05}
-                          onChange={v=>saveParams({...params,dcDeadMult:{...(params.dcDeadMult||DC_DEAD_MULT_DEFAULT),[field]:v}})}
-                          style={{width:72,color:"#B91C1C",fontWeight:700}}/>
-                      </td>
-                    ))}
-                  </tr></tbody>
-                </table>
-              </div>
-            </Section>
-            <Section title="DC Multipliers by Movement" icon="" accent="#0077A8"
-              summary={`SF ${(params.dcMult||DC_MULT_DEFAULT)["Super Fast"].min}–${(params.dcMult||DC_MULT_DEFAULT)["Super Fast"].max}`}>
-              <div style={{...S.card,padding:0,overflow:"hidden"}}>
-                <table style={S.table}>
-                  <thead><tr style={{background:HR.surfaceLight}}>
-                    <th style={S.th}>Movement Tag</th>
-                    <th style={{...S.th,textAlign:"center"}}>Min Mult</th>
-                    <th style={{...S.th,textAlign:"center"}}>Max Mult</th>
-                  </tr></thead>
-                  <tbody>
-                    {["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{
-                      const d=dcM[tier]||DC_MULT_DEFAULT[tier],color=MOV_COLORS[tier];
-                      return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                        <td style={S.td}><MovTag value={tier}/></td>
-                        <td style={{...S.td,textAlign:"center"}}>
-                          <NumInput value={d.min} min={0} max={1} step={0.05}
-                            onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,min:v}}})}
-                            style={{width:72,color,fontWeight:700}}/>
-                        </td>
-                        <td style={{...S.td,textAlign:"center"}}>
-                          <NumInput value={d.max} min={0} max={1} step={0.05}
-                            onChange={v=>saveParams({...params,dcMult:{...dcM,[tier]:{...d,max:v}}})}
-                            style={{width:72,color,fontWeight:700}}/>
-                        </td>
-                      </tr>;
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </Section>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-
-      </div>{/* end col 1 */}
-
-      {/* ══════════════ COLUMN 2 ══════════════ */}
-      <div style={{display:"flex",flexDirection:"column",gap:12}}>
-        <div>
-          <div style={{
-            background:"#FFFBEA",border:`1px solid ${HR.yellow}`,borderRadius:8,
-            padding:"12px 16px",marginBottom:4,
-            display:"flex",alignItems:"center",gap:10,
-          }}>
-            <span style={{fontSize:20}}>🏪</span>
-            <span style={{fontWeight:800,fontSize:16,color:HR.yellowDark,letterSpacing:"-0.3px"}}>
-              DS Level Logic Tweaks
-            </span>
+          <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Cover Days by Movement</div>
+          <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:12}}>
+            <table style={S.table}>
+              <thead><tr style={{background:HR.surfaceLight}}>
+                <th style={S.th}>Movement</th>
+                <th style={{...S.th,textAlign:"center"}}>Cover Days</th>
+              </tr></thead>
+              <tbody>
+                {["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tag,i)=>(
+                  <tr key={tag} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                    <td style={{...S.td,fontSize:11}}><MovTag value={tag}/></td>
+                    <td style={{...S.td,textAlign:"center"}}>
+                      <NumInput value={cdmC[tag]||1} min={1} max={7} step={1}
+                        onChange={v=>saveParams({...params,percentileCover:{...pc,coverDaysByMovement:{...cdmC,[tag]:v}}})}
+                        style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div>
-            <Section title="Base Min Days" icon="" accent={HR.yellowDark}
-              summary={`SF:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Super Fast"]} F:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Fast"]} M:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Moderate"]} Sl:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Slow"]} SS:${(params.baseMinDays||BASE_MIN_DAYS_DEFAULT)["Super Slow"]}`}>
-              <div style={{...S.card,padding:0,overflow:"hidden"}}>
-                <table style={S.table}>
-                  <thead><tr style={{background:HR.surfaceLight}}>
-                    <th style={S.th}>Movement Tag</th>
-                    <th style={{...S.th,textAlign:"center"}}>Base Min Days</th>
-                  </tr></thead>
-                  <tbody>
-                    {["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{
-                      const bmd=params.baseMinDays||BASE_MIN_DAYS_DEFAULT,color=MOV_COLORS[tier];
-                      return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                        <td style={S.td}><MovTag value={tier}/></td>
-                        <td style={{...S.td,textAlign:"center"}}>
-                          <NumInput value={bmd[tier]??3} min={1} max={30} step={1}
-                            onChange={v=>saveParams({...params,baseMinDays:{...(params.baseMinDays||BASE_MIN_DAYS_DEFAULT),[tier]:v}})}
-                            style={{width:72,color,fontWeight:700}}/>
-                        </td>
-                      </tr>;
-                    })}
-                  </tbody>
-                </table>
+          <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Guards</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div style={S.card}>
+              <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Min NZD for PCT</div>
+              <NumInput value={minNZD} min={1} max={10} step={1}
+                onChange={v=>saveParams({...params,pctMinNZD:v})}
+                style={{width:"100%",fontWeight:700,color:"#C0392B"}}/>
+              <div style={{fontSize:9,color:HR.muted,marginTop:4}}>Below this → Standard fallback</div>
+            </div>
+            <div style={S.card}>
+              <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DOC Cap (days)</div>
+              <NumInput value={capDays} min={0} max={90} step={1}
+                onChange={v=>saveParams({...params,pctDocCap:v})}
+                style={{width:"100%",fontWeight:700,color:"#C0392B"}}/>
+              <div style={{fontSize:9,color:HR.muted,marginTop:4}}>0 = disabled</div>
+            </div>
+          </div>
+          <div style={S.card}>
+            <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DOC Cap applies to</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {["Premium","High","Medium","Low","Super Low","No Price"].map(tag=>{
+                const isOn=capTags.includes(tag);
+                return <button key={tag} onClick={()=>{const next=isOn?capTags.filter(t=>t!==tag):[...capTags,tag];saveParams({...params,pctDocCapPriceTags:next});}}
+                  style={{padding:"4px 8px",borderRadius:4,fontSize:10,fontWeight:600,cursor:"pointer",border:`1px solid ${isOn?"#C0392B":HR.border}`,background:isOn?"#FEE2E2":"#fff",color:isOn?"#C0392B":HR.muted}}>{tag}</button>;
+              })}
+            </div>
+          </div>
+        </Section>
+
+        {/* RIGHT: DC Inputs */}
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <Section title="Brand Lead Time (DC)" icon="🚚" accent="#7C3AED"
+            summary={`Default ${bltC._default||3}d · ${configuredBrands.length} brand override${configuredBrands.length!==1?"s":""}`}>
+            <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontWeight:600,color:HR.text,fontSize:12}}>Default Lead Time (days)</div>
+                <NumInput value={bltC._default||3} min={1} max={10} step={1}
+                  onChange={v=>saveParams({...params,brandLeadTimeDays:{...bltC,_default:v}})}
+                  style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
               </div>
-            </Section>
-            <Section title="Movement Tag Boundaries" icon="" accent={HR.yellowDark}
-              summary={`≤${mi[0]}d / ≤${mi[1]}d / ≤${mi[2]}d / ≤${mi[3]}d`}>
-              {[0,1,2,3].map(i=>{
-                const labels=["Super Fast | Fast","Fast | Moderate","Moderate | Slow","Slow | Super Slow"];
-                const lo=i===0?1:mi[i-1]+1,hi=i===3?30:mi[i+1]-1;
-                return <TierSlider key={i} label={labels[i]} value={mi[i]} min={lo} max={hi}
-                  color={movColors[i+1]} onChange={v=>{const next=[...mi];next[i]=v;saveParams({...params,movIntervals:next});}}/>;
-              })}
-            </Section>
-            <Section title="Price Tag Boundaries" icon="" accent={HR.yellowDark}
-              summary={`₹${pt[0]} / ₹${pt[1]} / ₹${pt[2]} / ₹${pt[3]}`}>
-              {[0,1,2,3].map(i=>{
-                const labels=["Premium | High","High | Medium","Medium | Low","Low | Super Low"];
-                const lo=i===3?1:pt[i+1]+1,hi=i===0?50000:pt[i-1]-1;
-                return <TierSlider key={i} label={labels[i]} value={pt[i]} min={lo} max={hi}
-                  color={priceColors[i]} onChange={v=>{const next=[...pt];next[i]=v;saveParams({...params,priceTiers:next});}}/>;
-              })}
-            </Section>
-            <Section title="Spike Parameters" icon="" accent={HR.yellowDark}
-              summary={`${params.spikeMultiplier}× · Frequent ≥${params.spikePctFrequent}% · Once ≥${params.spikePctOnce}%`}>
-              {[
-                {key:"spikeMultiplier",label:"Spike Definition",desc:"Day qty > X × daily avg = spike day",min:1,max:20,step:1},
-                {key:"spikePctFrequent",label:"Frequent Spike Threshold (%)",desc:"Spike days ≥ X% of period = Frequent",min:1,max:50,step:1},
-                {key:"spikePctOnce",label:"Once-in-a-while Threshold (%)",desc:"Spike days ≥ X% of period = Once in a while",min:1,max:20,step:1}
-              ].map(pm=>(
-                <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-                    <div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div>
-                    <div style={{fontWeight:800,color:HR.yellowDark,fontSize:18,minWidth:32,textAlign:"right"}}>{params[pm.key]}</div>
-                  </div>
-                  <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
-                  <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step}
-                    onChange={v=>saveParams({...params,[pm.key]:v})}/>
-                </div>
-              ))}
-            </Section>
-            <Section title="Max Days Buffer & ABQ" icon="" accent={HR.yellowDark}
-              summary={`Buffer: +${params.maxDaysBuffer}d · ABQ mult: ${params.abqMaxMultiplier}×`}>
-              {[
-                {key:"maxDaysBuffer",label:"Max Days Buffer",desc:"Max Days = Min Days + X.",min:1,max:10,step:1},
-                {key:"abqMaxMultiplier",label:"ABQ Max Multiplier",desc:"Max = CEILING(Min × X) for Slow items.",min:1,max:3,step:0.1}
-              ].map(pm=>(
-                <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-                    <div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div>
-                    <div style={{fontWeight:800,color:HR.yellowDark,fontSize:18,minWidth:32,textAlign:"right"}}>{params[pm.key]}</div>
-                  </div>
-                  <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
-                  <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step}
-                    onChange={v=>saveParams({...params,[pm.key]:v})}/>
-                </div>
-              ))}
-            </Section>
-            <Section title="Brand Buffer Days" icon="" accent={HR.yellowDark}
-              summary={`${Object.keys(bb).length} brand${Object.keys(bb).length!==1?"s":""} configured`}>
+            </div>
+            {configuredBrands.length>0&&(
               <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:10}}>
                 <table style={S.table}>
                   <thead><tr style={{background:HR.surfaceLight}}>
                     <th style={S.th}>Brand</th>
-                    <th style={{...S.th,textAlign:"center"}}>Buffer Days</th>
+                    <th style={{...S.th,textAlign:"center"}}>Lead Days</th>
                     <th style={{...S.th,textAlign:"center"}}>Remove</th>
                   </tr></thead>
                   <tbody>
-                    {Object.entries(bb).map(([brand,days],i)=>(
+                    {configuredBrands.map((brand,i)=>(
                       <tr key={brand} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
                         <td style={{...S.td,fontWeight:600,fontSize:11}}>{brand}</td>
                         <td style={{...S.td,textAlign:"center"}}>
-                          <NumInput value={days} min={1} max={30} step={1}
-                            onChange={v=>saveParams({...params,brandBuffer:{...bb,[brand]:v}})}
-                            style={{width:64,color:HR.yellowDark,fontWeight:700}}/>
+                          <NumInput value={bltC[brand]||3} min={1} max={10} step={1}
+                            onChange={v=>saveParams({...params,brandLeadTimeDays:{...bltC,[brand]:v}})}
+                            style={{width:64,color:"#7C3AED",fontWeight:700}}/>
                         </td>
                         <td style={{...S.td,textAlign:"center"}}>
-                          <button onClick={()=>{const next={...bb};delete next[brand];saveParams({...params,brandBuffer:next});}}
+                          <button onClick={()=>{const next={...bltC};delete next[brand];saveParams({...params,brandLeadTimeDays:next});}}
                             style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"3px 8px",borderRadius:4,cursor:"pointer",fontSize:11}}>✕</button>
                         </td>
                       </tr>
@@ -4249,151 +3988,73 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                   </tbody>
                 </table>
               </div>
+            )}
+            {availableBrands.length>0&&(
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                <input placeholder="Brand name..." value={newBrand} onChange={e=>setNewBrand(e.target.value)} style={{...S.input,flex:1}}/>
-                <NumInput value={newBrandDays} min={1} max={30} step={1} onChange={v=>setNBD(v)} style={{width:70}}/>
-                <button onClick={()=>{const b=newBrand.trim();if(!b)return;saveParams({...params,brandBuffer:{...bb,[b]:newBrandDays}});setNewBrand("");setNBD(1);}}
+                <select id="newLeadBrand" style={{...S.input,fontSize:11,flex:1}}>
+                  {availableBrands.map(b=><option key={b} value={b}>{b}</option>)}
+                </select>
+                <button onClick={()=>{const sel=document.getElementById("newLeadBrand");if(!sel?.value)return;saveParams({...params,brandLeadTimeDays:{...bltC,[sel.value]:3}});}}
                   style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12,whiteSpace:"nowrap"}}>+ Add</button>
               </div>
-            </Section>
-            <Section title="New Dark Store Logic" icon="" accent={HR.yellowDark}
-              summary={`${(params.newDSList||[]).join(", ")||"None"} · Top ${params.newDSFloorTopN} SKUs`}>
-              <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-                  <div style={{fontWeight:600,color:HR.text,fontSize:12}}>Floor applies to Top N SKUs</div>
-                  <div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params.newDSFloorTopN}</div>
-                </div>
-                <TierSlider label="" value={params.newDSFloorTopN} min={50} max={250} step={50}
-                  onChange={v=>saveParams({...params,newDSFloorTopN:v})}/>
+            )}
+          </Section>
+
+          <Section title="Fixed Unit Floor Params" icon="📐" accent="#7C3AED"
+            summary={`P${fuC.orderQtyPercentile||90} · ${fuC.maxMultiplier||1.5}× + ${fuC.maxAdditive||1}`}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+              <div style={S.card}>
+                <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Order Qty Percentile</div>
+                <NumInput value={fuC.orderQtyPercentile||90} min={50} max={99} step={1}
+                  onChange={v=>saveParams({...params,fixedUnitFloor:{...fuC,orderQtyPercentile:v}})}
+                  style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
               </div>
-              <div style={{...S.card,padding:"12px 14px"}}>
-                <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Stores designated as New DS</div>
-                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-                  {(params.newDSList||[]).map(ds=>(
-                    <span key={ds} style={{background:"#FFFBEA",color:HR.yellowDark,border:`1px solid ${HR.yellow}`,padding:"3px 10px",borderRadius:5,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
-                      {ds}
-                      <button onClick={()=>saveParams({...params,newDSList:(params.newDSList||[]).filter(d=>d!==ds)})}
-                        style={{background:"none",border:"none",color:HR.yellowDark,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>×</button>
-                    </span>
-                  ))}
-                  {(params.newDSList||[]).length===0&&<span style={{color:HR.muted,fontSize:12}}>No stores assigned</span>}
-                </div>
-                <div style={{display:"flex",gap:6}}>
-                  <select id="newDSSelect" style={S.input}>
-                    {DS_LIST.filter(d=>!(params.newDSList||[]).includes(d)).map(d=><option key={d}>{d}</option>)}
-                  </select>
-                  <button onClick={()=>{const sel=document.getElementById("newDSSelect").value;if(sel&&!(params.newDSList||[]).includes(sel))saveParams({...params,newDSList:[...(params.newDSList||[]),sel]});}}
-                    style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12}}>+ Add</button>
-                </div>
+              <div style={S.card}>
+                <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Max Multiplier</div>
+                <NumInput value={fuC.maxMultiplier||1.5} min={1} max={3} step={0.1}
+                  onChange={v=>saveParams({...params,fixedUnitFloor:{...fuC,maxMultiplier:v}})}
+                  style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
               </div>
-            </Section>
-          </div>
+              <div style={S.card}>
+                <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Max Additive</div>
+                <NumInput value={fuC.maxAdditive||1} min={0} max={5} step={1}
+                  onChange={v=>saveParams({...params,fixedUnitFloor:{...fuC,maxAdditive:v}})}
+                  style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+              </div>
+            </div>
+          </Section>
         </div>
 
-        {/* ── Strategy Config Sections ── */}
-        <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:16}}>
-          <div style={{
-            background:"#F3E8FF",border:"1px solid #D8B4FE",borderRadius:8,
-            padding:"12px 16px",marginBottom:4,
-            display:"flex",alignItems:"center",gap:10,
-          }}>
-            <span style={{fontSize:20}}>🎯</span>
-            <span style={{fontWeight:800,fontSize:16,color:"#7C3AED",letterSpacing:"-0.3px"}}>
-              Category Strategy Engine
-            </span>
-          </div>
+      </div>{/* end primary 2-col */}
 
-          {/* Section A: Category Strategy Assignment */}
-          {(()=>{
-            const cats=[...new Set(Object.values(skuMaster).map(s=>s.category||"Unknown"))].sort();
-            const cs=params.categoryStrategies||{};
-            const nonStd=Object.values(cs).filter(v=>v&&v!=="standard").length;
-            return(
-              <Section title="Category → Strategy Map" icon="📋" accent="#7C3AED"
-                summary={nonStd>0?`${nonStd} non-standard`:"All standard"}>
-                <div style={{...S.card,padding:0,overflow:"hidden",maxHeight:360,overflowY:"auto"}}>
-                  <table style={S.table}>
-                    <thead><tr style={{background:HR.surfaceLight}}>
-                      <th style={{...S.th,position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Category</th>
-                      <th style={{...S.th,textAlign:"center",position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Strategy</th>
-                    </tr></thead>
-                    <tbody>
-                      {cats.map((cat,i)=>(
-                        <tr key={cat} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                          <td style={{...S.td,fontWeight:600,fontSize:11}}>{cat}</td>
-                          <td style={{...S.td,textAlign:"center"}}>
-                            <select value={cs[cat]||"standard"}
-                              onChange={e=>{
-                                const v=e.target.value;
-                                const next={...cs};
-                                if(v==="standard") delete next[cat]; else next[cat]=v;
-                                saveParams({...params,categoryStrategies:next});
-                              }}
-                              style={{...S.input,fontSize:11,padding:"3px 6px",fontWeight:600,
-                                color:cs[cat]&&cs[cat]!=="standard"?"#7C3AED":HR.muted}}>
-                              <option value="standard">Standard</option>
-                              <option value="percentile_cover">Percentile Cover</option>
-                              <option value="fixed_unit_floor">Fixed Unit Floor</option>
-                              <option value="manual">Manual</option>
-                            </select>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Section>
-            );
-          })()}
+      {/* ── ADVANCED ACCORDION ── */}
+      <div style={{border:`1px solid ${HR.border}`,borderRadius:8,overflow:"hidden"}}>
+        <button onClick={()=>setAdvancedOpen(o=>!o)}
+          style={{width:"100%",background:HR.surfaceLight,border:"none",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",fontWeight:700,color:HR.muted,fontSize:13}}>
+          <span>⚙ Advanced</span>
+          <span style={{fontSize:11}}>{advancedOpen?"▲ Collapse":"▼ Expand"}</span>
+        </button>
+        {advancedOpen&&(
+          <div style={{padding:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,alignItems:"start"}}>
 
-          {/* Section B: Percentile Cover Params */}
-          {(()=>{
-            const pc=params.percentileCover||DEFAULT_PARAMS.percentileCover;
-            const pbp=pc.percentileByPrice||DEFAULT_PARAMS.percentileCover.percentileByPrice;
-            const cdm=pc.coverDaysByMovement||DEFAULT_PARAMS.percentileCover.coverDaysByMovement;
-            const priceTags=["Premium","High","Medium","Low","Super Low","No Price"];
-            const movTags=["Super Fast","Fast","Moderate","Slow","Super Slow"];
-            return(
-              <Section title="Percentile Cover Params" icon="📊" accent="#7C3AED"
-                summary={`P${pbp["Medium"]||90} mid · ${cdm["Moderate"]||3}d mod cover`}>
-                <div style={{fontSize:11,color:HR.muted,marginBottom:8,fontWeight:600}}>Percentile by Price Tag</div>
-                <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:12}}>
-                  <table style={S.table}>
-                    <thead><tr style={{background:HR.surfaceLight}}>
-                      <th style={S.th}>Price Tag</th>
-                      <th style={{...S.th,textAlign:"center"}}>Percentile</th>
-                    </tr></thead>
-                    <tbody>
-                      {priceTags.map((tag,i)=>(
-                        <tr key={tag} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                          <td style={{...S.td,fontWeight:600,fontSize:11}}>
-                            <TagPill value={tag} colorMap={PRICE_TAG_COLORS}/>
-                          </td>
-                          <td style={{...S.td,textAlign:"center"}}>
-                            <NumInput value={pbp[tag]||90} min={50} max={99} step={1}
-                              onChange={v=>saveParams({...params,percentileCover:{...pc,percentileByPrice:{...pbp,[tag]:v}}})}
-                              style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div style={{fontSize:11,color:HR.muted,marginBottom:8,fontWeight:600}}>Cover Days by Movement</div>
+            {/* Left adv col */}
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              <Section title="Base Min Days" icon="" accent={HR.yellowDark}
+                summary={`SF:${bmdC["Super Fast"]} F:${bmdC["Fast"]} M:${bmdC["Moderate"]} Sl:${bmdC["Slow"]} SS:${bmdC["Super Slow"]}`}>
                 <div style={{...S.card,padding:0,overflow:"hidden"}}>
                   <table style={S.table}>
                     <thead><tr style={{background:HR.surfaceLight}}>
                       <th style={S.th}>Movement</th>
-                      <th style={{...S.th,textAlign:"center"}}>Cover Days</th>
+                      <th style={{...S.th,textAlign:"center"}}>Base Min Days</th>
                     </tr></thead>
                     <tbody>
-                      {movTags.map((tag,i)=>(
-                        <tr key={tag} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                          <td style={{...S.td,fontSize:11}}><MovTag value={tag}/></td>
+                      {["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>(
+                        <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                          <td style={S.td}><MovTag value={tier}/></td>
                           <td style={{...S.td,textAlign:"center"}}>
-                            <NumInput value={cdm[tag]||2} min={1} max={7} step={1}
-                              onChange={v=>saveParams({...params,percentileCover:{...pc,coverDaysByMovement:{...cdm,[tag]:v}}})}
-                              style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
+                            <NumInput value={bmdC[tier]??3} min={1} max={30} step={1}
+                              onChange={v=>saveParams({...params,baseMinDays:{...bmdC,[tier]:v}})}
+                              style={{width:72,color:MOV_COLORS[tier],fontWeight:700}}/>
                           </td>
                         </tr>
                       ))}
@@ -4401,213 +4062,172 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                   </table>
                 </div>
               </Section>
-            );
-          })()}
-
-          {/* Section B2: PCT Guards */}
-          {(()=>{
-            const capDays = params.pctDocCap ?? 30;
-            const capTags = params.pctDocCapPriceTags || ["High","Premium"];
-            const minNZD = params.pctMinNZD ?? 2;
-            const allPriceTags = ["Premium","High","Medium","Low","Super Low","No Price"];
-            return(
-              <Section title="PCT Guards" icon="📏" accent="#C0392B"
-                summary={`Min NZD ${minNZD} · ${capDays}D DOC cap on ${capTags.join(", ") || "none"}`}>
-                <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>
-                  Guards against PCT over-stocking: NZD threshold falls back to Standard for sparse data. DOC cap limits inventory days for selected price tags.
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:12}}>
-                  <div style={S.card}>
-                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Min NZD for PCT</div>
-                    <NumInput value={minNZD} min={1} max={10} step={1}
-                      onChange={v=>saveParams({...params,pctMinNZD:v})}
-                      style={{width:"100%",fontWeight:700,color:"#C0392B"}}/>
-                    <div style={{fontSize:9,color:HR.muted,marginTop:4}}>Below this → Standard fallback</div>
-                  </div>
-                  <div style={S.card}>
-                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DOC Cap (days)</div>
-                    <NumInput value={capDays} min={0} max={90} step={1}
-                      onChange={v=>saveParams({...params,pctDocCap:v})}
-                      style={{width:"100%",fontWeight:700,color:"#C0392B"}}/>
-                    <div style={{fontSize:9,color:HR.muted,marginTop:4}}>0 = disabled</div>
-                  </div>
-                  <div style={S.card}>
-                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DOC Cap Price Tags</div>
-                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                      {allPriceTags.map(tag=>{
-                        const isOn = capTags.includes(tag);
-                        return <button key={tag} onClick={()=>{
-                          const next = isOn ? capTags.filter(t=>t!==tag) : [...capTags, tag];
-                          saveParams({...params,pctDocCapPriceTags:next});
-                        }} style={{padding:"4px 8px",borderRadius:4,fontSize:10,fontWeight:600,cursor:"pointer",
-                          border:`1px solid ${isOn?"#C0392B":HR.border}`,
-                          background:isOn?"#FEE2E2":"#fff",color:isOn?"#C0392B":HR.muted}}>{tag}</button>;
-                      })}
+              <Section title="Recency Weights" icon="" accent="#0077A8"
+                summary={`SF:${rw2C["Super Fast"]} F:${rw2C["Fast"]} M:${rw2C["Moderate"]}`}>
+                <table style={S.table}>
+                  <thead><tr style={{background:HR.surfaceLight}}>
+                    <th style={S.th}>Movement</th>
+                    <th style={{...S.th,textAlign:"center"}}>Weight</th>
+                    <th style={{...S.th,color:HR.muted,fontSize:10,fontWeight:400}}>Formula</th>
+                  </tr></thead>
+                  <tbody>
+                    {["Super Fast","Fast","Moderate","Slow","Super Slow"].map((tier,i)=>{
+                      const wt=rw2C[tier]||1;
+                      return <tr key={tier} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                        <td style={S.td}><MovTag value={tier}/></td>
+                        <td style={{...S.td,textAlign:"center"}}>
+                          <NumInput value={wt} min={0.5} max={5} step={0.25}
+                            onChange={v=>saveParams({...params,recencyWt:{...rw2C,[tier]:v}})}
+                            style={{width:72,color:MOV_COLORS[tier],fontWeight:700}}/>
+                        </td>
+                        <td style={{...S.td,fontSize:10,color:HR.muted}}>{`(L + R×${wt}) ÷ ${1+wt}`}</td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              </Section>
+              <Section title="Max Days Buffer & ABQ" icon="" accent={HR.yellowDark}
+                summary={`Buffer: +${params.maxDaysBuffer}d · ABQ: ${params.abqMaxMultiplier}×`}>
+                {[
+                  {key:"maxDaysBuffer",label:"Max Days Buffer",desc:"Max = Min + (dailyAvg × buffer days)",min:1,max:10,step:1},
+                  {key:"abqMaxMultiplier",label:"ABQ Max Multiplier",desc:"Max = CEILING(Min × X) for Slow low-price items",min:1,max:3,step:0.1}
+                ].map(pm=>(
+                  <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                      <div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div>
+                      <div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params[pm.key]}</div>
                     </div>
+                    <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
+                    <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step}
+                      onChange={v=>saveParams({...params,[pm.key]:v})}/>
+                  </div>
+                ))}
+              </Section>
+              <Section title="Spike Parameters" icon="" accent={HR.yellowDark}
+                summary={`${params.spikeMultiplier}× · ${params.spikePctFrequent}% frequent`}>
+                {[
+                  {key:"spikeMultiplier",label:"Spike Definition",desc:"Day qty > X × daily avg = spike",min:1,max:20,step:1},
+                  {key:"spikePctFrequent",label:"Frequent Spike (%)",desc:"Spike days ≥ X% of period = Frequent",min:1,max:50,step:1},
+                  {key:"spikePctOnce",label:"Once-in-a-while (%)",desc:"Spike days ≥ X% of period = Once in a while",min:1,max:20,step:1}
+                ].map(pm=>(
+                  <div key={pm.key} style={{...S.card,marginBottom:8,padding:"12px 14px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                      <div style={{fontWeight:600,color:HR.text,fontSize:12}}>{pm.label}</div>
+                      <div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params[pm.key]}</div>
+                    </div>
+                    <div style={{fontSize:10,color:HR.muted,marginBottom:6}}>{pm.desc}</div>
+                    <TierSlider label="" value={params[pm.key]} min={pm.min} max={pm.max} step={pm.step}
+                      onChange={v=>saveParams({...params,[pm.key]:v})}/>
+                  </div>
+                ))}
+              </Section>
+            </div>
+
+            {/* Right adv col */}
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              <Section title="Movement Tag Boundaries" icon="" accent={HR.yellowDark}
+                summary={`≤${miC[0]}d / ≤${miC[1]}d / ≤${miC[2]}d / ≤${miC[3]}d`}>
+                {[0,1,2,3].map(i=>{
+                  const labels=["Super Fast | Fast","Fast | Moderate","Moderate | Slow","Slow | Super Slow"];
+                  const lo=i===0?1:miC[i-1]+1,hi=i===3?30:miC[i+1]-1;
+                  return <TierSlider key={i} label={labels[i]} value={miC[i]} min={lo} max={hi}
+                    color={["#16a34a","#2D7A3A","#B8860B","#C05A00"][i]}
+                    onChange={v=>{const next=[...miC];next[i]=v;saveParams({...params,movIntervals:next});}}/>;
+                })}
+              </Section>
+              <Section title="Price Tag Boundaries" icon="" accent={HR.yellowDark}
+                summary={`₹${ptC[0]} / ₹${ptC[1]} / ₹${ptC[2]} / ₹${ptC[3]}`}>
+                {[0,1,2,3].map(i=>{
+                  const labels=["Premium | High","High | Medium","Medium | Low","Low | Super Low"];
+                  const lo=i===3?1:ptC[i+1]+1,hi=i===0?50000:ptC[i-1]-1;
+                  return <TierSlider key={i} label={labels[i]} value={ptC[i]} min={lo} max={hi}
+                    color={["#B91C1C","#C2410C","#A16207","#475569"][i]}
+                    onChange={v=>{const next=[...ptC];next[i]=v;saveParams({...params,priceTiers:next});}}/>;
+                })}
+              </Section>
+              <Section title="New Dark Store Logic" icon="" accent={HR.yellowDark}
+                summary={`${(params.newDSList||[]).join(", ")||"None"} · Top ${params.newDSFloorTopN} SKUs`}>
+                <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                    <div style={{fontWeight:600,color:HR.text,fontSize:12}}>Floor applies to Top N SKUs</div>
+                    <div style={{fontWeight:800,color:HR.yellowDark,fontSize:18}}>{params.newDSFloorTopN}</div>
+                  </div>
+                  <TierSlider label="" value={params.newDSFloorTopN} min={50} max={250} step={50}
+                    onChange={v=>saveParams({...params,newDSFloorTopN:v})}/>
+                </div>
+                <div style={{...S.card,padding:"12px 14px"}}>
+                  <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Stores designated as New DS</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+                    {(params.newDSList||[]).map(ds=>(
+                      <span key={ds} style={{background:"#FFFBEA",color:HR.yellowDark,border:`1px solid ${HR.yellow}`,padding:"3px 10px",borderRadius:5,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>
+                        {ds}
+                        <button onClick={()=>saveParams({...params,newDSList:(params.newDSList||[]).filter(d=>d!==ds)})}
+                          style={{background:"none",border:"none",color:HR.yellowDark,cursor:"pointer",fontSize:13,padding:0}}>×</button>
+                      </span>
+                    ))}
+                    {(params.newDSList||[]).length===0&&<span style={{color:HR.muted,fontSize:12}}>None</span>}
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <select id="newDSSelect" style={S.input}>
+                      {DS_LIST.filter(d=>!(params.newDSList||[]).includes(d)).map(d=><option key={d}>{d}</option>)}
+                    </select>
+                    <button onClick={()=>{const sel=document.getElementById("newDSSelect").value;if(sel&&!(params.newDSList||[]).includes(sel))saveParams({...params,newDSList:[...(params.newDSList||[]),sel]});}}
+                      style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12}}>+ Add</button>
                   </div>
                 </div>
               </Section>
-            );
-          })()}
-
-          {/* Section B3: SKU Floor DC Multipliers */}
-          {(()=>{
-            const multMin = params.skuFloorDCMultMin ?? 0.2;
-            const multMax = params.skuFloorDCMultMax ?? 0.3;
-            return(
+              <Section title="Dead Stock DC Multiplier" icon="" accent="#0077A8"
+                summary={`Min: ${(params.dcDeadMult||DC_DEAD_MULT_DEFAULT).min} · Max: ${(params.dcDeadMult||DC_DEAD_MULT_DEFAULT).max}`}>
+                <div style={{...S.card,padding:0,overflow:"hidden"}}>
+                  <table style={S.table}>
+                    <thead><tr style={{background:HR.surfaceLight}}>
+                      <th style={S.th}>Condition</th>
+                      <th style={{...S.th,textAlign:"center"}}>Min Mult</th>
+                      <th style={{...S.th,textAlign:"center"}}>Max Mult</th>
+                    </tr></thead>
+                    <tbody><tr style={{background:HR.white}}>
+                      <td style={S.td}><span style={{...TAG_STYLE,background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}}>Dead Stock</span></td>
+                      {["min","max"].map(field=>(
+                        <td key={field} style={{...S.td,textAlign:"center"}}>
+                          <NumInput value={(params.dcDeadMult||DC_DEAD_MULT_DEFAULT)[field]} min={0} max={1} step={0.05}
+                            onChange={v=>saveParams({...params,dcDeadMult:{...(params.dcDeadMult||DC_DEAD_MULT_DEFAULT),[field]:v}})}
+                            style={{width:72,color:"#B91C1C",fontWeight:700}}/>
+                        </td>
+                      ))}
+                    </tr></tbody>
+                  </table>
+                </div>
+              </Section>
               <Section title="SKU Floor DC Multipliers" icon="🏭" accent="#0077A8"
-                summary={`Min ×${multMin} · Max ×${multMax} — for SKUs with manual DS floors`}>
+                summary={`Min ×${skuFloorMultMin} · Max ×${skuFloorMultMax}`}>
                 <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>
-                  For SKUs in the "SKU Floors - DS Level" CSV, DC Min/Max use these multipliers instead of movement-based multipliers. Brand Buffer is also skipped for these SKUs.
+                  For SKUs in the "SKU Floors - DS Level" CSV, DC Min/Max use these multipliers instead of the lead-time-based formula.
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                   <div style={S.card}>
                     <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DC Min Multiplier</div>
-                    <div style={{fontSize:10,color:HR.muted,marginBottom:4}}>DC Min = Σ DS Mins × this</div>
-                    <NumInput value={multMin} min={0.05} max={1} step={0.05}
+                    <NumInput value={skuFloorMultMin} min={0.05} max={1} step={0.05}
                       onChange={v=>saveParams({...params,skuFloorDCMultMin:v})}
                       style={{width:"100%",fontWeight:700,color:"#0077A8"}}/>
                   </div>
                   <div style={S.card}>
                     <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DC Max Multiplier</div>
-                    <div style={{fontSize:10,color:HR.muted,marginBottom:4}}>DC Max = Σ DS Maxes × this</div>
-                    <NumInput value={multMax} min={0.05} max={1} step={0.05}
+                    <NumInput value={skuFloorMultMax} min={0.05} max={1} step={0.05}
                       onChange={v=>saveParams({...params,skuFloorDCMultMax:v})}
                       style={{width:"100%",fontWeight:700,color:"#0077A8"}}/>
                   </div>
                 </div>
               </Section>
-            );
-          })()}
+            </div>
 
-          {/* Section C: Fixed Unit Floor Params */}
-          {(()=>{
-            const fu=params.fixedUnitFloor||DEFAULT_PARAMS.fixedUnitFloor;
-            return(
-              <Section title="Fixed Unit Floor Params" icon="📐" accent="#7C3AED"
-                summary={`P${fu.orderQtyPercentile||90} · ${fu.maxMultiplier||1.5}× + ${fu.maxAdditive||1}`}>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-                  <div style={S.card}>
-                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Order Qty Percentile</div>
-                    <NumInput value={fu.orderQtyPercentile||90} min={50} max={99} step={1}
-                      onChange={v=>saveParams({...params,fixedUnitFloor:{...fu,orderQtyPercentile:v}})}
-                      style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
-                  </div>
-                  <div style={S.card}>
-                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Max Multiplier</div>
-                    <NumInput value={fu.maxMultiplier||1.5} min={1} max={3} step={0.1}
-                      onChange={v=>saveParams({...params,fixedUnitFloor:{...fu,maxMultiplier:v}})}
-                      style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
-                  </div>
-                  <div style={S.card}>
-                    <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Max Additive</div>
-                    <NumInput value={fu.maxAdditive||1} min={0} max={5} step={1}
-                      onChange={v=>saveParams({...params,fixedUnitFloor:{...fu,maxAdditive:v}})}
-                      style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
-                  </div>
-                </div>
-              </Section>
-            );
-          })()}
-
-          {/* Section D: Brand Lead Time (DC) */}
-          {(()=>{
-            const blt=params.brandLeadTimeDays||{_default:2};
-            const allBrands=[...new Set(Object.values(skuMaster).map(s=>s.brand).filter(Boolean))].sort();
-            const configuredBrands=Object.keys(blt).filter(k=>k!=="_default");
-            const availableBrands=allBrands.filter(b=>!configuredBrands.includes(b));
-            return(
-              <Section title="Brand Lead Time (DC)" icon="🚚" accent="#7C3AED"
-                summary={`Default ${blt._default||2}d · ${configuredBrands.length} brand override${configuredBrands.length!==1?"s":""}`}>
-                <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-                    <div style={{fontWeight:600,color:HR.text,fontSize:12}}>Default Lead Time (days)</div>
-                    <NumInput value={blt._default||2} min={1} max={10} step={1}
-                      onChange={v=>saveParams({...params,brandLeadTimeDays:{...blt,_default:v}})}
-                      style={{width:64,fontWeight:700,color:"#7C3AED"}}/>
-                  </div>
-                </div>
-                {configuredBrands.length>0&&(
-                  <div style={{...S.card,padding:0,overflow:"hidden",marginBottom:10}}>
-                    <table style={S.table}>
-                      <thead><tr style={{background:HR.surfaceLight}}>
-                        <th style={S.th}>Brand</th>
-                        <th style={{...S.th,textAlign:"center"}}>Lead Days</th>
-                        <th style={{...S.th,textAlign:"center"}}>Remove</th>
-                      </tr></thead>
-                      <tbody>
-                        {configuredBrands.map((brand,i)=>(
-                          <tr key={brand} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                            <td style={{...S.td,fontWeight:600,fontSize:11}}>{brand}</td>
-                            <td style={{...S.td,textAlign:"center"}}>
-                              <NumInput value={blt[brand]||2} min={1} max={10} step={1}
-                                onChange={v=>saveParams({...params,brandLeadTimeDays:{...blt,[brand]:v}})}
-                                style={{width:64,color:"#7C3AED",fontWeight:700}}/>
-                            </td>
-                            <td style={{...S.td,textAlign:"center"}}>
-                              <button onClick={()=>{const next={...blt};delete next[brand];saveParams({...params,brandLeadTimeDays:next});}}
-                                style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"3px 8px",borderRadius:4,cursor:"pointer",fontSize:11}}>✕</button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {availableBrands.length>0&&(
-                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                    <select id="newLeadBrand" style={{...S.input,fontSize:11,flex:1}}>
-                      {availableBrands.map(b=><option key={b} value={b}>{b}</option>)}
-                    </select>
-                    <button onClick={()=>{
-                      const sel=document.getElementById("newLeadBrand");
-                      if(!sel?.value)return;
-                      saveParams({...params,brandLeadTimeDays:{...(params.brandLeadTimeDays||{_default:2}),[sel.value]:5}});
-                    }} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12,whiteSpace:"nowrap"}}>+ Add</button>
-                  </div>
-                )}
-              </Section>
-            );
-          })()}
-
-        </div>
-      </div>{/* end col 2 */}
-
-      {/* ══════════════ COLUMN 3 ══════════════ */}
-      <div style={{display:"flex",flexDirection:"column",gap:12}}>
-        <div style={{
-          background:"#DCFCE7",border:"1px solid #86EFAC",borderRadius:8,
-          padding:"12px 16px",marginBottom:4,
-          display:"flex",alignItems:"center",gap:10,
-        }}>
-          <span style={{fontSize:20}}>🔍</span>
-          <span style={{fontWeight:800,fontSize:16,color:HR.green,letterSpacing:"-0.3px"}}>
-            Preview Section — Impact of the Tweaks
-          </span>
-        </div>
-        <div style={{paddingLeft:0}}>
-          <div style={{background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`,padding:"14px 16px"}}>
-            <ImpactPreviewPanelV2
-              params={params}
-              savedParams={savedParams}
-              invoiceData={invoiceData}
-              skuMaster={skuMaster}
-              minReqQty={minReqQty}
-              newSKUQty={newSKUQty}
-              deadStock={deadStock}
-              priceData={priceData}
-              hasChanges={hasChanges}
-              previewState={previewState}
-              setPreviewState={setPreviewState}
-              onSetRunFn={fn=>{ runPreviewRef.current = fn; }}
-            />
           </div>
-        </div>
-      </div>{/* end col 3 */}
+        )}
+      </div>{/* end advanced */}
 
-    </div>{/* end 3-col grid */}
-  </div>
-)}{/* end logic tab */}
+    </div>
+  );
+})()}
+
 {tab==="overrides"&&isAdmin&&<OverridesTab coreOverrides={coreOverrides} saveCoreOverrides={saveCoreOverrides} priceData={priceData} results={results} newSKUQty={newSKUQty} skuMaster={skuMaster} params={params}/>}
       </div>{/* end pageWrap */}
       {/* Toast notification */}

@@ -17,10 +17,10 @@ export function percentileCoverStrategy(opts) {
   const { q90, prTag, mvTag90, params: p } = opts;
   const config = p.percentileCover || {};
   const percentileByPrice = config.percentileByPrice || {
-    "Low": 95, "Super Low": 95, "No Price": 95, "Medium": 90, "High": 85, "Premium": 85,
+    "Low": 95, "Super Low": 95, "No Price": 95, "Medium": 85, "High": 80, "Premium": 75,
   };
   const coverDaysByMovement = config.coverDaysByMovement || {
-    "Super Fast": 2, "Fast": 2, "Moderate": 3, "Slow": 2, "Super Slow": 1,
+    "Super Fast": 2, "Fast": 2, "Moderate": 1, "Slow": 1, "Super Slow": 1,
   };
 
   const pctValue = percentileByPrice[prTag] ?? 90;

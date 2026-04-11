@@ -2,8 +2,8 @@
 
 import {
   DS_LIST, MOVEMENT_TIERS_DEFAULT,
-  DC_MULT_DEFAULT, DC_DEAD_MULT_DEFAULT,
-  RECENCY_WT_DEFAULT, DEFAULT_BRAND_BUFFER,
+  DC_DEAD_MULT_DEFAULT,
+  RECENCY_WT_DEFAULT,
 } from "./constants.js";
 
 import { getPriceTag, getMovTag, getSpikeTag, computeStats } from "./utils.js";
@@ -47,8 +47,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     recencyWt = p.recencyWt || RECENCY_WT_DEFAULT;
   const intervals = p.movIntervals || MOVEMENT_TIERS_DEFAULT,
     priceTiers = p.priceTiers || [3000, 1500, 400, 100];
-  const brandBuffer = p.brandBuffer || DEFAULT_BRAND_BUFFER,
-    topN = p.newDSFloorTopN || 150;
+  const topN = p.newDSFloorTopN || 150;
 
   const allDatesRaw = [...new Set(inv.map(r => r.date))].sort(),
     allDates = allDatesRaw.slice(-op);
@@ -100,7 +99,6 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     const prTag = getPriceTag(pd[skuId] || 0, priceTiers),
       t150Tag = t150[skuId] || "No",
       isDead = deadStockSet.has(skuId);
-    const bufDays = brandBuffer[meta.brand] || 0, hasBuf = bufDays > 0;
     const dsMinArr = [], dsMaxArr = [], dsDailyAvgs = [], stores = {};
 
     const strategy = resolveStrategy(meta.category, p.categoryStrategies);
@@ -211,15 +209,6 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
         else maxQty = Math.max(maxQty, minQty);
       }
 
-      // 2. Brand buffer — skip for SKUs with manual DS floors (floor already encodes brand knowledge)
-      const hasManualFloor = !!(nsq && nsq[skuId]);
-      if (hasBuf && !hasManualFloor) {
-        const dohMin = s90.dailyAvg > 0 ? minQty / s90.dailyAvg : 0;
-        postBlendSteps.push({ rule: "Brand Buffer", bufDays, dohMin, beforeMin: minQty, beforeMax: maxQty });
-        minQty = Math.ceil((dohMin + bufDays) * s90.dailyAvg);
-        maxQty = minQty;
-        logicTag = "Brand Buffer";
-      }
 
       minQty = Math.ceil(minQty); maxQty = Math.ceil(Math.max(maxQty, minQty));
       if (isDead) maxQty = minQty; maxQty = Math.max(maxQty, minQty); if (isDead) maxQty = minQty;
@@ -287,15 +276,11 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       preFloorDcMax = Math.round(sumPreFloorMax * multMax);
       dcDetails = { isDead: false, isFlooredSKU: true, multMin, multMax, sumMin, sumMax, sumDailyAvg, leadTime };
     } else {
-      const dcM = (p.dcMult || DC_MULT_DEFAULT)[dcStats.mvTag] || DC_MULT_DEFAULT[dcStats.mvTag];
-      const multMin = dcM.min, multMax = dcM.max;
-      const leadTimeMin = Math.ceil(sumDailyAvg * leadTime);
-      dcMin = Math.round(Math.max(leadTimeMin, sumMin * multMin));
-      dcMax = Math.round(Math.max(Math.ceil(dcMin * (multMax / multMin)), sumMax * multMax));
-      const preFloorLeadTimeMin = Math.ceil(sumDailyAvg * leadTime);
-      preFloorDcMin = Math.round(Math.max(preFloorLeadTimeMin, sumPreFloorMin * multMin));
-      preFloorDcMax = Math.round(Math.max(Math.ceil(preFloorDcMin * (multMax / multMin)), sumPreFloorMax * multMax));
-      dcDetails = { isDead: false, isFlooredSKU: false, multMin, multMax, sumMin, sumMax, sumDailyAvg, leadTime, leadTimeMin };
+      dcMin = Math.ceil(sumDailyAvg * (leadTime + 1));
+      dcMax = dcMin + Math.ceil(sumDailyAvg * 2);
+      preFloorDcMin = Math.ceil(sumDailyAvg * (leadTime + 1));
+      preFloorDcMax = preFloorDcMin + Math.ceil(sumDailyAvg * 2);
+      dcDetails = { isDead: false, isFlooredSKU: false, sumMin, sumMax, sumDailyAvg, leadTime };
     }
 
     res[skuId] = {

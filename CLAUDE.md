@@ -50,24 +50,30 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 ### PCT Design Decisions
 - **Percentile by price:** Low/Super Low/No Price=95, Medium=85, High=80, Premium=75. Cheap items stocked aggressively — hard to emergency-source.
 - **Cover days:** Super Fast/Fast=2, Moderate/Slow/Super Slow=1. DC restocks daily so only 1 day needed for slow movers.
+- **Note:** constants.js and percentileCover.js fallbacks must match these values exactly — they're the authoritative source if Supabase params predate the `percentileCover` key.
 - **PCT Guards:** NZD<2 → fall back to Standard (1 observation = no distribution). DOC cap 30D on High/Premium only — prevents capital lock-up on expensive items. Low-priced items intentionally uncapped.
 - **Max formula:** Min + dailyAvg × buffer (not a multiplier of Min).
 
 ### DC Calculation
-Two paths depending on whether the SKU has manual DS floors:
+Three paths depending on SKU type:
 
 **Standard (no manual floors):**
-`DC Min = MAX(sumDailyAvg × brandLeadTimeDays, sumDSMin × dcMultiplier.min)` — lead-time-aware, configurable per brand (default 2 days).
+`DC Min = ceil(sumDailyAvg × (brandLeadTimeDays + 1))` — lead time + 1 safety day. Default lead time 3 days; configurable per brand in Logic Tweaker.
+`DC Max = DC Min + ceil(sumDailyAvg × 2)`
+Movement-tag multipliers removed — lead time is the sole driver.
 
 **Floored SKUs (SKU is in "SKU Floors - DS Level" CSV):**
 `DC Min = Σ effective DS Mins × skuFloorDCMultMin (default 0.2)`
 `DC Max = Σ effective DS Maxes × skuFloorDCMultMax (default 0.3)`
-Movement-tag DC multipliers are bypassed entirely. Both multipliers configurable in Logic Tweaker under "SKU Floor DC Multipliers".
+Demand erratic for these SKUs so DC stays lean. Configurable in Logic Tweaker.
+
+**Dead Stock SKUs:**
+`DC Min = Σ DS Mins × 0.25` / `DC Max = Σ DS Maxes × 0.25`
 
 ### Post-Blend Adjustment Order (strict)
-New DS Floor → Brand Buffer (skipped if SKU has manual floor) → SKU Floor Override → Dead Stock cap → Final rounding
+New DS Floor → SKU Floor Override → Dead Stock cap → Final rounding
 
-**Brand Buffer is skipped for SKUs with manual DS floors** — the manual floor already encodes the team's knowledge about brand replenishment behaviour. Applying both would double-count.
+**Brand Buffer removed** — was compensating for supplier lead time at DS level, which is wrong. Lead time is now correctly modelled at DC via brandLeadTimeDays.
 
 **SKU Floor Min and Max are checked independently** — if floor Min > engine Min, floor Min wins. If floor Max > engine Max, floor Max wins. Either can trigger without the other.
 
@@ -120,22 +126,16 @@ Add new capability: **Simulate with fresh invoice CSV** (temporary — does not 
   - **Ideal Restock:** Stock starts at Max each day. Any date range. Shows OOS breakdown.
   - **Actual Stock (single day only):** Upload 5 stock CSVs (DS01–DS05, one per DS, same Inventory Summary format). Simulate that one day's orders against actual opening stock. Shows OOS with root cause classification (Ops Failure / Tool Failure / Unstocked / Could Have Been Saved). DC not included in simulation.
 
-### 2. Remove Zoho Integration Entirely
-- Delete edge functions: `zoho-skumaster`, `zoho-prices`, `zoho-invoices`, `_shared/zoho.ts`
-- Remove auto-Zoho-sync on invoice upload from Upload tab
-- Invoice, SKU Master, Prices → plain CSV upload only (same pattern as DS Floor, SKU Floors, Dead Stock)
-- Remove `callZoho`, `syncZohoSKUMaster`, `syncZohoPrices`, `syncZohoInvoices` from App.jsx
-- Remove Zoho credentials from CLAUDE.md
-- Upload tab becomes fully CSV-driven with no Zoho dependency
-
-### 3. Polish Stock Health Tab
+### 2. Polish Stock Health Tab
 Make it more rich and actionable (specifics TBD).
 
-### 4. Check All Flows — Polish All Tabs
-Full pass across Overview, SKU Detail, OOS Simulation, Stock Health, Tool Output, Logic Tweaker, Manual Overrides, Upload Data.
+### 3. Rethink Tool Output Tab
+Decide whether a dedicated Tool Output tab is needed, or whether the 3 key download buttons can live directly in the Upload Data tab (to be renamed "Data"). If folded in, remove the Tool Output tab entirely.
+
+### 4. Full UI Polish Pass — All Tabs
+Revisit entire UI across all tabs: Overview, SKU Detail, OOS Simulation, Stock Health, Tool Output, Logic Tweaker, Manual Overrides, Upload Data. Make each tab sharper and more actionable.
 
 ## Deferred
-- Upload Data tab UI polish (revisit after all active items done)
 - Cluster fulfillment — build into tool or ops process?
 - Stock Health — actionables design (TBD)
 
