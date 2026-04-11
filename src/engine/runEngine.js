@@ -227,14 +227,17 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       // Capture pre-floor values for Overrides tab delta calculation
       const preFloorMin = Math.round(minQty), preFloorMax = Math.round(maxQty);
 
-      // 3. SKU Floors — runs last, wins if floor Min exceeds engine Min
+      // 3. SKU Floors — runs last, wins if floor Min OR floor Max exceeds engine values
       if (nsq && nsq[skuId]) {
         const fl = nsq[skuId][dsId];
         const fMin = !fl ? 0 : typeof fl === "number" ? fl : (fl.min || 0);
         const fMax = !fl ? 0 : typeof fl === "number" ? fl : (fl.max || fMin);
-        if (fMin > minQty) {
+        if (fMin > minQty || fMax > maxQty) {
           postBlendSteps.push({ rule: "SKU Floor", floorMin: fMin, floorMax: fMax, beforeMin: minQty, beforeMax: maxQty });
-          minQty = fMin; maxQty = Math.max(fMax, maxQty); logicTag = "SKU Floor";
+          if (fMin > minQty) minQty = fMin;
+          if (fMax > maxQty) maxQty = fMax;
+          maxQty = Math.max(maxQty, minQty); // ensure Max ≥ Min always
+          logicTag = "SKU Floor";
         }
       }
 
