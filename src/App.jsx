@@ -1108,11 +1108,12 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
       worker.terminate();
     };
     const allDatesArr = [...new Set(invoiceData.map(r => r.date))].sort();
-    const simDatesSet = new Set(allDatesArr.slice(-simDays));
+    const simDates = allDatesArr.slice(-simDays);
+    const simDatesSet = new Set(simDates);
     const slimInvoice = invoiceData
       .filter(r => simDatesSet.has(r.date))
       .map(r => ({ date: r.date, sku: r.sku, ds: r.ds, qty: r.qty }));
-    worker.postMessage({ invoiceData: slimInvoice, results, overrides, simDays });
+    worker.postMessage({ invoiceData: slimInvoice, results, overrides, simDates });
     return () => worker.terminate();
   }, [invoiceData, results, overrides, simDays]);
 
@@ -2815,6 +2816,12 @@ export default function App(){
   const [simResults, setSimResults] = useState({ tool: [], ovr: [] });
   const [simLoading, setSimLoading] = useState(true);
   const [simDays, setSimDays] = useState(15);
+  const [freshInvoiceData, setFreshInvoiceData] = useState([]);
+  const [freshInvoiceFile, setFreshInvoiceFile] = useState("");
+  const [dsStockData, setDsStockData] = useState({});
+  const [dsStockFiles, setDsStockFiles] = useState({});
+  const [freshSimResults, setFreshSimResults] = useState({ tool: [], ovr: [], actual: [] });
+  const [freshSimLoading, setFreshSimLoading] = useState(false);
   const [stockData, setStockData] = useState({});       // persists across tab switches
   const [stockUploadedAt, setStockUploadedAt] = useState(null);
   const stockUploadedAtRef = useRef(null); // always current — avoids stale closure in saveTeamData
@@ -3711,7 +3718,13 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
             saveTeamData={saveTeamData} />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
-  <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}/>
+  <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}
+    freshInvoiceData={freshInvoiceData} setFreshInvoiceData={setFreshInvoiceData}
+    freshInvoiceFile={freshInvoiceFile} setFreshInvoiceFile={setFreshInvoiceFile}
+    dsStockData={dsStockData} setDsStockData={setDsStockData}
+    dsStockFiles={dsStockFiles} setDsStockFiles={setDsStockFiles}
+    freshSimResults={freshSimResults} setFreshSimResults={setFreshSimResults}
+    freshSimLoading={freshSimLoading} setFreshSimLoading={setFreshSimLoading}/>
 </div>
 
         {tab==="logic"&&isAdmin&&(()=>{
