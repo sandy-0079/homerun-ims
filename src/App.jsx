@@ -1028,7 +1028,7 @@ function SimBrandLevel({ toolRows, ovrRows, ovrRowsFull, winRows, skuMeta, categ
   );
 }
 
-function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onApplyToCore, simOverrides, setSimOverrides, simOverrideCount, setSimOverrideCount, simResults, setSimResults, simLoading, setSimLoading, simDays, setSimDays }) {
+function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onApplyToCore, simOverrides, setSimOverrides, simOverrideCount, setSimOverrideCount, simResults, setSimResults, simLoading, setSimLoading, simDays, setSimDays, freshInvoiceData, setFreshInvoiceData, freshInvoiceFile, setFreshInvoiceFile, dsStockData, setDsStockData, dsStockFiles, setDsStockFiles, freshSimResults, setFreshSimResults, freshSimLoading, setFreshSimLoading }) {
   const [drill, setDrill] = useState(null);
   const [dsFilter, setDsFilter] = useState("All");
   const overrides = simOverrides;
@@ -1040,6 +1040,13 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
   const [applyPw, setApplyPw] = useState("");
   const [applyPwErr, setApplyPwErr] = useState(false);
   const [simDaysInput, setSimDaysInput] = useState("15");
+  const [simMode, setSimMode] = useState("loaded"); // "loaded" | "fresh"
+  const [simSubMode, setSimSubMode] = useState("ideal"); // "ideal" | "actual"
+  const [simPreset, setSimPreset] = useState("L15D");
+  const [simDateFrom, setSimDateFrom] = useState("");
+  const [simDateTo, setSimDateTo] = useState("");
+  const [simSingleDate, setSimSingleDate] = useState("");
+  const [rootCauseFilter, setRootCauseFilter] = useState(null);
   const ADMIN_PW = import.meta.env.VITE_ADMIN_PASSWORD || "";
   const hasOverrides = overrideCount > 0;
 
@@ -1083,7 +1090,19 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
     setShowApplyConfirm(false);
   };
 
-  const allDates = useMemo(() => [...new Set(invoiceData.map(r => r.date))].sort().slice(-simDays), [invoiceData, simDays]);
+  const allInvoiceDates = useMemo(() => [...new Set(invoiceData.map(r => r.date))].sort(), [invoiceData]);
+
+  const simDates = useMemo(() => {
+    if (simPreset !== "custom") {
+      const n = parseInt(simPreset.slice(1));
+      return allInvoiceDates.slice(-n);
+    }
+    if (simDateFrom && simDateTo) {
+      return allInvoiceDates.filter(d => d >= simDateFrom && d <= simDateTo);
+    }
+    return allInvoiceDates.slice(-15);
+  }, [allInvoiceDates, simPreset, simDateFrom, simDateTo]);
+
   const skuMeta  = useMemo(() => {
     const m = {};
     Object.values(results || {}).forEach(r => { m[r.meta.sku] = r.meta; });
@@ -1092,6 +1111,7 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
 
   useEffect(() => {
     if (!invoiceData.length || !results) return;
+    if (simMode !== "loaded") return;
     setSimLoading(true);
     setSimResults({ tool: [], ovr: [] });
     const worker = new Worker(
@@ -1107,15 +1127,13 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
       setSimLoading(false);
       worker.terminate();
     };
-    const allDatesArr = [...new Set(invoiceData.map(r => r.date))].sort();
-    const simDates = allDatesArr.slice(-simDays);
     const simDatesSet = new Set(simDates);
     const slimInvoice = invoiceData
       .filter(r => simDatesSet.has(r.date))
       .map(r => ({ date: r.date, sku: r.sku, ds: r.ds, qty: r.qty }));
     worker.postMessage({ invoiceData: slimInvoice, results, overrides, simDates });
     return () => worker.terminate();
-  }, [invoiceData, results, overrides, simDays]);
+  }, [invoiceData, results, overrides, simDates, simMode]);
 
   const toolRowsFull = simResults.tool;
   const ovrRowsFull  = simResults.ovr;
@@ -1129,7 +1147,7 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
   const toolRowsView = useMemo(() => simLoading ? [] : dsFilter === "All" ? toolRows : toolRows.filter(r => r.dsId === dsFilter), [toolRows, dsFilter, simLoading]);
   const ovrRowsView  = useMemo(() => simLoading ? [] : dsFilter === "All" ? ovrRows  : ovrRows.filter(r => r.dsId === dsFilter),  [ovrRows,  dsFilter, simLoading]);
   const inv          = useMemo(() => dsFilter === "All" ? invoiceData : invoiceData.filter(r => r.ds === dsFilter), [invoiceData, dsFilter]);
-  const winRows      = useMemo(() => simLoading ? [] : inv.filter(r => allDates.includes(r.date)), [inv, allDates, simLoading]);
+  const winRows      = useMemo(() => simLoading ? [] : inv.filter(r => simDates.includes(r.date)), [inv, simDates, simLoading]);
   const totInst      = winRows.length;
   const totSkus      = useMemo(() => simLoading ? 0 : new Set(winRows.map(r => r.sku)).size, [winRows, simLoading]);
 
@@ -1176,19 +1194,27 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, fontSize: 14, color: HR.yellowDark, whiteSpace: "nowrap" }}>OOS Simulation</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 0, border: `2px solid ${HR.yellow}`, borderRadius: 6, background: "#FFFBEA", overflow: "hidden", flexShrink: 0 }}>
-              <span style={{ padding: "3px 8px", fontSize: 11, fontWeight: 700, color: HR.yellowDark, borderRight: `1px solid ${HR.yellow}`, whiteSpace: "nowrap" }}>Last</span>
-              <input type="number" min={1} max={params.overallPeriod||90} value={simDaysInput} onFocus={e => e.target.select()}
-                onChange={e => setSimDaysInput(e.target.value)}
-                onBlur={e => { const mx=params.overallPeriod||90; const v=Math.min(mx,Math.max(1,parseInt(e.target.value)||15)); setSimDaysInput(String(v)); setSimDays(v); setDrill(null); }}
-                onKeyDown={e => { if(e.key==="Enter"){ const mx=params.overallPeriod||90; const v=Math.min(mx,Math.max(1,parseInt(e.target.value)||15)); setSimDaysInput(String(v)); setSimDays(v); setDrill(null); e.target.blur(); }}}
-                style={{ width: 38, border: "none", background: "transparent", fontSize: 13, fontWeight: 800, color: HR.yellowDark, textAlign: "center", outline: "none", padding: "3px 2px", MozAppearance: "textfield" }}
-              />
-              <span style={{ padding: "3px 8px", fontSize: 11, fontWeight: 700, color: HR.yellowDark, borderLeft: `1px solid ${HR.yellow}`, whiteSpace: "nowrap" }}>days <span style={{ fontSize: 9, fontWeight: 500, color: HR.muted }}>(max 90)</span></span>
-              <button onClick={() => { const mx=params.overallPeriod||90; const v=Math.min(mx,Math.max(1,parseInt(simDaysInput)||15)); setSimDaysInput(String(v)); setSimDays(v); setDrill(null); }}
-                style={{ padding:"0 10px", background:HR.yellow, color:HR.black, border:"none", fontWeight:700, fontSize:11, cursor:"pointer", alignSelf:"stretch" }}>▶ Run</button>
+            <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+              {["L45D","L30D","L15D","L7D","L3D"].map(preset=>(
+                <button key={preset} onClick={()=>{setSimPreset(preset);setSimDateFrom("");setSimDateTo("");setDrill(null);}}
+                  style={{padding:"4px 10px",borderRadius:5,border:`1px solid ${simPreset===preset?HR.yellow:HR.border}`,background:simPreset===preset?HR.yellow:HR.white,color:simPreset===preset?HR.black:HR.muted,fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>
+                  {preset.replace("L","").replace("D"," days")}
+                </button>
+              ))}
+              <div style={{display:"flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:5,border:`1px solid ${simPreset==="custom"?HR.yellow:HR.border}`,background:simPreset==="custom"?"#FFFBEA":HR.white}}>
+                <span style={{fontSize:10,color:HR.muted,fontWeight:600}}>From</span>
+                <input type="date" value={simDateFrom}
+                  min={allInvoiceDates[0]||""} max={simDateTo||allInvoiceDates[allInvoiceDates.length-1]||""}
+                  onChange={e=>{setSimDateFrom(e.target.value);setSimPreset("custom");setDrill(null);}}
+                  style={{border:"none",background:"transparent",fontSize:11,fontWeight:700,color:HR.yellowDark,outline:"none",cursor:"pointer"}}/>
+                <span style={{fontSize:10,color:HR.muted}}>→</span>
+                <input type="date" value={simDateTo}
+                  min={simDateFrom||allInvoiceDates[0]||""} max={allInvoiceDates[allInvoiceDates.length-1]||""}
+                  onChange={e=>{setSimDateTo(e.target.value);setSimPreset("custom");setDrill(null);}}
+                  style={{border:"none",background:"transparent",fontSize:11,fontWeight:700,color:HR.yellowDark,outline:"none",cursor:"pointer"}}/>
+              </div>
+              {simDates.length > 0 && <span style={{fontSize:10,color:HR.muted}}>{simDates[0]} → {simDates[simDates.length-1]} ({simDates.length}D)</span>}
             </div>
-            {allDates.length > 0 && <span style={{ fontSize: 10, color: HR.muted }}>{allDates[0]} → {allDates[allDates.length - 1]}</span>}
           </div>
           {hasOverrides && <span style={{ fontSize: 10, fontWeight: 700, color: HR.yellowDark, background: "#FFFBEA", border: `1px solid ${HR.yellow}`, borderRadius: 4, padding: "2px 8px" }}>✏ What-If Mode — {overrideCount} overrides</span>}
           <div style={{ display: "flex", gap: 0, border: `1px solid ${HR.border}`, borderRadius: 5, overflow: "hidden", flexShrink: 0 }}>
@@ -1275,8 +1301,8 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
       ) : (
         <>
           {!drill && <SimOrgLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} hasOverrides={hasOverrides} priceData={priceData} totInst={totInst} totSkus={totSkus} onDrillCategory={cat => setDrill({ type: "category", value: cat, category: cat })} />}
-          {drill?.type === "category" && <SimCategoryLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.value} hasOverrides={hasOverrides} priceData={priceData} totInst={totInst} totSkus={totSkus} allDates={allDates} onDrillBrand={brand => setDrill({ type: "brand", value: brand, brand, category: drill.value })} />}
-          {drill?.type === "brand" && <SimBrandLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.category} brand={drill.value} hasOverrides={hasOverrides} priceData={priceData} allDates={allDates} toolRowsFull={toolRowsFull} />}
+          {drill?.type === "category" && <SimCategoryLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.value} hasOverrides={hasOverrides} priceData={priceData} totInst={totInst} totSkus={totSkus} allDates={simDates} onDrillBrand={brand => setDrill({ type: "brand", value: brand, brand, category: drill.value })} />}
+          {drill?.type === "brand" && <SimBrandLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.category} brand={drill.value} hasOverrides={hasOverrides} priceData={priceData} allDates={simDates} toolRowsFull={toolRowsFull} />}
         </>
       )}
     </div>
