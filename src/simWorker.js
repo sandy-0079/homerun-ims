@@ -1,3 +1,9 @@
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b), m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
 function runSim(invoiceData, results, overrides, simDates) {
   const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
   if (!invoiceData.length || !results || !simDates.length) return [];
@@ -9,11 +15,6 @@ function runSim(invoiceData, results, overrides, simDates) {
     if (!simIndex[k]) simIndex[k] = [];
     simIndex[k].push(r);
   });
-  function median(arr) {
-    if (!arr.length) return 0;
-    const s = [...arr].sort((a, b) => a - b), m = Math.floor(s.length / 2);
-    return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
-  }
   const out = [];
   Object.entries(results).forEach(([skuId, res]) => {
     DS_LIST.forEach(dsId => {
@@ -76,6 +77,7 @@ function runActualStockSim(invoiceData, results, openingStock, singleDate) {
   // openingStock: { DS01: { SKU1: { physical, inTransit }, ... }, ... }
   const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
   if (!invoiceData.length || !results) return [];
+  if (!singleDate) return [];
   const dayLines = invoiceData.filter(r => r.date === singleDate);
   const simIndex = {};
   dayLines.forEach(r => {
@@ -123,7 +125,7 @@ function runActualStockSim(invoiceData, results, openingStock, singleDate) {
           inTransit,
           oosInstances,
           totalInstances: lines.length,
-          medianShort: Math.ceil((() => { const s=[...shortQtys].sort((a,b)=>a-b),m=Math.floor(s.length/2); return s.length%2===1?s[m]:(s[m-1]+s[m])/2; })()),
+          medianShort: Math.ceil(median(shortQtys)),
           maxShort: shortQtys.length ? Math.max(...shortQtys) : 0,
           rootCause: firstOosLine?.rootCause || "tool_failure",
           orderLog,
