@@ -1498,12 +1498,84 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
             />
           )}
 
-          {/* Actual Stock results placeholder — implemented in Task 5 */}
-          {!freshSimLoading && simSubMode==="actual" && freshSimResults.actual.length>0 && (
-            <div style={{...S.card,padding:16,textAlign:"center",color:HR.muted,fontSize:12}}>
-              {freshSimResults.actual.length} OOS instances found — root cause display coming in Task 5
-            </div>
-          )}
+          {/* Actual Stock results — root cause summary strip + drill-down table */}
+          {!freshSimLoading && simSubMode==="actual" && freshSimResults.actual.length>0 && (()=>{
+            const actualRows=freshSimResults.actual.filter(r=>dsFilter==="All"||r.dsId===dsFilter);
+            const counts={ops_failure:0,tool_failure:0,unstocked:0,could_have_saved:0};
+            actualRows.forEach(r=>{if(counts[r.rootCause]!==undefined)counts[r.rootCause]++;});
+            const causeLabels={
+              ops_failure:["Ops Failure","DC didn't restock when it should"],
+              tool_failure:["Tool Failure","Min/Max set too low"],
+              unstocked:["Unstocked","Min = Max = 0"],
+              could_have_saved:["Could Have Been Saved","TO arrived too late"]
+            };
+            const causeColors={ops_failure:"#B91C1C",tool_failure:"#C05A00",unstocked:"#6B7280",could_have_saved:"#0077A8"};
+            const filteredRows=rootCauseFilter?actualRows.filter(r=>r.rootCause===rootCauseFilter):actualRows;
+            return(
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {/* Root cause summary strip */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+                  {Object.entries(causeLabels).map(([key,[title,desc]])=>{
+                    const count=counts[key];
+                    const isActive=rootCauseFilter===key;
+                    const color=causeColors[key];
+                    return(
+                      <div key={key} onClick={()=>setRootCauseFilter(isActive?null:key)}
+                        style={{...S.card,cursor:"pointer",border:`2px solid ${isActive?color:HR.border}`,background:isActive?color+"10":HR.white}}>
+                        <div style={{fontWeight:800,fontSize:22,color,marginBottom:2}}>{count}</div>
+                        <div style={{fontWeight:700,fontSize:11,color:HR.text,marginBottom:3}}>{title}</div>
+                        <div style={{fontSize:9,color:HR.muted,lineHeight:1.3}}>{desc}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {rootCauseFilter && (
+                  <div style={{fontSize:11,color:HR.muted}}>
+                    Filtering: <strong style={{color:causeColors[rootCauseFilter]}}>{causeLabels[rootCauseFilter][0]}</strong>
+                    <button onClick={()=>setRootCauseFilter(null)} style={{background:"none",border:"none",color:HR.yellowDark,cursor:"pointer",fontWeight:600,fontSize:11,marginLeft:8}}>Clear ×</button>
+                  </div>
+                )}
+                {/* Results table */}
+                <div style={{...S.card,padding:0,overflow:"hidden"}}>
+                  <table style={S.table}>
+                    <thead><tr style={{background:HR.surfaceLight}}>
+                      <th style={S.th}>SKU</th>
+                      <th style={S.th}>DS</th>
+                      <th style={S.th}>Category</th>
+                      <th style={{...S.th,textAlign:"center"}}>Opening Stock</th>
+                      <th style={{...S.th,textAlign:"center"}}>Tool Min</th>
+                      <th style={{...S.th,textAlign:"center"}}>OOS Orders</th>
+                      <th style={S.th}>Root Cause</th>
+                    </tr></thead>
+                    <tbody>
+                      {filteredRows.map((r,i)=>{
+                        const color=causeColors[r.rootCause]||HR.muted;
+                        const label=causeLabels[r.rootCause]?.[0]||r.rootCause;
+                        return(
+                          <tr key={`${r.skuId}||${r.dsId}`} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                            <td style={{...S.td,fontWeight:600,fontSize:11}}>{r.name}</td>
+                            <td style={S.td}>{r.dsId}</td>
+                            <td style={{...S.td,fontSize:11}}>{r.category}</td>
+                            <td style={{...S.td,textAlign:"center",fontWeight:700}}>{r.openingStock}</td>
+                            <td style={{...S.td,textAlign:"center"}}>{r.toolMin}</td>
+                            <td style={{...S.td,textAlign:"center",fontWeight:700,color:"#B91C1C"}}>{r.oosInstances}</td>
+                            <td style={S.td}>
+                              <span style={{background:color+"18",color,border:`1px solid ${color}44`,borderRadius:4,padding:"2px 6px",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
+                                {label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {filteredRows.length===0 && (
+                    <div style={{padding:24,textAlign:"center",color:HR.muted,fontSize:12}}>No OOS instances for this filter</div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
         </div>
       )}
