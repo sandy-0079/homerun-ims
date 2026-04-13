@@ -1192,6 +1192,16 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
     <div>
       <div style={{ position: "sticky", top: -16, zIndex: 10, background: HR.bg, paddingTop: 4, paddingBottom: 8, marginBottom: 12, borderBottom: `1px solid ${HR.border}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+          {/* Mode toggle */}
+          <div style={{display:"flex",gap:0,border:`1px solid ${HR.border}`,borderRadius:6,overflow:"hidden",flexShrink:0}}>
+            {[["loaded","Loaded Data"],["fresh","Fresh CSV"]].map(([mode,label])=>(
+              <button key={mode} onClick={()=>setSimMode(mode)}
+                style={{padding:"6px 18px",background:simMode===mode?HR.yellow:HR.white,color:simMode===mode?HR.black:HR.muted,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",borderRight:mode==="loaded"?`1px solid ${HR.border}`:"none"}}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {simMode === "loaded" && (<>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, fontSize: 14, color: HR.yellowDark, whiteSpace: "nowrap" }}>OOS Simulation</span>
             <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
@@ -1228,6 +1238,8 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
               );
             })}
           </div>
+          </>)}
+          {simMode === "loaded" && (<>
           {showApplyPwModal && (
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}}>
               <div style={{background:HR.white,padding:28,borderRadius:10,border:`2px solid ${HR.yellow}`,maxWidth:360,width:"90%",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
@@ -1264,7 +1276,9 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
             style={{ background: HR.green, color: HR.white, border: "none", padding: "5px 14px", borderRadius: 5, cursor: "pointer", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>
             ⬇ Download What-If CSV
           </button>
+          </>)}
         </div>
+        {simMode === "loaded" && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <div style={{ background: tAcc + "18", border: `1px solid ${tAcc}44`, borderRadius: 5, padding: "3px 10px", display: "flex", gap: 5, alignItems: "baseline" }}>
             <span style={{ fontWeight: 800, fontSize: 14, color: tAcc }}>{toolRate}%</span>
@@ -1288,8 +1302,10 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
             </span>
           ))}
         </div>
+        )}
       </div>
 
+      {simMode === "loaded" && (<>
       <WhatIfUploadPanel onUpload={handleUpload} hasOverrides={hasOverrides} onReset={handleReset} overrideCount={overrideCount} />
 
       {toolRowsView.filter(r => r.oosInstances > 0).length === 0 && !hasOverrides ? (
@@ -1304,6 +1320,192 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
           {drill?.type === "category" && <SimCategoryLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.value} hasOverrides={hasOverrides} priceData={priceData} totInst={totInst} totSkus={totSkus} allDates={simDates} onDrillBrand={brand => setDrill({ type: "brand", value: brand, brand, category: drill.value })} />}
           {drill?.type === "brand" && <SimBrandLevel toolRows={toolRowsView} ovrRows={ovrRowsView} ovrRowsFull={ovrRowsFull} winRows={winRows} skuMeta={skuMeta} category={drill.category} brand={drill.value} hasOverrides={hasOverrides} priceData={priceData} allDates={simDates} toolRowsFull={toolRowsFull} />}
         </>
+      )}
+      </>)}
+
+      {simMode === "fresh" && (
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+
+          {/* Upload cards */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+
+            {/* Invoice CSV card */}
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:110}}>
+              <div style={{fontWeight:700,color:HR.text,fontSize:12,marginBottom:4}}>
+                Invoice CSV <span style={{fontSize:10,color:"#B91C1C",fontWeight:400}}>required</span>
+              </div>
+              <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>Temporary — won't replace loaded data</div>
+              <div style={{marginTop:"auto",display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                <label style={{background:HR.green,color:HR.white,padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600}}>
+                  ⬆ Upload CSV
+                  <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{
+                    const file=e.target.files[0]; if(!file)return;
+                    file.text().then(text=>{
+                      const rows=parseCSV(text);
+                      const filtered=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||""))
+                        .map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0)}))
+                        .filter(r=>r.date&&r.sku&&r.qty>0);
+                      setFreshInvoiceData(filtered);
+                      setFreshInvoiceFile(file.name);
+                      setFreshSimResults({tool:[],ovr:[],actual:[]});
+                    });
+                    e.target.value="";
+                  }}/>
+                </label>
+                {freshInvoiceFile && <span style={{fontSize:9,color:"#6B7280"}}>📄 {freshInvoiceFile}</span>}
+                {freshInvoiceData.length>0 && <span style={{fontSize:11,color:HR.green,fontWeight:700}}>{freshInvoiceData.length.toLocaleString()} rows</span>}
+                {freshInvoiceData.length>0 && <button onClick={()=>{setFreshInvoiceData([]);setFreshInvoiceFile("");setFreshSimResults({tool:[],ovr:[],actual:[]});}} style={{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"4px 8px",borderRadius:5,cursor:"pointer",fontSize:10,fontWeight:600}}>🗑 Clear</button>}
+              </div>
+            </div>
+
+            {/* DS Stock CSVs card */}
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:110,opacity:simSubMode==="actual"?1:0.45,pointerEvents:simSubMode==="actual"?"auto":"none"}}>
+              <div style={{fontWeight:700,color:HR.text,fontSize:12,marginBottom:4}}>
+                DS Stock CSVs <span style={{fontSize:10,color:simSubMode==="actual"?"#B91C1C":"#999",fontWeight:400}}>{simSubMode==="actual"?"required (5 DS)":"Actual Stock only"}</span>
+              </div>
+              <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>Inventory Summary format — one per DS</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:"auto"}}>
+                {DS_LIST.map(dsId=>(
+                  <div key={dsId} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                    <span style={{fontSize:11,color:dsStockData[dsId]&&Object.keys(dsStockData[dsId]).length?HR.green:"#999",fontWeight:700}}>
+                      {dsStockData[dsId]&&Object.keys(dsStockData[dsId]).length?"✅":"⬜"} {dsId}
+                    </span>
+                    <label style={{background:HR.green,color:HR.white,padding:"3px 7px",borderRadius:4,cursor:"pointer",fontSize:10,fontWeight:600}}>
+                      ⬆
+                      <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{
+                        const file=e.target.files[0]; if(!file)return;
+                        file.text().then(text=>{
+                          const rows=parseCSV(text);
+                          const stockMap={};
+                          rows.forEach(r=>{
+                            const sku=(r["SKU"]||r["Item Name"]||"").trim();
+                            const physical=parseFloat(r["Quantity On Hand"]||r["Physical Quantity"]||r["Closing Stock"]||0);
+                            const inTransit=parseFloat(r["Quantity In Transit"]||r["In Transit"]||0);
+                            if(sku) stockMap[sku]={physical,inTransit};
+                          });
+                          setDsStockData(prev=>({...prev,[dsId]:stockMap}));
+                          setDsStockFiles(prev=>({...prev,[dsId]:file.name}));
+                        });
+                        e.target.value="";
+                      }}/>
+                    </label>
+                    {dsStockFiles[dsId] && <span style={{fontSize:8,color:"#6B7280",maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{dsStockFiles[dsId]}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Sub-mode selector */}
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <span style={{fontSize:12,color:HR.muted,fontWeight:600}}>Simulation type:</span>
+            {[["ideal","Ideal Restock"],["actual","Actual Stock (single day)"]].map(([mode,label])=>(
+              <label key={mode} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12,fontWeight:mode===simSubMode?700:400,color:mode===simSubMode?HR.text:HR.muted}}>
+                <input type="radio" name="simSubMode" value={mode} checked={simSubMode===mode} onChange={()=>{setSimSubMode(mode);setFreshSimResults({tool:[],ovr:[],actual:[]});}}/>
+                {label}
+              </label>
+            ))}
+          </div>
+
+          {/* Date controls */}
+          {simSubMode==="ideal" && (
+            <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+              {(()=>{
+                const freshDates=[...new Set(freshInvoiceData.map(r=>r.date))].sort();
+                return ["L45D","L30D","L15D","L7D","L3D"].map(preset=>(
+                  <button key={preset} onClick={()=>{setSimPreset(preset+"_f");setSimDateFrom("");setSimDateTo("");}}
+                    style={{padding:"4px 10px",borderRadius:5,border:`1px solid ${simPreset===preset+"_f"?HR.yellow:HR.border}`,background:simPreset===preset+"_f"?HR.yellow:HR.white,color:simPreset===preset+"_f"?HR.black:HR.muted,fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>
+                    {preset.replace("L","").replace("D"," days")}
+                  </button>
+                ));
+              })()}
+              <div style={{display:"flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:5,border:`1px solid ${simPreset==="custom_f"?HR.yellow:HR.border}`,background:simPreset==="custom_f"?"#FFFBEA":HR.white}}>
+                <span style={{fontSize:10,color:HR.muted,fontWeight:600}}>From</span>
+                <input type="date" value={simDateFrom} onChange={e=>{setSimDateFrom(e.target.value);setSimPreset("custom_f");}} style={{border:"none",background:"transparent",fontSize:11,fontWeight:700,color:HR.yellowDark,outline:"none",cursor:"pointer"}}/>
+                <span style={{fontSize:10,color:HR.muted}}>→</span>
+                <input type="date" value={simDateTo} onChange={e=>{setSimDateTo(e.target.value);setSimPreset("custom_f");}} style={{border:"none",background:"transparent",fontSize:11,fontWeight:700,color:HR.yellowDark,outline:"none",cursor:"pointer"}}/>
+              </div>
+            </div>
+          )}
+          {simSubMode==="actual" && (
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:12,color:HR.muted,fontWeight:600}}>Simulate date:</span>
+              <input type="date" value={simSingleDate} onChange={e=>setSimSingleDate(e.target.value)}
+                style={{...S.input,width:160,fontWeight:700,color:HR.yellowDark}}/>
+            </div>
+          )}
+
+          {/* Run button */}
+          {(()=>{
+            const freshDates=[...new Set(freshInvoiceData.map(r=>r.date))].sort();
+            const idealReady=simSubMode==="ideal"&&freshInvoiceData.length>0&&(simPreset!=="custom_f"||(simDateFrom&&simDateTo));
+            const actualReady=simSubMode==="actual"&&freshInvoiceData.length>0&&DS_LIST.every(d=>dsStockData[d]&&Object.keys(dsStockData[d]).length>0)&&simSingleDate;
+            const canRun=idealReady||actualReady;
+            return(
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <button disabled={!canRun||freshSimLoading} onClick={()=>{
+                  if(!canRun)return;
+                  setFreshSimLoading(true);
+                  setFreshSimResults({tool:[],ovr:[],actual:[]});
+                  const worker=new Worker(new URL("./simWorker.js",import.meta.url));
+                  if(simSubMode==="actual"){
+                    const openingStock={};
+                    DS_LIST.forEach(dsId=>{openingStock[dsId]=dsStockData[dsId]||{};});
+                    worker.onmessage=({data})=>{setFreshSimResults(prev=>({...prev,actual:data.actual}));setFreshSimLoading(false);worker.terminate();};
+                    worker.onerror=()=>{setFreshSimLoading(false);worker.terminate();};
+                    worker.postMessage({type:"actual",invoiceData:freshInvoiceData,results,openingStock,singleDate:simSingleDate});
+                  } else {
+                    let fd=freshDates;
+                    if(simPreset!=="custom_f"){const n=parseInt(simPreset.replace("_f","").slice(1));fd=freshDates.slice(-n);}
+                    else if(simDateFrom&&simDateTo) fd=freshDates.filter(d=>d>=simDateFrom&&d<=simDateTo);
+                    const simDatesSet=new Set(fd);
+                    const slimInvoice=freshInvoiceData.filter(r=>simDatesSet.has(r.date)).map(r=>({date:r.date,sku:r.sku,ds:r.ds,qty:r.qty}));
+                    worker.onmessage=({data})=>{setFreshSimResults(prev=>({...prev,tool:data.tool,ovr:data.ovr}));setFreshSimLoading(false);worker.terminate();};
+                    worker.onerror=()=>{setFreshSimLoading(false);worker.terminate();};
+                    worker.postMessage({invoiceData:slimInvoice,results,overrides:{},simDates:fd});
+                  }
+                }} style={{background:canRun&&!freshSimLoading?HR.yellow:"#E5E5E5",color:canRun&&!freshSimLoading?HR.black:"#999",border:"none",padding:"8px 20px",borderRadius:7,cursor:canRun&&!freshSimLoading?"pointer":"not-allowed",fontWeight:800,fontSize:12}}>
+                  {freshSimLoading?"⚡ Running…":"▶ Run Simulation"}
+                </button>
+                {!canRun && <span style={{fontSize:11,color:HR.muted}}>
+                  {simSubMode==="ideal"?"Upload invoice CSV to run":"Upload invoice CSV + all 5 DS stock CSVs + pick a date to run"}
+                </span>}
+              </div>
+            );
+          })()}
+
+          {/* Loading state */}
+          {freshSimLoading && (
+            <div style={{textAlign:"center",padding:40}}>
+              <div style={{fontSize:32,marginBottom:8}}>⚡</div>
+              <div style={{color:HR.yellowDark,fontWeight:700,fontSize:14}}>Running Simulation…</div>
+            </div>
+          )}
+
+          {/* Ideal Restock results */}
+          {!freshSimLoading && simSubMode==="ideal" && freshSimResults.tool.length>0 && (
+            <SimOrgLevel
+              toolRows={freshSimResults.tool.filter(r=>dsFilter==="All"||r.dsId===dsFilter)}
+              ovrRows={freshSimResults.tool.filter(r=>dsFilter==="All"||r.dsId===dsFilter)}
+              ovrRowsFull={freshSimResults.tool}
+              winRows={freshInvoiceData.filter(r=>dsFilter==="All"||r.ds===dsFilter)}
+              skuMeta={skuMeta}
+              hasOverrides={false}
+              priceData={priceData}
+              totInst={freshInvoiceData.filter(r=>dsFilter==="All"||r.ds===dsFilter).length}
+              totSkus={new Set(freshInvoiceData.filter(r=>dsFilter==="All"||r.ds===dsFilter).map(r=>r.sku)).size}
+              onDrillCategory={cat=>setDrill({type:"category",value:cat,category:cat})}
+            />
+          )}
+
+          {/* Actual Stock results placeholder — implemented in Task 5 */}
+          {!freshSimLoading && simSubMode==="actual" && freshSimResults.actual.length>0 && (
+            <div style={{...S.card,padding:16,textAlign:"center",color:HR.muted,fontSize:12}}>
+              {freshSimResults.actual.length} OOS instances found — root cause display coming in Task 5
+            </div>
+          )}
+
+        </div>
       )}
     </div>
   );
