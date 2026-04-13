@@ -117,14 +117,15 @@ Cluster analysis: 65% OOS reduction (134→46) via cross-DS fulfillment. Cluster
 
 ## To-Do (Active)
 
-### 1. OOS Simulation Redesign
-Replace "Last N days" slider with **custom date range picker** on existing Mode 1 (uses already-loaded invoice data).
+### 1. OOS Simulation Redesign ⚠️ Built — pending full local test before push
+**Built but not fully tested.** Local commits exist, not pushed. Test before pushing:
+- Loaded Data mode: preset bar (L45D→L3D), custom date picker, drill-down navigation
+- Fresh CSV / Ideal Restock: upload invoice CSV, run, drill into category/brand, breadcrumbs
+- Fresh CSV / Actual Stock: upload invoice + 5 DS CSVs, pick date, run, root cause strip + filter
 
-Add new capability: **Simulate with fresh invoice CSV** (temporary — does not replace loaded data):
-- Upload invoice CSV for any period
-- Choose simulation type:
-  - **Ideal Restock:** Stock starts at Max each day. Any date range. Shows OOS breakdown.
-  - **Actual Stock (single day only):** Upload 5 stock CSVs (DS01–DS05, one per DS, same Inventory Summary format). Simulate that one day's orders against actual opening stock. Shows OOS with root cause classification (Ops Failure / Tool Failure / Unstocked / Could Have Been Saved). DC not included in simulation.
+Original spec:
+- Replace "Last N days" slider with preset bar + date picker on existing Loaded Data mode
+- Fresh CSV mode (temporary, doesn't replace loaded data): Ideal Restock (any date range, OOS breakdown) and Actual Stock (single day, 5 DS stock CSVs, root cause classification: Ops Failure / Tool Failure / Unstocked / Could Have Been Saved)
 
 ### 2. Polish Stock Health Tab
 Make it more rich and actionable (specifics TBD).
