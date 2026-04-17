@@ -66,9 +66,21 @@
 <h1>Category Network Analysis</h1>
 <p class="subtitle">Basket composition, SKU demand profiling, DS stocking & capacity recommendations</p>
 
-<div class="upload-box" id="uploadBox">
-  <label>Upload Invoice CSV <input type="file" accept=".csv" id="csvInput"/></label>
-  <div class="info">Same CSV you upload to the IMS tool (Invoice Date, Shopify Order, SKU, Category Name, Quantity, Location)</div>
+<div id="uploadBox">
+  <div class="upload-box" style="margin-bottom:8px">
+    <label>⬆ Upload Invoice CSV <input type="file" accept=".csv" id="csvInput"/></label>
+    <div class="info">Same CSV you upload to the IMS tool (Invoice Date, Shopify Order, SKU, Category Name, Quantity, Location)</div>
+  </div>
+  <div style="background:#fff;border:1px solid #e5e5d0;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center">
+    <div>
+      <div style="font-weight:700;font-size:12px;margin-bottom:2px">SKU Master <span style="font-size:10px;color:#888;font-weight:400">(optional — enables active SKU counts)</span></div>
+      <div id="skuMasterStatus" style="font-size:11px;color:#888">Not loaded</div>
+    </div>
+    <label style="background:#16a34a;color:#fff;padding:5px 12px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap">
+      ⬆ Upload SKU Master
+      <input type="file" accept=".csv" id="skuMasterInput" style="display:none"/>
+    </label>
+  </div>
 </div>
 
 <div id="results">
@@ -95,72 +107,19 @@
       <div class="cat-label">Click to select: <span class="tag tag-green" style="font-size:9px">Primary</span> → <span class="tag tag-amber" style="font-size:9px">Secondary</span> → Off</div>
       <div class="cat-tags" id="catTags"></div>
     </div>
-    <div style="display:flex;gap:8px;align-items:center;font-size:11px;color:#888;margin-top:6px">
+    <div style="display:flex;gap:8px;align-items:center;font-size:11px;color:#888;margin-top:6px;flex-wrap:wrap">
       <span><span class="tag tag-green">Primary</span> = categories you're analyzing (e.g. Plywood, MDF)</span>
-      <span><span class="tag tag-amber">Secondary</span> = related category shown separately in basket (e.g. Fevicol)</span>
-      <span>Unselected = "Others" in basket composition</span>
+      <span><span class="tag tag-amber">Secondary</span> = related category shown separately in basket</span>
+      <span>Unselected = "Others"</span>
+    </div>
+    <div style="margin-top:10px">
+      <button id="btnRunBasket" onclick="runBasket()" disabled style="background:#E5E5E5;color:#999;border:none;padding:6px 18px;border-radius:6px;cursor:not-allowed;font-weight:800;font-size:12px">▶ Run Basket Analysis</button>
+      <span id="basketStatus" style="font-size:11px;color:#16a34a;font-weight:600;margin-left:8px"></span>
     </div>
   </div>
 
-  <!-- Config Panel -->
-  <div class="config-panel">
-    <h3>Thresholds & Capacity <span id="cfgDsLabel" style="font-size:11px;color:#0077A8;font-weight:700;margin-left:8px;background:#EAF9FF;padding:2px 8px;border-radius:4px">DS01</span></h3>
-    <div class="config-row">
-      <div class="config-item">
-        <label>Running SKU NZD</label>
-        <input type="number" id="cfgTier1NZD" value="10" min="1" max="45" step="1"/>
-        <div class="hint">Min NZD to stock at DS</div>
-      </div>
-      <div class="config-item">
-        <label>Fallback NZD</label>
-        <input type="number" id="cfgTier2NZD" value="2" min="1" max="20" step="1"/>
-        <div class="hint">Below this → Super Slow</div>
-      </div>
-      <div class="config-item">
-        <label>Min Cover Days</label>
-        <input type="number" id="cfgMinCoverDays" value="1.5" min="0.5" max="5" step="0.5"/>
-        <div class="hint">Reorder trigger (Min)</div>
-      </div>
-      <div class="config-item">
-        <label>Max Cover Days</label>
-        <input type="number" id="cfgCoverDays" value="3" min="1" max="7" step="1"/>
-        <div class="hint">Stock target (Max)</div>
-      </div>
-      <div class="config-item">
-        <label>Buffer %</label>
-        <input type="number" id="cfgBufferPct" value="20" min="0" max="100" step="5"/>
-        <div class="hint">Safety margin on Max</div>
-      </div>
-      <div class="config-item">
-        <label>Laminate Threshold (mm)</label>
-        <input type="number" id="cfgLaminateThreshold" value="1" min="0.5" max="3" step="0.5"/>
-        <div class="hint">≤ this = Laminate (excluded from capacity)</div>
-      </div>
-      <div class="config-item">
-        <label>Thin Bin Capacity (≤6mm)</label>
-        <input type="number" id="cfgThinCap" value="60" min="1" max="500" step="1"/>
-        <div class="hint">Max units in thin bin</div>
-      </div>
-      <div class="config-item">
-        <label>Thick Vertical Capacity (>6mm)</label>
-        <input type="number" id="cfgThickCap" value="150" min="1" max="500" step="1"/>
-        <div class="hint">Max units stacked vertically</div>
-      </div>
-      <div class="config-item">
-        <label>Fallback Threshold Pctl</label>
-        <input type="number" id="cfgThresholdPctl" value="75" min="50" max="99" step="5"/>
-        <div class="hint">Order qty above this percentile → fallback</div>
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
-      <button id="btnRun" onclick="runAnalysis()" disabled style="background:#E5E5E5;color:#999;border:none;padding:7px 20px;border-radius:6px;cursor:not-allowed;font-weight:800;font-size:12px">▶ Run Analysis</button>
-      <button id="btnReset" onclick="resetDSConfig()" disabled style="background:#E5E5E5;color:#999;border:1px solid #ddd;padding:7px 16px;border-radius:6px;cursor:not-allowed;font-weight:700;font-size:12px">↩ Reset to Default</button>
-      <span id="cfgStatus" style="font-size:11px;color:#16a34a;font-weight:600"></span>
-    </div>
-  </div>
-
-  <!-- Phase 1: Basket Analysis -->
-  <h2 id="phase1Title">Phase 1 — Basket Composition</h2>
+  <!-- Basket Analysis -->
+  <h2 id="phase1Title">Basket Composition</h2>
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px" class="section" id="summaryCards"></div>
   <div class="grid2 section">
     <div class="card"><h3>Order Composition</h3><div class="chart-wrap"><canvas id="chartComposition"></canvas></div></div>
@@ -168,13 +127,50 @@
   </div>
   <div class="highlight" id="basketInsight"></div>
 
-  <!-- Capacity Check -->
-  <h2>Capacity Check</h2>
-  <div class="card section" id="capacityCheck" style="padding:14px"></div>
+  <!-- Config Panel — below basket so you see demand context before tuning thresholds -->
+  <div class="config-panel">
+    <h3>Thresholds & Capacity <span id="cfgDsLabel" style="font-size:11px;color:#0077A8;font-weight:700;margin-left:8px;background:#EAF9FF;padding:2px 8px;border-radius:4px">DS01</span></h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:10px">
+      <div style="border:1px solid #FDE68A;border-radius:6px;padding:10px">
+        <div style="font-size:11px;font-weight:700;color:#92400E;margin-bottom:8px">Thick (&gt;6mm) — Vertical Storage</div>
+        <div class="config-row" style="flex-wrap:wrap;gap:8px">
+          <div class="config-item"><label>Running NZD</label><input type="number" id="cfgThickTier1NZD" value="10" min="1" max="45" step="1"/><div class="hint">Min NZD to stock</div></div>
+          <div class="config-item"><label>Fallback NZD</label><input type="number" id="cfgThickTier2NZD" value="2" min="1" max="20" step="1"/><div class="hint">Below → Super Slow</div></div>
+          <div class="config-item"><label>Min Cover Days</label><input type="number" id="cfgThickMinCoverDays" value="1.5" min="0.5" max="5" step="0.5"/><div class="hint">Reorder trigger</div></div>
+          <div class="config-item"><label>Max Cover Days</label><input type="number" id="cfgThickCoverDays" value="3" min="1" max="7" step="1"/><div class="hint">Stock target</div></div>
+          <div class="config-item"><label>Buffer %</label><input type="number" id="cfgThickBufferPct" value="20" min="0" max="100" step="5"/><div class="hint">Safety margin</div></div>
+          <div class="config-item"><label>Capacity (units)</label><input type="number" id="cfgThickCap" value="150" min="1" max="500" step="1"/><div class="hint">Vertical slots</div></div>
+        </div>
+      </div>
+      <div style="border:1px solid #BAE6FD;border-radius:6px;padding:10px">
+        <div style="font-size:11px;font-weight:700;color:#0077A8;margin-bottom:8px">Thin (≤6mm) — Bin Storage</div>
+        <div class="config-row" style="flex-wrap:wrap;gap:8px">
+          <div class="config-item"><label>Running NZD</label><input type="number" id="cfgThinTier1NZD" value="10" min="1" max="45" step="1"/><div class="hint">Min NZD to stock</div></div>
+          <div class="config-item"><label>Fallback NZD</label><input type="number" id="cfgThinTier2NZD" value="2" min="1" max="20" step="1"/><div class="hint">Below → Super Slow</div></div>
+          <div class="config-item"><label>Min Cover Days</label><input type="number" id="cfgThinMinCoverDays" value="1.5" min="0.5" max="5" step="0.5"/><div class="hint">Reorder trigger</div></div>
+          <div class="config-item"><label>Max Cover Days</label><input type="number" id="cfgThinCoverDays" value="3" min="1" max="7" step="1"/><div class="hint">Stock target</div></div>
+          <div class="config-item"><label>Buffer %</label><input type="number" id="cfgThinBufferPct" value="20" min="0" max="100" step="5"/><div class="hint">Safety margin</div></div>
+          <div class="config-item"><label>Capacity (units)</label><input type="number" id="cfgThinCap" value="60" min="1" max="500" step="1"/><div class="hint">Bin slots</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="config-row">
+      <div class="config-item"><label>Laminate Threshold (mm)</label><input type="number" id="cfgLaminateThreshold" value="1" min="0.5" max="3" step="0.5"/><div class="hint">≤ this = Laminate (excluded from capacity)</div></div>
+      <div class="config-item"><label>Fallback Threshold Pctl</label><input type="number" id="cfgThresholdPctl" value="75" min="50" max="99" step="5"/><div class="hint">Order qty above this → fallback</div></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+      <button id="btnRunStocking" onclick="runStocking()" disabled style="background:#E5E5E5;color:#999;border:none;padding:7px 20px;border-radius:6px;cursor:not-allowed;font-weight:800;font-size:12px">▶ Run SKU Stocking</button>
+      <button id="btnReset" onclick="resetDSConfig()" disabled style="background:#E5E5E5;color:#999;border:1px solid #ddd;padding:7px 16px;border-radius:6px;cursor:not-allowed;font-weight:700;font-size:12px">↩ Reset to Default</button>
+      <span id="cfgStatus" style="font-size:11px;color:#16a34a;font-weight:600"></span>
+    </div>
+  </div>
 
-  <!-- SKU Tables -->
+  <!-- Thickness diagnostic -->
+  <div id="skuDiagnostic" style="padding:4px 0 8px"></div>
+
+  <!-- SKU Tables (capacity cards embedded above each) -->
   <h2 id="skuTablesTitle">SKU Stocking Recommendation</h2>
-  <div class="grid3 section" id="skuSummaryCards"></div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px" class="section" id="skuSummaryCards"></div>
   <div class="section" id="tableThick"></div>
   <div class="section" id="tableThin"></div>
 
@@ -247,12 +243,36 @@ function thicknessCategory(mm, laminateThreshold) {
 
 // ── Per-DS configs ──
 const DS_DEFAULTS = {
-  DS01: { tier1NZD: 10, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
-  DS02: { tier1NZD: 10, tier2NZD: 2, minCoverDays: 1, coverDays: 2, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
-  DS03: { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
-  DS04: { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
-  DS05: { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
-  ALL:  { tier1NZD: 8, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
+  DS01: {
+    thick: { tier1NZD: 10, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 150 },
+    thin:  { tier1NZD: 10, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 60 },
+    shared: { laminateThreshold: 1, thresholdPctl: 75 }, fallbackLabel: "Om Timber",
+  },
+  DS02: {
+    thick: { tier1NZD: 10, tier2NZD: 2, minCoverDays: 1, coverDays: 2, bufferPct: 20, capacity: 150 },
+    thin:  { tier1NZD: 10, tier2NZD: 2, minCoverDays: 1, coverDays: 2, bufferPct: 20, capacity: 60 },
+    shared: { laminateThreshold: 1, thresholdPctl: 75 }, fallbackLabel: "DC (Rampura)",
+  },
+  DS03: {
+    thick: { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 150 },
+    thin:  { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 60 },
+    shared: { laminateThreshold: 1, thresholdPctl: 75 }, fallbackLabel: "DC",
+  },
+  DS04: {
+    thick: { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 150 },
+    thin:  { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 60 },
+    shared: { laminateThreshold: 1, thresholdPctl: 75 }, fallbackLabel: "DC",
+  },
+  DS05: {
+    thick: { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 150 },
+    thin:  { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 60 },
+    shared: { laminateThreshold: 1, thresholdPctl: 75 }, fallbackLabel: "DC",
+  },
+  ALL: {
+    thick: { tier1NZD: 8, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 150 },
+    thin:  { tier1NZD: 8, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, capacity: 60 },
+    shared: { laminateThreshold: 1, thresholdPctl: 75 }, fallbackLabel: "DC",
+  },
 };
 // Load saved configs from localStorage, falling back to defaults for any missing keys
 const dsConfigs = JSON.parse(JSON.stringify(DS_DEFAULTS));
@@ -265,31 +285,48 @@ try {
 
 function loadDSConfig(ds) {
   const cfg = dsConfigs[ds] || dsConfigs.ALL;
-  document.getElementById("cfgTier1NZD").value = cfg.tier1NZD;
-  document.getElementById("cfgTier2NZD").value = cfg.tier2NZD;
-  document.getElementById("cfgMinCoverDays").value = cfg.minCoverDays;
-  document.getElementById("cfgCoverDays").value = cfg.coverDays;
-  document.getElementById("cfgBufferPct").value = cfg.bufferPct;
-  document.getElementById("cfgThinCap").value = cfg.thinCap;
-  document.getElementById("cfgThickCap").value = cfg.thickCap;
-  document.getElementById("cfgLaminateThreshold").value = cfg.laminateThreshold;
-  document.getElementById("cfgThresholdPctl").value = cfg.thresholdPctl || 75;
+  const t = cfg.thick, n = cfg.thin, s = cfg.shared;
+  document.getElementById("cfgThickTier1NZD").value = t.tier1NZD;
+  document.getElementById("cfgThickTier2NZD").value = t.tier2NZD;
+  document.getElementById("cfgThickMinCoverDays").value = t.minCoverDays;
+  document.getElementById("cfgThickCoverDays").value = t.coverDays;
+  document.getElementById("cfgThickBufferPct").value = t.bufferPct;
+  document.getElementById("cfgThickCap").value = t.capacity;
+  document.getElementById("cfgThinTier1NZD").value = n.tier1NZD;
+  document.getElementById("cfgThinTier2NZD").value = n.tier2NZD;
+  document.getElementById("cfgThinMinCoverDays").value = n.minCoverDays;
+  document.getElementById("cfgThinCoverDays").value = n.coverDays;
+  document.getElementById("cfgThinBufferPct").value = n.bufferPct;
+  document.getElementById("cfgThinCap").value = n.capacity;
+  document.getElementById("cfgLaminateThreshold").value = s.laminateThreshold;
+  document.getElementById("cfgThresholdPctl").value = s.thresholdPctl;
   const label = document.getElementById("cfgDsLabel");
   if (label) label.textContent = ds;
-  updateButtons();
+  updateRunButtons();
 }
 
 function readDSConfig() {
   return {
-    tier1NZD: parseInt(document.getElementById("cfgTier1NZD").value) || 6,
-    tier2NZD: parseInt(document.getElementById("cfgTier2NZD").value) || 2,
-    minCoverDays: parseFloat(document.getElementById("cfgMinCoverDays").value) || 1.5,
-    coverDays: parseInt(document.getElementById("cfgCoverDays").value) || 3,
-    bufferPct: parseInt(document.getElementById("cfgBufferPct").value) || 0,
-    thinCap: parseInt(document.getElementById("cfgThinCap").value) || 60,
-    thickCap: parseInt(document.getElementById("cfgThickCap").value) || 150,
-    laminateThreshold: parseFloat(document.getElementById("cfgLaminateThreshold").value) || 1,
-    thresholdPctl: parseInt(document.getElementById("cfgThresholdPctl").value) || 75,
+    thick: {
+      tier1NZD: parseInt(document.getElementById("cfgThickTier1NZD").value) || 6,
+      tier2NZD: parseInt(document.getElementById("cfgThickTier2NZD").value) || 2,
+      minCoverDays: parseFloat(document.getElementById("cfgThickMinCoverDays").value) || 1.5,
+      coverDays: parseInt(document.getElementById("cfgThickCoverDays").value) || 3,
+      bufferPct: parseInt(document.getElementById("cfgThickBufferPct").value) || 0,
+      capacity: parseInt(document.getElementById("cfgThickCap").value) || 150,
+    },
+    thin: {
+      tier1NZD: parseInt(document.getElementById("cfgThinTier1NZD").value) || 6,
+      tier2NZD: parseInt(document.getElementById("cfgThinTier2NZD").value) || 2,
+      minCoverDays: parseFloat(document.getElementById("cfgThinMinCoverDays").value) || 1.5,
+      coverDays: parseInt(document.getElementById("cfgThinCoverDays").value) || 3,
+      bufferPct: parseInt(document.getElementById("cfgThinBufferPct").value) || 0,
+      capacity: parseInt(document.getElementById("cfgThinCap").value) || 60,
+    },
+    shared: {
+      laminateThreshold: parseFloat(document.getElementById("cfgLaminateThreshold").value) || 1,
+      thresholdPctl: parseInt(document.getElementById("cfgThresholdPctl").value) || 75,
+    },
   };
 }
 
@@ -299,27 +336,50 @@ function saveDSConfig(ds) {
 }
 
 function resetDSConfig() {
-  const def = DS_DEFAULTS[dsFilter] || DS_DEFAULTS.ALL;
-  dsConfigs[dsFilter] = JSON.parse(JSON.stringify(def));
+  dsConfigs[dsFilter] = JSON.parse(JSON.stringify(DS_DEFAULTS[dsFilter] || DS_DEFAULTS.ALL));
   loadDSConfig(dsFilter);
-  updateButtons();
+  markStockingDirty();
 }
 
-let lastRunConfig = null; // tracks what was last run
+// ── Dirty flags — track what needs re-running ──
+let basketDirty = true;
+let stockingDirty = true;
+let lastStockingCfg = null; // JSON of last stocking config run
 
-function updateButtons() {
+function markBasketDirty() {
+  basketDirty = true;
+  stockingDirty = true; // stocking always needs re-run if basket inputs change
+  document.getElementById("basketStatus").textContent = "";
+  document.getElementById("cfgStatus").textContent = "";
+  updateRunButtons();
+}
+function markStockingDirty() {
+  stockingDirty = true;
+  document.getElementById("cfgStatus").textContent = "";
+  updateRunButtons();
+}
+
+function updateRunButtons() {
   const current = JSON.stringify(readDSConfig());
-  const hasChanges = !lastRunConfig || current !== lastRunConfig;
   const def = JSON.stringify(DS_DEFAULTS[dsFilter] || DS_DEFAULTS.ALL);
   const isDefault = current === def;
-  const btnRun = document.getElementById("btnRun");
-  const btnReset = document.getElementById("btnReset");
-  if (btnRun) {
-    btnRun.disabled = !hasChanges;
-    btnRun.style.background = hasChanges ? "#F5D77A" : "#E5E5E5";
-    btnRun.style.color = hasChanges ? "#1a1a1a" : "#999";
-    btnRun.style.cursor = hasChanges ? "pointer" : "not-allowed";
+  const hasData = allRows.length > 0 && primaryCats.size > 0;
+
+  const bBtn = document.getElementById("btnRunBasket");
+  if (bBtn) {
+    bBtn.disabled = !basketDirty || !hasData;
+    bBtn.style.background = (basketDirty && hasData) ? "#F5D77A" : "#E5E5E5";
+    bBtn.style.color = (basketDirty && hasData) ? "#1a1a1a" : "#999";
+    bBtn.style.cursor = (basketDirty && hasData) ? "pointer" : "not-allowed";
   }
+  const sBtn = document.getElementById("btnRunStocking");
+  if (sBtn) {
+    sBtn.disabled = !stockingDirty || !hasData;
+    sBtn.style.background = (stockingDirty && hasData) ? "#F5D77A" : "#E5E5E5";
+    sBtn.style.color = (stockingDirty && hasData) ? "#1a1a1a" : "#999";
+    sBtn.style.cursor = (stockingDirty && hasData) ? "pointer" : "not-allowed";
+  }
+  const btnReset = document.getElementById("btnReset");
   if (btnReset) {
     btnReset.disabled = isDefault;
     btnReset.style.background = isDefault ? "#E5E5E5" : "#FEE2E2";
@@ -328,6 +388,40 @@ function updateButtons() {
     btnReset.style.cursor = isDefault ? "not-allowed" : "pointer";
   }
 }
+
+// ── SKU Master ──
+let skuMasterData = []; // { sku, name, category, brand, status }
+
+function parseSKUMasterCSV(text) {
+  const rows = parseCSV(text);
+  return rows.map(r => ({
+    sku: (r["SKU"] || "").trim(),
+    name: (r["Name"] || "").trim(),
+    category: (r["Category"] || r["Category Name"] || "").trim(),
+    brand: (r["Brand"] || "").trim(),
+    status: (r["Status"] || "Active").trim(),
+  })).filter(r => r.sku);
+}
+
+function renderSKUMasterCard() {
+  const el = document.getElementById("skuMasterStatus");
+  if (!el) return;
+  if (!skuMasterData.length) {
+    el.textContent = "Not loaded — upload to enable active SKU counts per category";
+    el.style.color = "#888";
+  } else {
+    const activeCount = skuMasterData.filter(s => s.status.toLowerCase() === "active").length;
+    el.textContent = `${activeCount.toLocaleString()} active SKUs loaded`;
+    el.style.color = "#16a34a";
+  }
+}
+
+(function loadSKUMasterFromStorage() {
+  try {
+    const saved = localStorage.getItem("hrSkuMaster");
+    if (saved) { skuMasterData = JSON.parse(saved); renderSKUMasterCard(); }
+  } catch(e) {}
+})();
 
 // ── State ──
 let allRows = [];
@@ -361,60 +455,19 @@ function buildCatTags() {
         primaryCats.add(cat);
       }
       buildCatTags();
-      lastRunConfig = null;
-      document.getElementById("cfgStatus").textContent = "";
-      updateButtons();
+      markBasketDirty();
     });
   });
 }
 
 // ── Main Analysis ──
-function runAnalysis() {
-  const tier1NZD = parseInt(document.getElementById("cfgTier1NZD").value) || 6;
-  const tier2NZD = parseInt(document.getElementById("cfgTier2NZD").value) || 2;
-  const minCoverDays = parseFloat(document.getElementById("cfgMinCoverDays").value) || 1.5;
-  const coverDays = parseInt(document.getElementById("cfgCoverDays").value) || 3;
-  const bufferPct = parseInt(document.getElementById("cfgBufferPct").value) || 0;
-  const thinCap = parseInt(document.getElementById("cfgThinCap").value) || 60;
-  const thickCap = parseInt(document.getElementById("cfgThickCap").value) || 150;
-  const laminateThreshold = parseFloat(document.getElementById("cfgLaminateThreshold").value) || 1;
-  const thresholdPctl = parseInt(document.getElementById("cfgThresholdPctl").value) || 75;
-
-  // Save config and update buttons
-  saveDSConfig(dsFilter);
-  lastRunConfig = JSON.stringify(readDSConfig());
-  updateButtons();
-  document.getElementById("cfgStatus").textContent = "✓ Analysis up to date";
-
-  const isPrimary = cat => primaryCats.has(cat);
-  const isSecondary = cat => secondaryCats.has(cat);
-  const primaryLabel = primaryCats.size ? [...primaryCats].join(", ") : "Primary";
-  const secondaryLabel = secondaryCats.size ? [...secondaryCats].join(", ") : "Secondary";
-
-  if (!primaryCats.size) {
-    document.getElementById("summaryCards").innerHTML = '<div class="no-data" style="grid-column:1/-1">Select at least one <span class="tag tag-green">Primary</span> category above to begin analysis</div>';
-    document.getElementById("basketInsight").innerHTML = "";
-    document.getElementById("skuSummaryCards").innerHTML = "";
-    document.querySelector("#skuTable tbody").innerHTML = "";
-    document.querySelector("#thinSkuTable tbody").innerHTML = "";
-    document.getElementById("thinSkuSection").style.display = "none";
-    document.getElementById("capacityCheck").innerHTML = "";
-    if (chartComp) { chartComp.destroy(); chartComp = null; }
-    if (chartCoCat) { chartCoCat.destroy(); chartCoCat = null; }
-    if (chartQtyDist) { chartQtyDist.destroy(); chartQtyDist = null; }
-    return;
-  }
-
-  // Update dynamic titles
-  document.getElementById("phase1Title").textContent = `Phase 1 — Basket Composition: ${primaryLabel}`;
-
-  // Filter by status, period, DS
+// ── Shared data preparation ──
+function prepareRows() {
   const validStatus = new Set(["Closed", "Overdue"]);
   const base = allRows.filter(r => validStatus.has(r["Invoice Status"]));
   const allDates = [...new Set(base.map(r => r["Invoice Date"]))].sort();
   const periodDates = new Set(allDates.slice(-period));
   const periodRows = base.filter(r => periodDates.has(r["Invoice Date"]));
-
   const withDS = periodRows.map(r => ({
     ...r,
     ds: (r["Line Item Location Name"] || "").trim().split(/\s+/)[0].toUpperCase(),
@@ -425,17 +478,34 @@ function runAnalysis() {
     order: r["Shopify Order"] || r["Invoice Number"] || "",
     date: r["Invoice Date"] || "",
   }));
-
   const dsRows = dsFilter === "ALL"
     ? withDS.filter(r => ["DS01","DS02","DS03","DS04","DS05"].includes(r.ds))
     : withDS.filter(r => r.ds === dsFilter);
-
   const dsDates = [...new Set(dsRows.map(r => r.date))].sort();
   document.getElementById("periodRange").textContent = dsDates.length
-    ? `${dsDates[0]} → ${dsDates[dsDates.length - 1]} (${dsDates.length}D)`
+    ? `${dsDates[0]} → ${dsDates[dsDates.length-1]} (${dsDates.length}D)`
     : "No data";
+  return { withDS, dsRows, periodDates };
+}
 
-  // ── Phase 1: Basket Analysis ──
+function runBasket(silent = false) {
+  if (!primaryCats.size) {
+    document.getElementById("summaryCards").innerHTML = '<div class="no-data" style="grid-column:1/-1">Select at least one <span class="tag tag-green">Primary</span> category above to begin analysis</div>';
+    document.getElementById("basketInsight").innerHTML = "";
+    if (chartComp) { chartComp.destroy(); chartComp = null; }
+    if (chartCoCat) { chartCoCat.destroy(); chartCoCat = null; }
+    return;
+  }
+
+  const { dsRows } = prepareRows();
+  const isPrimary = cat => primaryCats.has(cat);
+  const isSecondary = cat => secondaryCats.has(cat);
+  const primaryLabel = [...primaryCats].join(", ");
+  const secondaryLabel = [...secondaryCats].join(", ");
+
+  document.getElementById("phase1Title").textContent = `Basket Composition: ${primaryLabel}`;
+
+  // ── Basket Analysis ──
   const orderMap = {};
   dsRows.forEach(r => {
     if (!r.order) return;
@@ -531,7 +601,32 @@ function runAnalysis() {
     ${secondaryCats.size ? ` <strong>${secondaryLabel}</strong> appears in ${primarySecondaryOrders} orders with ${primaryLabel} (${primaryOrders>0?((primarySecondaryOrders/primaryOrders)*100).toFixed(0):0}%).` : ""}
   `;
 
-  // ── Phase 2: SKU Profiling ──
+  basketDirty = false;
+  if (!silent) document.getElementById("basketStatus").textContent = "✓ Up to date";
+  updateRunButtons();
+}
+
+function runStocking(silent = false) {
+  if (!primaryCats.size) return;
+
+  const rawCfg = readDSConfig();
+  const thickCfg = rawCfg.thick;
+  const thinCfg = rawCfg.thin;
+  const sharedCfg = rawCfg.shared;
+  const laminateThreshold = sharedCfg.laminateThreshold;
+  const thresholdPctl = sharedCfg.thresholdPctl;
+  const fallbackLabel = (dsConfigs[dsFilter] || DS_DEFAULTS[dsFilter] || DS_DEFAULTS.ALL).fallbackLabel || "DC";
+
+  saveDSConfig(dsFilter);
+
+  const { withDS, dsRows } = prepareRows();
+  const isPrimary = cat => primaryCats.has(cat);
+  const primaryLabel = [...primaryCats].join(", ");
+
+  // Primary lines at this DS in this period
+  const primaryLines = dsRows.filter(r => isPrimary(r.cat));
+
+  // ── Build SKU map from invoice data ──
   const skuMap = {};
   primaryLines.forEach(r => {
     if (!r.sku) return;
@@ -542,40 +637,67 @@ function runAnalysis() {
     if (r.order) skuMap[r.sku].orderIds.add(r.order);
   });
 
+  // ── Merge with SKU Master: add 0-NZD active SKUs ──
+  const activeMasterSkus = skuMasterData.filter(s =>
+    (s.status || "").toLowerCase() === "active" && isPrimary(s.category)
+  );
+  // Add master SKUs not seen in invoice data
+  activeMasterSkus.forEach(ms => {
+    if (!skuMap[ms.sku]) {
+      skuMap[ms.sku] = { sku: ms.sku, name: ms.name, dates: new Set(), orderQtys: [], dayQtyMap: {}, orderIds: new Set() };
+    }
+  });
+  const totalActiveMasterCount = new Set(
+    activeMasterSkus.filter(s => {
+      if (s.sku.toUpperCase().includes("LAM")) return false;
+      const mm = inferThickness(s.name);
+      return thicknessCategory(mm, laminateThreshold) !== "Laminate";
+    }).map(s => s.sku)
+  ).size;
+
   const skuList = Object.values(skuMap).map(s => {
-    const mm = inferThickness(s.name);
-    const dailyQtys = Object.values(s.dayQtyMap); // array of daily totals
+    // Use name from master if available
+    const masterEntry = skuMasterData.find(m => m.sku === s.sku);
+    const name = masterEntry?.name || s.name;
+    const mm = inferThickness(name);
+    const dailyQtys = Object.values(s.dayQtyMap);
     const dailyMedian = dailyQtys.length > 0 ? Math.ceil(median(dailyQtys)) : 0;
     const dailyP75 = dailyQtys.length > 0 ? Math.ceil(percentile(dailyQtys, 75)) : 0;
-    const dailyAvg = dailyQtys.length > 0 ? +(dailyQtys.reduce((a,b)=>a+b,0) / dailyQtys.length).toFixed(1) : 0;
-    const minQty = Math.ceil(dailyMedian * minCoverDays);
-    const maxQty = Math.ceil(dailyMedian * coverDays * (1 + bufferPct/100));
-    const orderThreshold = Math.ceil(percentile(s.orderQtys, thresholdPctl));
+    // Laminate: SKU ID contains "LAM" (primary) OR mm ≤ threshold
+    const isLam = s.sku.toUpperCase().includes("LAM") || thicknessCategory(mm, laminateThreshold) === "Laminate";
+    const thicknessCat = isLam ? "Laminate" : thicknessCategory(mm, laminateThreshold);
+    const skuTypeCfg = thicknessCat === "Thick" ? thickCfg : thinCfg;
+    const minQty = Math.ceil(dailyMedian * skuTypeCfg.minCoverDays);
+    const maxQty = Math.ceil(dailyMedian * skuTypeCfg.coverDays * (1 + skuTypeCfg.bufferPct/100));
+    const orderThreshold = s.orderQtys.length > 0 ? Math.ceil(percentile(s.orderQtys, thresholdPctl)) : 0;
     return {
-      sku: s.sku, name: s.name,
+      sku: s.sku, name,
       nzd: s.dates.size, orders: s.orderIds.size,
-      dailyMedian, dailyP75, dailyAvg,
-      minQty, maxQty,
-      orderMedian: Math.ceil(median(s.orderQtys)),
-      orderThreshold,
-      orderP90: Math.ceil(percentile(s.orderQtys, Math.min(thresholdPctl + 10, 99))),
-      orderMax: Math.max(...s.orderQtys),
+      dailyMedian, dailyP75,
+      minQty, maxQty, orderThreshold,
+      orderMax: s.orderQtys.length > 0 ? Math.max(...s.orderQtys) : 0,
+      orderMedian: s.orderQtys.length > 0 ? Math.ceil(median(s.orderQtys)) : 0,
       thicknessMM: mm,
-      thicknessCat: thicknessCategory(mm, laminateThreshold),
+      thicknessCat,
       orderQtys: s.orderQtys,
       dayQtyMap: s.dayQtyMap,
     };
   }).sort((a, b) => b.nzd - a.nzd);
 
-  const tier1 = skuList.filter(s => s.nzd >= tier1NZD);
-  const tier2 = skuList.filter(s => s.nzd >= tier2NZD && s.nzd < tier1NZD);
-  const tier3 = skuList.filter(s => s.nzd < tier2NZD);
-  const thinTier1 = tier1.filter(s => s.thicknessCat === "Thin");
-  const thickTier1 = tier1.filter(s => s.thicknessCat === "Thick");
-  const laminateTier1 = tier1.filter(s => s.thicknessCat === "Laminate");
+  // Exclude laminates from all counts and tables — stocked separately
+  const laminateSkus = skuList.filter(s => s.thicknessCat === "Laminate");
+  const skuListNoLam = skuList.filter(s => s.thicknessCat !== "Laminate");
 
-  // Store globally for click handler
-  // Build full calendar spanning the selected period (fills gaps between first & last date)
+  const skuTierOf = s => {
+    const cfg = s.thicknessCat === "Thick" ? thickCfg : thinCfg;
+    if (s.nzd >= cfg.tier1NZD) return 1;
+    if (s.nzd >= cfg.tier2NZD) return 2;
+    return 3;
+  };
+  const thickRunning = skuList.filter(s => s.thicknessCat === "Thick" && skuTierOf(s) === 1);
+  const thinRunning  = skuList.filter(s => s.thicknessCat === "Thin"  && skuTierOf(s) === 1);
+
+  // ── Build full calendar for SKU detail charts ──
   const allPeriodSorted = [...new Set(withDS.map(r => r.date))].sort().slice(-period);
   const fullCalendar = [];
   if (allPeriodSorted.length > 0) {
@@ -585,75 +707,115 @@ function runAnalysis() {
       fullCalendar.push(d.toISOString().slice(0, 10));
     }
   }
-
   window._skuData = skuList;
-  window._skuConfig = { minCoverDays, coverDays, bufferPct, tier1NZD, tier2NZD, thresholdPctl };
+  window._skuConfig = { thickCfg, thinCfg, thresholdPctl };
   window._periodDates = fullCalendar;
 
-  // Summary cards
+  // ── 4-card summary ──
+  const skusWithSales = skuListNoLam.filter(s => s.nzd > 0).length;
+  const totalActive = totalActiveMasterCount || skusWithSales;
+
+  // Active totals by thickness from master (for % denominators)
+  const masterThickSet = new Set(activeMasterSkus.filter(s => {
+    if (s.sku.toUpperCase().includes("LAM")) return false;
+    const mm = inferThickness(s.name);
+    return thicknessCategory(mm, laminateThreshold) === "Thick";
+  }).map(s => s.sku));
+  const masterThinSet = new Set(activeMasterSkus.filter(s => {
+    if (s.sku.toUpperCase().includes("LAM")) return false;
+    const mm = inferThickness(s.name);
+    const cat = thicknessCategory(mm, laminateThreshold);
+    return cat === "Thin" || cat === "Unknown";
+  }).map(s => s.sku));
+  const totalActiveThick = masterThickSet.size;
+  const totalActiveThin = masterThinSet.size;
+
+  // Tier counts split by thickness
+  const tierSplit = (tier) => {
+    const thick = skuListNoLam.filter(s => s.thicknessCat === "Thick" && skuTierOf(s) === tier).length;
+    const thin  = skuListNoLam.filter(s => s.thicknessCat !== "Thick" && skuTierOf(s) === tier).length;
+    return { thick, thin, total: thick + thin };
+  };
+  const running   = tierSplit(1);
+  const fallback  = tierSplit(2);
+  const superSlow = tierSplit(3);
+  const p = (n, d) => d > 0 ? `${((n/d)*100).toFixed(0)}%` : "—";
+
+  const breakdown = (t, f) =>
+    `Thick: ${t.thick} (${p(t.thick, totalActiveThick)} of ${totalActiveThick}) · Thin: ${t.thin} (${p(t.thin, totalActiveThin)} of ${totalActiveThin})${f ? " · "+f : ""}`;
+
   document.getElementById("skuSummaryCards").innerHTML = [
-    { num: skuList.length, lbl: `Total ${primaryLabel} SKUs`, sub: "with at least 1 sale", color: "#0077A8" },
-    { num: tier1.length, lbl: "Running SKUs", sub: `NZD ≥ ${tier1NZD} · stocked at DS`, color: "#16a34a" },
-    { num: tier2.length, lbl: "Fallback SKUs", sub: `NZD ${tier2NZD}–${tier1NZD-1} · DC/vendor`, color: "#92400E" },
-  ].map(c => `<div class="card"><div class="num" style="color:${c.color}">${c.num}</div><div class="lbl">${c.lbl}</div><div class="sub">${c.sub}</div></div>`).join("");
+    {
+      num: skusWithSales,
+      lbl: `SKUs with ≥1 sale / ${totalActive || "?"} Active`,
+      sub: totalActive ? `${p(skusWithSales, totalActive)} of active · Thick: ${totalActiveThick} · Thin: ${totalActiveThin}` : "Upload SKU Master for active count",
+      color: "#0077A8",
+    },
+    {
+      num: running.total,
+      lbl: "Running — Stock at DS",
+      sub: breakdown(running),
+      color: "#16a34a",
+    },
+    {
+      num: fallback.total,
+      lbl: "Fallback — DC or Supplier",
+      sub: breakdown(fallback),
+      color: "#92400E",
+    },
+    {
+      num: superSlow.total,
+      lbl: "Super Slow — On Demand",
+      sub: breakdown(superSlow),
+      color: "#6B7280",
+    },
+  ].map(c => `<div class="card" style="min-width:0"><div class="num" style="color:${c.color};font-size:22px">${c.num}</div><div style="font-size:11px;font-weight:600;color:#555;margin:2px 0">${c.lbl}</div><div class="sub" style="font-size:10px;line-height:1.5">${c.sub}</div></div>`).join("");
 
-  // ── Capacity Check ──
-  const thinCount = thinTier1.reduce((s, x) => s + x.maxQty, 0);
-  const thickCount = thickTier1.reduce((s, x) => s + x.maxQty, 0);
-  const lamCount = laminateTier1.reduce((s, x) => s + x.maxQty, 0);
-  const bufLabel = bufferPct > 0 ? ` + ${bufferPct}%` : "";
-  document.getElementById("capacityCheck").innerHTML = `
-    <div style="margin:8px 0">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <span class="tag tag-amber" style="min-width:100px">Thick (&gt;6mm)</span>
-        <div style="flex:1;background:#eee;border-radius:4px;height:22px;overflow:hidden">
-          <div style="width:${Math.min(100,(thickCount/thickCap)*100)}%;background:${thickCount>thickCap?'#B91C1C':'#16a34a'};height:100%;border-radius:4px"></div>
-        </div>
-        <span style="font-size:13px;font-weight:800;color:${thickCount>thickCap?'#B91C1C':'#16a34a'};min-width:90px;text-align:right">${thickCount} / ${thickCap}</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <span class="tag tag-blue" style="min-width:100px">Thin (≤6mm)</span>
-        <div style="flex:1;background:#eee;border-radius:4px;height:22px;overflow:hidden">
-          <div style="width:${Math.min(100,(thinCount/thinCap)*100)}%;background:${thinCount>thinCap?'#B91C1C':'#16a34a'};height:100%;border-radius:4px"></div>
-        </div>
-        <span style="font-size:13px;font-weight:800;color:${thinCount>thinCap?'#B91C1C':'#16a34a'};min-width:90px;text-align:right">${thinCount} / ${thinCap}</span>
-      </div>
-      ${lamCount > 0 ? `<div style="display:flex;align-items:center;gap:8px">
-        <span class="tag tag-purple" style="min-width:100px">Laminate</span>
-        <span style="font-size:12px;color:#7C3AED;font-weight:600">${lamCount} units · ${laminateTier1.length} SKUs (separate storage)</span>
-      </div>` : ""}
-    </div>
-    <div style="font-size:11px;color:#888;line-height:1.6">
-      <strong>Max</strong> = ceil(Daily Median × ${coverDays}d × ${(1+bufferPct/100).toFixed(2)}) · <strong>Min</strong> = ceil(Daily Median × ${minCoverDays}d)<br>
-      ${(thinCount > thinCap || thickCount > thickCap)
-        ? '<span style="color:#B91C1C;font-weight:700">Over capacity — reduce NZD threshold, cover days, or buffer %.</span>'
-        : '<span style="color:#16a34a;font-weight:700">Within capacity.</span>'}
-    </div>
-  `;
+  // ── SKU Tables ──
+  document.getElementById("skuTablesTitle").textContent = `SKU Stocking — ${dsFilter}`;
 
-  // ── SKU Tables — Thick and Thin ──
-  document.getElementById("skuTablesTitle").textContent = `SKU Stocking — ${dsFilter} (Running: NZD ≥ ${tier1NZD})`;
-
-  function tierLabel(s) {
-    if (s.nzd >= tier1NZD) return '<span class="tag tag-green">Running — Stock at DS</span>';
-    if (s.nzd >= tier2NZD) return '<span class="tag tag-amber">Fallback — DC/Vendor</span>';
+  function tierLabelFor(s) {
+    const cfg = s.thicknessCat === "Thick" ? thickCfg : thinCfg;
+    if (s.nzd >= cfg.tier1NZD) return '<span class="tag tag-green">Running — Stock at DS</span>';
+    if (s.nzd >= cfg.tier2NZD) return '<span class="tag tag-amber">Fallback — DC/Vendor</span>';
     return '<span class="tag tag-red">Super Slow — On Demand</span>';
   }
 
-  function renderSkuTable(containerId, title, allSkus, capUsed, capTotal, capLabel) {
+  function capacityCard(cfg, capUsed, label) {
+    const pct = Math.min(100, (capUsed / cfg.capacity) * 100).toFixed(0);
+    const over = capUsed > cfg.capacity;
+    return `
+      <div class="card" style="padding:12px;margin-bottom:8px;border:1px solid ${over?'#FECACA':'#e5e5d0'}">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="font-size:12px;font-weight:700;color:#555;white-space:nowrap">${label}</div>
+          <div style="flex:1;background:#eee;border-radius:4px;height:18px;overflow:hidden">
+            <div style="width:${pct}%;background:${over?'#B91C1C':'#16a34a'};height:100%;border-radius:4px;transition:width 0.3s"></div>
+          </div>
+          <div style="font-size:13px;font-weight:800;color:${over?'#B91C1C':'#16a34a'};white-space:nowrap">${capUsed} / ${cfg.capacity}</div>
+          <div style="font-size:11px;color:${over?'#B91C1C':'#16a34a'};font-weight:600">${pct}%</div>
+        </div>
+        <div style="font-size:10px;color:#888;margin-top:4px">
+          Running NZD ≥ ${cfg.tier1NZD} · Max = Daily Median × ${cfg.coverDays}d × ${(1+cfg.bufferPct/100).toFixed(2)} · Min = × ${cfg.minCoverDays}d
+          ${over ? ' · <span style="color:#B91C1C;font-weight:700">Over capacity — raise NZD threshold or reduce cover days</span>' : ''}
+        </div>
+      </div>`;
+  }
+
+  function renderSkuTable(containerId, title, allSkus, typeCfg) {
     const el = document.getElementById(containerId);
     if (!allSkus.length) { el.innerHTML = ""; return; }
     const sorted = [...allSkus].sort((a, b) => {
-      const ta = a.nzd >= tier1NZD ? 0 : a.nzd >= tier2NZD ? 1 : 2;
-      const tb = b.nzd >= tier1NZD ? 0 : b.nzd >= tier2NZD ? 1 : 2;
+      const ta = a.nzd >= typeCfg.tier1NZD ? 0 : a.nzd >= typeCfg.tier2NZD ? 1 : 2;
+      const tb = b.nzd >= typeCfg.tier1NZD ? 0 : b.nzd >= typeCfg.tier2NZD ? 1 : 2;
       return ta !== tb ? ta - tb : b.nzd - a.nzd;
     });
-    const runningCount = sorted.filter(s => s.nzd >= tier1NZD).length;
+    const runningCount = sorted.filter(s => s.nzd >= typeCfg.tier1NZD).length;
+    const capUsed = sorted.filter(s => s.nzd >= typeCfg.tier1NZD).reduce((sum, s) => sum + s.maxQty, 0);
     el.innerHTML = `
+      ${capacityCard(typeCfg, capUsed, title + " Capacity")}
       <div class="card" style="padding:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <h3 style="margin:0;font-size:13px">${title} — <span style="color:#16a34a">${runningCount} running</span> / ${allSkus.length} total</h3>
-          <div style="font-size:12px;font-weight:700;color:${capUsed>capTotal?'#B91C1C':'#16a34a'}">${capLabel}: ${capUsed} / ${capTotal}</div>
         </div>
         <div style="overflow-y:auto">
           <table style="font-size:11px">
@@ -673,7 +835,7 @@ function runAnalysis() {
             <tbody>
               ${sorted.map((s, i) => {
                 const coverActual = s.dailyMedian > 0 ? (s.maxQty / s.dailyMedian).toFixed(1) + "d" : "—";
-                const isRunning = s.nzd >= tier1NZD;
+                const isRunning = s.nzd >= typeCfg.tier1NZD;
                 return `<tr style="cursor:pointer;line-height:1.3" onclick="openSkuDetail('${s.sku}')" title="Click for detail">
                   <td style="padding:3px 6px">${i+1}</td>
                   <td style="padding:3px 6px;font-weight:600">${s.sku}</td>
@@ -685,7 +847,7 @@ function runAnalysis() {
                   <td style="padding:3px 6px;text-align:center;font-weight:800;color:${isRunning?'#065F46':'#ccc'}">${isRunning ? s.maxQty : "—"}</td>
                   <td style="padding:3px 6px;text-align:center;color:#888">${isRunning ? coverActual : "—"}</td>
                   <td style="padding:3px 6px;text-align:center">${isRunning ? '<span style="color:#92400E;font-weight:600">≥'+(s.orderThreshold+1)+' → fallback</span>' : "—"}</td>
-                  <td style="padding:3px 6px">${tierLabel(s)}</td>
+                  <td style="padding:3px 6px">${tierLabelFor(s)}</td>
                 </tr>`;
               }).join("")}
             </tbody>
@@ -695,13 +857,20 @@ function runAnalysis() {
     `;
   }
 
-  const thickAll = skuList.filter(s => s.thicknessCat === "Thick");
-  const thinAll = skuList.filter(s => s.thicknessCat === "Thin");
-  renderSkuTable("tableThick", "Thick (>6mm) — Vertical Storage", thickAll, thickCount, thickCap, "Vertical capacity");
-  renderSkuTable("tableThin", "Thin (≤6mm) — Bin Storage", thinAll, thinCount, thinCap, "Bin capacity");
+  const thickAll = skuListNoLam.filter(s => s.thicknessCat === "Thick");
+  const thinAll  = skuListNoLam.filter(s => s.thicknessCat === "Thin");
+  renderSkuTable("tableThick", "Thick (>6mm) — Vertical Storage", thickAll, thickCfg);
+  renderSkuTable("tableThin",  "Thin (≤6mm) — Bin Storage",       thinAll,  thinCfg);
 
-  // Close any open SKU detail
+  const diagEl = document.getElementById("skuDiagnostic");
+  if (diagEl) diagEl.innerHTML = laminateSkus.length > 0
+    ? `<span style="color:#aaa;font-size:10px">All counts exclude ${laminateSkus.length} laminate SKU${laminateSkus.length!==1?"s":""} (SKU IDs containing "LAM") — stocked and managed separately.</span>`
+    : "";
+
   document.getElementById("skuDetailOverlay").style.display = "none";
+  stockingDirty = false;
+  if (!silent) document.getElementById("cfgStatus").textContent = "✓ Up to date";
+  updateRunButtons();
 }
 
 // ── SKU Detail Modal ──
@@ -725,8 +894,10 @@ document.addEventListener("keydown", e => {
 function openSkuDetail(sku) {
   const s = (window._skuData || []).find(x => x.sku === sku);
   if (!s) return;
-  const cfg = window._skuConfig || {};
-  const isRunning = s.nzd >= cfg.tier1NZD;
+  const _cfg = window._skuConfig || {};
+  const cfg = s.thicknessCat === "Thick" ? (_cfg.thickCfg || {}) : (_cfg.thinCfg || {});
+  cfg.thresholdPctl = _cfg.thresholdPctl || 75;
+  const isRunning = s.nzd >= (cfg.tier1NZD || 6);
 
   // Show modal
   const overlay = document.getElementById("skuDetailOverlay");
@@ -947,15 +1118,30 @@ document.getElementById("csvInput").addEventListener("change", e => {
   if (!file) return;
   file.text().then(text => {
     allRows = parseCSV(text);
-    // Extract unique categories (excluding blank)
     const validStatus = new Set(["Closed", "Overdue"]);
     allCategories = [...new Set(allRows.filter(r => validStatus.has(r["Invoice Status"])).map(r => (r["Category Name"]||"").trim()).filter(Boolean))].sort();
     buildCatTags();
     loadDSConfig(dsFilter);
     document.getElementById("results").style.display = "block";
-    document.getElementById("uploadBox").style.display = "none";
-    lastRunConfig = null;
-    updateButtons();
+    // Keep uploadBox visible so SKU Master can be re-uploaded anytime
+    // Just shrink it to a compact bar
+    const ub = document.getElementById("uploadBox");
+    ub.style.marginBottom = "12px";
+    basketDirty = true; stockingDirty = true;
+    updateRunButtons();
+  });
+});
+
+document.getElementById("skuMasterInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  file.text().then(text => {
+    skuMasterData = parseSKUMasterCSV(text);
+    try { localStorage.setItem("hrSkuMaster", JSON.stringify(skuMasterData)); } catch(err) {}
+    renderSKUMasterCard();
+    if (!stockingDirty && allRows.length && primaryCats.size) runStocking(true);
+    else markStockingDirty();
+    e.target.value = "";
   });
 });
 
@@ -964,9 +1150,7 @@ document.querySelectorAll("[data-period]").forEach(btn => {
     document.querySelectorAll("[data-period]").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     period = parseInt(btn.dataset.period);
-    lastRunConfig = null;
-    document.getElementById("cfgStatus").textContent = "";
-    updateButtons();
+    markBasketDirty();
   });
 });
 
@@ -977,17 +1161,16 @@ document.querySelectorAll("[data-ds]").forEach(btn => {
     btn.classList.add("active");
     dsFilter = btn.dataset.ds;
     loadDSConfig(dsFilter);
-    lastRunConfig = null; // force re-run needed
-    document.getElementById("cfgStatus").textContent = "";
-    updateButtons();
+    // Auto-rerun if nothing is dirty (DS is just a filter, not a config change)
+    if (!basketDirty && allRows.length && primaryCats.size) runBasket(true);
+    if (!stockingDirty && allRows.length && primaryCats.size) runStocking(true);
   });
 });
 
-["cfgTier1NZD","cfgTier2NZD","cfgMinCoverDays","cfgCoverDays","cfgBufferPct","cfgThinCap","cfgThickCap","cfgLaminateThreshold","cfgThresholdPctl"].forEach(id => {
-  document.getElementById(id).addEventListener("input", () => {
-    document.getElementById("cfgStatus").textContent = "";
-    updateButtons();
-  });
+["cfgThickTier1NZD","cfgThickTier2NZD","cfgThickMinCoverDays","cfgThickCoverDays","cfgThickBufferPct","cfgThickCap",
+ "cfgThinTier1NZD","cfgThinTier2NZD","cfgThinMinCoverDays","cfgThinCoverDays","cfgThinBufferPct","cfgThinCap",
+ "cfgLaminateThreshold","cfgThresholdPctl"].forEach(id => {
+  document.getElementById(id).addEventListener("input", () => markStockingDirty());
 });
 </script>
 </body>

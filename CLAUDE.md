@@ -136,7 +136,36 @@ Decide whether a dedicated Tool Output tab is needed, or whether the 3 key downl
 ### 4. Full UI Polish Pass — All Tabs
 Revisit entire UI across all tabs: Overview, SKU Detail, OOS Simulation, Stock Health, Tool Output, Logic Tweaker, Manual Overrides, Upload Data. Make each tab sharper and more actionable.
 
+### 5. Category Network Analysis — 2 New Tabs in IMS Tool
+Build "Basket Analysis" and "Category Stocking" as new tabs in the existing IMS tool (not the standalone HTML). Eliminates sharing friction — invoice + SKU Master already in tool, all colleagues access immediately.
+
+**Context:** Full design decisions documented in `analysis/CONTEXT.md`. Read that file first.
+
+**Phase 1 — Parser change (5 min):**
+- Add `shopifyOrder: r["Shopify Order"] || ""` to `handleInvoice` in App.jsx
+- Existing Supabase data won't have it until re-upload — handle gracefully in basket analysis
+
+**Phase 2 — Basket Analysis tab (~1 hr):**
+- Generic: user selects primary + secondary categories from existing skuMaster
+- Period (L45D→L3D + custom) + DS filter
+- Basket composition: 5 summary cards, donut chart (Primary Only / +Secondary / +Others), co-category bar chart, insight
+- Requires shopifyOrder for order grouping — show prompt if not present
+- Charts: use Recharts (already in app), not Chart.js
+
+**Phase 3 — Category Stocking tab (~1.5 hr):**
+- Generic: user selects category — defaults to Plywood/MDF & HDHMR
+- Per-DS Thick/Thin configs (NZD thresholds, cover days, buffer %, capacity) stored in new Supabase key `networkConfigs`
+- Admin-only for editing configs; all users can view recommendations
+- SKU tables: Thick + Thin separately, sorted Running → Fallback → Super Slow
+- 4 summary cards with Thick/Thin breakdown + % of active
+- Per-SKU click → modal with order histogram + daily consumption chart (Min/Max dotted lines)
+- Recommendation only — does NOT write into the Min/Max engine (scope for later)
+- Laminate detection: SKU ID contains "LAM" OR mm ≤ laminate threshold
+
+**Estimated build time for Claude: ~2.5–3 hours**
+
 ## Deferred
+- Category Stocking → IMS engine integration (write Min/Max back for Plywood category — needs broader scoping including DC implications)
 - Cluster fulfillment — build into tool or ops process?
 - Stock Health — actionables design (TBD)
 

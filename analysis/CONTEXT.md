@@ -1,6 +1,14 @@
-# Plywood Network Analysis — Context
+# Category Network Analysis — Context
 
-Standalone HTML analysis tool (`plywood-network.html`) for designing DS-level network stocking for bulky/erratic categories like Plywood. Separate from the IMS tool — no shared code, no deployment dependency.
+## Status: HTML tool is a stepping stone — integration into IMS tool planned
+
+The standalone HTML tool (`plywood-network.html`) was built to prototype and validate the analysis methodology. **The next step is to build this as two new tabs in the IMS tool** (Basket Analysis + Category Stocking), which eliminates the need to re-upload data and enables sharing with colleagues automatically.
+
+See `CLAUDE.md` To-Do #5 for the full build plan. This CONTEXT.md documents the methodology decisions that should carry into the IMS integration.
+
+---
+
+Standalone HTML analysis tool (`plywood-network.html`) for designing DS-level network stocking for bulky/erratic categories like Plywood.
 
 ---
 
