@@ -3315,7 +3315,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     setUploading("invoiceData");
     const rows=parseCSV(await file.text());
     // Replace entirely — no merge, no rolling cap. Store all data Admin provides.
-    const filtered=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0)})).filter(r=>r.date&&r.sku&&r.qty>0);
+    const filtered=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0),shopifyOrder:r["Shopify Order"]||""})).filter(r=>r.date&&r.sku&&r.qty>0);
     setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
     await saveTeamData({invoiceData:filtered});
     setModelDirty(true);
