@@ -2,7 +2,11 @@
 
 ## Status: HTML tool is a stepping stone — integration into IMS tool planned
 
-The standalone HTML tool (`plywood-network.html`) was built to prototype and validate the analysis methodology. **The next step is to build this as two new tabs in the IMS tool** (Basket Analysis + Category Stocking), which eliminates the need to re-upload data and enables sharing with colleagues automatically.
+The standalone HTML tool (`plywood-network.html`) was built to prototype and validate the analysis methodology. **The next step is to build this as two new tabs in the IMS tool** (Basket Analysis + Category Stocking).
+
+**Key principle for the IMS integration:** Both tabs will use the invoice data and SKU Master already uploaded in the Upload Data tab — no separate uploads. Colleagues open the tool and see the analysis immediately without any file uploads.
+
+**Until the IMS tabs are live:** continue running analysis in this HTML tool.
 
 See `CLAUDE.md` To-Do #5 for the full build plan. This CONTEXT.md documents the methodology decisions that should carry into the IMS integration.
 

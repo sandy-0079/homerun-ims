@@ -145,6 +145,11 @@ Build "Basket Analysis" and "Category Stocking" as new tabs in the existing IMS 
 - Add `shopifyOrder: r["Shopify Order"] || ""` to `handleInvoice` in App.jsx
 - Existing Supabase data won't have it until re-upload — handle gracefully in basket analysis
 
+**Data source — both tabs use data already in the tool (no separate uploads):**
+- Invoice data: from `invoiceData` state (uploaded via Upload Data tab)
+- SKU Master: from `skuMaster` state (uploaded via Upload Data tab)
+- No new file uploads needed on these tabs — colleagues see analysis immediately on load
+
 **Phase 2 — Basket Analysis tab (~1 hr):**
 - Generic: user selects primary + secondary categories from existing skuMaster
 - Period (L45D→L3D + custom) + DS filter
@@ -161,6 +166,8 @@ Build "Basket Analysis" and "Category Stocking" as new tabs in the existing IMS 
 - Per-SKU click → modal with order histogram + daily consumption chart (Min/Max dotted lines)
 - Recommendation only — does NOT write into the Min/Max engine (scope for later)
 - Laminate detection: SKU ID contains "LAM" OR mm ≤ laminate threshold
+
+**Until these tabs are live:** continue running analysis in `analysis/plywood-network.html` (standalone HTML tool)
 
 **Estimated build time for Claude: ~2.5–3 hours**
 
