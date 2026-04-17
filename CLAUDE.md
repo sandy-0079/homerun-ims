@@ -117,40 +117,29 @@ Cluster analysis: 65% OOS reduction (134→46) via cross-DS fulfillment. Cluster
 
 ## To-Do (Active)
 
-### 1. Category Network Analysis — 2 New Tabs in IMS Tool
-Build "Basket Analysis" and "Category Stocking" as new tabs in the existing IMS tool (not the standalone HTML). Eliminates sharing friction — invoice + SKU Master already in tool, all colleagues access immediately.
+### 1. Category Network Analysis — Plywood Network Tab ⚠️ In Progress
+**Branch:** `feature/category-network-analysis` · **Worktree:** `.worktrees/category-network-analysis`
+**Plan:** `docs/superpowers/plans/2026-04-17-category-network-analysis.md` (Tasks 1–3 done, Task 4+5 pending)
 
-**Context:** Full design decisions documented in `analysis/CONTEXT.md`. Read that file first.
+**✅ Done (2026-04-17):**
+- Phase 1: `shopifyOrder` added to `handleInvoice` parser — admin must re-upload invoice CSV for basket analysis to work
+- Phase 2: **Baskets tab** fully live — category selector (click-cycle Primary→Secondary→unselect), period L45D→L3D + custom, DS filter, 5 cards, donut, co-category bar, insight. Numbers verified against HTML tool.
 
-**Phase 1 — Parser change (5 min):**
-- Add `shopifyOrder: r["Shopify Order"] || ""` to `handleInvoice` in App.jsx
-- Existing Supabase data won't have it until re-upload — handle gracefully in basket analysis
+**⏳ Next — Phase 3: Plywood Network tab (Task 4+5 in plan, ~20 min)**
+- Tab scaffold already in place (`src/tabs/PlywoodNetworkTab.jsx`), showing placeholder
+- `networkConfigs` loads from Supabase `params/networkConfigs` on mount (saves there on admin edit)
+- Full implementation: computation engine + UI. Resume with subagent-driven execution of Task 4+5.
 
-**Data source — both tabs use data already in the tool (no separate uploads):**
-- Invoice data: from `invoiceData` state (uploaded via Upload Data tab)
-- SKU Master: from `skuMaster` state (uploaded via Upload Data tab)
-- No new file uploads needed on these tabs — colleagues see analysis immediately on load
-
-**Phase 2 — Basket Analysis tab (~1 hr):**
-- Generic: user selects primary + secondary categories from existing skuMaster
-- Period (L45D→L3D + custom) + DS filter
-- Basket composition: 5 summary cards, donut chart (Primary Only / +Secondary / +Others), co-category bar chart, insight
-- Requires shopifyOrder for order grouping — show prompt if not present
-- Charts: use Recharts (already in app), not Chart.js
-
-**Phase 3 — Category Stocking tab (~1.5 hr):**
-- Generic: user selects category — defaults to Plywood/MDF & HDHMR
-- Per-DS Thick/Thin configs (NZD thresholds, cover days, buffer %, capacity) stored in new Supabase key `networkConfigs`
-- Admin-only for editing configs; all users can view recommendations
-- SKU tables: Thick + Thin separately, sorted Running → Fallback → Super Slow
-- 4 summary cards with Thick/Thin breakdown + % of active
-- Per-SKU click → modal with order histogram + daily consumption chart (Min/Max dotted lines)
-- Recommendation only — does NOT write into the Min/Max engine (scope for later)
-- Laminate detection: SKU ID contains "LAM" OR mm ≤ laminate threshold
-
-**Until these tabs are live:** continue running analysis in `analysis/plywood-network.html` (standalone HTML tool)
-
-**Estimated build time for Claude: ~2.5–3 hours**
+**Key design decisions locked (do not re-litigate):**
+- Plywood-specific only (not generic category) — tab named "Plywood"
+- Thick/Thin split layout: each section has its own Config Panel → Run button → Capacity Bar → SKU Table
+- Run buttons are per-section (Thick and Thin run independently)
+- Recommendation only — does NOT write into Min/Max engine
+- NZD computed per DS (not cross-DS)
+- Median of daily totals for Min/Max (not ABQ)
+- SKU categories from `skuMaster` (Plywood/MDF & HDHMR); thickness from SKU name regex `/(\d+(?:\.\d+)?)\s*mm/i`
+- DS configs: same structure as `analysis/plywood-network.html` DS_DEFAULTS (thick/thin/shared/fallbackLabel)
+- Laminate: SKU contains "LAM" OR mm ≤ laminateThreshold → excluded from Thick/Thin tables
 
 ### 2. OOS Simulation Redesign ⚠️ Built — pending full local test before push
 **Built but not fully tested.** Local commits exist, not pushed. Test before pushing:
