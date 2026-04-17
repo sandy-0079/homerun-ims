@@ -37,7 +37,7 @@ function filterByPeriod(invoiceData, periodKey, dateFrom, dateTo, invoiceDateRan
     const last = allDates.slice(-preset.days);
     return invoiceData.filter(r => last.includes(r.date));
   }
-  return invoiceData;
+  return [];
 }
 
 function computeBaskets(rows, skuMaster, primaryCats, secondaryCats) {
@@ -63,8 +63,8 @@ function computeBaskets(rows, skuMaster, primaryCats, secondaryCats) {
     primaryOrders++;
     const nonPrimary = allCats.filter(c => !isPrimary(c));
     if (nonPrimary.length === 0) { primaryOnlyOrders++; return; }
-    if (nonPrimary.some(isSecondary)) primarySecondaryOrders++;
-    if (nonPrimary.some(c => !isSecondary(c))) primaryOtherOrders++;
+    if (nonPrimary.some(isSecondary)) { primarySecondaryOrders++; }
+    else { primaryOtherOrders++; }
     nonPrimary.forEach(c => { coCatCounts[c] = (coCatCounts[c] || 0) + 1; });
   });
 
@@ -88,7 +88,10 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
   const primaryLabel = primaryCats.size > 0 ? [...primaryCats].join(" + ") : "Primary";
   const secondaryLabel = secondaryCats.size > 0 ? [...secondaryCats].join(" + ") : "Secondary";
 
-  const canRun = primaryCats.size > 0 && invoiceData.length > 0 && hasShopifyOrder;
+  const canRun = primaryCats.size > 0
+    && invoiceData.length > 0
+    && hasShopifyOrder
+    && (period !== "CUSTOM" || (dateFrom && dateTo));
 
   const handleRun = useCallback(() => {
     const periodRows = filterByPeriod(invoiceData, period, dateFrom, dateTo, invoiceDateRange);
@@ -235,25 +238,27 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
             {/* Co-category bar */}
             <div style={S.card}>
               <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>Co-Category Frequency (top 10)</div>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart
-                  layout="vertical"
-                  data={Object.entries(results.coCatCounts)
-                    .sort((a,b) => b[1]-a[1]).slice(0,10)
-                    .map(([cat,count]) => ({cat:cat.length>28?cat.slice(0,26)+"…":cat,count}))}
-                  margin={{left:8,right:16,top:0,bottom:0}}
-                >
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
-                  <XAxis type="number" tick={{fontSize:10}}/>
-                  <YAxis type="category" dataKey="cat" width={140} tick={{fontSize:10}}/>
-                  <RTooltip formatter={(v) => [v, `Orders with ${primaryLabel}`]}/>
-                  <Bar dataKey="count">
-                    {Object.entries(results.coCatCounts)
-                      .sort((a,b) => b[1]-a[1]).slice(0,10)
-                      .map(([cat],i) => <Cell key={i} fill={secondaryCats.has(cat)?"#F5C400":"#0077A8"}/>)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              {(() => {
+                const sortedCoCats = Object.entries(results.coCatCounts)
+                  .sort((a,b) => b[1]-a[1]).slice(0,10);
+                return (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart
+                      layout="vertical"
+                      data={sortedCoCats.map(([cat,count]) => ({cat:cat.length>28?cat.slice(0,26)+"…":cat,count}))}
+                      margin={{left:8,right:16,top:0,bottom:0}}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
+                      <XAxis type="number" tick={{fontSize:10}}/>
+                      <YAxis type="category" dataKey="cat" width={140} tick={{fontSize:10}}/>
+                      <RTooltip formatter={(v) => [v, `Orders with ${primaryLabel}`]}/>
+                      <Bar dataKey="count">
+                        {sortedCoCats.map(([cat],i) => <Cell key={i} fill={secondaryCats.has(cat)?"#F5C400":"#0077A8"}/>)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                );
+              })()}
             </div>
           </div>
 
