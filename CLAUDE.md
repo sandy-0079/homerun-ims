@@ -117,26 +117,7 @@ Cluster analysis: 65% OOS reduction (134→46) via cross-DS fulfillment. Cluster
 
 ## To-Do (Active)
 
-### 1. OOS Simulation Redesign ⚠️ Built — pending full local test before push
-**Built but not fully tested.** Local commits exist, not pushed. Test before pushing:
-- Loaded Data mode: preset bar (L45D→L3D), custom date picker, drill-down navigation
-- Fresh CSV / Ideal Restock: upload invoice CSV, run, drill into category/brand, breadcrumbs
-- Fresh CSV / Actual Stock: upload invoice + 5 DS CSVs, pick date, run, root cause strip + filter
-
-Original spec:
-- Replace "Last N days" slider with preset bar + date picker on existing Loaded Data mode
-- Fresh CSV mode (temporary, doesn't replace loaded data): Ideal Restock (any date range, OOS breakdown) and Actual Stock (single day, 5 DS stock CSVs, root cause classification: Ops Failure / Tool Failure / Unstocked / Could Have Been Saved)
-
-### 2. Polish Stock Health Tab
-Make it more rich and actionable (specifics TBD).
-
-### 3. Rethink Tool Output Tab
-Decide whether a dedicated Tool Output tab is needed, or whether the 3 key download buttons can live directly in the Upload Data tab (to be renamed "Data"). If folded in, remove the Tool Output tab entirely.
-
-### 4. Full UI Polish Pass — All Tabs
-Revisit entire UI across all tabs: Overview, SKU Detail, OOS Simulation, Stock Health, Tool Output, Logic Tweaker, Manual Overrides, Upload Data. Make each tab sharper and more actionable.
-
-### 5. Category Network Analysis — 2 New Tabs in IMS Tool
+### 1. Category Network Analysis — 2 New Tabs in IMS Tool
 Build "Basket Analysis" and "Category Stocking" as new tabs in the existing IMS tool (not the standalone HTML). Eliminates sharing friction — invoice + SKU Master already in tool, all colleagues access immediately.
 
 **Context:** Full design decisions documented in `analysis/CONTEXT.md`. Read that file first.
@@ -170,6 +151,25 @@ Build "Basket Analysis" and "Category Stocking" as new tabs in the existing IMS 
 **Until these tabs are live:** continue running analysis in `analysis/plywood-network.html` (standalone HTML tool)
 
 **Estimated build time for Claude: ~2.5–3 hours**
+
+### 2. OOS Simulation Redesign ⚠️ Built — pending full local test before push
+**Built but not fully tested.** Local commits exist, not pushed. Test before pushing:
+- Loaded Data mode: preset bar (L45D→L3D), custom date picker, drill-down navigation
+- Fresh CSV / Ideal Restock: upload invoice CSV, run, drill into category/brand, breadcrumbs
+- Fresh CSV / Actual Stock: upload invoice + 5 DS CSVs, pick date, run, root cause strip + filter
+
+Original spec:
+- Replace "Last N days" slider with preset bar + date picker on existing Loaded Data mode
+- Fresh CSV mode (temporary, doesn't replace loaded data): Ideal Restock (any date range, OOS breakdown) and Actual Stock (single day, 5 DS stock CSVs, root cause classification: Ops Failure / Tool Failure / Unstocked / Could Have Been Saved)
+
+### 3. Polish Stock Health Tab
+Make it more rich and actionable (specifics TBD).
+
+### 4. Rethink Tool Output Tab
+Decide whether a dedicated Tool Output tab is needed, or whether the 3 key download buttons can live directly in the Upload Data tab (to be renamed "Data"). If folded in, remove the Tool Output tab entirely.
+
+### 5. Full UI Polish Pass — All Tabs
+Revisit entire UI across all tabs: Overview, SKU Detail, OOS Simulation, Stock Health, Tool Output, Logic Tweaker, Manual Overrides, Upload Data. Make each tab sharper and more actionable.
 
 ## Deferred
 - Category Stocking → IMS engine integration (write Min/Max back for Plywood category — needs broader scoping including DC implications)
