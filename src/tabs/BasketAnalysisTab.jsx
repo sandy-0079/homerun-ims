@@ -162,14 +162,13 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
                 style={{...S.btn(isPrimary||isSecondary), background:bg, color, borderColor}}
               >
                 {cat}
-                {isSecondary && <span style={{fontSize:8,marginLeft:4,opacity:0.7}}>2°</span>}
               </button>
             );
           })}
         </div>
         <div style={{fontSize:10,color:HR.muted,marginTop:8}}>
           Click once → <span style={{background:"#D1FAE5",color:"#065F46",padding:"1px 4px",borderRadius:3}}>Primary</span> &nbsp;
-          Click again → <span style={{background:"#FEF3C7",color:"#92400E",padding:"1px 4px",borderRadius:3}}>Secondary 2°</span> &nbsp;
+          Click again → <span style={{background:"#FEF3C7",color:"#92400E",padding:"1px 4px",borderRadius:3}}>Secondary</span> &nbsp;
           Click again → Unselect
         </div>
         <div style={{marginTop:10,display:"flex",justifyContent:"flex-end"}}>
