@@ -3894,26 +3894,22 @@ const visibleOutput = useMemo(() => {
         )}
 
         {tab==="baskets"&&(
-          <div style={S.pageWrap}>
-            <BasketAnalysisTab
-              invoiceData={invoiceData}
-              skuMaster={skuMaster}
-              invoiceDateRange={invoiceDateRange}
-              isAdmin={isAdmin}
-            />
-          </div>
+          <BasketAnalysisTab
+            invoiceData={invoiceData}
+            skuMaster={skuMaster}
+            invoiceDateRange={invoiceDateRange}
+            isAdmin={isAdmin}
+          />
         )}
         {tab==="plywood"&&(
-          <div style={S.pageWrap}>
-            <PlywoodNetworkTab
-              invoiceData={invoiceData}
-              skuMaster={skuMaster}
-              invoiceDateRange={invoiceDateRange}
-              isAdmin={isAdmin}
-              networkConfigs={networkConfigs}
-              onSaveConfigs={handleSaveNetworkConfigs}
-            />
-          </div>
+          <PlywoodNetworkTab
+            invoiceData={invoiceData}
+            skuMaster={skuMaster}
+            invoiceDateRange={invoiceDateRange}
+            isAdmin={isAdmin}
+            networkConfigs={networkConfigs}
+            onSaveConfigs={handleSaveNetworkConfigs}
+          />
         )}
 
         {/* Old dashboard tab removed — replaced by OverviewTab */}
