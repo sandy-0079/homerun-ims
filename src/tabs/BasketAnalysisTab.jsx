@@ -63,7 +63,7 @@ function computeBaskets(rows, skuMaster, primaryCats, secondaryCats) {
     primaryOrders++;
     const nonPrimary = allCats.filter(c => !isPrimary(c));
     if (nonPrimary.length === 0) { primaryOnlyOrders++; return; }
-    if (nonPrimary.some(isSecondary)) { primarySecondaryOrders++; }
+    if (nonPrimary.every(isSecondary)) { primarySecondaryOrders++; }
     else { primaryOtherOrders++; }
     nonPrimary.forEach(c => { coCatCounts[c] = (coCatCounts[c] || 0) + 1; });
   });
@@ -217,7 +217,7 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
               {num:results.totalOrders,pct:null,lbl:"Total Orders",sub:`${dsFilter} · ${period}`,color:"#0077A8"},
               {num:results.primaryOrders,pct:results.totalOrders?`${((results.primaryOrders/results.totalOrders)*100).toFixed(1)}%`:null,lbl:`Orders with ${primaryLabel}`,sub:"of total orders",color:"#92400E"},
               {num:results.primaryOnlyOrders,pct:results.primaryOrders?`${((results.primaryOnlyOrders/results.primaryOrders)*100).toFixed(1)}%`:null,lbl:`${primaryLabel} Only`,sub:`of ${primaryLabel} orders`,color:"#16a34a"},
-              {num:results.primarySecondaryOrders,pct:results.primaryOrders?`${((results.primarySecondaryOrders/results.primaryOrders)*100).toFixed(1)}%`:null,lbl:`+ ${secondaryLabel}`,sub:`of ${primaryLabel} orders`,color:"#B8860B"},
+              {num:results.primarySecondaryOrders,pct:results.primaryOrders?`${((results.primarySecondaryOrders/results.primaryOrders)*100).toFixed(1)}%`:null,lbl:`${primaryLabel} + ${secondaryLabel} Only`,sub:`of ${primaryLabel} orders`,color:"#B8860B"},
               {num:results.primaryOtherOrders,pct:results.primaryOrders?`${((results.primaryOtherOrders/results.primaryOrders)*100).toFixed(1)}%`:null,lbl:"+ Others",sub:`of ${primaryLabel} orders`,color:"#C05A00"},
             ].map((c,i) => (
               <div key={i} style={S.card}>
@@ -239,7 +239,7 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
                   <Pie
                     data={[
                       {name:`${primaryLabel} Only`,value:results.primaryOnlyOrders},
-                      {name:`+ ${secondaryLabel}`,value:results.primarySecondaryOrders},
+                      {name:`+ ${secondaryLabel} Only`,value:results.primarySecondaryOrders},
                       {name:"+ Others",value:results.primaryOtherOrders},
                     ]}
                     cx="50%" cy="50%" innerRadius={75} outerRadius={115}
