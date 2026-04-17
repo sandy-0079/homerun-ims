@@ -269,7 +269,7 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
                       <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
                       <XAxis type="number" tick={{fontSize:10}}/>
                       <YAxis type="category" dataKey="cat" width={140} tick={{fontSize:10}}/>
-                      <RTooltip formatter={(v) => [v, `Orders with ${primaryLabel}`]}/>
+                      <RTooltip formatter={(v) => [v, `${primaryLabel} orders also containing this`]}/>
                       <Bar dataKey="count">
                         {sortedCoCats.map(([cat],i) => <Cell key={i} fill={secondaryCats.has(cat)?"#F5C400":"#0077A8"}/>)}
                       </Bar>
