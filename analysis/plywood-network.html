@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Category Network Analysis — HomeRun IMS</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #FAFAF5; color: #1a1a1a; padding: 24px; max-width: 1280px; margin: 0 auto; }
+  h1 { font-size: 20px; color: #92400E; margin-bottom: 4px; }
+  h2 { font-size: 15px; color: #92400E; margin: 24px 0 10px; border-bottom: 2px solid #F5D77A; padding-bottom: 4px; }
+  h3 { font-size: 13px; color: #555; margin: 16px 0 8px; }
+  .subtitle { font-size: 12px; color: #888; margin-bottom: 20px; }
+  .upload-box { background: #fff; border: 2px dashed #D4C97A; border-radius: 10px; padding: 32px; text-align: center; margin-bottom: 20px; }
+  .upload-box label { background: #16a34a; color: #fff; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 13px; }
+  .upload-box input { display: none; }
+  .upload-box .info { font-size: 12px; color: #888; margin-top: 10px; }
+  .controls { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .controls .label { font-size: 12px; color: #888; font-weight: 600; }
+  .btn { padding: 5px 14px; border-radius: 5px; border: 1px solid #ddd; background: #fff; color: #888; font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.15s; }
+  .btn.active { background: #F5D77A; color: #1a1a1a; border-color: #F5D77A; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .card { background: #fff; border: 1px solid #e5e5d0; border-radius: 8px; padding: 14px; }
+  .card .num { font-size: 26px; font-weight: 800; margin-bottom: 2px; }
+  .card .lbl { font-size: 11px; color: #888; }
+  .card .sub { font-size: 10px; color: #aaa; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: #f5f5ea; text-align: left; padding: 6px 10px; font-weight: 700; color: #555; border-bottom: 1px solid #e5e5d0; font-size: 11px; position: sticky; top: 0; z-index: 1; }
+  td { padding: 5px 10px; border-bottom: 1px solid #f0f0e0; }
+  tr:nth-child(even) { background: #fafaf5; }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+  .tag-green { background: #D1FAE5; color: #065F46; }
+  .tag-amber { background: #FEF3C7; color: #92400E; }
+  .tag-red { background: #FEE2E2; color: #B91C1C; }
+  .tag-blue { background: #EAF9FF; color: #0077A8; }
+  .tag-purple { background: #F3E8FF; color: #7C3AED; }
+  .chart-wrap { position: relative; height: 280px; }
+  #results { display: none; }
+  .section { margin-bottom: 24px; }
+  .highlight { background: #FFFBEA; border: 1px solid #F5D77A; border-radius: 8px; padding: 12px 16px; margin: 12px 0; font-size: 12px; line-height: 1.6; }
+  .highlight strong { color: #92400E; }
+  .config-panel { background: #fff; border: 1px solid #e5e5d0; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; }
+  .config-panel h3 { margin: 0 0 10px; font-size: 13px; color: #92400E; }
+  .config-row { display: flex; gap: 12px; align-items: start; margin-bottom: 12px; flex-wrap: wrap; }
+  .config-item { display: flex; flex-direction: column; gap: 3px; }
+  .config-item label { font-size: 10px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+  .config-item input[type="number"] { border: 1px solid #ddd; border-radius: 5px; padding: 5px 8px; font-size: 13px; font-weight: 700; color: #92400E; width: 100px; outline: none; }
+  .config-item input:focus { border-color: #F5D77A; box-shadow: 0 0 0 2px #F5D77A44; }
+  .config-item .hint { font-size: 9px; color: #aaa; }
+  .cat-selector { margin-bottom: 12px; }
+  .cat-selector .cat-label { font-size: 10px; color: #888; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
+  .cat-tags { display: flex; gap: 5px; flex-wrap: wrap; }
+  .cat-tag { padding: 4px 10px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid #ddd; background: #fff; color: #999; transition: all 0.15s; user-select: none; }
+  .cat-tag.primary { background: #D1FAE5; color: #065F46; border-color: #6EE7B7; }
+  .cat-tag.secondary { background: #FEF3C7; color: #92400E; border-color: #FDE68A; }
+  .cat-tag:hover { border-color: #aaa; }
+  .no-data { text-align: center; padding: 40px; color: #888; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<h1>Category Network Analysis</h1>
+<p class="subtitle">Basket composition, SKU demand profiling, DS stocking & capacity recommendations</p>
+
+<div class="upload-box" id="uploadBox">
+  <label>Upload Invoice CSV <input type="file" accept=".csv" id="csvInput"/></label>
+  <div class="info">Same CSV you upload to the IMS tool (Invoice Date, Shopify Order, SKU, Category Name, Quantity, Location)</div>
+</div>
+
+<div id="results">
+
+  <div class="controls">
+    <span class="label">Period:</span>
+    <button class="btn active" data-period="45">L45D</button>
+    <button class="btn" data-period="60">L60D</button>
+    <button class="btn" data-period="90">L90D</button>
+    <span style="margin-left:16px" class="label">Store:</span>
+    <button class="btn active" data-ds="DS01">DS01</button>
+    <button class="btn" data-ds="DS02">DS02</button>
+    <button class="btn" data-ds="DS03">DS03</button>
+    <button class="btn" data-ds="DS04">DS04</button>
+    <button class="btn" data-ds="DS05">DS05</button>
+    <button class="btn" data-ds="ALL">All</button>
+    <span id="periodRange" style="margin-left:auto;font-size:11px;color:#888"></span>
+  </div>
+
+  <!-- Category Selection -->
+  <div class="config-panel">
+    <h3>Category Selection</h3>
+    <div class="cat-selector">
+      <div class="cat-label">Click to select: <span class="tag tag-green" style="font-size:9px">Primary</span> → <span class="tag tag-amber" style="font-size:9px">Secondary</span> → Off</div>
+      <div class="cat-tags" id="catTags"></div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;font-size:11px;color:#888;margin-top:6px">
+      <span><span class="tag tag-green">Primary</span> = categories you're analyzing (e.g. Plywood, MDF)</span>
+      <span><span class="tag tag-amber">Secondary</span> = related category shown separately in basket (e.g. Fevicol)</span>
+      <span>Unselected = "Others" in basket composition</span>
+    </div>
+  </div>
+
+  <!-- Config Panel -->
+  <div class="config-panel">
+    <h3>Thresholds & Capacity <span id="cfgDsLabel" style="font-size:11px;color:#0077A8;font-weight:700;margin-left:8px;background:#EAF9FF;padding:2px 8px;border-radius:4px">DS01</span></h3>
+    <div class="config-row">
+      <div class="config-item">
+        <label>Running SKU NZD</label>
+        <input type="number" id="cfgTier1NZD" value="10" min="1" max="45" step="1"/>
+        <div class="hint">Min NZD to stock at DS</div>
+      </div>
+      <div class="config-item">
+        <label>Fallback NZD</label>
+        <input type="number" id="cfgTier2NZD" value="2" min="1" max="20" step="1"/>
+        <div class="hint">Below this → Super Slow</div>
+      </div>
+      <div class="config-item">
+        <label>Min Cover Days</label>
+        <input type="number" id="cfgMinCoverDays" value="1.5" min="0.5" max="5" step="0.5"/>
+        <div class="hint">Reorder trigger (Min)</div>
+      </div>
+      <div class="config-item">
+        <label>Max Cover Days</label>
+        <input type="number" id="cfgCoverDays" value="3" min="1" max="7" step="1"/>
+        <div class="hint">Stock target (Max)</div>
+      </div>
+      <div class="config-item">
+        <label>Buffer %</label>
+        <input type="number" id="cfgBufferPct" value="20" min="0" max="100" step="5"/>
+        <div class="hint">Safety margin on Max</div>
+      </div>
+      <div class="config-item">
+        <label>Laminate Threshold (mm)</label>
+        <input type="number" id="cfgLaminateThreshold" value="1" min="0.5" max="3" step="0.5"/>
+        <div class="hint">≤ this = Laminate (excluded from capacity)</div>
+      </div>
+      <div class="config-item">
+        <label>Thin Bin Capacity (≤6mm)</label>
+        <input type="number" id="cfgThinCap" value="60" min="1" max="500" step="1"/>
+        <div class="hint">Max units in thin bin</div>
+      </div>
+      <div class="config-item">
+        <label>Thick Vertical Capacity (>6mm)</label>
+        <input type="number" id="cfgThickCap" value="150" min="1" max="500" step="1"/>
+        <div class="hint">Max units stacked vertically</div>
+      </div>
+      <div class="config-item">
+        <label>Fallback Threshold Pctl</label>
+        <input type="number" id="cfgThresholdPctl" value="75" min="50" max="99" step="5"/>
+        <div class="hint">Order qty above this percentile → fallback</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+      <button id="btnRun" onclick="runAnalysis()" disabled style="background:#E5E5E5;color:#999;border:none;padding:7px 20px;border-radius:6px;cursor:not-allowed;font-weight:800;font-size:12px">▶ Run Analysis</button>
+      <button id="btnReset" onclick="resetDSConfig()" disabled style="background:#E5E5E5;color:#999;border:1px solid #ddd;padding:7px 16px;border-radius:6px;cursor:not-allowed;font-weight:700;font-size:12px">↩ Reset to Default</button>
+      <span id="cfgStatus" style="font-size:11px;color:#16a34a;font-weight:600"></span>
+    </div>
+  </div>
+
+  <!-- Phase 1: Basket Analysis -->
+  <h2 id="phase1Title">Phase 1 — Basket Composition</h2>
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px" class="section" id="summaryCards"></div>
+  <div class="grid2 section">
+    <div class="card"><h3>Order Composition</h3><div class="chart-wrap"><canvas id="chartComposition"></canvas></div></div>
+    <div class="card"><h3 id="coCatTitle">Co-categories in mixed orders</h3><div class="chart-wrap"><canvas id="chartCoCat"></canvas></div></div>
+  </div>
+  <div class="highlight" id="basketInsight"></div>
+
+  <!-- Capacity Check -->
+  <h2>Capacity Check</h2>
+  <div class="card section" id="capacityCheck" style="padding:14px"></div>
+
+  <!-- SKU Tables -->
+  <h2 id="skuTablesTitle">SKU Stocking Recommendation</h2>
+  <div class="grid3 section" id="skuSummaryCards"></div>
+  <div class="section" id="tableThick"></div>
+  <div class="section" id="tableThin"></div>
+
+  <!-- Per-SKU Detail Modal -->
+  <div id="skuDetailOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:none;align-items:center;justify-content:center">
+    <div style="background:#fff;border-radius:12px;padding:24px;max-width:960px;width:95%;max-height:90vh;overflow-y:auto;box-shadow:0 12px 48px rgba(0,0,0,0.25)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 id="skuDetailTitle" style="margin:0;font-size:15px"></h3>
+        <button onclick="closeSkuDetail()" style="background:none;border:1px solid #ddd;border-radius:4px;padding:4px 14px;cursor:pointer;font-size:12px;color:#888;font-weight:600">Close ✕</button>
+      </div>
+      <div id="skuDetailStats" style="margin-bottom:14px"></div>
+      <div class="grid2" style="margin-bottom:14px;gap:20px">
+        <div><h3 style="font-size:12px;margin-bottom:6px;color:#555">Order Qty Distribution</h3><div style="height:260px"><canvas id="chartSkuHist"></canvas></div></div>
+        <div><h3 style="font-size:12px;margin-bottom:6px;color:#555">Daily Consumption</h3><div style="height:260px"><canvas id="chartSkuTimeline"></canvas></div></div>
+      </div>
+      <div id="skuDetailLogic" style="font-size:11px;color:#888;line-height:1.6;border-top:1px solid #eee;padding-top:10px"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── CSV Parser ──
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return [];
+  const headers = [];
+  let inQuote = false, field = '', row = [];
+  for (const ch of lines[0]) {
+    if (ch === '"') { inQuote = !inQuote; continue; }
+    if (ch === ',' && !inQuote) { headers.push(field.trim()); field = ''; continue; }
+    field += ch;
+  }
+  headers.push(field.trim());
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    inQuote = false; field = ''; row = [];
+    for (const ch of lines[i]) {
+      if (ch === '"') { inQuote = !inQuote; continue; }
+      if (ch === ',' && !inQuote) { row.push(field.trim()); field = ''; continue; }
+      field += ch;
+    }
+    row.push(field.trim());
+    const obj = {};
+    headers.forEach((h, j) => { obj[h] = row[j] || ''; });
+    rows.push(obj);
+  }
+  return rows;
+}
+
+function percentile(arr, p) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const i = (p / 100) * (s.length - 1);
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo);
+}
+function median(arr) { return percentile(arr, 50); }
+
+function inferThickness(name) {
+  const m = name.match(/(\d+(?:\.\d+)?)\s*mm/i);
+  if (m) return parseFloat(m[1]);
+  return null;
+}
+function thicknessCategory(mm, laminateThreshold) {
+  if (mm === null) return "Unknown";
+  if (mm <= laminateThreshold) return "Laminate";
+  return mm <= 6 ? "Thin" : "Thick";
+}
+
+// ── Per-DS configs ──
+const DS_DEFAULTS = {
+  DS01: { tier1NZD: 10, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
+  DS02: { tier1NZD: 10, tier2NZD: 2, minCoverDays: 1, coverDays: 2, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
+  DS03: { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
+  DS04: { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
+  DS05: { tier1NZD: 6, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
+  ALL:  { tier1NZD: 8, tier2NZD: 2, minCoverDays: 1.5, coverDays: 3, bufferPct: 20, thinCap: 60, thickCap: 150, laminateThreshold: 1, thresholdPctl: 75 },
+};
+// Load saved configs from localStorage, falling back to defaults for any missing keys
+const dsConfigs = JSON.parse(JSON.stringify(DS_DEFAULTS));
+try {
+  const saved = JSON.parse(localStorage.getItem("hrDsConfigs") || "{}");
+  Object.keys(dsConfigs).forEach(ds => {
+    if (saved[ds]) dsConfigs[ds] = { ...dsConfigs[ds], ...saved[ds] };
+  });
+} catch(e) {}
+
+function loadDSConfig(ds) {
+  const cfg = dsConfigs[ds] || dsConfigs.ALL;
+  document.getElementById("cfgTier1NZD").value = cfg.tier1NZD;
+  document.getElementById("cfgTier2NZD").value = cfg.tier2NZD;
+  document.getElementById("cfgMinCoverDays").value = cfg.minCoverDays;
+  document.getElementById("cfgCoverDays").value = cfg.coverDays;
+  document.getElementById("cfgBufferPct").value = cfg.bufferPct;
+  document.getElementById("cfgThinCap").value = cfg.thinCap;
+  document.getElementById("cfgThickCap").value = cfg.thickCap;
+  document.getElementById("cfgLaminateThreshold").value = cfg.laminateThreshold;
+  document.getElementById("cfgThresholdPctl").value = cfg.thresholdPctl || 75;
+  const label = document.getElementById("cfgDsLabel");
+  if (label) label.textContent = ds;
+  updateButtons();
+}
+
+function readDSConfig() {
+  return {
+    tier1NZD: parseInt(document.getElementById("cfgTier1NZD").value) || 6,
+    tier2NZD: parseInt(document.getElementById("cfgTier2NZD").value) || 2,
+    minCoverDays: parseFloat(document.getElementById("cfgMinCoverDays").value) || 1.5,
+    coverDays: parseInt(document.getElementById("cfgCoverDays").value) || 3,
+    bufferPct: parseInt(document.getElementById("cfgBufferPct").value) || 0,
+    thinCap: parseInt(document.getElementById("cfgThinCap").value) || 60,
+    thickCap: parseInt(document.getElementById("cfgThickCap").value) || 150,
+    laminateThreshold: parseFloat(document.getElementById("cfgLaminateThreshold").value) || 1,
+    thresholdPctl: parseInt(document.getElementById("cfgThresholdPctl").value) || 75,
+  };
+}
+
+function saveDSConfig(ds) {
+  dsConfigs[ds] = readDSConfig();
+  try { localStorage.setItem("hrDsConfigs", JSON.stringify(dsConfigs)); } catch(e) {}
+}
+
+function resetDSConfig() {
+  const def = DS_DEFAULTS[dsFilter] || DS_DEFAULTS.ALL;
+  dsConfigs[dsFilter] = JSON.parse(JSON.stringify(def));
+  loadDSConfig(dsFilter);
+  updateButtons();
+}
+
+let lastRunConfig = null; // tracks what was last run
+
+function updateButtons() {
+  const current = JSON.stringify(readDSConfig());
+  const hasChanges = !lastRunConfig || current !== lastRunConfig;
+  const def = JSON.stringify(DS_DEFAULTS[dsFilter] || DS_DEFAULTS.ALL);
+  const isDefault = current === def;
+  const btnRun = document.getElementById("btnRun");
+  const btnReset = document.getElementById("btnReset");
+  if (btnRun) {
+    btnRun.disabled = !hasChanges;
+    btnRun.style.background = hasChanges ? "#F5D77A" : "#E5E5E5";
+    btnRun.style.color = hasChanges ? "#1a1a1a" : "#999";
+    btnRun.style.cursor = hasChanges ? "pointer" : "not-allowed";
+  }
+  if (btnReset) {
+    btnReset.disabled = isDefault;
+    btnReset.style.background = isDefault ? "#E5E5E5" : "#FEE2E2";
+    btnReset.style.color = isDefault ? "#999" : "#B91C1C";
+    btnReset.style.borderColor = isDefault ? "#ddd" : "#FECACA";
+    btnReset.style.cursor = isDefault ? "not-allowed" : "pointer";
+  }
+}
+
+// ── State ──
+let allRows = [];
+let period = 45;
+let dsFilter = "DS01";
+let primaryCats = new Set();
+let secondaryCats = new Set();
+let allCategories = [];
+let chartComp, chartCoCat, chartQtyDist;
+
+// ── Build category tag toggles ──
+function buildCatTags() {
+  const container = document.getElementById("catTags");
+  container.innerHTML = allCategories.map(cat => {
+    const cls = primaryCats.has(cat) ? "primary" : secondaryCats.has(cat) ? "secondary" : "";
+    return `<span class="cat-tag ${cls}" data-cat="${cat}">${cat}</span>`;
+  }).join("");
+
+  container.querySelectorAll(".cat-tag").forEach(el => {
+    el.addEventListener("click", () => {
+      const cat = el.dataset.cat;
+      if (primaryCats.has(cat)) {
+        // Primary → Secondary
+        primaryCats.delete(cat);
+        secondaryCats.add(cat);
+      } else if (secondaryCats.has(cat)) {
+        // Secondary → Off
+        secondaryCats.delete(cat);
+      } else {
+        // Off → Primary
+        primaryCats.add(cat);
+      }
+      buildCatTags();
+      lastRunConfig = null;
+      document.getElementById("cfgStatus").textContent = "";
+      updateButtons();
+    });
+  });
+}
+
+// ── Main Analysis ──
+function runAnalysis() {
+  const tier1NZD = parseInt(document.getElementById("cfgTier1NZD").value) || 6;
+  const tier2NZD = parseInt(document.getElementById("cfgTier2NZD").value) || 2;
+  const minCoverDays = parseFloat(document.getElementById("cfgMinCoverDays").value) || 1.5;
+  const coverDays = parseInt(document.getElementById("cfgCoverDays").value) || 3;
+  const bufferPct = parseInt(document.getElementById("cfgBufferPct").value) || 0;
+  const thinCap = parseInt(document.getElementById("cfgThinCap").value) || 60;
+  const thickCap = parseInt(document.getElementById("cfgThickCap").value) || 150;
+  const laminateThreshold = parseFloat(document.getElementById("cfgLaminateThreshold").value) || 1;
+  const thresholdPctl = parseInt(document.getElementById("cfgThresholdPctl").value) || 75;
+
+  // Save config and update buttons
+  saveDSConfig(dsFilter);
+  lastRunConfig = JSON.stringify(readDSConfig());
+  updateButtons();
+  document.getElementById("cfgStatus").textContent = "✓ Analysis up to date";
+
+  const isPrimary = cat => primaryCats.has(cat);
+  const isSecondary = cat => secondaryCats.has(cat);
+  const primaryLabel = primaryCats.size ? [...primaryCats].join(", ") : "Primary";
+  const secondaryLabel = secondaryCats.size ? [...secondaryCats].join(", ") : "Secondary";
+
+  if (!primaryCats.size) {
+    document.getElementById("summaryCards").innerHTML = '<div class="no-data" style="grid-column:1/-1">Select at least one <span class="tag tag-green">Primary</span> category above to begin analysis</div>';
+    document.getElementById("basketInsight").innerHTML = "";
+    document.getElementById("skuSummaryCards").innerHTML = "";
+    document.querySelector("#skuTable tbody").innerHTML = "";
+    document.querySelector("#thinSkuTable tbody").innerHTML = "";
+    document.getElementById("thinSkuSection").style.display = "none";
+    document.getElementById("capacityCheck").innerHTML = "";
+    if (chartComp) { chartComp.destroy(); chartComp = null; }
+    if (chartCoCat) { chartCoCat.destroy(); chartCoCat = null; }
+    if (chartQtyDist) { chartQtyDist.destroy(); chartQtyDist = null; }
+    return;
+  }
+
+  // Update dynamic titles
+  document.getElementById("phase1Title").textContent = `Phase 1 — Basket Composition: ${primaryLabel}`;
+
+  // Filter by status, period, DS
+  const validStatus = new Set(["Closed", "Overdue"]);
+  const base = allRows.filter(r => validStatus.has(r["Invoice Status"]));
+  const allDates = [...new Set(base.map(r => r["Invoice Date"]))].sort();
+  const periodDates = new Set(allDates.slice(-period));
+  const periodRows = base.filter(r => periodDates.has(r["Invoice Date"]));
+
+  const withDS = periodRows.map(r => ({
+    ...r,
+    ds: (r["Line Item Location Name"] || "").trim().split(/\s+/)[0].toUpperCase(),
+    qty: parseFloat(r["Quantity"] || 0),
+    cat: (r["Category Name"] || "").trim(),
+    sku: r["SKU"] || "",
+    name: r["Item Name"] || "",
+    order: r["Shopify Order"] || r["Invoice Number"] || "",
+    date: r["Invoice Date"] || "",
+  }));
+
+  const dsRows = dsFilter === "ALL"
+    ? withDS.filter(r => ["DS01","DS02","DS03","DS04","DS05"].includes(r.ds))
+    : withDS.filter(r => r.ds === dsFilter);
+
+  const dsDates = [...new Set(dsRows.map(r => r.date))].sort();
+  document.getElementById("periodRange").textContent = dsDates.length
+    ? `${dsDates[0]} → ${dsDates[dsDates.length - 1]} (${dsDates.length}D)`
+    : "No data";
+
+  // ── Phase 1: Basket Analysis ──
+  const orderMap = {};
+  dsRows.forEach(r => {
+    if (!r.order) return;
+    if (!orderMap[r.order]) orderMap[r.order] = [];
+    orderMap[r.order].push(r);
+  });
+
+  const totalOrders = Object.keys(orderMap).length;
+  let primaryOnlyOrders = 0, primarySecondaryOrders = 0, primaryOtherOrders = 0, primaryOrders = 0;
+  const coCatCounts = {};
+
+  Object.values(orderMap).forEach(lines => {
+    const cats = new Set(lines.map(l => l.cat).filter(c => c));
+    const hasPrimary = [...cats].some(c => isPrimary(c));
+    if (!hasPrimary) return;
+    primaryOrders++;
+    const otherCats = [...cats].filter(c => !isPrimary(c));
+    if (otherCats.length === 0) {
+      primaryOnlyOrders++;
+    } else {
+      const hasSecondary = otherCats.some(c => isSecondary(c));
+      const nonSecondaryOthers = otherCats.filter(c => !isSecondary(c));
+      if (hasSecondary && nonSecondaryOthers.length === 0) {
+        primarySecondaryOrders++;
+      } else {
+        primaryOtherOrders++;
+      }
+      otherCats.forEach(c => { coCatCounts[c] = (coCatCounts[c] || 0) + 1; });
+    }
+  });
+
+  const primaryLines = dsRows.filter(r => isPrimary(r.cat));
+  const totalLines = dsRows.length;
+  const primaryLineCount = primaryLines.length;
+  const primaryPct = totalLines > 0 ? ((primaryLineCount / totalLines) * 100).toFixed(1) : "0";
+
+  const pctOfTotal = totalOrders > 0 ? ((primaryOrders/totalOrders)*100).toFixed(1) : "0";
+  const pctOnly = primaryOrders > 0 ? ((primaryOnlyOrders/primaryOrders)*100).toFixed(1) : "0";
+  const pctSec = primaryOrders > 0 ? ((primarySecondaryOrders/primaryOrders)*100).toFixed(1) : "0";
+  const pctOther = primaryOrders > 0 ? ((primaryOtherOrders/primaryOrders)*100).toFixed(1) : "0";
+
+  document.getElementById("summaryCards").innerHTML = [
+    { num: totalOrders, pct: null, lbl: "Total Orders", sub: `${dsFilter} in L${period}D`, color: "#0077A8" },
+    { num: primaryOrders, pct: pctOfTotal + "%", lbl: `Orders with ${primaryLabel}`, sub: `of total orders`, color: "#92400E" },
+    { num: primaryOnlyOrders, pct: pctOnly + "%", lbl: `${primaryLabel} Only`, sub: `of ${primaryLabel.toLowerCase()} orders`, color: "#16a34a" },
+    { num: primarySecondaryOrders, pct: pctSec + "%", lbl: secondaryCats.size ? `+ ${secondaryLabel}` : "+ Secondary", sub: `of ${primaryLabel.toLowerCase()} orders`, color: "#B8860B" },
+    { num: primaryOtherOrders, pct: pctOther + "%", lbl: `+ Others`, sub: `of ${primaryLabel.toLowerCase()} orders`, color: "#C05A00" },
+  ].map(c => `<div class="card">
+    <div class="num" style="color:${c.color}">${c.num.toLocaleString()}</div>
+    ${c.pct ? `<div style="font-size:18px;font-weight:800;color:${c.color};margin:-2px 0 2px">${c.pct}</div>` : ""}
+    <div class="lbl">${c.lbl}</div>
+    <div class="sub">${c.sub}</div>
+  </div>`).join("");
+
+  // Composition chart
+  const compLabels = [
+    `${primaryLabel} Only`,
+    secondaryCats.size ? `${primaryLabel} + ${secondaryLabel}` : "(no secondary set)",
+    `${primaryLabel} + Others`,
+  ];
+  if (chartComp) chartComp.destroy();
+  chartComp = new Chart(document.getElementById("chartComposition"), {
+    type: "doughnut",
+    data: {
+      labels: compLabels,
+      datasets: [{ data: [primaryOnlyOrders, primarySecondaryOrders, primaryOtherOrders], backgroundColor: ["#16a34a", "#F5D77A", "#C05A00"] }],
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom", labels: { font: { size: 11 } } } } },
+  });
+
+  // Co-category chart
+  const coCatSorted = Object.entries(coCatCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  if (chartCoCat) chartCoCat.destroy();
+  chartCoCat = new Chart(document.getElementById("chartCoCat"), {
+    type: "bar",
+    data: {
+      labels: coCatSorted.map(c => c[0].length > 25 ? c[0].slice(0, 23) + "…" : c[0]),
+      datasets: [{ label: `Orders shared with ${primaryLabel}`, data: coCatSorted.map(c => c[1]), backgroundColor: coCatSorted.map(c => isSecondary(c[0]) ? "#F5D77A" : "#0077A8") }],
+    },
+    options: { responsive: true, maintainAspectRatio: false, indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } },
+  });
+
+  // Basket insight
+  const mixedPct = primaryOrders > 0 ? (((primarySecondaryOrders + primaryOtherOrders) / primaryOrders) * 100).toFixed(0) : 0;
+  const onlyPct = primaryOrders > 0 ? ((primaryOnlyOrders / primaryOrders) * 100).toFixed(0) : 0;
+  document.getElementById("basketInsight").innerHTML = `
+    <strong>Key Insight:</strong> ${mixedPct}% of ${primaryLabel} orders are mixed (contain other categories).
+    ${parseInt(mixedPct) > 60
+      ? `High mix rate — routing all ${primaryLabel} to fallback would split most orders. <strong>Keeping top ${primaryLabel} SKUs at DS makes sense.</strong>`
+      : parseInt(onlyPct) > 60
+        ? `Most ${primaryLabel} orders are standalone — routing to fallback is operationally clean.`
+        : `Mixed/standalone split is roughly even — stock top movers at DS, route bulk to fallback.`}
+    ${secondaryCats.size ? ` <strong>${secondaryLabel}</strong> appears in ${primarySecondaryOrders} orders with ${primaryLabel} (${primaryOrders>0?((primarySecondaryOrders/primaryOrders)*100).toFixed(0):0}%).` : ""}
+  `;
+
+  // ── Phase 2: SKU Profiling ──
+  const skuMap = {};
+  primaryLines.forEach(r => {
+    if (!r.sku) return;
+    if (!skuMap[r.sku]) skuMap[r.sku] = { sku: r.sku, name: r.name, dates: new Set(), orderQtys: [], dayQtyMap: {}, orderIds: new Set() };
+    skuMap[r.sku].dates.add(r.date);
+    skuMap[r.sku].orderQtys.push(r.qty); // per-order qty (for threshold)
+    skuMap[r.sku].dayQtyMap[r.date] = (skuMap[r.sku].dayQtyMap[r.date] || 0) + r.qty; // daily total
+    if (r.order) skuMap[r.sku].orderIds.add(r.order);
+  });
+
+  const skuList = Object.values(skuMap).map(s => {
+    const mm = inferThickness(s.name);
+    const dailyQtys = Object.values(s.dayQtyMap); // array of daily totals
+    const dailyMedian = dailyQtys.length > 0 ? Math.ceil(median(dailyQtys)) : 0;
+    const dailyP75 = dailyQtys.length > 0 ? Math.ceil(percentile(dailyQtys, 75)) : 0;
+    const dailyAvg = dailyQtys.length > 0 ? +(dailyQtys.reduce((a,b)=>a+b,0) / dailyQtys.length).toFixed(1) : 0;
+    const minQty = Math.ceil(dailyMedian * minCoverDays);
+    const maxQty = Math.ceil(dailyMedian * coverDays * (1 + bufferPct/100));
+    const orderThreshold = Math.ceil(percentile(s.orderQtys, thresholdPctl));
+    return {
+      sku: s.sku, name: s.name,
+      nzd: s.dates.size, orders: s.orderIds.size,
+      dailyMedian, dailyP75, dailyAvg,
+      minQty, maxQty,
+      orderMedian: Math.ceil(median(s.orderQtys)),
+      orderThreshold,
+      orderP90: Math.ceil(percentile(s.orderQtys, Math.min(thresholdPctl + 10, 99))),
+      orderMax: Math.max(...s.orderQtys),
+      thicknessMM: mm,
+      thicknessCat: thicknessCategory(mm, laminateThreshold),
+      orderQtys: s.orderQtys,
+      dayQtyMap: s.dayQtyMap,
+    };
+  }).sort((a, b) => b.nzd - a.nzd);
+
+  const tier1 = skuList.filter(s => s.nzd >= tier1NZD);
+  const tier2 = skuList.filter(s => s.nzd >= tier2NZD && s.nzd < tier1NZD);
+  const tier3 = skuList.filter(s => s.nzd < tier2NZD);
+  const thinTier1 = tier1.filter(s => s.thicknessCat === "Thin");
+  const thickTier1 = tier1.filter(s => s.thicknessCat === "Thick");
+  const laminateTier1 = tier1.filter(s => s.thicknessCat === "Laminate");
+
+  // Store globally for click handler
+  // Build full calendar spanning the selected period (fills gaps between first & last date)
+  const allPeriodSorted = [...new Set(withDS.map(r => r.date))].sort().slice(-period);
+  const fullCalendar = [];
+  if (allPeriodSorted.length > 0) {
+    const start = new Date(allPeriodSorted[0]);
+    const end = new Date(allPeriodSorted[allPeriodSorted.length - 1]);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      fullCalendar.push(d.toISOString().slice(0, 10));
+    }
+  }
+
+  window._skuData = skuList;
+  window._skuConfig = { minCoverDays, coverDays, bufferPct, tier1NZD, tier2NZD, thresholdPctl };
+  window._periodDates = fullCalendar;
+
+  // Summary cards
+  document.getElementById("skuSummaryCards").innerHTML = [
+    { num: skuList.length, lbl: `Total ${primaryLabel} SKUs`, sub: "with at least 1 sale", color: "#0077A8" },
+    { num: tier1.length, lbl: "Running SKUs", sub: `NZD ≥ ${tier1NZD} · stocked at DS`, color: "#16a34a" },
+    { num: tier2.length, lbl: "Fallback SKUs", sub: `NZD ${tier2NZD}–${tier1NZD-1} · DC/vendor`, color: "#92400E" },
+  ].map(c => `<div class="card"><div class="num" style="color:${c.color}">${c.num}</div><div class="lbl">${c.lbl}</div><div class="sub">${c.sub}</div></div>`).join("");
+
+  // ── Capacity Check ──
+  const thinCount = thinTier1.reduce((s, x) => s + x.maxQty, 0);
+  const thickCount = thickTier1.reduce((s, x) => s + x.maxQty, 0);
+  const lamCount = laminateTier1.reduce((s, x) => s + x.maxQty, 0);
+  const bufLabel = bufferPct > 0 ? ` + ${bufferPct}%` : "";
+  document.getElementById("capacityCheck").innerHTML = `
+    <div style="margin:8px 0">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span class="tag tag-amber" style="min-width:100px">Thick (&gt;6mm)</span>
+        <div style="flex:1;background:#eee;border-radius:4px;height:22px;overflow:hidden">
+          <div style="width:${Math.min(100,(thickCount/thickCap)*100)}%;background:${thickCount>thickCap?'#B91C1C':'#16a34a'};height:100%;border-radius:4px"></div>
+        </div>
+        <span style="font-size:13px;font-weight:800;color:${thickCount>thickCap?'#B91C1C':'#16a34a'};min-width:90px;text-align:right">${thickCount} / ${thickCap}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span class="tag tag-blue" style="min-width:100px">Thin (≤6mm)</span>
+        <div style="flex:1;background:#eee;border-radius:4px;height:22px;overflow:hidden">
+          <div style="width:${Math.min(100,(thinCount/thinCap)*100)}%;background:${thinCount>thinCap?'#B91C1C':'#16a34a'};height:100%;border-radius:4px"></div>
+        </div>
+        <span style="font-size:13px;font-weight:800;color:${thinCount>thinCap?'#B91C1C':'#16a34a'};min-width:90px;text-align:right">${thinCount} / ${thinCap}</span>
+      </div>
+      ${lamCount > 0 ? `<div style="display:flex;align-items:center;gap:8px">
+        <span class="tag tag-purple" style="min-width:100px">Laminate</span>
+        <span style="font-size:12px;color:#7C3AED;font-weight:600">${lamCount} units · ${laminateTier1.length} SKUs (separate storage)</span>
+      </div>` : ""}
+    </div>
+    <div style="font-size:11px;color:#888;line-height:1.6">
+      <strong>Max</strong> = ceil(Daily Median × ${coverDays}d × ${(1+bufferPct/100).toFixed(2)}) · <strong>Min</strong> = ceil(Daily Median × ${minCoverDays}d)<br>
+      ${(thinCount > thinCap || thickCount > thickCap)
+        ? '<span style="color:#B91C1C;font-weight:700">Over capacity — reduce NZD threshold, cover days, or buffer %.</span>'
+        : '<span style="color:#16a34a;font-weight:700">Within capacity.</span>'}
+    </div>
+  `;
+
+  // ── SKU Tables — Thick and Thin ──
+  document.getElementById("skuTablesTitle").textContent = `SKU Stocking — ${dsFilter} (Running: NZD ≥ ${tier1NZD})`;
+
+  function tierLabel(s) {
+    if (s.nzd >= tier1NZD) return '<span class="tag tag-green">Running — Stock at DS</span>';
+    if (s.nzd >= tier2NZD) return '<span class="tag tag-amber">Fallback — DC/Vendor</span>';
+    return '<span class="tag tag-red">Super Slow — On Demand</span>';
+  }
+
+  function renderSkuTable(containerId, title, allSkus, capUsed, capTotal, capLabel) {
+    const el = document.getElementById(containerId);
+    if (!allSkus.length) { el.innerHTML = ""; return; }
+    const sorted = [...allSkus].sort((a, b) => {
+      const ta = a.nzd >= tier1NZD ? 0 : a.nzd >= tier2NZD ? 1 : 2;
+      const tb = b.nzd >= tier1NZD ? 0 : b.nzd >= tier2NZD ? 1 : 2;
+      return ta !== tb ? ta - tb : b.nzd - a.nzd;
+    });
+    const runningCount = sorted.filter(s => s.nzd >= tier1NZD).length;
+    el.innerHTML = `
+      <div class="card" style="padding:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h3 style="margin:0;font-size:13px">${title} — <span style="color:#16a34a">${runningCount} running</span> / ${allSkus.length} total</h3>
+          <div style="font-size:12px;font-weight:700;color:${capUsed>capTotal?'#B91C1C':'#16a34a'}">${capLabel}: ${capUsed} / ${capTotal}</div>
+        </div>
+        <div style="overflow-y:auto">
+          <table style="font-size:11px">
+            <thead><tr>
+              <th style="padding:4px 6px">#</th>
+              <th style="padding:4px 6px">SKU</th>
+              <th style="padding:4px 6px">Item Name</th>
+              <th style="padding:4px 6px">mm</th>
+              <th style="padding:4px 6px;text-align:center">NZD</th>
+              <th style="padding:4px 6px;text-align:center">Daily Med</th>
+              <th style="padding:4px 6px;text-align:center;color:#B91C1C">Min</th>
+              <th style="padding:4px 6px;text-align:center;color:#065F46">Max</th>
+              <th style="padding:4px 6px;text-align:center">Cover</th>
+              <th style="padding:4px 6px;text-align:center">Threshold</th>
+              <th style="padding:4px 6px">Stocking</th>
+            </tr></thead>
+            <tbody>
+              ${sorted.map((s, i) => {
+                const coverActual = s.dailyMedian > 0 ? (s.maxQty / s.dailyMedian).toFixed(1) + "d" : "—";
+                const isRunning = s.nzd >= tier1NZD;
+                return `<tr style="cursor:pointer;line-height:1.3" onclick="openSkuDetail('${s.sku}')" title="Click for detail">
+                  <td style="padding:3px 6px">${i+1}</td>
+                  <td style="padding:3px 6px;font-weight:600">${s.sku}</td>
+                  <td style="padding:3px 6px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.name}">${s.name}</td>
+                  <td style="padding:3px 6px;font-weight:600">${s.thicknessMM !== null ? s.thicknessMM : "?"}</td>
+                  <td style="padding:3px 6px;text-align:center;font-weight:700">${s.nzd}</td>
+                  <td style="padding:3px 6px;text-align:center;font-weight:700;color:#0077A8">${isRunning ? s.dailyMedian : "—"}</td>
+                  <td style="padding:3px 6px;text-align:center;font-weight:800;color:${isRunning?'#B91C1C':'#ccc'}">${isRunning ? s.minQty : "—"}</td>
+                  <td style="padding:3px 6px;text-align:center;font-weight:800;color:${isRunning?'#065F46':'#ccc'}">${isRunning ? s.maxQty : "—"}</td>
+                  <td style="padding:3px 6px;text-align:center;color:#888">${isRunning ? coverActual : "—"}</td>
+                  <td style="padding:3px 6px;text-align:center">${isRunning ? '<span style="color:#92400E;font-weight:600">≥'+(s.orderThreshold+1)+' → fallback</span>' : "—"}</td>
+                  <td style="padding:3px 6px">${tierLabel(s)}</td>
+                </tr>`;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  const thickAll = skuList.filter(s => s.thicknessCat === "Thick");
+  const thinAll = skuList.filter(s => s.thicknessCat === "Thin");
+  renderSkuTable("tableThick", "Thick (>6mm) — Vertical Storage", thickAll, thickCount, thickCap, "Vertical capacity");
+  renderSkuTable("tableThin", "Thin (≤6mm) — Bin Storage", thinAll, thinCount, thinCap, "Bin capacity");
+
+  // Close any open SKU detail
+  document.getElementById("skuDetailOverlay").style.display = "none";
+}
+
+// ── SKU Detail Modal ──
+let chartSkuHist = null, chartSkuTimeline = null;
+
+function closeSkuDetail() {
+  document.getElementById("skuDetailOverlay").style.display = "none";
+  if (chartSkuHist) { chartSkuHist.destroy(); chartSkuHist = null; }
+  if (chartSkuTimeline) { chartSkuTimeline.destroy(); chartSkuTimeline = null; }
+}
+
+// Close on overlay click (outside modal)
+document.addEventListener("click", e => {
+  if (e.target.id === "skuDetailOverlay") closeSkuDetail();
+});
+// Close on Escape
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closeSkuDetail();
+});
+
+function openSkuDetail(sku) {
+  const s = (window._skuData || []).find(x => x.sku === sku);
+  if (!s) return;
+  const cfg = window._skuConfig || {};
+  const isRunning = s.nzd >= cfg.tier1NZD;
+
+  // Show modal
+  const overlay = document.getElementById("skuDetailOverlay");
+  overlay.style.display = "flex";
+
+  // Title
+  document.getElementById("skuDetailTitle").innerHTML = `${s.name} <span style="font-size:11px;color:#888;font-weight:400">${s.sku} · ${s.thicknessMM ? s.thicknessMM + "mm" : "?"}</span>`;
+
+  // Stats strip — order: Total Orders, NZD, Daily Median, Min, Max, Threshold
+  const coverActual = s.dailyMedian > 0 ? (s.maxQty / s.dailyMedian).toFixed(1) : "—";
+  const minCoverLabel = cfg.minCoverDays ? cfg.minCoverDays + "d" : "—";
+  document.getElementById("skuDetailStats").innerHTML = `
+    <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;background:#f9f9f5;border-radius:6px;padding:8px 12px">
+      <div><span style="color:#888">Total Orders:</span> <strong>${s.orders}</strong></div>
+      <div><span style="color:#888">NZD:</span> <strong>${s.nzd}</strong></div>
+      <div><span style="color:#888">Daily Median:</span> <strong style="color:#0077A8">${s.dailyMedian}</strong></div>
+      ${isRunning ? `<div><span style="color:#B91C1C">Min:</span> <strong style="color:#B91C1C">${s.minQty}</strong> <span style="color:#888;font-weight:400">(${minCoverLabel})</span></div>` : ""}
+      ${isRunning ? `<div><span style="color:#065F46">Max:</span> <strong style="color:#065F46">${s.maxQty}</strong> <span style="color:#888;font-weight:400">(${coverActual}d)</span></div>` : ""}
+      <div><span style="color:#888">Threshold (P${cfg.thresholdPctl||75}):</span> <strong>${s.orderThreshold}</strong></div>
+    </div>
+  `;
+
+  // Logic
+  const tierName = isRunning ? "Running — Stock at DS" : s.nzd >= cfg.tier2NZD ? "Fallback — DC/Vendor" : "Super Slow — On Demand";
+  const thresholdQty = s.orderThreshold;
+  const ordersAbove = (s.orderQtys || []).filter(q => q > thresholdQty).length;
+  const ordersBelowEq = (s.orderQtys || []).filter(q => q <= thresholdQty).length;
+  document.getElementById("skuDetailLogic").innerHTML = `
+    <strong>Classification:</strong> ${tierName} (NZD ${s.nzd} ${isRunning ? "≥" : "<"} ${cfg.tier1NZD})<br>
+    ${isRunning ? `<strong>Min</strong> = ceil(${s.dailyMedian} daily median × ${cfg.minCoverDays} min cover days) = <strong style="color:#B91C1C">${s.minQty}</strong><br>
+    <strong>Max</strong> = ceil(${s.dailyMedian} daily median × ${cfg.coverDays} max cover days × ${(1+cfg.bufferPct/100).toFixed(2)} buffer) = <strong style="color:#065F46">${s.maxQty}</strong><br>
+    <strong>Threshold:</strong> Orders ≤ ${thresholdQty} fulfilled from DS (${ordersBelowEq} orders) · Orders &gt; ${thresholdQty} → fallback (${ordersAbove} orders)` :
+    `This SKU does not qualify for DS stocking. Orders fulfilled from fallback (DC/vendor).`}
+  `;
+
+  // ── Histogram: Order qty distribution (exact qty per bar) ──
+  if (chartSkuHist) chartSkuHist.destroy();
+  const orderQtys = s.orderQtys || [];
+  // Count frequency of each exact qty
+  const qtyCounts = {};
+  orderQtys.forEach(q => { qtyCounts[q] = (qtyCounts[q] || 0) + 1; });
+  // Fill in all integer values from 1 to max for uniform bars
+  const maxOrdQty = Math.max(...orderQtys, 1);
+  const histLabels = [];
+  const histValues = [];
+  const histColors = [];
+  for (let q = 1; q <= maxOrdQty; q++) {
+    histLabels.push(String(q));
+    histValues.push(qtyCounts[q] || 0);
+    histColors.push(isRunning && q > thresholdQty ? "#C05A0066" : "#0077A8");
+  }
+
+  chartSkuHist = new Chart(document.getElementById("chartSkuHist"), {
+    type: "bar",
+    data: {
+      labels: histLabels,
+      datasets: [{
+        label: "Orders",
+        data: histValues,
+        backgroundColor: histColors,
+        barPercentage: 1.0,
+        categoryPercentage: 0.85,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        annotation: isRunning ? {
+          annotations: {
+            thresholdLine: {
+              type: "line",
+              xMin: thresholdQty - 0.5,
+              xMax: thresholdQty - 0.5,
+              borderColor: "#C05A00",
+              borderWidth: 2,
+              borderDash: [5, 3],
+              label: {
+                display: true,
+                content: "≤" + thresholdQty + " → DS",
+                position: "start",
+                backgroundColor: "#C05A00",
+                color: "#fff",
+                font: { size: 9, weight: "bold" },
+                padding: 3,
+              },
+            },
+          },
+        } : {},
+      },
+      scales: {
+        x: {
+          title: { display: true, text: "Order Qty", font: { size: 10 } },
+          grid: { display: false },
+          ticks: {
+            font: { size: 9 },
+            maxRotation: 0, minRotation: 0,
+            autoSkip: false,
+            callback(val, i) {
+              // Only label where a bar exists (non-zero frequency)
+              return histValues[i] > 0 ? (i + 1) : null;
+            },
+          },
+        },
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: "Frequency", font: { size: 10 } },
+          ticks: { stepSize: 1 },
+          afterFit(scale) { scale.width = 40; },
+        },
+      },
+    },
+  });
+
+  // ── Timeline: Daily consumption — full calendar, Min/Max via annotations ──
+  if (chartSkuTimeline) chartSkuTimeline.destroy();
+  const dayMap = s.dayQtyMap || {};
+  const allDatesInPeriod = window._periodDates || [];
+  const dailyVals = allDatesInPeriod.map(d => dayMap[d] || 0);
+  const timeLabels = allDatesInPeriod.map(d => d.slice(5));
+
+  // Only one dataset — no legend needed
+  const tlDatasets = [{
+    label: "Daily Qty",
+    data: dailyVals,
+    backgroundColor: dailyVals.map(v => v > 0 ? "#0077A8" : "transparent"),
+    borderColor: "transparent",
+    barPercentage: 1.0,
+    categoryPercentage: 0.9,
+    type: "bar",
+  }];
+
+  // Min/Max as annotations with inline labels (no legend)
+  const tlAnnotations = {};
+  if (isRunning) {
+    tlAnnotations.minLine = {
+      type: "line",
+      yMin: s.minQty, yMax: s.minQty,
+      borderColor: "#B91C1C",
+      borderWidth: 2,
+      borderDash: [6, 3],
+      label: {
+        display: true,
+        content: "Min=" + s.minQty,
+        position: "end",
+        backgroundColor: "transparent",
+        color: "#B91C1C",
+        font: { size: 9, weight: "bold" },
+        yAdjust: -8,
+      },
+    };
+    tlAnnotations.maxLine = {
+      type: "line",
+      yMin: s.maxQty, yMax: s.maxQty,
+      borderColor: "#065F46",
+      borderWidth: 2,
+      borderDash: [6, 3],
+      label: {
+        display: true,
+        content: "Max=" + s.maxQty,
+        position: "end",
+        backgroundColor: "transparent",
+        color: "#065F46",
+        font: { size: 9, weight: "bold" },
+        yAdjust: -8,
+      },
+    };
+  }
+
+  chartSkuTimeline = new Chart(document.getElementById("chartSkuTimeline"), {
+    type: "bar",
+    data: { labels: timeLabels, datasets: tlDatasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        annotation: { annotations: tlAnnotations },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: "Date", font: { size: 10 } },
+          grid: { display: false },
+          ticks: {
+            font: { size: 9 },
+            maxRotation: 0, minRotation: 0,
+            autoSkip: false,
+            callback: (function() {
+              // Pre-compute which indices to label:
+              // Only order days, minimum 4-day gap between labels
+              const toLabel = new Set();
+              let lastLabelled = -99;
+              allDatesInPeriod.forEach((d, i) => {
+                if (dailyVals[i] > 0 && i - lastLabelled >= 4) {
+                  toLabel.add(i);
+                  lastLabelled = i;
+                }
+              });
+              return function(val, i) {
+                return toLabel.has(i) ? allDatesInPeriod[i].slice(5) : null;
+              };
+            })(),
+            padding: 2,
+          },
+        },
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: "Qty", font: { size: 10 } },
+          afterFit(scale) { scale.width = 40; },
+        },
+      },
+    },
+  });
+}
+
+// ── Event Handlers ──
+document.getElementById("csvInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  file.text().then(text => {
+    allRows = parseCSV(text);
+    // Extract unique categories (excluding blank)
+    const validStatus = new Set(["Closed", "Overdue"]);
+    allCategories = [...new Set(allRows.filter(r => validStatus.has(r["Invoice Status"])).map(r => (r["Category Name"]||"").trim()).filter(Boolean))].sort();
+    buildCatTags();
+    loadDSConfig(dsFilter);
+    document.getElementById("results").style.display = "block";
+    document.getElementById("uploadBox").style.display = "none";
+    lastRunConfig = null;
+    updateButtons();
+  });
+});
+
+document.querySelectorAll("[data-period]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("[data-period]").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    period = parseInt(btn.dataset.period);
+    lastRunConfig = null;
+    document.getElementById("cfgStatus").textContent = "";
+    updateButtons();
+  });
+});
+
+document.querySelectorAll("[data-ds]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    saveDSConfig(dsFilter);
+    document.querySelectorAll("[data-ds]").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    dsFilter = btn.dataset.ds;
+    loadDSConfig(dsFilter);
+    lastRunConfig = null; // force re-run needed
+    document.getElementById("cfgStatus").textContent = "";
+    updateButtons();
+  });
+});
+
+["cfgTier1NZD","cfgTier2NZD","cfgMinCoverDays","cfgCoverDays","cfgBufferPct","cfgThinCap","cfgThickCap","cfgLaminateThreshold","cfgThresholdPctl"].forEach(id => {
+  document.getElementById(id).addEventListener("input", () => {
+    document.getElementById("cfgStatus").textContent = "";
+    updateButtons();
+  });
+});
+</script>
+</body>
+</html>
