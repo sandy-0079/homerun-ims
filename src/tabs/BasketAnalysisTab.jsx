@@ -79,7 +79,7 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
   const [primaryCats, setPrimaryCats] = useState(new Set());
   const [secondaryCats, setSecondaryCats] = useState(new Set());
   const [results, setResults] = useState(null);
-  const [cachedResults, setCachedResults] = useState(null); // keyed by DS: {All, DS01, DS02, ...}
+  const [cachedResults, setCachedResults] = useState(null); // keyed by period then DS: {L45D: {All, DS01,...}, ...}
 
   const hasShopifyOrder = useMemo(() => invoiceData.some(r => r.shopifyOrder), [invoiceData]);
   const allCategories = useMemo(() =>
@@ -94,17 +94,35 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
     && hasShopifyOrder
     && (period !== "CUSTOM" || (dateFrom && dateTo));
 
+  // Run button shows "Re-run" if we have cached results (category/custom change forces re-run)
+  const needsRerun = !cachedResults && primaryCats.size > 0;
+
   const handleRun = useCallback(() => {
-    const periodRows = filterByPeriod(invoiceData, period, dateFrom, dateTo, invoiceDateRange);
     const cache = {};
-    ["All", ...DS_LIST].forEach(ds => {
-      const dsRows = ds === "All"
-        ? periodRows.filter(r => DS_LIST.includes(r.ds))
-        : periodRows.filter(r => r.ds === ds);
-      cache[ds] = computeBaskets(dsRows, skuMaster, primaryCats, secondaryCats);
+    // Pre-compute all preset periods × all DSes so period switching is instant
+    BA_PERIODS.filter(p => p.days).forEach(preset => {
+      const periodRows = filterByPeriod(invoiceData, preset.key, "", "", invoiceDateRange);
+      cache[preset.key] = {};
+      ["All", ...DS_LIST].forEach(ds => {
+        const dsRows = ds === "All"
+          ? periodRows.filter(r => DS_LIST.includes(r.ds))
+          : periodRows.filter(r => r.ds === ds);
+        cache[preset.key][ds] = computeBaskets(dsRows, skuMaster, primaryCats, secondaryCats);
+      });
     });
+    // Also compute custom period if active
+    if (period === "CUSTOM" && dateFrom && dateTo) {
+      const periodRows = filterByPeriod(invoiceData, "CUSTOM", dateFrom, dateTo, invoiceDateRange);
+      cache["CUSTOM"] = {};
+      ["All", ...DS_LIST].forEach(ds => {
+        const dsRows = ds === "All"
+          ? periodRows.filter(r => DS_LIST.includes(r.ds))
+          : periodRows.filter(r => r.ds === ds);
+        cache["CUSTOM"][ds] = computeBaskets(dsRows, skuMaster, primaryCats, secondaryCats);
+      });
+    }
     setCachedResults(cache);
-    setResults(cache[dsFilter]);
+    setResults(cache[period]?.[dsFilter] || null);
   }, [invoiceData, skuMaster, period, dateFrom, dateTo, dsFilter, primaryCats, secondaryCats, invoiceDateRange]);
 
   const toggleCat = (cat) => {
@@ -127,9 +145,9 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
 
   useEffect(() => {
     if (cachedResults) {
-      setResults(cachedResults[dsFilter] || null);
+      setResults(cachedResults[period]?.[dsFilter] || null);
     }
-  }, [dsFilter, cachedResults]);
+  }, [dsFilter, period, cachedResults]);
 
   if (!invoiceData.length) return (
     <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>
@@ -186,9 +204,9 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
         <div style={{display:"flex",gap:4}}>
           {BA_PERIODS.filter(p => p.key !== "CUSTOM").map(p => (
-            <button key={p.key} onClick={() => { setPeriod(p.key); setResults(null); setCachedResults(null); }} style={S.btn(period === p.key)}>{p.label}</button>
+            <button key={p.key} onClick={() => setPeriod(p.key)} style={S.btn(period === p.key)}>{p.label}</button>
           ))}
-          <button onClick={() => { setPeriod("CUSTOM"); setResults(null); setCachedResults(null); }} style={S.btn(period === "CUSTOM")}>Custom</button>
+          <button onClick={() => { setPeriod("CUSTOM"); setCachedResults(null); setResults(null); }} style={S.btn(period === "CUSTOM")}>Custom</button>
         </div>
         {period === "CUSTOM" && (
           <>
