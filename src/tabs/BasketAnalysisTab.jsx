@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
@@ -79,6 +79,7 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
   const [primaryCats, setPrimaryCats] = useState(new Set());
   const [secondaryCats, setSecondaryCats] = useState(new Set());
   const [results, setResults] = useState(null);
+  const [cachedResults, setCachedResults] = useState(null); // keyed by DS: {All, DS01, DS02, ...}
 
   const hasShopifyOrder = useMemo(() => invoiceData.some(r => r.shopifyOrder), [invoiceData]);
   const allCategories = useMemo(() =>
@@ -95,22 +96,40 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
 
   const handleRun = useCallback(() => {
     const periodRows = filterByPeriod(invoiceData, period, dateFrom, dateTo, invoiceDateRange);
-    const dsRows = dsFilter === "All"
-      ? periodRows.filter(r => DS_LIST.includes(r.ds))
-      : periodRows.filter(r => r.ds === dsFilter);
-    setResults(computeBaskets(dsRows, skuMaster, primaryCats, secondaryCats));
+    const cache = {};
+    ["All", ...DS_LIST].forEach(ds => {
+      const dsRows = ds === "All"
+        ? periodRows.filter(r => DS_LIST.includes(r.ds))
+        : periodRows.filter(r => r.ds === ds);
+      cache[ds] = computeBaskets(dsRows, skuMaster, primaryCats, secondaryCats);
+    });
+    setCachedResults(cache);
+    setResults(cache[dsFilter]);
   }, [invoiceData, skuMaster, period, dateFrom, dateTo, dsFilter, primaryCats, secondaryCats, invoiceDateRange]);
 
-  const toggleCat = (cat, type) => {
-    if (type === "primary") {
-      setPrimaryCats(prev => { const n = new Set(prev); n.has(cat) ? n.delete(cat) : n.add(cat); return n; });
-      setSecondaryCats(prev => { const n = new Set(prev); n.delete(cat); return n; });
-    } else {
-      setSecondaryCats(prev => { const n = new Set(prev); n.has(cat) ? n.delete(cat) : n.add(cat); return n; });
+  const toggleCat = (cat) => {
+    const isPrimary = primaryCats.has(cat);
+    const isSecondary = secondaryCats.has(cat);
+    if (!isPrimary && !isSecondary) {
+      // none → Primary
+      setPrimaryCats(prev => { const n = new Set(prev); n.add(cat); return n; });
+    } else if (isPrimary) {
+      // Primary → Secondary
       setPrimaryCats(prev => { const n = new Set(prev); n.delete(cat); return n; });
+      setSecondaryCats(prev => { const n = new Set(prev); n.add(cat); return n; });
+    } else {
+      // Secondary → none
+      setSecondaryCats(prev => { const n = new Set(prev); n.delete(cat); return n; });
     }
     setResults(null);
+    setCachedResults(null);
   };
+
+  useEffect(() => {
+    if (cachedResults) {
+      setResults(cachedResults[dsFilter] || null);
+    }
+  }, [dsFilter, cachedResults]);
 
   if (!invoiceData.length) return (
     <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>
@@ -133,27 +152,34 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
           {allCategories.map(cat => {
             const isPrimary = primaryCats.has(cat);
             const isSecondary = secondaryCats.has(cat);
+            const bg = isPrimary ? "#D1FAE5" : isSecondary ? "#FEF3C7" : HR.white;
+            const color = isPrimary ? "#065F46" : isSecondary ? "#92400E" : HR.muted;
+            const borderColor = isPrimary ? "#6EE7B7" : isSecondary ? "#FDE68A" : HR.border;
             return (
-              <span key={cat} style={{display:"inline-flex",gap:4,alignItems:"center"}}>
-                <button
-                  onClick={() => toggleCat(cat, "primary")}
-                  style={{...S.btn(isPrimary),background:isPrimary?"#D1FAE5":"",color:isPrimary?"#065F46":"",borderColor:isPrimary?"#6EE7B7":HR.border}}
-                >
-                  {cat}
-                </button>
-                <button
-                  onClick={() => toggleCat(cat, "secondary")}
-                  style={{...S.btn(isSecondary),background:isSecondary?"#FEF3C7":"",color:isSecondary?"#92400E":"",borderColor:isSecondary?"#FDE68A":HR.border,fontSize:9,padding:"2px 6px"}}
-                >
-                  2°
-                </button>
-              </span>
+              <button
+                key={cat}
+                onClick={() => toggleCat(cat)}
+                style={{...S.btn(isPrimary||isSecondary), background:bg, color, borderColor}}
+              >
+                {cat}
+                {isSecondary && <span style={{fontSize:8,marginLeft:4,opacity:0.7}}>2°</span>}
+              </button>
             );
           })}
         </div>
         <div style={{fontSize:10,color:HR.muted,marginTop:8}}>
-          Click category name → <span style={{background:"#D1FAE5",color:"#065F46",padding:"1px 4px",borderRadius:3}}>Primary</span> &nbsp;
-          Click "2°" → <span style={{background:"#FEF3C7",color:"#92400E",padding:"1px 4px",borderRadius:3}}>Secondary</span>
+          Click once → <span style={{background:"#D1FAE5",color:"#065F46",padding:"1px 4px",borderRadius:3}}>Primary</span> &nbsp;
+          Click again → <span style={{background:"#FEF3C7",color:"#92400E",padding:"1px 4px",borderRadius:3}}>Secondary 2°</span> &nbsp;
+          Click again → Unselect
+        </div>
+        <div style={{marginTop:10,display:"flex",justifyContent:"flex-end"}}>
+          <button
+            onClick={handleRun}
+            disabled={!canRun}
+            style={{padding:"5px 18px",borderRadius:6,border:"none",background:canRun?HR.yellow:"#E5E5E5",color:canRun?HR.black:"#999",fontWeight:800,fontSize:12,cursor:canRun?"pointer":"not-allowed"}}
+          >
+            ▶ Run Basket Analysis
+          </button>
         </div>
       </div>
 
@@ -161,28 +187,21 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
         <div style={{display:"flex",gap:4}}>
           {BA_PERIODS.filter(p => p.key !== "CUSTOM").map(p => (
-            <button key={p.key} onClick={() => { setPeriod(p.key); setResults(null); }} style={S.btn(period === p.key)}>{p.label}</button>
+            <button key={p.key} onClick={() => { setPeriod(p.key); setResults(null); setCachedResults(null); }} style={S.btn(period === p.key)}>{p.label}</button>
           ))}
-          <button onClick={() => { setPeriod("CUSTOM"); setResults(null); }} style={S.btn(period === "CUSTOM")}>Custom</button>
+          <button onClick={() => { setPeriod("CUSTOM"); setResults(null); setCachedResults(null); }} style={S.btn(period === "CUSTOM")}>Custom</button>
         </div>
         {period === "CUSTOM" && (
           <>
-            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setResults(null); }} style={S.input}/>
-            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setResults(null); }} style={S.input}/>
+            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setResults(null); setCachedResults(null); }} style={S.input}/>
+            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setResults(null); setCachedResults(null); }} style={S.input}/>
           </>
         )}
         <div style={{display:"flex",gap:4,marginLeft:8}}>
           {["All",...DS_LIST].map(ds => (
-            <button key={ds} onClick={() => { setDsFilter(ds); setResults(null); }} style={S.btn(dsFilter === ds)}>{ds}</button>
+            <button key={ds} onClick={() => setDsFilter(ds)} style={S.btn(dsFilter === ds)}>{ds}</button>
           ))}
         </div>
-        <button
-          onClick={handleRun}
-          disabled={!canRun}
-          style={{marginLeft:"auto",padding:"5px 18px",borderRadius:6,border:"none",background:canRun?HR.yellow:"#E5E5E5",color:canRun?HR.black:"#999",fontWeight:800,fontSize:12,cursor:canRun?"pointer":"not-allowed"}}
-        >
-          ▶ Run Basket Analysis
-        </button>
       </div>
 
       {!results && (
@@ -212,11 +231,11 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
           </div>
 
           {/* Charts */}
-          <div style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:12,marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1.5fr",gap:12,marginBottom:16}}>
             {/* Donut */}
             <div style={S.card}>
               <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>Basket Composition</div>
-              <ResponsiveContainer width="100%" height={220}>
+              <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
                   <Pie
                     data={[
@@ -224,7 +243,7 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
                       {name:`+ ${secondaryLabel}`,value:results.primarySecondaryOrders},
                       {name:"+ Others",value:results.primaryOtherOrders},
                     ]}
-                    cx="50%" cy="50%" innerRadius={55} outerRadius={85}
+                    cx="50%" cy="50%" innerRadius={75} outerRadius={115}
                     dataKey="value"
                   >
                     {DONUT_COLORS.map((c,i) => <Cell key={i} fill={c}/>)}
@@ -242,7 +261,7 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
                 const sortedCoCats = Object.entries(results.coCatCounts)
                   .sort((a,b) => b[1]-a[1]).slice(0,10);
                 return (
-                  <ResponsiveContainer width="100%" height={220}>
+                  <ResponsiveContainer width="100%" height={280}>
                     <BarChart
                       layout="vertical"
                       data={sortedCoCats.map(([cat,count]) => ({cat:cat.length>28?cat.slice(0,26)+"…":cat,count}))}
