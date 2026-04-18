@@ -444,30 +444,6 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     setCommittedThinCfg(cached?.thinCfg || null);
   }, [dsFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-compute on first load for each DS (runs once per DS per session, covers page refresh)
-  useEffect(() => {
-    if (!thickCfg || !thinCfg || !baseSkus.length) return;
-    if (autoRanRef.current.has(dsFilter)) return;
-    autoRanRef.current.add(dsFilter);
-
-    const thickList = baseSkus.filter(s => s.thicknessCat === "Thick");
-    const thinList  = baseSkus.filter(s => s.thicknessCat !== "Thick");
-
-    const withThick = thickList.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
-    const thickCap  = withThick.filter(s => s.nzd >= thickCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
-    const thickR    = { skus: withThick, capUsed: thickCap };
-
-    const withThin = thinList.map(s => ({ ...s, ...computeMinMax(s, thinCfg) }));
-    const thinCap  = withThin.filter(s => s.nzd >= thinCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
-    const thinR    = { skus: withThin, capUsed: thinCap };
-
-    setThickResults(thickR);
-    setThinResults(thinR);
-    setCommittedThickCfg(thickCfg);
-    setCommittedThinCfg(thinCfg);
-    setResultsCache(prev => ({ ...prev, [dsFilter]: { thick: thickR, thin: thinR, thickCfg, thinCfg } }));
-  }, [thickCfg, thinCfg, baseSkus, dsFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const handleSaveConfig = useCallback((type, newCfg) => {
     if (!isAdmin) return;
     const merged = {
@@ -486,6 +462,28 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   );
   const thickSkus = useMemo(() => baseSkus.filter(s => s.thicknessCat === "Thick"), [baseSkus]);
   const thinSkus  = useMemo(() => baseSkus.filter(s => s.thicknessCat !== "Thick"), [baseSkus]);
+
+  // Auto-compute on first load for each DS (runs once per DS per session, covers page refresh)
+  // Must be declared AFTER baseSkus/thickSkus/thinSkus to avoid TDZ error
+  useEffect(() => {
+    if (!thickCfg || !thinCfg || !baseSkus.length) return;
+    if (autoRanRef.current.has(dsFilter)) return;
+    autoRanRef.current.add(dsFilter);
+
+    const withThick = thickSkus.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
+    const thickCap  = withThick.filter(s => s.nzd >= thickCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
+    const thickR    = { skus: withThick, capUsed: thickCap };
+
+    const withThin = thinSkus.map(s => ({ ...s, ...computeMinMax(s, thinCfg) }));
+    const thinCap  = withThin.filter(s => s.nzd >= thinCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
+    const thinR    = { skus: withThin, capUsed: thinCap };
+
+    setThickResults(thickR);
+    setThinResults(thinR);
+    setCommittedThickCfg(thickCfg);
+    setCommittedThinCfg(thinCfg);
+    setResultsCache(prev => ({ ...prev, [dsFilter]: { thick: thickR, thin: thinR, thickCfg, thinCfg } }));
+  }, [thickCfg, thinCfg, baseSkus, dsFilter, thickSkus, thinSkus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runThick = useCallback(() => {
     const withMM = thickSkus.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
