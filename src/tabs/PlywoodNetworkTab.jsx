@@ -278,8 +278,8 @@ function SKUModal({ sku, cfg, onClose, invoiceDateRange }) {
     qty: sku.dailyMap[date] || 0,
   }));
 
-  // Shared bar size: constrained by whichever chart has more bars
-  const sharedBarSize = Math.max(4, Math.min(32, Math.floor(420 / Math.max(histData.length, timelineData.length))));
+  // Shared bar size: use NZD (actual sale days) not total dates — bars only appear on NZD days
+  const sharedBarSize = Math.max(6, Math.min(32, Math.floor(420 / Math.max(histData.length, sku.nzd || 1))));
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
