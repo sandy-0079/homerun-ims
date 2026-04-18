@@ -22,29 +22,29 @@ const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
 
 const DS_DEFAULTS = {
   DS01: {
-    thick: { tier1NZD:10, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, capacity:150 },
-    thin:  { tier1NZD:10, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, capacity:60 },
-    shared: { laminateThreshold:1, thresholdPctl:75 }, fallbackLabel:"Om Timber",
+    thick: { tier1NZD:10, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:150 },
+    thin:  { tier1NZD:10, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:60 },
+    shared: { laminateThreshold:1 }, fallbackLabel:"Om Timber",
   },
   DS02: {
-    thick: { tier1NZD:10, tier2NZD:2, minCoverDays:1, coverDays:2, bufferPct:20, capacity:150 },
-    thin:  { tier1NZD:10, tier2NZD:2, minCoverDays:1, coverDays:2, bufferPct:20, capacity:60 },
-    shared: { laminateThreshold:1, thresholdPctl:75 }, fallbackLabel:"DC (Rampura)",
+    thick: { tier1NZD:10, tier2NZD:2, minCoverDays:1, coverDays:2, bufferPct:20, thresholdPctl:75, capacity:150 },
+    thin:  { tier1NZD:10, tier2NZD:2, minCoverDays:1, coverDays:2, bufferPct:20, thresholdPctl:75, capacity:60 },
+    shared: { laminateThreshold:1 }, fallbackLabel:"DC (Rampura)",
   },
   DS03: {
-    thick: { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, capacity:150 },
-    thin:  { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, capacity:60 },
-    shared: { laminateThreshold:1, thresholdPctl:75 }, fallbackLabel:"DC",
+    thick: { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:150 },
+    thin:  { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:60 },
+    shared: { laminateThreshold:1 }, fallbackLabel:"DC",
   },
   DS04: {
-    thick: { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, capacity:150 },
-    thin:  { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, capacity:60 },
-    shared: { laminateThreshold:1, thresholdPctl:75 }, fallbackLabel:"DC",
+    thick: { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:150 },
+    thin:  { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:60 },
+    shared: { laminateThreshold:1 }, fallbackLabel:"DC",
   },
   DS05: {
-    thick: { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, capacity:150 },
-    thin:  { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, capacity:60 },
-    shared: { laminateThreshold:1, thresholdPctl:75 }, fallbackLabel:"DC",
+    thick: { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:150 },
+    thin:  { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:60 },
+    shared: { laminateThreshold:1 }, fallbackLabel:"DC",
   },
 };
 
@@ -110,10 +110,10 @@ function computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDat
   }).filter(s => s.thicknessCat !== "Laminate");
 }
 
-function computeMinMax(sku, cfg, thresholdPctl = 75) {
+function computeMinMax(sku, cfg) {
   const minQty = Math.ceil(sku.dailyMedian * cfg.minCoverDays);
   const maxQty = Math.ceil(sku.dailyMedian * cfg.coverDays * (1 + cfg.bufferPct / 100));
-  const threshold = percentile(sku.orderQtys, thresholdPctl);
+  const threshold = percentile(sku.orderQtys, cfg.thresholdPctl ?? 75);
   return { minQty, maxQty, threshold };
 }
 
@@ -127,8 +127,9 @@ function ConfigPanel({ type, cfg, onChange, isAdmin, onRun }) {
     { key:"tier2NZD",    label:"Fallback NZD",    hint:"Below → Super Slow" },
     { key:"minCoverDays",label:"Min Cover Days",  hint:"Min × daily median" },
     { key:"coverDays",   label:"Max Cover Days",  hint:"Max × daily median × buffer" },
-    { key:"bufferPct",   label:"Buffer %",        hint:"Safety margin on Max" },
-    { key:"capacity",    label:"Capacity (units)",hint:"Physical constraint" },
+    { key:"bufferPct",      label:"Buffer %",           hint:"Safety margin on Max" },
+    { key:"thresholdPctl",  label:"Fallback Threshold %",hint:"P-ile for routing threshold" },
+    { key:"capacity",       label:"Capacity (units)",   hint:"Physical constraint" },
   ];
   return (
     <div style={{...S.card,marginBottom:8}}>
@@ -249,9 +250,9 @@ function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
   );
 }
 
-function SKUModal({ sku, cfg, onClose, invoiceDateRange, thresholdPctl }) {
+function SKUModal({ sku, cfg, onClose, invoiceDateRange }) {
   if (!sku) return null;
-  const { minQty, maxQty, threshold } = computeMinMax(sku, cfg, thresholdPctl);
+  const { minQty, maxQty, threshold } = computeMinMax(sku, cfg);
   const tier = sku.nzd >= cfg.tier1NZD ? "Running — Stock at DS" : sku.nzd >= cfg.tier2NZD ? "Fallback" : "Super Slow";
   const tierColor = sku.nzd >= cfg.tier1NZD ? "#16a34a" : sku.nzd >= cfg.tier2NZD ? "#92400E" : "#64748B";
   const minCov = sku.dailyMedian > 0 ? (minQty / sku.dailyMedian).toFixed(1) + "d" : "—";
@@ -294,7 +295,7 @@ function SKUModal({ sku, cfg, onClose, invoiceDateRange, thresholdPctl }) {
           <span>Daily Median: <strong style={{color:"#0077A8"}}>{sku.dailyMedian > 0 ? sku.dailyMedian.toFixed(0) : "—"}</strong></span>
           <span>Min: <strong style={{color:"#B91C1C"}}>{minQty}</strong> <span style={{color:HR.muted}}>({minCov})</span></span>
           <span>Max: <strong style={{color:"#16a34a"}}>{maxQty}</strong> <span style={{color:HR.muted}}>({maxCov})</span></span>
-          <span>Threshold (P{thresholdPctl}): <strong style={{color:"#92400E"}}>{threshold}</strong></span>
+          <span>Threshold (P{cfg.thresholdPctl ?? 75}): <strong style={{color:"#92400E"}}>{threshold}</strong></span>
         </div>
 
         {/* Charts */}
@@ -412,7 +413,6 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const [period, setPeriod] = useState(45);
   const [thickCfg, setThickCfg] = useState(null);
   const [thinCfg, setThinCfg] = useState(null);
-  const [sharedCfg, setSharedCfg] = useState(null);
   const [thickResults, setThickResults] = useState(null);
   const [thinResults, setThinResults] = useState(null);
   const [selectedSku, setSelectedSku] = useState(null);
@@ -423,7 +423,6 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     const saved = networkConfigs?.[dsFilter] || DS_DEFAULTS[dsFilter];
     setThickCfg({ ...DS_DEFAULTS[dsFilter].thick, ...saved.thick });
     setThinCfg({ ...DS_DEFAULTS[dsFilter].thin, ...saved.thin });
-    setSharedCfg({ ...DS_DEFAULTS[dsFilter].shared, ...saved.shared });
   }, [dsFilter, networkConfigs]);
 
   // Clear results only when DS changes (not when config is saved)
@@ -452,27 +451,25 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const thinSkus  = useMemo(() => baseSkus.filter(s => s.thicknessCat !== "Thick"), [baseSkus]);
 
   const runThick = useCallback(() => {
-    const pctl = sharedCfg?.thresholdPctl ?? 75;
-    const withMM = thickSkus.map(s => ({ ...s, ...computeMinMax(s, thickCfg, pctl) }));
+    const withMM = thickSkus.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
     const capUsed = withMM.filter(s => s.nzd >= thickCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
     setThickResults({ skus: withMM, capUsed });
     if (isAdmin) handleSaveConfig("thick", thickCfg);
-  }, [thickSkus, thickCfg, sharedCfg, isAdmin, handleSaveConfig]);
+  }, [thickSkus, thickCfg, isAdmin, handleSaveConfig]);
 
   const runThin = useCallback(() => {
-    const pctl = sharedCfg?.thresholdPctl ?? 75;
-    const withMM = thinSkus.map(s => ({ ...s, ...computeMinMax(s, thinCfg, pctl) }));
+    const withMM = thinSkus.map(s => ({ ...s, ...computeMinMax(s, thinCfg) }));
     const capUsed = withMM.filter(s => s.nzd >= thinCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
     setThinResults({ skus: withMM, capUsed });
     if (isAdmin) handleSaveConfig("thin", thinCfg);
-  }, [thinSkus, thinCfg, sharedCfg, isAdmin, handleSaveConfig]);
+  }, [thinSkus, thinCfg, isAdmin, handleSaveConfig]);
 
   if (!invoiceData.length || !Object.keys(skuMaster).length) return (
     <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>
       Upload invoice CSV and SKU Master in the Upload Data tab to begin.
     </div>
   );
-  if (!thickCfg || !thinCfg || !sharedCfg) return null;
+  if (!thickCfg || !thinCfg) return null;
 
   const dsFallbackLabel = networkConfigs?.[dsFilter]?.fallbackLabel || DS_DEFAULTS[dsFilter]?.fallbackLabel || "DC";
 
@@ -492,29 +489,6 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         </div>
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
-
-      {sharedCfg && (
-        <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:12,padding:"8px 12px",background:HR.surfaceLight,borderRadius:6,border:`1px solid ${HR.border}`}}>
-          <span style={{fontSize:10,fontWeight:700,color:HR.muted,textTransform:"uppercase",letterSpacing:"0.04em"}}>Shared Settings</span>
-          <div>
-            <div style={{fontSize:9,color:HR.muted,fontWeight:600,textTransform:"uppercase",marginBottom:2}}>Fallback Threshold Pctl</div>
-            <input
-              type="number"
-              value={sharedCfg.thresholdPctl}
-              disabled={!isAdmin}
-              min={50} max={99} step={5}
-              onChange={e => {
-                const updated = { ...sharedCfg, thresholdPctl: parseFloat(e.target.value) || 75 };
-                setSharedCfg(updated);
-                handleSaveConfig("shared", updated);
-              }}
-              onFocus={e => e.target.select()}
-              style={{...S.input,width:60,fontWeight:700,color:"#555"}}
-            />
-            <div style={{fontSize:9,color:HR.muted,marginTop:2}}>P75 = default routing threshold</div>
-          </div>
-        </div>
-      )}
 
       <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={thickCfg} thinCfg={thinCfg}/>
 
@@ -556,7 +530,6 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           cfg={selectedSkuType === "thick" ? thickCfg : thinCfg}
           onClose={() => setSelectedSku(null)}
           invoiceDateRange={invoiceDateRange}
-          thresholdPctl={sharedCfg?.thresholdPctl ?? 75}
         />
       )}
     </div>
