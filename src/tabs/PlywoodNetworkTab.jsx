@@ -185,7 +185,9 @@ function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
   const withTiers = skus.map(s => {
     const { minQty, maxQty, threshold } = computeMinMax(s, cfg);
     const tier = s.nzd >= cfg.tier1NZD ? "Running" : s.nzd >= cfg.tier2NZD ? "Fallback" : "Super Slow";
-    return { ...s, minQty, maxQty, threshold, tier };
+    const minCov = s.dailyMedian > 0 ? (minQty / s.dailyMedian).toFixed(1) + "d" : "—";
+    const maxCov = s.dailyMedian > 0 ? (maxQty / s.dailyMedian).toFixed(1) + "d" : "—";
+    return { ...s, minQty, maxQty, threshold, tier, minCov, maxCov };
   }).sort((a, b) => {
     const order = { Running:0, Fallback:1, "Super Slow":2 };
     return order[a.tier] !== order[b.tier] ? order[a.tier] - order[b.tier] : b.nzd - a.nzd;
@@ -195,33 +197,48 @@ function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
     "Fallback":   { bg:"#FEF3C7", color:"#92400E" },
     "Super Slow": { bg:"#F1F5F9", color:"#64748B" },
   };
+  const thL = {padding:"6px 8px",textAlign:"left",color:HR.muted,background:HR.surfaceLight,fontWeight:600,fontSize:10,whiteSpace:"nowrap",borderBottom:`1px solid ${HR.border}`};
+  const thC = {...thL, textAlign:"center"};
+  const tdC = {padding:"4px 8px",textAlign:"center"};
   return (
     <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
       <thead>
         <tr>
-          {["SKU","Name","mm","NZD","Daily Median","Min","Max","Threshold","Tier"].map(h => (
-            <th key={h} style={{padding:"6px 8px",textAlign:"left",color:HR.muted,background:HR.surfaceLight,fontWeight:600,fontSize:10,whiteSpace:"nowrap",borderBottom:`1px solid ${HR.border}`}}>{h}</th>
-          ))}
+          <th style={thL}>#</th>
+          <th style={thL}>SKU</th>
+          <th style={thL}>Item Name</th>
+          <th style={thC}>mm</th>
+          <th style={thC}>NZD</th>
+          <th style={thC}>Daily Med</th>
+          <th style={thC}>Min</th>
+          <th style={thC}>Min Cov</th>
+          <th style={thC}>Max</th>
+          <th style={thC}>Cover</th>
+          <th style={thC}>Threshold</th>
+          <th style={thL}>Stocking</th>
         </tr>
       </thead>
       <tbody>
-        {withTiers.map(s => {
+        {withTiers.map((s, idx) => {
           const ts = TIER_STYLE[s.tier];
           return (
             <tr key={s.sku} onClick={() => onSelectSku(s)} style={{cursor:"pointer",borderTop:`1px solid ${HR.border}`}}
               onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
               onMouseLeave={e => e.currentTarget.style.background = ""}>
+              <td style={{padding:"4px 8px",color:HR.muted}}>{idx+1}</td>
               <td style={{padding:"4px 8px",fontWeight:600}}>{s.sku}</td>
               <td style={{padding:"4px 8px",color:HR.muted}}>{s.name}</td>
-              <td style={{padding:"4px 8px"}}>{s.mm != null ? `${s.mm}mm` : "—"}</td>
-              <td style={{padding:"4px 8px",fontWeight:700}}>{s.nzd}</td>
-              <td style={{padding:"4px 8px"}}>{s.dailyMedian.toFixed(1)}</td>
-              <td style={{padding:"4px 8px",color:"#16a34a",fontWeight:700}}>{s.nzd > 0 ? s.minQty : "—"}</td>
-              <td style={{padding:"4px 8px",color:"#0077A8",fontWeight:700}}>{s.nzd > 0 ? s.maxQty : "—"}</td>
-              <td style={{padding:"4px 8px"}}>{s.nzd > 0 ? <span style={{fontSize:10,color:"#555"}}>{">"}{s.threshold}</span> : "—"}</td>
+              <td style={tdC}>{s.mm != null ? `${s.mm}` : "—"}</td>
+              <td style={{...tdC,fontWeight:700}}>{s.nzd}</td>
+              <td style={tdC}>{s.dailyMedian > 0 ? s.dailyMedian.toFixed(0) : "—"}</td>
+              <td style={{...tdC,color:"#16a34a",fontWeight:700}}>{s.nzd > 0 ? s.minQty : "—"}</td>
+              <td style={{...tdC,color:HR.muted}}>{s.nzd > 0 ? s.minCov : "—"}</td>
+              <td style={{...tdC,color:"#0077A8",fontWeight:700}}>{s.nzd > 0 ? s.maxQty : "—"}</td>
+              <td style={{...tdC,color:HR.muted}}>{s.nzd > 0 ? s.maxCov : "—"}</td>
+              <td style={tdC}>{s.nzd > 0 ? <span style={{fontSize:10,color:"#555"}}>≥{s.threshold} → fallback</span> : "—"}</td>
               <td style={{padding:"4px 8px"}}>
                 <span style={{...TAG_STYLE,background:ts.bg,color:ts.color,border:`1px solid ${ts.color}33`}}>
-                  {s.tier === "Running" ? "Running — DS" : s.tier === "Fallback" ? `Fallback — ${fallbackLabel}` : "Super Slow"}
+                  {s.tier === "Running" ? "Running — Stock at DS" : s.tier === "Fallback" ? `Fallback — ${fallbackLabel}` : "Super Slow"}
                 </span>
               </td>
             </tr>
