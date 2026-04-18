@@ -213,7 +213,7 @@ function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
           <th style={thC}>Min</th>
           <th style={thC}>Min Cov</th>
           <th style={thC}>Max</th>
-          <th style={thC}>Cover</th>
+          <th style={thC}>Max Cov</th>
           <th style={thC}>Threshold</th>
           <th style={thL}>Stocking</th>
         </tr>
@@ -321,7 +321,7 @@ function SKUModal({ sku, cfg, onClose, invoiceDateRange, thresholdPctl }) {
           <div>
             <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>Daily Consumption</div>
             <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={timelineData} margin={{left:8,right:32,top:4,bottom:20}}>
+              <BarChart data={timelineData} margin={{left:8,right:64,top:4,bottom:20}}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false}/>
                 <XAxis dataKey="date" tick={{fontSize:9}} interval={Math.floor(timelineData.length/6)} label={{value:"Date",position:"insideBottom",offset:-10,fontSize:10}}/>
                 <YAxis tick={{fontSize:10}} label={{value:"Qty",angle:-90,position:"insideLeft",offset:10,fontSize:10}}/>
