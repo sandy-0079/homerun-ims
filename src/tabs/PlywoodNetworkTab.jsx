@@ -278,6 +278,9 @@ function SKUModal({ sku, cfg, onClose, invoiceDateRange }) {
     qty: sku.dailyMap[date] || 0,
   }));
 
+  // Shared bar size: constrained by whichever chart has more bars
+  const sharedBarSize = Math.max(4, Math.min(32, Math.floor(420 / Math.max(histData.length, timelineData.length))));
+
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
       <div style={{background:HR.surface,borderRadius:12,padding:24,width:"min(900px,96vw)",maxHeight:"88vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
@@ -314,7 +317,7 @@ function SKUModal({ sku, cfg, onClose, invoiceDateRange }) {
                 <RTooltip formatter={(v) => [v,"Orders"]} labelFormatter={l=>`Qty: ${l}`}/>
                 <ReferenceLine x={threshold} stroke="#C05A00" strokeDasharray="4 4" strokeWidth={2}
                   label={{value:`≤${threshold} → DS`,position:"insideTopRight",fontSize:9,fill:"#C05A00",fontWeight:700}}/>
-                <Bar dataKey="count" radius={[2,2,0,0]}>
+                <Bar dataKey="count" barSize={sharedBarSize} radius={[2,2,0,0]}>
                   {histData.map((d,i) => <Cell key={i} fill={d.fill}/>)}
                 </Bar>
               </BarChart>
@@ -332,7 +335,7 @@ function SKUModal({ sku, cfg, onClose, invoiceDateRange }) {
                 <RTooltip/>
                 {minQty > 0 && <ReferenceLine y={minQty} stroke="#B91C1C" strokeDasharray="5 4" label={{value:`Min=${minQty}`,position:"right",fontSize:9,fill:"#B91C1C"}}/>}
                 {maxQty > 0 && <ReferenceLine y={maxQty} stroke="#16a34a" strokeDasharray="5 4" label={{value:`Max=${maxQty}`,position:"right",fontSize:9,fill:"#16a34a"}}/>}
-                <Bar dataKey="qty" fill="#0077A8" radius={[2,2,0,0]}/>
+                <Bar dataKey="qty" barSize={sharedBarSize} fill="#0077A8" radius={[2,2,0,0]}/>
               </BarChart>
             </ResponsiveContainer>
           </div>
