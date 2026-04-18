@@ -185,8 +185,9 @@ function CapacityBar({ used, total, label }) {
 }
 
 function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
+  // skus already have minQty/maxQty/threshold baked in from runThick/runThin — use them directly
   const withTiers = skus.map(s => {
-    const { minQty, maxQty, threshold } = computeMinMax(s, cfg);
+    const { minQty, maxQty, threshold } = s;
     const tier = s.nzd >= cfg.tier1NZD ? "Running" : s.nzd >= cfg.tier2NZD ? "Fallback" : "Super Slow";
     const minCov = s.dailyMedian > 0 ? (minQty / s.dailyMedian).toFixed(1) + "d" : "—";
     const maxCov = s.dailyMedian > 0 ? (maxQty / s.dailyMedian).toFixed(1) + "d" : "—";
@@ -516,7 +517,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           <>
             <CapacityBar used={thickResults.capUsed} total={thickCfg.capacity} label="Thick"/>
             <div style={S.card}>
-              <SKUTable skus={thickResults.skus} cfg={thickCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }}/>
+              <SKUTable skus={thickResults.skus} cfg={committedThickCfg || thickCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }}/>
             </div>
           </>
         ) : (
@@ -532,7 +533,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           <>
             <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Thin"/>
             <div style={S.card}>
-              <SKUTable skus={thinResults.skus} cfg={thinCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
+              <SKUTable skus={thinResults.skus} cfg={committedThinCfg || thinCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
             </div>
           </>
         ) : (
