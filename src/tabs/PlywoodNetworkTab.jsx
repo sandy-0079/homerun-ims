@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   ReferenceLine, ResponsiveContainer,
@@ -426,6 +426,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const [resultsCache, setResultsCache] = useState({}); // per-DS result cache
   const [selectedSku, setSelectedSku] = useState(null);
   const [selectedSkuType, setSelectedSkuType] = useState(null);
+  const autoRanRef = useRef(new Set()); // tracks which DSes have been auto-computed
 
   // Reload configs when DS or saved configs change
   useEffect(() => {
@@ -442,6 +443,30 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     setCommittedThickCfg(cached?.thickCfg || null);
     setCommittedThinCfg(cached?.thinCfg || null);
   }, [dsFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-compute on first load for each DS (runs once per DS per session, covers page refresh)
+  useEffect(() => {
+    if (!thickCfg || !thinCfg || !baseSkus.length) return;
+    if (autoRanRef.current.has(dsFilter)) return;
+    autoRanRef.current.add(dsFilter);
+
+    const thickList = baseSkus.filter(s => s.thicknessCat === "Thick");
+    const thinList  = baseSkus.filter(s => s.thicknessCat !== "Thick");
+
+    const withThick = thickList.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
+    const thickCap  = withThick.filter(s => s.nzd >= thickCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
+    const thickR    = { skus: withThick, capUsed: thickCap };
+
+    const withThin = thinList.map(s => ({ ...s, ...computeMinMax(s, thinCfg) }));
+    const thinCap  = withThin.filter(s => s.nzd >= thinCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
+    const thinR    = { skus: withThin, capUsed: thinCap };
+
+    setThickResults(thickR);
+    setThinResults(thinR);
+    setCommittedThickCfg(thickCfg);
+    setCommittedThinCfg(thinCfg);
+    setResultsCache(prev => ({ ...prev, [dsFilter]: { thick: thickR, thin: thinR, thickCfg, thinCfg } }));
+  }, [thickCfg, thinCfg, baseSkus, dsFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveConfig = useCallback((type, newCfg) => {
     if (!isAdmin) return;
