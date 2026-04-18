@@ -276,7 +276,7 @@ function SKUModal({ sku, cfg, onClose, invoiceDateRange }) {
   );
 }
 
-function SummaryCards({ skuList, skuMaster }) {
+function SummaryCards({ skuList, skuMaster, thickCfg }) {
   const plywoodActive = Object.values(skuMaster).filter(s =>
     PLYWOOD_CATEGORIES.includes(s.category) && (s.status || "Active").toLowerCase() === "active"
   );
@@ -290,11 +290,13 @@ function SummaryCards({ skuList, skuMaster }) {
     return cat === "Thin" || cat === "Unknown";
   }).length;
   const withSales = skuList.filter(s => s.nzd > 0).length;
+  const tier1 = thickCfg?.tier1NZD ?? 10;
+  const tier2 = thickCfg?.tier2NZD ?? 2;
   const cards = [
     { num: withSales, lbl: `SKUs with ≥1 sale / ${plywoodActive.length} Active`, sub: `Thick: ${masterThickCount} · Thin: ${masterThinCount} in master`, color:"#0077A8" },
-    { num: skuList.filter(s => s.nzd >= 10).length, lbl:"Running — Stock at DS", sub:"NZD ≥ tier1 threshold", color:"#16a34a" },
-    { num: skuList.filter(s => s.nzd >= 2 && s.nzd < 10).length, lbl:"Fallback — DC or Supplier", sub:"NZD tier2–tier1", color:"#92400E" },
-    { num: skuList.filter(s => s.nzd < 2).length, lbl:"Super Slow — On Demand", sub:"NZD below tier2", color:"#6B7280" },
+    { num: skuList.filter(s => s.nzd >= tier1).length, lbl:"Running — Stock at DS", sub:`NZD ≥ ${tier1}`, color:"#16a34a" },
+    { num: skuList.filter(s => s.nzd >= tier2 && s.nzd < tier1).length, lbl:"Fallback — DC or Supplier", sub:`NZD ${tier2}–${tier1}`, color:"#92400E" },
+    { num: skuList.filter(s => s.nzd < tier2).length, lbl:"Super Slow — On Demand", sub:`NZD < ${tier2}`, color:"#6B7280" },
   ];
   return (
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:16}}>
@@ -386,7 +388,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
 
-      <SummaryCards skuList={baseSkus} skuMaster={skuMaster}/>
+      <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={thickCfg}/>
 
       {/* Thick section */}
       <div style={{marginBottom:24}}>
