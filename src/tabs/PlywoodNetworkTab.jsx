@@ -119,7 +119,7 @@ function computeMinMax(sku, cfg) {
 
 const TAG_STYLE = {padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,whiteSpace:"nowrap",display:"inline-block"};
 
-function ConfigPanel({ type, cfg, onChange, isAdmin, onRun }) {
+function ConfigPanel({ type, cfg, onChange, isAdmin, onRun, dirty }) {
   const label = type === "thick" ? "Thick (>6mm) — Vertical Storage" : "Thin (≤6mm) — Bin Storage";
   const color = type === "thick" ? "#92400E" : "#0077A8";
   const fields = [
@@ -134,24 +134,26 @@ function ConfigPanel({ type, cfg, onChange, isAdmin, onRun }) {
   return (
     <div style={{...S.card,marginBottom:8}}>
       <div style={{fontSize:11,fontWeight:700,color,marginBottom:10}}>{label}</div>
-      <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-end"}}>
-        {fields.map(f => (
-          <div key={f.key}>
-            <div style={{fontSize:9,color:HR.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{f.label}</div>
-            <input
-              type="number"
-              value={cfg[f.key]}
-              disabled={!isAdmin}
-              onChange={e => onChange({ ...cfg, [f.key]: parseFloat(e.target.value) || 0 })}
-              onFocus={e => e.target.select()}
-              style={{...S.input,color,fontWeight:700,border:`1px solid ${color}44`,opacity:isAdmin?1:0.7}}
-            />
-            <div style={{fontSize:9,color:HR.muted,marginTop:2}}>{f.hint}</div>
-          </div>
-        ))}
+      <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-end",justifyContent:"space-between"}}>
+        <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-end"}}>
+          {fields.map(f => (
+            <div key={f.key}>
+              <div style={{fontSize:9,color:HR.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{f.label}</div>
+              <input
+                type="number"
+                value={cfg[f.key]}
+                disabled={!isAdmin}
+                onChange={e => onChange({ ...cfg, [f.key]: parseFloat(e.target.value) || 0 })}
+                onFocus={e => e.target.select()}
+                style={{...S.input,color,fontWeight:700,border:`1px solid ${color}44`,opacity:isAdmin?1:0.7}}
+              />
+              <div style={{fontSize:9,color:HR.muted,marginTop:2}}>{f.hint}</div>
+            </div>
+          ))}
+        </div>
         <button
-          onClick={onRun}
-          style={{padding:"6px 18px",borderRadius:6,border:"none",background:HR.yellow,color:HR.black,fontWeight:800,fontSize:12,cursor:"pointer",alignSelf:"flex-end",marginBottom:2}}
+          onClick={dirty ? onRun : undefined}
+          style={{padding:"6px 20px",borderRadius:6,border:"none",background:dirty?HR.yellow:"#E5E5E5",color:dirty?HR.black:"#999",fontWeight:800,fontSize:12,cursor:dirty?"pointer":"default",alignSelf:"flex-end",marginBottom:2,flexShrink:0}}
         >
           ▶ Run
         </button>
@@ -413,8 +415,11 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const [period, setPeriod] = useState(45);
   const [thickCfg, setThickCfg] = useState(null);
   const [thinCfg, setThinCfg] = useState(null);
+  const [committedThickCfg, setCommittedThickCfg] = useState(null); // config at last Run — drives SummaryCards
+  const [committedThinCfg, setCommittedThinCfg] = useState(null);
   const [thickResults, setThickResults] = useState(null);
   const [thinResults, setThinResults] = useState(null);
+  const [resultsCache, setResultsCache] = useState({}); // per-DS result cache
   const [selectedSku, setSelectedSku] = useState(null);
   const [selectedSkuType, setSelectedSkuType] = useState(null);
 
@@ -425,11 +430,14 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     setThinCfg({ ...DS_DEFAULTS[dsFilter].thin, ...saved.thin });
   }, [dsFilter, networkConfigs]);
 
-  // Clear results only when DS changes (not when config is saved)
+  // On DS change: restore cached results if available, else clear
   useEffect(() => {
-    setThickResults(null);
-    setThinResults(null);
-  }, [dsFilter]);
+    const cached = resultsCache[dsFilter];
+    setThickResults(cached?.thick || null);
+    setThinResults(cached?.thin || null);
+    setCommittedThickCfg(cached?.thickCfg || null);
+    setCommittedThinCfg(cached?.thinCfg || null);
+  }, [dsFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveConfig = useCallback((type, newCfg) => {
     if (!isAdmin) return;
@@ -453,16 +461,22 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const runThick = useCallback(() => {
     const withMM = thickSkus.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
     const capUsed = withMM.filter(s => s.nzd >= thickCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
-    setThickResults({ skus: withMM, capUsed });
+    const r = { skus: withMM, capUsed };
+    setThickResults(r);
+    setCommittedThickCfg(thickCfg);
+    setResultsCache(prev => ({ ...prev, [dsFilter]: { ...prev[dsFilter], thick: r, thickCfg } }));
     if (isAdmin) handleSaveConfig("thick", thickCfg);
-  }, [thickSkus, thickCfg, isAdmin, handleSaveConfig]);
+  }, [thickSkus, thickCfg, dsFilter, isAdmin, handleSaveConfig]);
 
   const runThin = useCallback(() => {
     const withMM = thinSkus.map(s => ({ ...s, ...computeMinMax(s, thinCfg) }));
     const capUsed = withMM.filter(s => s.nzd >= thinCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
-    setThinResults({ skus: withMM, capUsed });
+    const r = { skus: withMM, capUsed };
+    setThinResults(r);
+    setCommittedThinCfg(thinCfg);
+    setResultsCache(prev => ({ ...prev, [dsFilter]: { ...prev[dsFilter], thin: r, thinCfg } }));
     if (isAdmin) handleSaveConfig("thin", thinCfg);
-  }, [thinSkus, thinCfg, isAdmin, handleSaveConfig]);
+  }, [thinSkus, thinCfg, dsFilter, isAdmin, handleSaveConfig]);
 
   if (!invoiceData.length || !Object.keys(skuMaster).length) return (
     <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>
@@ -471,6 +485,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   );
   if (!thickCfg || !thinCfg) return null;
 
+  const thickDirty = !committedThickCfg || JSON.stringify(thickCfg) !== JSON.stringify(committedThickCfg);
+  const thinDirty  = !committedThinCfg  || JSON.stringify(thinCfg)  !== JSON.stringify(committedThinCfg);
   const dsFallbackLabel = networkConfigs?.[dsFilter]?.fallbackLabel || DS_DEFAULTS[dsFilter]?.fallbackLabel || "DC";
 
   return (
@@ -490,12 +506,12 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
 
-      <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={thickCfg} thinCfg={thinCfg}/>
+      <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg}/>
 
       {/* Thick section */}
       <div style={{marginBottom:24}}>
         <div style={S.sectionTitle}>Thick (&gt;6mm) — Vertical Storage</div>
-        <ConfigPanel type="thick" cfg={thickCfg} onChange={setThickCfg} isAdmin={isAdmin} onRun={runThick}/>
+        <ConfigPanel type="thick" cfg={thickCfg} onChange={setThickCfg} isAdmin={isAdmin} onRun={runThick} dirty={thickDirty}/>
         {thickResults ? (
           <>
             <CapacityBar used={thickResults.capUsed} total={thickCfg.capacity} label="Thick"/>
@@ -511,7 +527,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       {/* Thin section */}
       <div style={{marginBottom:24}}>
         <div style={S.sectionTitle}>Thin (≤6mm) — Bin Storage</div>
-        <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin}/>
+        <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin} dirty={thinDirty}/>
         {thinResults ? (
           <>
             <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Thin"/>

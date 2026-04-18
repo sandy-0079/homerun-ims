@@ -3901,7 +3901,7 @@ const visibleOutput = useMemo(() => {
             isAdmin={isAdmin}
           />
         )}
-        {tab==="plywood"&&(
+        <div style={{display:tab==="plywood"?"block":"none"}}>
           <PlywoodNetworkTab
             invoiceData={invoiceData}
             skuMaster={skuMaster}
@@ -3910,7 +3910,7 @@ const visibleOutput = useMemo(() => {
             networkConfigs={networkConfigs}
             onSaveConfigs={handleSaveNetworkConfigs}
           />
-        )}
+        </div>
 
         {/* Old dashboard tab removed — replaced by OverviewTab */}
         {tab==="output"&&(
