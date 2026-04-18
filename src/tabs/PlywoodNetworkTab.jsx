@@ -3,7 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   LineChart, Line, ReferenceLine, ResponsiveContainer,
 } from "recharts";
-import { loadFromSupabase, saveToSupabase } from "../supabase";
+import { saveToSupabase } from "../supabase";
 
 const HR = {
   yellow:"#F5C400",black:"#1A1A1A",white:"#FFFFFF",
@@ -101,7 +101,7 @@ function computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDat
     const agg = skuMap[s.sku];
     const dailyTotals = agg ? Object.values(agg.dailyMap) : [];
     const nzd = agg ? agg.dates.size : 0;
-    const dailyMedian = median(dailyTotals);
+    const dailyMedian = dailyTotals.length > 0 ? Math.ceil(median(dailyTotals)) : 0;
     const orderQtys = agg ? agg.orderQtys : [];
     const mm = inferThickness(s.name);
     const isLam = s.sku.toUpperCase().includes("LAM") || (mm !== null && mm <= 1);
@@ -377,7 +377,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
         <div style={{display:"flex",gap:4}}>
           {DS_LIST.map(ds => (
-            <button key={ds} onClick={() => setDsFilter(ds)} style={S.btn(dsFilter===ds)}>{ds}</button>
+            <button key={ds} onClick={() => { setDsFilter(ds); setThickResults(null); setThinResults(null); }} style={S.btn(dsFilter===ds)}>{ds}</button>
           ))}
         </div>
         <div style={{display:"flex",gap:4,marginLeft:12}}>
