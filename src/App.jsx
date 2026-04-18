@@ -3893,14 +3893,14 @@ const visibleOutput = useMemo(() => {
           )
         )}
 
-        {tab==="baskets"&&(
+        <div style={{display:tab==="baskets"?"block":"none"}}>
           <BasketAnalysisTab
             invoiceData={invoiceData}
             skuMaster={skuMaster}
             invoiceDateRange={invoiceDateRange}
             isAdmin={isAdmin}
           />
-        )}
+        </div>
         <div style={{display:tab==="plywood"?"block":"none"}}>
           <PlywoodNetworkTab
             invoiceData={invoiceData}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
@@ -72,14 +72,19 @@ function computeBaskets(rows, skuMaster, primaryCats, secondaryCats) {
 }
 
 export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateRange, isAdmin }) {
-  const [period, setPeriod] = useState("L45D");
+  const [period, setPeriod] = useState(() => localStorage.getItem("hrBasketPeriod") || "L45D");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [dsFilter, setDsFilter] = useState("All");
-  const [primaryCats, setPrimaryCats] = useState(new Set());
-  const [secondaryCats, setSecondaryCats] = useState(new Set());
+  const [dsFilter, setDsFilter] = useState(() => localStorage.getItem("hrBasketDS") || "All");
+  const [primaryCats, setPrimaryCats] = useState(() => {
+    try { const s = localStorage.getItem("hrBasketPrimary"); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
+  });
+  const [secondaryCats, setSecondaryCats] = useState(() => {
+    try { const s = localStorage.getItem("hrBasketSecondary"); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
+  });
   const [results, setResults] = useState(null);
-  const [cachedResults, setCachedResults] = useState(null); // keyed by period then DS: {L45D: {All, DS01,...}, ...}
+  const [cachedResults, setCachedResults] = useState(null);
+  const autoRanRef = useRef(false);
 
   const hasShopifyOrder = useMemo(() => invoiceData.some(r => r.shopifyOrder), [invoiceData]);
   const allCategories = useMemo(() =>
@@ -148,6 +153,20 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
       setResults(cachedResults[period]?.[dsFilter] || null);
     }
   }, [dsFilter, period, cachedResults]);
+
+  // Persist selections to localStorage
+  useEffect(() => { localStorage.setItem("hrBasketPrimary",   JSON.stringify([...primaryCats]));   }, [primaryCats]);
+  useEffect(() => { localStorage.setItem("hrBasketSecondary", JSON.stringify([...secondaryCats])); }, [secondaryCats]);
+  useEffect(() => { localStorage.setItem("hrBasketPeriod", period);   }, [period]);
+  useEffect(() => { localStorage.setItem("hrBasketDS",     dsFilter); }, [dsFilter]);
+
+  // Auto-run on load if categories were restored from localStorage
+  useEffect(() => {
+    if (autoRanRef.current) return;
+    if (!invoiceData.length || !hasShopifyOrder || primaryCats.size === 0) return;
+    autoRanRef.current = true;
+    handleRun();
+  }); // no dep array — runs every render until autoRanRef is set
 
   if (!invoiceData.length) return (
     <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>
