@@ -10,6 +10,8 @@ import {
 } from "./engine/index.js";
 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
+import BasketAnalysisTab from "./tabs/BasketAnalysisTab";
+import PlywoodNetworkTab from "./tabs/PlywoodNetworkTab";
 
 const HR = {
   yellow:"#F5C400",yellowDark:"#D4A800",black:"#1A1A1A",white:"#FFFFFF",
@@ -3133,6 +3135,7 @@ export default function App(){
   const [uploading, setUploading] = useState(null); // key of card currently uploading CSV
   const [infoCard, setInfoCard] = useState(null); // key of card whose column info tooltip is visible
   const [modelSnapshot, setModelSnapshot] = useState(null); // stats frozen at last model run — drives data health strip
+  const [networkConfigs, setNetworkConfigs] = useState(null);
 
   const addChange = (msg) => setChangeLog(prev => [...prev, msg]);
   const [syncStatus,setSyncStatus]=useState("idle"); // "idle" | "saving" | "saved" | "error"
@@ -3177,8 +3180,18 @@ export default function App(){
         // Fallback to localStorage
         try{const v=localStorage.getItem("coreOverrides");if(v)setCoreOverrides(JSON.parse(v));}catch{}
       }
+
+      // Load networkConfigs from Supabase
+      const sbNetCfg = await loadFromSupabase("params", "networkConfigs");
+      if (sbNetCfg) setNetworkConfigs(sbNetCfg);
     })();
   },[]);
+
+  // ── handleSaveNetworkConfigs: saves networkConfigs to Supabase ───────────────
+  const handleSaveNetworkConfigs = useCallback(async (configs) => {
+    setNetworkConfigs(configs);
+    await saveToSupabase("params", "networkConfigs", configs);
+  }, []);
 
   // ── saveCoreOverrides: writes to both Supabase + localStorage ───────────────
   const saveCoreOverrides = useCallback(async(ov)=>{
@@ -3315,7 +3328,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     setUploading("invoiceData");
     const rows=parseCSV(await file.text());
     // Replace entirely — no merge, no rolling cap. Store all data Admin provides.
-    const filtered=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0)})).filter(r=>r.date&&r.sku&&r.qty>0);
+    const filtered=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0),shopifyOrder:r["Shopify Order"]||""})).filter(r=>r.date&&r.sku&&r.qty>0);
     setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
     await saveTeamData({invoiceData:filtered});
     setModelDirty(true);
@@ -3467,8 +3480,8 @@ const visibleOutput = useMemo(() => {
   const rw2=params.recencyWt||RECENCY_WT_DEFAULT;
   const movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"],priceColors=["#B91C1C","#C2410C","#A16207","#475569","#64748B"];
 
-  const ADMIN_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
-  const PUBLIC_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"]];
+  const ADMIN_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["baskets","Baskets"],["plywood","Plywood"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
+  const PUBLIC_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["baskets","Baskets"],["plywood","Plywood"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"]];
   const NAV_TABS=isAdmin?ADMIN_TABS:PUBLIC_TABS;
 
   // Sync status indicator
@@ -3879,6 +3892,25 @@ const visibleOutput = useMemo(() => {
             />
           )
         )}
+
+        <div style={{display:tab==="baskets"?"block":"none"}}>
+          <BasketAnalysisTab
+            invoiceData={invoiceData}
+            skuMaster={skuMaster}
+            invoiceDateRange={invoiceDateRange}
+            isAdmin={isAdmin}
+          />
+        </div>
+        <div style={{display:tab==="plywood"?"block":"none"}}>
+          <PlywoodNetworkTab
+            invoiceData={invoiceData}
+            skuMaster={skuMaster}
+            invoiceDateRange={invoiceDateRange}
+            isAdmin={isAdmin}
+            networkConfigs={networkConfigs}
+            onSaveConfigs={handleSaveNetworkConfigs}
+          />
+        </div>
 
         {/* Old dashboard tab removed — replaced by OverviewTab */}
         {tab==="output"&&(
