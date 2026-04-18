@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
-  LineChart, Line, ReferenceLine, ResponsiveContainer,
+  BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
+  ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import { saveToSupabase } from "../supabase";
 
@@ -110,10 +110,10 @@ function computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDat
   }).filter(s => s.thicknessCat !== "Laminate");
 }
 
-function computeMinMax(sku, cfg) {
+function computeMinMax(sku, cfg, thresholdPctl = 75) {
   const minQty = Math.ceil(sku.dailyMedian * cfg.minCoverDays);
   const maxQty = Math.ceil(sku.dailyMedian * cfg.coverDays * (1 + cfg.bufferPct / 100));
-  const threshold = percentile(sku.orderQtys, 75);
+  const threshold = percentile(sku.orderQtys, thresholdPctl);
   return { minQty, maxQty, threshold };
 }
 
@@ -249,50 +249,97 @@ function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
   );
 }
 
-function SKUModal({ sku, cfg, onClose, invoiceDateRange }) {
+function SKUModal({ sku, cfg, onClose, invoiceDateRange, thresholdPctl }) {
   if (!sku) return null;
-  const { minQty, maxQty } = computeMinMax(sku, cfg);
+  const { minQty, maxQty, threshold } = computeMinMax(sku, cfg, thresholdPctl);
+  const tier = sku.nzd >= cfg.tier1NZD ? "Running — Stock at DS" : sku.nzd >= cfg.tier2NZD ? "Fallback" : "Super Slow";
+  const tierColor = sku.nzd >= cfg.tier1NZD ? "#16a34a" : sku.nzd >= cfg.tier2NZD ? "#92400E" : "#64748B";
+  const minCov = sku.dailyMedian > 0 ? (minQty / sku.dailyMedian).toFixed(1) + "d" : "—";
+  const maxCov = sku.dailyMedian > 0 ? (maxQty / sku.dailyMedian).toFixed(1) + "d" : "—";
+
+  // Count orders below/above threshold
+  const ordersAtDS = sku.orderQtys.filter(q => q <= threshold).length;
+  const ordersFallback = sku.orderQtys.filter(q => q > threshold).length;
+
+  // Histogram: bucket order qtys, color by threshold
   const qtyBuckets = {};
   sku.orderQtys.forEach(q => { const b = Math.ceil(q); qtyBuckets[b] = (qtyBuckets[b] || 0) + 1; });
-  const histData = Object.entries(qtyBuckets).sort((a,b)=>+a[0]-+b[0]).map(([qty,count])=>({qty:+qty,count}));
-  const timelineData = invoiceDateRange.dates.map(date => ({ date, qty: sku.dailyMap[date] || 0 }));
+  const histData = Object.entries(qtyBuckets)
+    .sort((a,b) => +a[0] - +b[0])
+    .map(([qty, count]) => ({ qty: +qty, count, fill: +qty <= threshold ? "#0077A8" : "#F5D77A" }));
+
+  // Timeline: all dates in period
+  const timelineData = invoiceDateRange.dates.map(date => ({
+    date: date.slice(5), // MM-DD
+    qty: sku.dailyMap[date] || 0,
+  }));
+
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
-      <div style={{background:HR.surface,borderRadius:12,padding:24,width:"min(860px,95vw)",maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+      <div style={{background:HR.surface,borderRadius:12,padding:24,width:"min(900px,96vw)",maxHeight:"88vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
           <div>
-            <div style={{fontSize:14,fontWeight:700}}>{sku.sku}</div>
-            <div style={{fontSize:11,color:HR.muted}}>{sku.name} · {sku.thicknessCat} · NZD {sku.nzd} · Min {minQty} · Max {maxQty}</div>
+            <span style={{fontSize:16,fontWeight:800,color:HR.text}}>{sku.name}</span>
+            <span style={{fontSize:12,color:HR.muted,marginLeft:10}}>{sku.sku} · {sku.mm != null ? `${sku.mm}mm` : "—"}</span>
           </div>
-          <button onClick={onClose} style={{background:"none",border:`1px solid ${HR.border}`,borderRadius:4,padding:"4px 14px",cursor:"pointer",fontSize:12,color:HR.muted,fontWeight:600}}>Close ✕</button>
+          <button onClick={onClose} style={{background:"none",border:`1px solid ${HR.border}`,borderRadius:6,padding:"4px 14px",cursor:"pointer",fontSize:12,color:HR.muted,fontWeight:600,whiteSpace:"nowrap"}}>Close ✕</button>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+
+        {/* Stats row */}
+        <div style={{display:"flex",gap:20,flexWrap:"wrap",padding:"8px 12px",background:HR.surfaceLight,borderRadius:6,marginBottom:16,fontSize:12,color:"#555"}}>
+          <span>Total Orders: <strong style={{color:"#1A1A1A"}}>{sku.orderQtys.length}</strong></span>
+          <span>NZD: <strong style={{color:"#1A1A1A"}}>{sku.nzd}</strong></span>
+          <span>Daily Median: <strong style={{color:"#0077A8"}}>{sku.dailyMedian > 0 ? sku.dailyMedian.toFixed(0) : "—"}</strong></span>
+          <span>Min: <strong style={{color:"#B91C1C"}}>{minQty}</strong> <span style={{color:HR.muted}}>({minCov})</span></span>
+          <span>Max: <strong style={{color:"#16a34a"}}>{maxQty}</strong> <span style={{color:HR.muted}}>({maxCov})</span></span>
+          <span>Threshold (P{thresholdPctl}): <strong style={{color:"#92400E"}}>{threshold}</strong></span>
+        </div>
+
+        {/* Charts */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:16}}>
+          {/* Histogram */}
           <div>
-            <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:6}}>Order Qty Distribution</div>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={histData} margin={{left:0,right:8,top:4,bottom:0}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>Order Qty Distribution</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={histData} margin={{left:8,right:8,top:4,bottom:20}}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false}/>
-                <XAxis dataKey="qty" tick={{fontSize:10}}/>
-                <YAxis tick={{fontSize:10}}/>
-                <RTooltip formatter={(v) => [v, "Orders"]} labelFormatter={l => `Qty: ${l}`}/>
-                <Bar dataKey="count" fill="#0077A8" radius={[2,2,0,0]}/>
+                <XAxis dataKey="qty" tick={{fontSize:10}} label={{value:"Order Qty",position:"insideBottom",offset:-10,fontSize:10}}/>
+                <YAxis tick={{fontSize:10}} label={{value:"Frequency",angle:-90,position:"insideLeft",offset:10,fontSize:10}}/>
+                <RTooltip formatter={(v) => [v,"Orders"]} labelFormatter={l=>`Qty: ${l}`}/>
+                <ReferenceLine x={threshold} stroke="#C05A00" strokeDasharray="4 4" strokeWidth={2}
+                  label={{value:`≤${threshold} → DS`,position:"insideTopRight",fontSize:9,fill:"#C05A00",fontWeight:700}}/>
+                <Bar dataKey="count" radius={[2,2,0,0]}>
+                  {histData.map((d,i) => <Cell key={i} fill={d.fill}/>)}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
+
+          {/* Daily Consumption */}
           <div>
-            <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:6}}>Daily Consumption</div>
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={timelineData} margin={{left:0,right:8,top:4,bottom:0}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>Daily Consumption</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={timelineData} margin={{left:8,right:32,top:4,bottom:20}}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false}/>
-                <XAxis dataKey="date" tick={false}/>
-                <YAxis tick={{fontSize:10}}/>
+                <XAxis dataKey="date" tick={{fontSize:9}} interval={Math.floor(timelineData.length/6)} label={{value:"Date",position:"insideBottom",offset:-10,fontSize:10}}/>
+                <YAxis tick={{fontSize:10}} label={{value:"Qty",angle:-90,position:"insideLeft",offset:10,fontSize:10}}/>
                 <RTooltip/>
-                {minQty > 0 && <ReferenceLine y={minQty} stroke="#16a34a" strokeDasharray="4 4" label={{value:`Min ${minQty}`,position:"right",fontSize:9,fill:"#16a34a"}}/>}
-                {maxQty > 0 && <ReferenceLine y={maxQty} stroke="#0077A8" strokeDasharray="4 4" label={{value:`Max ${maxQty}`,position:"right",fontSize:9,fill:"#0077A8"}}/>}
-                <Line type="monotone" dataKey="qty" stroke="#92400E" strokeWidth={1.5} dot={false}/>
-              </LineChart>
+                {minQty > 0 && <ReferenceLine y={minQty} stroke="#B91C1C" strokeDasharray="5 4" label={{value:`Min=${minQty}`,position:"right",fontSize:9,fill:"#B91C1C"}}/>}
+                {maxQty > 0 && <ReferenceLine y={maxQty} stroke="#16a34a" strokeDasharray="5 4" label={{value:`Max=${maxQty}`,position:"right",fontSize:9,fill:"#16a34a"}}/>}
+                <Bar dataKey="qty" fill="#0077A8" radius={[2,2,0,0]}/>
+              </BarChart>
             </ResponsiveContainer>
           </div>
+        </div>
+
+        {/* Classification footer */}
+        <div style={{fontSize:11,color:HR.muted,lineHeight:1.8,borderTop:`1px solid ${HR.border}`,paddingTop:10}}>
+          <div><strong style={{color:HR.text}}>Classification:</strong> <span style={{color:tierColor,fontWeight:600}}>{tier}</span> (NZD {sku.nzd} {sku.nzd >= cfg.tier1NZD ? "≥" : sku.nzd >= cfg.tier2NZD ? "≥" : "<"} {sku.nzd >= cfg.tier1NZD ? cfg.tier1NZD : cfg.tier2NZD})</div>
+          <div><strong style={{color:HR.text}}>Min</strong> = ceil({sku.dailyMedian > 0 ? sku.dailyMedian.toFixed(0) : 0} daily median × {cfg.minCoverDays} min cover days) = <strong style={{color:"#B91C1C"}}>{minQty}</strong></div>
+          <div><strong style={{color:HR.text}}>Max</strong> = ceil({sku.dailyMedian > 0 ? sku.dailyMedian.toFixed(0) : 0} daily median × {cfg.coverDays} max cover days × {(1+cfg.bufferPct/100).toFixed(2)} buffer) = <strong style={{color:"#16a34a"}}>{maxQty}</strong></div>
+          <div><strong style={{color:HR.text}}>Threshold:</strong> Orders ≤ {threshold} fulfilled from DS ({ordersAtDS} orders) · Orders &gt; {threshold} → fallback ({ordersFallback} orders)</div>
         </div>
       </div>
     </div>
@@ -365,6 +412,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const [period, setPeriod] = useState(45);
   const [thickCfg, setThickCfg] = useState(null);
   const [thinCfg, setThinCfg] = useState(null);
+  const [sharedCfg, setSharedCfg] = useState(null);
   const [thickResults, setThickResults] = useState(null);
   const [thinResults, setThinResults] = useState(null);
   const [selectedSku, setSelectedSku] = useState(null);
@@ -375,6 +423,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     const saved = networkConfigs?.[dsFilter] || DS_DEFAULTS[dsFilter];
     setThickCfg({ ...DS_DEFAULTS[dsFilter].thick, ...saved.thick });
     setThinCfg({ ...DS_DEFAULTS[dsFilter].thin, ...saved.thin });
+    setSharedCfg({ ...DS_DEFAULTS[dsFilter].shared, ...saved.shared });
   }, [dsFilter, networkConfigs]);
 
   // Clear results only when DS changes (not when config is saved)
@@ -403,25 +452,27 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const thinSkus  = useMemo(() => baseSkus.filter(s => s.thicknessCat !== "Thick"), [baseSkus]);
 
   const runThick = useCallback(() => {
-    const withMM = thickSkus.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
+    const pctl = sharedCfg?.thresholdPctl ?? 75;
+    const withMM = thickSkus.map(s => ({ ...s, ...computeMinMax(s, thickCfg, pctl) }));
     const capUsed = withMM.filter(s => s.nzd >= thickCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
     setThickResults({ skus: withMM, capUsed });
     if (isAdmin) handleSaveConfig("thick", thickCfg);
-  }, [thickSkus, thickCfg, isAdmin, handleSaveConfig]);
+  }, [thickSkus, thickCfg, sharedCfg, isAdmin, handleSaveConfig]);
 
   const runThin = useCallback(() => {
-    const withMM = thinSkus.map(s => ({ ...s, ...computeMinMax(s, thinCfg) }));
+    const pctl = sharedCfg?.thresholdPctl ?? 75;
+    const withMM = thinSkus.map(s => ({ ...s, ...computeMinMax(s, thinCfg, pctl) }));
     const capUsed = withMM.filter(s => s.nzd >= thinCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
     setThinResults({ skus: withMM, capUsed });
     if (isAdmin) handleSaveConfig("thin", thinCfg);
-  }, [thinSkus, thinCfg, isAdmin, handleSaveConfig]);
+  }, [thinSkus, thinCfg, sharedCfg, isAdmin, handleSaveConfig]);
 
   if (!invoiceData.length || !Object.keys(skuMaster).length) return (
     <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>
       Upload invoice CSV and SKU Master in the Upload Data tab to begin.
     </div>
   );
-  if (!thickCfg || !thinCfg) return null;
+  if (!thickCfg || !thinCfg || !sharedCfg) return null;
 
   const dsFallbackLabel = networkConfigs?.[dsFilter]?.fallbackLabel || DS_DEFAULTS[dsFilter]?.fallbackLabel || "DC";
 
@@ -441,6 +492,29 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         </div>
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
+
+      {sharedCfg && (
+        <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:12,padding:"8px 12px",background:HR.surfaceLight,borderRadius:6,border:`1px solid ${HR.border}`}}>
+          <span style={{fontSize:10,fontWeight:700,color:HR.muted,textTransform:"uppercase",letterSpacing:"0.04em"}}>Shared Settings</span>
+          <div>
+            <div style={{fontSize:9,color:HR.muted,fontWeight:600,textTransform:"uppercase",marginBottom:2}}>Fallback Threshold Pctl</div>
+            <input
+              type="number"
+              value={sharedCfg.thresholdPctl}
+              disabled={!isAdmin}
+              min={50} max={99} step={5}
+              onChange={e => {
+                const updated = { ...sharedCfg, thresholdPctl: parseFloat(e.target.value) || 75 };
+                setSharedCfg(updated);
+                handleSaveConfig("shared", updated);
+              }}
+              onFocus={e => e.target.select()}
+              style={{...S.input,width:60,fontWeight:700,color:"#555"}}
+            />
+            <div style={{fontSize:9,color:HR.muted,marginTop:2}}>P75 = default routing threshold</div>
+          </div>
+        </div>
+      )}
 
       <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={thickCfg} thinCfg={thinCfg}/>
 
@@ -482,6 +556,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           cfg={selectedSkuType === "thick" ? thickCfg : thinCfg}
           onClose={() => setSelectedSku(null)}
           invoiceDateRange={invoiceDateRange}
+          thresholdPctl={sharedCfg?.thresholdPctl ?? 75}
         />
       )}
     </div>
