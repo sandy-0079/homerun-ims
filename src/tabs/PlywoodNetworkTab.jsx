@@ -160,17 +160,22 @@ function ConfigPanel({ type, cfg, onChange, isAdmin, onRun }) {
 }
 
 function CapacityBar({ used, total, label }) {
-  const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+  const pct = total > 0 ? (used / total) * 100 : 0;
   const over = used > total;
-  const barColor = over ? "#B91C1C" : pct > 85 ? "#C05A00" : "#16a34a";
+  const majorOver = used > total * 1.1;
+  const barColor = majorOver ? "#B91C1C" : over ? "#C05A00" : "#16a34a";
+  const barWidth = Math.min(100, pct);
+  const statusText = majorOver ? " — OVER CAPACITY (>10%)" : over ? " — OVER CAPACITY" : "";
   return (
     <div style={{...S.card,marginBottom:8,padding:"8px 12px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
         <span style={{fontSize:11,fontWeight:600,color:"#555"}}>{label} Capacity</span>
-        <span style={{fontSize:11,fontWeight:700,color:barColor}}>{used}/{total} units ({pct.toFixed(0)}%){over?" — OVER CAPACITY":""}</span>
+        <span style={{fontSize:11,fontWeight:700,color:barColor}}>
+          {used}/{total} units ({pct.toFixed(0)}%){statusText}
+        </span>
       </div>
       <div style={{height:6,background:"#E5E5D0",borderRadius:3,overflow:"hidden"}}>
-        <div style={{height:"100%",width:`${pct}%`,background:barColor,borderRadius:3,transition:"width 0.3s"}}/>
+        <div style={{height:"100%",width:`${barWidth}%`,background:barColor,borderRadius:3,transition:"width 0.3s"}}/>
       </div>
     </div>
   );
@@ -277,7 +282,7 @@ function SKUModal({ sku, cfg, onClose, invoiceDateRange }) {
   );
 }
 
-function SummaryCards({ skuList, skuMaster, thickCfg }) {
+function SummaryCards({ skuList, skuMaster, thickCfg, thinCfg }) {
   const plywoodActive = Object.values(skuMaster).filter(s =>
     PLYWOOD_CATEGORIES.includes(s.category) && (s.status || "Active").toLowerCase() === "active"
   );
@@ -290,15 +295,41 @@ function SummaryCards({ skuList, skuMaster, thickCfg }) {
     const cat = thicknessCategory(inferThickness(s.name), 1);
     return cat === "Thin" || cat === "Unknown";
   }).length;
+
+  const totalActive = masterThickCount + masterThinCount;
   const withSales = skuList.filter(s => s.nzd > 0).length;
-  const tier1 = thickCfg?.tier1NZD ?? 10;
-  const tier2 = thickCfg?.tier2NZD ?? 2;
+
+  const t1thick = thickCfg?.tier1NZD ?? 10;
+  const t2thick = thickCfg?.tier2NZD ?? 2;
+  const t1thin  = thinCfg?.tier1NZD  ?? 10;
+  const t2thin  = thinCfg?.tier2NZD  ?? 2;
+
+  const thickList = skuList.filter(s => s.thicknessCat === "Thick");
+  const thinList  = skuList.filter(s => s.thicknessCat !== "Thick");
+
+  const runThick  = thickList.filter(s => s.nzd >= t1thick).length;
+  const runThin   = thinList.filter(s  => s.nzd >= t1thin).length;
+  const fbThick   = thickList.filter(s => s.nzd >= t2thick && s.nzd < t1thick).length;
+  const fbThin    = thinList.filter(s  => s.nzd >= t2thin  && s.nzd < t1thin).length;
+  const ssThick   = thickList.filter(s => s.nzd < t2thick).length;
+  const ssThin    = thinList.filter(s  => s.nzd < t2thin).length;
+
+  const pct = (n, d) => d > 0 ? `${Math.round((n / d) * 100)}%` : "—";
+  const breakdown = (tk, tn) =>
+    `Thick: ${tk} (${pct(tk, masterThickCount)} of ${masterThickCount}) · Thin: ${tn} (${pct(tn, masterThinCount)} of ${masterThinCount})`;
+
   const cards = [
-    { num: withSales, lbl: `SKUs with ≥1 sale / ${masterThickCount + masterThinCount} Active`, sub: `Thick: ${masterThickCount} · Thin: ${masterThinCount} (laminates excluded)`, color:"#0077A8" },
-    { num: skuList.filter(s => s.nzd >= tier1).length, lbl:"Running — Stock at DS", sub:`NZD ≥ ${tier1}`, color:"#16a34a" },
-    { num: skuList.filter(s => s.nzd >= tier2 && s.nzd < tier1).length, lbl:"Fallback — DC or Supplier", sub:`NZD ${tier2}–${tier1}`, color:"#92400E" },
-    { num: skuList.filter(s => s.nzd < tier2).length, lbl:"Super Slow — On Demand", sub:`NZD < ${tier2}`, color:"#6B7280" },
+    {
+      num: withSales,
+      lbl: `SKUs with ≥1 sale / ${totalActive} Active`,
+      sub: `${pct(withSales, totalActive)} of active · Thick: ${masterThickCount} · Thin: ${masterThinCount}`,
+      color: "#0077A8",
+    },
+    { num: runThick + runThin,  lbl: "Running — Stock at DS",      sub: breakdown(runThick, runThin),  color: "#16a34a" },
+    { num: fbThick  + fbThin,   lbl: "Fallback — DC or Supplier",  sub: breakdown(fbThick,  fbThin),   color: "#92400E" },
+    { num: ssThick  + ssThin,   lbl: "Super Slow — On Demand",     sub: breakdown(ssThick,  ssThin),   color: "#6B7280" },
   ];
+
   return (
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:16}}>
       {cards.map((c,i) => (
@@ -394,7 +425,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
 
-      <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={thickCfg}/>
+      <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={thickCfg} thinCfg={thinCfg}/>
 
       {/* Thick section */}
       <div style={{marginBottom:24}}>
