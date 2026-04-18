@@ -142,6 +142,7 @@ function ConfigPanel({ type, cfg, onChange, isAdmin, onRun }) {
               value={cfg[f.key]}
               disabled={!isAdmin}
               onChange={e => onChange({ ...cfg, [f.key]: parseFloat(e.target.value) || 0 })}
+              onFocus={e => e.target.select()}
               style={{...S.input,color,fontWeight:700,border:`1px solid ${color}44`,opacity:isAdmin?1:0.7}}
             />
             <div style={{fontSize:9,color:HR.muted,marginTop:2}}>{f.hint}</div>
@@ -293,7 +294,7 @@ function SummaryCards({ skuList, skuMaster, thickCfg }) {
   const tier1 = thickCfg?.tier1NZD ?? 10;
   const tier2 = thickCfg?.tier2NZD ?? 2;
   const cards = [
-    { num: withSales, lbl: `SKUs with ≥1 sale / ${plywoodActive.length} Active`, sub: `Thick: ${masterThickCount} · Thin: ${masterThinCount} in master`, color:"#0077A8" },
+    { num: withSales, lbl: `SKUs with ≥1 sale / ${masterThickCount + masterThinCount} Active`, sub: `Thick: ${masterThickCount} · Thin: ${masterThinCount} (laminates excluded)`, color:"#0077A8" },
     { num: skuList.filter(s => s.nzd >= tier1).length, lbl:"Running — Stock at DS", sub:`NZD ≥ ${tier1}`, color:"#16a34a" },
     { num: skuList.filter(s => s.nzd >= tier2 && s.nzd < tier1).length, lbl:"Fallback — DC or Supplier", sub:`NZD ${tier2}–${tier1}`, color:"#92400E" },
     { num: skuList.filter(s => s.nzd < tier2).length, lbl:"Super Slow — On Demand", sub:`NZD < ${tier2}`, color:"#6B7280" },
@@ -321,13 +322,18 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const [selectedSku, setSelectedSku] = useState(null);
   const [selectedSkuType, setSelectedSkuType] = useState(null);
 
+  // Reload configs when DS or saved configs change
   useEffect(() => {
     const saved = networkConfigs?.[dsFilter] || DS_DEFAULTS[dsFilter];
     setThickCfg({ ...DS_DEFAULTS[dsFilter].thick, ...saved.thick });
     setThinCfg({ ...DS_DEFAULTS[dsFilter].thin, ...saved.thin });
+  }, [dsFilter, networkConfigs]);
+
+  // Clear results only when DS changes (not when config is saved)
+  useEffect(() => {
     setThickResults(null);
     setThinResults(null);
-  }, [dsFilter, networkConfigs]);
+  }, [dsFilter]);
 
   const handleSaveConfig = useCallback((type, newCfg) => {
     if (!isAdmin) return;
