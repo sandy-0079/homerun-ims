@@ -117,29 +117,10 @@ Cluster analysis: 65% OOS reduction (134→46) via cross-DS fulfillment. Cluster
 
 ## To-Do (Active)
 
-### 1. Category Network Analysis — Plywood Network Tab ⚠️ In Progress
-**Branch:** `feature/category-network-analysis` · **Worktree:** `.worktrees/category-network-analysis`
-**Plan:** `docs/superpowers/plans/2026-04-17-category-network-analysis.md` (Tasks 1–3 done, Task 4+5 pending)
-
-**✅ Done (2026-04-17):**
-- Phase 1: `shopifyOrder` added to `handleInvoice` parser — admin must re-upload invoice CSV for basket analysis to work
-- Phase 2: **Baskets tab** fully live — category selector (click-cycle Primary→Secondary→unselect), period L45D→L3D + custom, DS filter, 5 cards, donut, co-category bar, insight. Numbers verified against HTML tool.
-
-**⏳ Next — Phase 3: Plywood Network tab (Task 4+5 in plan, ~20 min)**
-- Tab scaffold already in place (`src/tabs/PlywoodNetworkTab.jsx`), showing placeholder
-- `networkConfigs` loads from Supabase `params/networkConfigs` on mount (saves there on admin edit)
-- Full implementation: computation engine + UI. Resume with subagent-driven execution of Task 4+5.
-
-**Key design decisions locked (do not re-litigate):**
-- Plywood-specific only (not generic category) — tab named "Plywood"
-- Thick/Thin split layout: each section has its own Config Panel → Run button → Capacity Bar → SKU Table
-- Run buttons are per-section (Thick and Thin run independently)
-- Recommendation only — does NOT write into Min/Max engine
-- NZD computed per DS (not cross-DS)
-- Median of daily totals for Min/Max (not ABQ)
-- SKU categories from `skuMaster` (Plywood/MDF & HDHMR); thickness from SKU name regex `/(\d+(?:\.\d+)?)\s*mm/i`
-- DS configs: same structure as `analysis/plywood-network.html` DS_DEFAULTS (thick/thin/shared/fallbackLabel)
-- Laminate: SKU contains "LAM" OR mm ≤ laminateThreshold → excluded from Thick/Thin tables
+### 1. Category Network Analysis ✅ Shipped (2026-04-18)
+Both tabs live in production. `src/tabs/BasketAnalysisTab.jsx` + `src/tabs/PlywoodNetworkTab.jsx`.
+- **Baskets**: category selector (click-cycle), period L45D→L3D + custom, DS filter, 5 cards, donut, co-category bar, insight. Selections persist to localStorage, auto-runs on load.
+- **Plywood**: per-DS Thick/Thin configs (Supabase), SKU table (Running/Fallback/Super Slow), capacity bar (3-state), per-SKU modal (histogram + timeline). Auto-computes on load. Recommendation only — does NOT write into Min/Max engine.
 
 ### 2. OOS Simulation Redesign ⚠️ Built — pending full local test before push
 **Built but not fully tested.** Local commits exist, not pushed. Test before pushing:
