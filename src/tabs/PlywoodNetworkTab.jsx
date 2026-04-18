@@ -128,7 +128,7 @@ function ConfigPanel({ type, cfg, onChange, isAdmin, onRun, dirty }) {
     { key:"minCoverDays",label:"Min Cover Days",  hint:"Min × daily median" },
     { key:"coverDays",   label:"Max Cover Days",  hint:"Max × daily median × buffer" },
     { key:"bufferPct",      label:"Buffer %",           hint:"Safety margin on Max" },
-    { key:"thresholdPctl",  label:"Fallback Threshold %",hint:"P-ile for routing threshold" },
+    { key:"thresholdPctl",  label:"Fallback Threshold",hint:"Percentile (75 = P75)" },
     { key:"capacity",       label:"Capacity (units)",   hint:"Physical constraint" },
   ];
   return (
