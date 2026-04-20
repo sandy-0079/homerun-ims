@@ -3183,7 +3183,7 @@ export default function App(){
 
       // Load networkConfigs from Supabase
       const sbNetCfg = await loadFromSupabase("params", "networkConfigs");
-      if (sbNetCfg) setNetworkConfigs(sbNetCfg);
+      setNetworkConfigs(sbNetCfg || {}); // {} = loaded but no saved config; null = still loading
     })();
   },[]);
 

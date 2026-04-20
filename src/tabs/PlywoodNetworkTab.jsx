@@ -53,10 +53,12 @@ function inferThickness(name) {
   return m ? parseFloat(m[1]) : null;
 }
 
-function thicknessCategory(mm, laminateThreshold = 1) {
+const GLOBAL_DEFAULTS = { thickBoundaryMm: 6 };
+
+function thicknessCategory(mm, laminateThreshold = 1, thickBoundaryMm = 6) {
   if (mm === null) return "Unknown";
   if (mm <= laminateThreshold) return "Laminate";
-  if (mm <= 6) return "Thin";
+  if (mm <= thickBoundaryMm) return "Thin";
   return "Thick";
 }
 
@@ -74,7 +76,7 @@ function percentile(arr, pct) {
   return sorted[Math.max(0, idx)];
 }
 
-function computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDateRange) {
+function computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDateRange, thickBoundaryMm = 6) {
   const plywoodSkus = new Set(
     Object.values(skuMaster)
       .filter(s => PLYWOOD_CATEGORIES.includes(s.category) && (s.status || "Active").toLowerCase() === "active")
@@ -105,7 +107,7 @@ function computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDat
     const orderQtys = agg ? agg.orderQtys : [];
     const mm = inferThickness(s.name);
     const isLam = s.sku.toUpperCase().includes("LAM") || (mm !== null && mm <= 1);
-    const thicknessCat = isLam ? "Laminate" : thicknessCategory(mm, 1);
+    const thicknessCat = isLam ? "Laminate" : thicknessCategory(mm, 1, thickBoundaryMm);
     return { sku: s.sku, name: s.name, thicknessCat, mm, nzd, dailyMedian, orderQtys, dailyTotals, dailyMap: agg?.dailyMap || {} };
   }).filter(s => s.thicknessCat !== "Laminate");
 }
@@ -119,8 +121,8 @@ function computeMinMax(sku, cfg) {
 
 const TAG_STYLE = {padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,whiteSpace:"nowrap",display:"inline-block"};
 
-function ConfigPanel({ type, cfg, onChange, isAdmin, onRun, dirty }) {
-  const label = type === "thick" ? "Thick (>6mm) — Vertical Storage" : "Thin (≤6mm) — Bin Storage";
+function ConfigPanel({ type, cfg, onChange, isAdmin, onRun, dirty, boundary }) {
+  const label = type === "thick" ? "Configs — Thick SKUs" : "Configs — Thin SKUs";
   const color = type === "thick" ? "#92400E" : "#0077A8";
   const fields = [
     { key:"tier1NZD",    label:"Running NZD",     hint:"Min NZD to stock at DS" },
@@ -145,6 +147,7 @@ function ConfigPanel({ type, cfg, onChange, isAdmin, onRun, dirty }) {
                 disabled={!isAdmin}
                 onChange={e => onChange({ ...cfg, [f.key]: parseFloat(e.target.value) || 0 })}
                 onFocus={e => e.target.select()}
+                onKeyDown={e => e.key === 'Enter' && dirty && onRun()}
                 style={{...S.input,color,fontWeight:700,border:`1px solid ${color}44`,opacity:isAdmin?1:0.7}}
               />
               <div style={{fontSize:9,color:HR.muted,marginTop:2}}>{f.hint}</div>
@@ -162,22 +165,30 @@ function ConfigPanel({ type, cfg, onChange, isAdmin, onRun, dirty }) {
   );
 }
 
-function CapacityBar({ used, total, label }) {
+function CapacityBar({ used, total, label, cfg }) {
   const pct = total > 0 ? (used / total) * 100 : 0;
-  const over = used > total;
-  const majorOver = used > total * 1.1;
-  const barColor = majorOver ? "#B91C1C" : over ? "#C05A00" : "#16a34a";
+  const atLimit = used > total && used <= total * 1.1;
+  const overCapacity = used > total * 1.1;
+  const barColor = overCapacity ? "#DC2626" : atLimit ? "#F59E0B" : "#16a34a";
   const barWidth = Math.min(100, pct);
-  const statusText = majorOver ? " — OVER CAPACITY (>10%)" : over ? " — OVER CAPACITY" : "";
+  const overText = overCapacity ? "Over Capacity" : atLimit ? "At Limit" : "Within Capacity";
+  const formula = cfg
+    ? `Max = Daily Median × ${cfg.coverDays}d × ${(1 + cfg.bufferPct / 100).toFixed(2)} · Min = × ${cfg.minCoverDays}d`
+    : "";
   return (
     <div style={{...S.card,marginBottom:8,padding:"8px 12px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-        <span style={{fontSize:11,fontWeight:600,color:"#555"}}>{label} Capacity</span>
-        <span style={{fontSize:11,fontWeight:700,color:barColor}}>
-          {used}/{total} units ({pct.toFixed(0)}%){statusText}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+        <span style={{fontSize:11,fontWeight:700,color:"#555"}}>
+          {label}
+          {formula && <span style={{fontSize:10,color:HR.muted,fontWeight:400,marginLeft:10}}>{formula}</span>}
+        </span>
+        <span style={{whiteSpace:"nowrap",marginLeft:16,display:"flex",alignItems:"baseline",gap:8}}>
+          <span style={{fontSize:12,fontWeight:600,color:"#555"}}>{used} / {total}</span>
+          <span style={{fontSize:15,fontWeight:800,color:barColor}}>{pct.toFixed(0)}%</span>
+          <span style={{fontSize:10,color:barColor,fontWeight:600}}>{overText}</span>
         </span>
       </div>
-      <div style={{height:6,background:"#E5E5D0",borderRadius:3,overflow:"hidden"}}>
+      <div style={{height:6,background:"#E5E5D0",borderRadius:3,overflow:"hidden",marginTop:4}}>
         <div style={{height:"100%",width:`${barWidth}%`,background:barColor,borderRadius:3,transition:"width 0.3s"}}/>
       </div>
     </div>
@@ -185,7 +196,9 @@ function CapacityBar({ used, total, label }) {
 }
 
 function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
-  // skus already have minQty/maxQty/threshold baked in from runThick/runThin — use them directly
+  const [fallbackOpen, setFallbackOpen] = useState(false);
+  const [superSlowOpen, setSuperSlowOpen] = useState(false);
+
   const withTiers = skus.map(s => {
     const { minQty, maxQty, threshold } = s;
     const tier = s.nzd >= cfg.tier1NZD ? "Running" : s.nzd >= cfg.tier2NZD ? "Fallback" : "Super Slow";
@@ -196,6 +209,11 @@ function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
     const order = { Running:0, Fallback:1, "Super Slow":2 };
     return order[a.tier] !== order[b.tier] ? order[a.tier] - order[b.tier] : b.nzd - a.nzd;
   });
+
+  const runningSkus   = withTiers.filter(s => s.tier === "Running");
+  const fallbackSkus  = withTiers.filter(s => s.tier === "Fallback");
+  const superSlowSkus = withTiers.filter(s => s.tier === "Super Slow");
+
   const TIER_STYLE = {
     "Running":    { bg:"#D1FAE5", color:"#065F46" },
     "Fallback":   { bg:"#FEF3C7", color:"#92400E" },
@@ -204,6 +222,44 @@ function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
   const thL = {padding:"6px 8px",textAlign:"left",color:HR.muted,background:HR.surfaceLight,fontWeight:600,fontSize:10,whiteSpace:"nowrap",borderBottom:`1px solid ${HR.border}`};
   const thC = {...thL, textAlign:"center"};
   const tdC = {padding:"4px 8px",textAlign:"center"};
+
+  const renderRows = (tierSkus, offset = 0) => tierSkus.map((s, idx) => {
+    const ts = TIER_STYLE[s.tier];
+    return (
+      <tr key={s.sku} onClick={() => onSelectSku(s)} style={{cursor:"pointer",borderTop:`1px solid ${HR.border}`}}
+        onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
+        onMouseLeave={e => e.currentTarget.style.background = ""}>
+        <td style={{padding:"4px 8px",color:HR.muted}}>{offset + idx + 1}</td>
+        <td style={{padding:"4px 8px",fontWeight:600}}>{s.sku}</td>
+        <td style={{padding:"4px 8px",color:HR.muted}}>{s.name}</td>
+        <td style={tdC}>{s.mm != null ? `${s.mm}` : "—"}</td>
+        <td style={{...tdC,fontWeight:700}}>{s.nzd}</td>
+        <td style={tdC}>{s.dailyMedian > 0 ? s.dailyMedian.toFixed(0) : "—"}</td>
+        <td style={{...tdC,color:"#16a34a",fontWeight:700}}>{s.nzd > 0 ? s.minQty : "—"}</td>
+        <td style={{...tdC,color:HR.muted}}>{s.nzd > 0 ? s.minCov : "—"}</td>
+        <td style={{...tdC,color:"#0077A8",fontWeight:700}}>{s.nzd > 0 ? s.maxQty : "—"}</td>
+        <td style={{...tdC,color:HR.muted}}>{s.nzd > 0 ? s.maxCov : "—"}</td>
+        <td style={tdC}>{s.nzd > 0 ? <span style={{fontSize:10,color:"#555"}}>≥{s.threshold} → fallback</span> : "—"}</td>
+        <td style={{padding:"4px 8px"}}>
+          <span style={{...TAG_STYLE,background:ts.bg,color:ts.color,border:`1px solid ${ts.color}33`}}>
+            {s.tier === "Running" ? "Running — Stock at DS" : s.tier === "Fallback" ? `Fallback — ${fallbackLabel}` : "Super Slow"}
+          </span>
+        </td>
+      </tr>
+    );
+  });
+
+  const TierHeader = ({ label, count, color, collapsible, open, onToggle }) => (
+    <tr style={{background:HR.surfaceLight, borderTop:`2px solid ${HR.border}`, cursor: collapsible ? "pointer" : "default"}}
+      onClick={collapsible ? onToggle : undefined}>
+      <td colSpan={12} style={{padding:"6px 8px"}}>
+        <span style={{fontSize:11,fontWeight:700,color}}>
+          {collapsible ? (open ? "▼ " : "▶ ") : "▼ "}{label} — {count} SKU{count !== 1 ? "s" : ""}
+        </span>
+      </td>
+    </tr>
+  );
+
   return (
     <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
       <thead>
@@ -223,31 +279,12 @@ function SKUTable({ skus, cfg, onSelectSku, fallbackLabel }) {
         </tr>
       </thead>
       <tbody>
-        {withTiers.map((s, idx) => {
-          const ts = TIER_STYLE[s.tier];
-          return (
-            <tr key={s.sku} onClick={() => onSelectSku(s)} style={{cursor:"pointer",borderTop:`1px solid ${HR.border}`}}
-              onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight}
-              onMouseLeave={e => e.currentTarget.style.background = ""}>
-              <td style={{padding:"4px 8px",color:HR.muted}}>{idx+1}</td>
-              <td style={{padding:"4px 8px",fontWeight:600}}>{s.sku}</td>
-              <td style={{padding:"4px 8px",color:HR.muted}}>{s.name}</td>
-              <td style={tdC}>{s.mm != null ? `${s.mm}` : "—"}</td>
-              <td style={{...tdC,fontWeight:700}}>{s.nzd}</td>
-              <td style={tdC}>{s.dailyMedian > 0 ? s.dailyMedian.toFixed(0) : "—"}</td>
-              <td style={{...tdC,color:"#16a34a",fontWeight:700}}>{s.nzd > 0 ? s.minQty : "—"}</td>
-              <td style={{...tdC,color:HR.muted}}>{s.nzd > 0 ? s.minCov : "—"}</td>
-              <td style={{...tdC,color:"#0077A8",fontWeight:700}}>{s.nzd > 0 ? s.maxQty : "—"}</td>
-              <td style={{...tdC,color:HR.muted}}>{s.nzd > 0 ? s.maxCov : "—"}</td>
-              <td style={tdC}>{s.nzd > 0 ? <span style={{fontSize:10,color:"#555"}}>≥{s.threshold} → fallback</span> : "—"}</td>
-              <td style={{padding:"4px 8px"}}>
-                <span style={{...TAG_STYLE,background:ts.bg,color:ts.color,border:`1px solid ${ts.color}33`}}>
-                  {s.tier === "Running" ? "Running — Stock at DS" : s.tier === "Fallback" ? `Fallback — ${fallbackLabel}` : "Super Slow"}
-                </span>
-              </td>
-            </tr>
-          );
-        })}
+        <TierHeader label="Running" count={runningSkus.length} color="#065F46" collapsible={false}/>
+        {renderRows(runningSkus, 0)}
+        <TierHeader label="Fallback" count={fallbackSkus.length} color="#92400E" collapsible={true} open={fallbackOpen} onToggle={() => setFallbackOpen(o => !o)}/>
+        {fallbackOpen && renderRows(fallbackSkus, runningSkus.length)}
+        <TierHeader label="Super Slow" count={superSlowSkus.length} color="#64748B" collapsible={true} open={superSlowOpen} onToggle={() => setSuperSlowOpen(o => !o)}/>
+        {superSlowOpen && renderRows(superSlowSkus, runningSkus.length + fallbackSkus.length)}
       </tbody>
     </table>
   );
@@ -353,17 +390,17 @@ function SKUModal({ sku, cfg, onClose, invoiceDateRange }) {
   );
 }
 
-function SummaryCards({ skuList, skuMaster, thickCfg, thinCfg }) {
+function SummaryCards({ skuList, skuMaster, thickCfg, thinCfg, thickBoundaryMm = 6 }) {
   const plywoodActive = Object.values(skuMaster).filter(s =>
     PLYWOOD_CATEGORIES.includes(s.category) && (s.status || "Active").toLowerCase() === "active"
   );
   const masterThickCount = plywoodActive.filter(s => {
     if (s.sku.toUpperCase().includes("LAM")) return false;
-    return thicknessCategory(inferThickness(s.name), 1) === "Thick";
+    return thicknessCategory(inferThickness(s.name), 1, thickBoundaryMm) === "Thick";
   }).length;
   const masterThinCount = plywoodActive.filter(s => {
     if (s.sku.toUpperCase().includes("LAM")) return false;
-    const cat = thicknessCategory(inferThickness(s.name), 1);
+    const cat = thicknessCategory(inferThickness(s.name), 1, thickBoundaryMm);
     return cat === "Thin" || cat === "Unknown";
   }).length;
 
@@ -423,10 +460,12 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const [committedThinCfg, setCommittedThinCfg] = useState(null);
   const [thickResults, setThickResults] = useState(null);
   const [thinResults, setThinResults] = useState(null);
-  const [resultsCache, setResultsCache] = useState({}); // per-DS result cache
+  const [resultsCache, setResultsCache] = useState({}); // keyed by "DS-period" e.g. "DS01-45"
   const [selectedSku, setSelectedSku] = useState(null);
   const [selectedSkuType, setSelectedSkuType] = useState(null);
-  const autoRanRef = useRef(new Set()); // tracks which DSes have been auto-computed
+  const [thickBoundaryMm, setThickBoundaryMm] = useState(GLOBAL_DEFAULTS.thickBoundaryMm);
+  const [committedBoundaryMm, setCommittedBoundaryMm] = useState(null); // locked at last Run; null = use live value
+  const autoRanRef = useRef(new Set()); // tracks which "DS-period" combos have been auto-computed
 
   // Reload configs when DS or saved configs change
   useEffect(() => {
@@ -435,14 +474,25 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     setThinCfg({ ...DS_DEFAULTS[dsFilter].thin, ...saved.thin });
   }, [dsFilter, networkConfigs]);
 
-  // On DS change: restore cached results if available, else clear
+  // Load global boundary from networkConfigs
   useEffect(() => {
-    const cached = resultsCache[dsFilter];
+    setThickBoundaryMm(networkConfigs?.global?.thickBoundaryMm ?? GLOBAL_DEFAULTS.thickBoundaryMm);
+  }, [networkConfigs]);
+
+  // On DS or period change: restore cached results for that combo, else clear
+  useEffect(() => {
+    const cached = resultsCache[`${dsFilter}-${period}`];
     setThickResults(cached?.thick || null);
     setThinResults(cached?.thin || null);
     setCommittedThickCfg(cached?.thickCfg || null);
     setCommittedThinCfg(cached?.thinCfg || null);
-  }, [dsFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dsFilter, period]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSaveBoundary = useCallback((val) => {
+    if (!isAdmin) return;
+    setThickBoundaryMm(val);
+    onSaveConfigs({ ...(networkConfigs || {}), global: { ...(networkConfigs?.global || {}), thickBoundaryMm: val } });
+  }, [networkConfigs, onSaveConfigs, isAdmin]);
 
   const handleSaveConfig = useCallback((type, newCfg) => {
     if (!isAdmin) return;
@@ -456,9 +506,10 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     onSaveConfigs(merged);
   }, [dsFilter, networkConfigs, onSaveConfigs, isAdmin]);
 
+  const appliedBoundary = committedBoundaryMm !== null ? committedBoundaryMm : thickBoundaryMm;
   const baseSkus = useMemo(() =>
-    computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDateRange),
-    [invoiceData, skuMaster, dsFilter, period, invoiceDateRange]
+    computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDateRange, appliedBoundary),
+    [invoiceData, skuMaster, dsFilter, period, invoiceDateRange, appliedBoundary] // eslint-disable-line
   );
   const thickSkus = useMemo(() => baseSkus.filter(s => s.thicknessCat === "Thick"), [baseSkus]);
   const thinSkus  = useMemo(() => baseSkus.filter(s => s.thicknessCat !== "Thick"), [baseSkus]);
@@ -466,9 +517,11 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   // Auto-compute on first load for each DS (runs once per DS per session, covers page refresh)
   // Must be declared AFTER baseSkus/thickSkus/thinSkus to avoid TDZ error
   useEffect(() => {
+    if (networkConfigs === null) return; // still loading from Supabase — wait for final configs
     if (!thickCfg || !thinCfg || !baseSkus.length) return;
-    if (autoRanRef.current.has(dsFilter)) return;
-    autoRanRef.current.add(dsFilter);
+    const cacheKey = `${dsFilter}-${period}`;
+    if (autoRanRef.current.has(cacheKey)) return;
+    autoRanRef.current.add(cacheKey);
 
     const withThick = thickSkus.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
     const thickCap  = withThick.filter(s => s.nzd >= thickCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
@@ -482,28 +535,61 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     setThinResults(thinR);
     setCommittedThickCfg(thickCfg);
     setCommittedThinCfg(thinCfg);
-    setResultsCache(prev => ({ ...prev, [dsFilter]: { thick: thickR, thin: thinR, thickCfg, thinCfg } }));
-  }, [thickCfg, thinCfg, baseSkus, dsFilter, thickSkus, thinSkus]); // eslint-disable-line react-hooks/exhaustive-deps
+    setCommittedBoundaryMm(thickBoundaryMm);
+    setResultsCache(prev => ({ ...prev, [cacheKey]: { thick: thickR, thin: thinR, thickCfg, thinCfg } }));
+  }, [thickCfg, thinCfg, baseSkus, dsFilter, thickSkus, thinSkus, networkConfigs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const runBothSections = useCallback((freshBase) => {
+    // Shared helper — recomputes both sections from an already-classified freshBase
+    const k = `${dsFilter}-${period}`;
+    const freshThick = freshBase.filter(s => s.thicknessCat === "Thick");
+    const thickWithMM = freshThick.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
+    const thickCap = thickWithMM.filter(s => s.nzd >= thickCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
+    const thickR = { skus: thickWithMM, capUsed: thickCap };
+
+    const freshThin = freshBase.filter(s => s.thicknessCat !== "Thick");
+    const thinWithMM = freshThin.map(s => ({ ...s, ...computeMinMax(s, thinCfg) }));
+    const thinCap = thinWithMM.filter(s => s.nzd >= thinCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
+    const thinR = { skus: thinWithMM, capUsed: thinCap };
+
+    setThickResults(thickR); setThinResults(thinR);
+    setCommittedThickCfg(thickCfg); setCommittedThinCfg(thinCfg);
+    setCommittedBoundaryMm(thickBoundaryMm);
+    setResultsCache(prev => ({ ...prev, [k]: { thick: thickR, thin: thinR, thickCfg, thinCfg } }));
+    if (isAdmin) { handleSaveConfig("thick", thickCfg); handleSaveConfig("thin", thinCfg); }
+  }, [dsFilter, period, thickCfg, thinCfg, thickBoundaryMm, isAdmin, handleSaveConfig]);
 
   const runThick = useCallback(() => {
-    const withMM = thickSkus.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
+    const freshBase = computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDateRange, thickBoundaryMm);
+    if (thickBoundaryMm !== committedBoundaryMm) {
+      // Boundary changed — both sections reclassify together
+      runBothSections(freshBase);
+      return;
+    }
+    const freshThick = freshBase.filter(s => s.thicknessCat === "Thick");
+    const withMM = freshThick.map(s => ({ ...s, ...computeMinMax(s, thickCfg) }));
     const capUsed = withMM.filter(s => s.nzd >= thickCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
     const r = { skus: withMM, capUsed };
-    setThickResults(r);
-    setCommittedThickCfg(thickCfg);
-    setResultsCache(prev => ({ ...prev, [dsFilter]: { ...prev[dsFilter], thick: r, thickCfg } }));
+    setThickResults(r); setCommittedThickCfg(thickCfg); setCommittedBoundaryMm(thickBoundaryMm);
+    setResultsCache(prev => { const k=`${dsFilter}-${period}`; return { ...prev, [k]: { ...prev[k], thick: r, thickCfg } }; });
     if (isAdmin) handleSaveConfig("thick", thickCfg);
-  }, [thickSkus, thickCfg, dsFilter, isAdmin, handleSaveConfig]);
+  }, [invoiceData, skuMaster, dsFilter, period, invoiceDateRange, thickBoundaryMm, committedBoundaryMm, thickCfg, isAdmin, handleSaveConfig, runBothSections]);
 
   const runThin = useCallback(() => {
-    const withMM = thinSkus.map(s => ({ ...s, ...computeMinMax(s, thinCfg) }));
+    const freshBase = computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDateRange, thickBoundaryMm);
+    if (thickBoundaryMm !== committedBoundaryMm) {
+      // Boundary changed — both sections reclassify together
+      runBothSections(freshBase);
+      return;
+    }
+    const freshThin = freshBase.filter(s => s.thicknessCat !== "Thick");
+    const withMM = freshThin.map(s => ({ ...s, ...computeMinMax(s, thinCfg) }));
     const capUsed = withMM.filter(s => s.nzd >= thinCfg.tier1NZD).reduce((sum,s) => sum+s.maxQty, 0);
     const r = { skus: withMM, capUsed };
-    setThinResults(r);
-    setCommittedThinCfg(thinCfg);
-    setResultsCache(prev => ({ ...prev, [dsFilter]: { ...prev[dsFilter], thin: r, thinCfg } }));
+    setThinResults(r); setCommittedThinCfg(thinCfg); setCommittedBoundaryMm(thickBoundaryMm);
+    setResultsCache(prev => { const k=`${dsFilter}-${period}`; return { ...prev, [k]: { ...prev[k], thin: r, thinCfg } }; });
     if (isAdmin) handleSaveConfig("thin", thinCfg);
-  }, [thinSkus, thinCfg, dsFilter, isAdmin, handleSaveConfig]);
+  }, [invoiceData, skuMaster, dsFilter, period, invoiceDateRange, thickBoundaryMm, committedBoundaryMm, thinCfg, isAdmin, handleSaveConfig, runBothSections]);
 
   if (!invoiceData.length || !Object.keys(skuMaster).length) return (
     <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>
@@ -512,8 +598,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   );
   if (!thickCfg || !thinCfg) return null;
 
-  const thickDirty = !committedThickCfg || JSON.stringify(thickCfg) !== JSON.stringify(committedThickCfg);
-  const thinDirty  = !committedThinCfg  || JSON.stringify(thinCfg)  !== JSON.stringify(committedThinCfg);
+  const boundaryDirty = committedBoundaryMm !== null && thickBoundaryMm !== committedBoundaryMm;
+  const thickDirty = boundaryDirty || !committedThickCfg || JSON.stringify(thickCfg) !== JSON.stringify(committedThickCfg);
+  const thinDirty  = boundaryDirty || !committedThinCfg  || JSON.stringify(thinCfg)  !== JSON.stringify(committedThinCfg);
   const dsFallbackLabel = networkConfigs?.[dsFilter]?.fallbackLabel || DS_DEFAULTS[dsFilter]?.fallbackLabel || "DC";
 
   return (
@@ -522,26 +609,39 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
         <div style={{display:"flex",gap:4}}>
           {DS_LIST.map(ds => (
-            <button key={ds} onClick={() => { setDsFilter(ds); setThickResults(null); setThinResults(null); }} style={S.btn(dsFilter===ds)}>{ds}</button>
+            <button key={ds} onClick={() => setDsFilter(ds)} style={S.btn(dsFilter===ds)}>{ds}</button>
           ))}
         </div>
         <div style={{display:"flex",gap:4,marginLeft:12}}>
           {[{v:45,l:"L45D"},{v:30,l:"L30D"},{v:15,l:"L15D"},{v:7,l:"L7D"}].map(p => (
-            <button key={p.v} onClick={() => { setPeriod(p.v); setThickResults(null); setThinResults(null); }} style={S.btn(period===p.v)}>{p.l}</button>
+            <button key={p.v} onClick={() => setPeriod(p.v)} style={S.btn(period===p.v)}>{p.l}</button>
           ))}
         </div>
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
 
-      <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg}/>
+      <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
 
       {/* Thick section */}
       <div style={{marginBottom:24}}>
-        <div style={S.sectionTitle}>Thick (&gt;6mm) — Vertical Storage</div>
-        <ConfigPanel type="thick" cfg={thickCfg} onChange={setThickCfg} isAdmin={isAdmin} onRun={runThick} dirty={thickDirty}/>
+        <div style={{...S.sectionTitle,display:"flex",alignItems:"center",gap:6}}>
+          Thick SKUs — Vertical Storage: Greater than
+          <input
+            type="number"
+            value={thickBoundaryMm}
+            disabled={!isAdmin}
+            min={1} max={30} step={1}
+            onChange={e => handleSaveBoundary(parseFloat(e.target.value) || 6)}
+            onFocus={e => e.target.select()}
+            onKeyDown={e => { if (e.key === 'Enter' && boundaryDirty) { const freshBase = computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDateRange, thickBoundaryMm); runBothSections(freshBase); } }}
+            style={{width:40,padding:"0 4px",fontSize:12,fontWeight:700,border:`1px solid #C05A00`,borderRadius:4,color:"#92400E",background:isAdmin?HR.white:HR.surfaceLight,textAlign:"center"}}
+          />
+          mm {!isAdmin && <span style={{fontSize:9,color:HR.muted,fontWeight:400}}>(admin to edit)</span>}
+        </div>
+        <ConfigPanel type="thick" cfg={thickCfg} onChange={setThickCfg} isAdmin={isAdmin} onRun={runThick} dirty={thickDirty} boundary={thickBoundaryMm}/>
         {thickResults ? (
           <>
-            <CapacityBar used={thickResults.capUsed} total={thickCfg.capacity} label="Thick"/>
+            <CapacityBar used={thickResults.capUsed} total={thickCfg.capacity} label="Vertical Storage Capacity" cfg={thickCfg}/>
             <div style={S.card}>
               <SKUTable skus={thickResults.skus} cfg={committedThickCfg || thickCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }}/>
             </div>
@@ -553,11 +653,11 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
 
       {/* Thin section */}
       <div style={{marginBottom:24}}>
-        <div style={S.sectionTitle}>Thin (≤6mm) — Bin Storage</div>
-        <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin} dirty={thinDirty}/>
+        <div style={S.sectionTitle}>Thin SKUs — Tub Storage: Up to {thickBoundaryMm}mm</div>
+        <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin} dirty={thinDirty} boundary={thickBoundaryMm}/>
         {thinResults ? (
           <>
-            <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Thin"/>
+            <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Tub Storage Capacity" cfg={thinCfg}/>
             <div style={S.card}>
               <SKUTable skus={thinResults.skus} cfg={committedThinCfg || thinCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
             </div>
