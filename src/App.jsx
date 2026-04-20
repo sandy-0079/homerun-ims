@@ -3399,6 +3399,8 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     LS.set("params", JSON.stringify(np));
     setSyncStatus("saving");
     const ok = await saveToSupabase("params","global",np);
+    // Always keep a timestamped backup — restore from params/paramsBackup if params/global is corrupted
+    saveToSupabase("params","paramsBackup",{ ...np, _backedUpAt: new Date().toISOString() });
     setSyncStatus(ok?"saved":"error");
     setTimeout(()=>setSyncStatus("idle"),3000);
     if (invoiceData.length > 0 && Object.keys(skuMaster).length > 0) {
