@@ -1197,7 +1197,7 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
           {/* Mode toggle */}
           <div style={{display:"flex",gap:0,border:`1px solid ${HR.border}`,borderRadius:6,overflow:"hidden",flexShrink:0}}>
             {[["loaded","Loaded Data"],["fresh","Fresh CSV"]].map(([mode,label])=>(
-              <button key={mode} onClick={()=>setSimMode(mode)}
+              <button key={mode} onClick={()=>{setSimMode(mode);setDrill(null);}}
                 style={{padding:"6px 18px",background:simMode===mode?HR.yellow:HR.white,color:simMode===mode?HR.black:HR.muted,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",borderRight:mode==="loaded"?`1px solid ${HR.border}`:"none"}}>
                 {label}
               </button>
@@ -1484,21 +1484,31 @@ function SimulationTab({ invoiceData, results, skuMaster, params, priceData, onA
             </div>
           )}
 
-          {/* Ideal Restock results */}
-          {!freshSimLoading && simSubMode==="ideal" && freshSimResults.tool.length>0 && (
-            <SimOrgLevel
-              toolRows={freshSimResults.tool.filter(r=>dsFilter==="All"||r.dsId===dsFilter)}
-              ovrRows={freshSimResults.tool.filter(r=>dsFilter==="All"||r.dsId===dsFilter)}
-              ovrRowsFull={freshSimResults.tool}
-              winRows={freshInvoiceData.filter(r=>dsFilter==="All"||r.ds===dsFilter)}
-              skuMeta={skuMeta}
-              hasOverrides={false}
-              priceData={priceData}
-              totInst={freshInvoiceData.filter(r=>dsFilter==="All"||r.ds===dsFilter).length}
-              totSkus={new Set(freshInvoiceData.filter(r=>dsFilter==="All"||r.ds===dsFilter).map(r=>r.sku)).size}
-              onDrillCategory={cat=>setDrill({type:"category",value:cat,category:cat})}
-            />
+          {/* Breadcrumb nav — shown when drilled into category or brand */}
+          {drill && (
+            <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",padding:"6px 0",borderBottom:`1px solid ${HR.border}`,marginBottom:4}}>
+              {crumbs.map((c,i)=>(
+                <span key={i} style={{display:"flex",alignItems:"center",gap:5}}>
+                  {i>0&&<span style={{color:HR.muted,fontSize:11}}>›</span>}
+                  <span onClick={c.onClick||undefined} style={{fontSize:11,color:c.onClick?HR.yellowDark:HR.text,cursor:c.onClick?"pointer":"default",fontWeight:i===crumbs.length-1?700:400,textDecoration:c.onClick?"underline":"none"}}>{c.label}</span>
+                </span>
+              ))}
+            </div>
           )}
+
+          {/* Ideal Restock results */}
+          {!freshSimLoading && simSubMode==="ideal" && freshSimResults.tool.length>0 && (()=>{
+            const fToolRows=freshSimResults.tool.filter(r=>dsFilter==="All"||r.dsId===dsFilter);
+            const fWinRows=freshInvoiceData.filter(r=>dsFilter==="All"||r.ds===dsFilter);
+            const fDates=[...new Set(freshInvoiceData.map(r=>r.date))].sort();
+            const fTotInst=fWinRows.length;
+            const fTotSkus=new Set(fWinRows.map(r=>r.sku)).size;
+            return(<>
+              {!drill&&<SimOrgLevel toolRows={fToolRows} ovrRows={fToolRows} ovrRowsFull={freshSimResults.tool} winRows={fWinRows} skuMeta={skuMeta} hasOverrides={false} priceData={priceData} totInst={fTotInst} totSkus={fTotSkus} onDrillCategory={cat=>setDrill({type:"category",value:cat,category:cat})}/>}
+              {drill?.type==="category"&&<SimCategoryLevel toolRows={fToolRows} ovrRows={fToolRows} ovrRowsFull={freshSimResults.tool} winRows={fWinRows} skuMeta={skuMeta} category={drill.value} hasOverrides={false} priceData={priceData} totInst={fTotInst} totSkus={fTotSkus} allDates={fDates} onDrillBrand={brand=>setDrill({type:"brand",value:brand,brand,category:drill.value})}/>}
+              {drill?.type==="brand"&&<SimBrandLevel toolRows={fToolRows} ovrRows={fToolRows} ovrRowsFull={freshSimResults.tool} winRows={fWinRows} skuMeta={skuMeta} category={drill.category} brand={drill.value} hasOverrides={false} priceData={priceData} allDates={fDates} toolRowsFull={freshSimResults.tool}/>}
+            </>);
+          })()}
 
           {/* Actual Stock results — root cause summary strip + drill-down table */}
           {!freshSimLoading && simSubMode==="actual" && freshSimResults.actual.length>0 && (()=>{
@@ -3183,7 +3193,7 @@ export default function App(){
 
       // Load networkConfigs from Supabase
       const sbNetCfg = await loadFromSupabase("params", "networkConfigs");
-      if (sbNetCfg) setNetworkConfigs(sbNetCfg);
+      setNetworkConfigs(sbNetCfg || {}); // {} = loaded but no saved config; null = still loading
     })();
   },[]);
 
