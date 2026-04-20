@@ -99,9 +99,8 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
     && hasShopifyOrder
     && (period !== "CUSTOM" || (dateFrom && dateTo));
 
-  // Button active only when results don't yet exist for the current period+DS combination
-  const resultsUpToDate = !!(cachedResults?.[period]?.[dsFilter]);
-  const runActive = canRun && !resultsUpToDate;
+  // Run button shows "Re-run" if we have cached results (category/custom change forces re-run)
+  const needsRerun = !cachedResults && primaryCats.size > 0;
 
   const handleRun = useCallback(() => {
     const cache = {};
@@ -212,8 +211,8 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
         <div style={{marginTop:10,display:"flex",justifyContent:"flex-end"}}>
           <button
             onClick={handleRun}
-            disabled={!runActive}
-            style={{padding:"5px 18px",borderRadius:6,border:"none",background:runActive?HR.yellow:"#E5E5E5",color:runActive?HR.black:"#999",fontWeight:800,fontSize:12,cursor:runActive?"pointer":"not-allowed"}}
+            disabled={!canRun}
+            style={{padding:"5px 18px",borderRadius:6,border:"none",background:canRun?HR.yellow:"#E5E5E5",color:canRun?HR.black:"#999",fontWeight:800,fontSize:12,cursor:canRun?"pointer":"not-allowed"}}
           >
             ▶ Run Basket Analysis
           </button>
