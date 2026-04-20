@@ -166,3 +166,63 @@ Revisit entire UI across all tabs: Overview, SKU Detail, OOS Simulation, Stock H
 | PCT Fallback | PCT SKU with NZD < threshold → uses Standard |
 | Ops Failure | OOS because DC didn't restock when it should have |
 | Tool Failure | OOS because Min/Max was too low for order size |
+
+---
+
+## Logic Tweaker Params Backup
+
+**Last saved:** 2026-04-20T12:09 IST — restore via Logic Tweaker if Supabase `params/global` is corrupted.
+
+```json
+{
+  "overallPeriod": 45,
+  "recencyWindow": 15,
+  "recencyWt": { "Super Fast": 5, "Fast": 5, "Moderate": 4, "Slow": 4, "Super Slow": 4 },
+  "movIntervals": [2, 4, 7, 10],
+  "priceTiers": [3000, 1500, 400, 100],
+  "spikeMultiplier": 5,
+  "spikePctFrequent": 10,
+  "spikePctOnce": 5,
+  "maxDaysBuffer": 2,
+  "abqMaxMultiplier": 1.5,
+  "baseMinDays": { "Super Fast": 6, "Fast": 5, "Moderate": 3, "Slow": 3, "Super Slow": 3 },
+  "brandBuffer": {
+    "Asian Paints": 3, "VIP Extrusions": 3, "MYK Laticrete": 3, "Roff": 3,
+    "Supreme": 3, "Saint-Gobain": 2, "Alagar": 3, "Legrand": 1, "Archidply": 1
+  },
+  "newDSList": ["DS04", "DS05", "DS03"],
+  "newDSFloorTopN": 250,
+  "activeDSCount": 4,
+  "dcMult": {
+    "Super Fast": { "min": 0.75, "max": 1 },
+    "Fast": { "min": 0.5, "max": 0.75 },
+    "Moderate": { "min": 0.5, "max": 0.75 },
+    "Slow": { "min": 0.25, "max": 0.5 },
+    "Super Slow": { "min": 0.25, "max": 0.5 }
+  },
+  "dcDeadMult": { "min": 0.25, "max": 0.25 },
+  "categoryStrategies": {
+    "Tiling": "percentile_cover",
+    "Lighting": "percentile_cover",
+    "Switches & Sockets": "percentile_cover",
+    "Conduits & GI Boxes": "percentile_cover",
+    "Plywood, MDF & HDHMR": "percentile_cover",
+    "CPVC Pipes & Fittings": "percentile_cover",
+    "Furniture & Architectural Hardware": "percentile_cover",
+    "Sanitary & Bath Fittings": "percentile_cover",
+    "Overhead Tanks": "fixed_unit_floor",
+    "Wires, MCB & Distribution Boards": "fixed_unit_floor"
+  },
+  "percentileCover": {
+    "percentileByPrice": { "Low": 95, "Super Low": 95, "No Price": 95, "Medium": 85, "High": 80, "Premium": 75 },
+    "coverDaysByMovement": { "Super Fast": 2, "Fast": 2, "Moderate": 1, "Slow": 1, "Super Slow": 1 }
+  },
+  "fixedUnitFloor": { "orderQtyPercentile": 90, "maxMultiplier": 1.5, "maxAdditive": 1 },
+  "brandLeadTimeDays": { "_default": 3, "Asian Paints": 4 },
+  "pctDocCap": 30,
+  "pctDocCapPriceTags": ["High", "Premium"],
+  "pctMinNZD": 2,
+  "skuFloorDCMultMin": 0.2,
+  "skuFloorDCMultMax": 0.3
+}
+```
