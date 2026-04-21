@@ -3666,8 +3666,9 @@ const visibleOutput = useMemo(() => {
           if(key==="skuMaster"){
             if(!Object.keys(skuMaster).length) return null;
             const h=["Name","Inventorised At","SKU","Category","Brand","Status"];
-            const rows=Object.values(skuMaster).map(s=>[s.name||"",s.inventorisedAt||"DS",s.sku,s.category||"",s.brand||"",s.status||""].map(v=>`"${v}"`).join(","));
-            return h.join(",")+"\n"+rows.join("\n");
+            const q=v=>`"${(v||"").replace(/"/g,'""')}"`;
+            const rows=Object.values(skuMaster).map(s=>[q(s.name),q(s.inventorisedAt||"DS"),q(s.sku),q(s.category),q(s.brand),q(s.status||"Active")].join(","));
+            return h.map(v=>`"${v}"`).join(",")+"\n"+rows.join("\n");
           }
           if(key==="priceData"){
             if(!Object.keys(priceData).length) return null;
