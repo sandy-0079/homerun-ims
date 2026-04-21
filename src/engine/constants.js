@@ -33,7 +33,7 @@ export const DEFAULT_PARAMS = {
   fixedUnitFloor:{orderQtyPercentile:90, maxMultiplier:1.5, maxAdditive:1},
   brandLeadTimeDays:{_default:3},
   pctDocCap:30,
-  pctDocCapPriceTags:["High","Premium"],
+  pctDocCapLow:60,
   pctMinNZD:2,
   skuFloorDCMultMin:0.2,
   skuFloorDCMultMax:0.3,

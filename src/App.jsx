@@ -4069,7 +4069,8 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
   if(c.recencyWindow!==s.recencyWindow) logicChangelog.push(`Recency window: ${s.recencyWindow}D → ${c.recencyWindow}D`);
   if(c.maxDaysBuffer!==s.maxDaysBuffer) logicChangelog.push(`Max days buffer: ${s.maxDaysBuffer}D → ${c.maxDaysBuffer}D`);
   if(c.abqMaxMultiplier!==s.abqMaxMultiplier) logicChangelog.push(`ABQ multiplier: ${s.abqMaxMultiplier} → ${c.abqMaxMultiplier}`);
-  if(c.pctDocCap!==s.pctDocCap) logicChangelog.push(`PCT DOC cap: ${s.pctDocCap}D → ${c.pctDocCap}D`);
+  if(c.pctDocCap!==s.pctDocCap) logicChangelog.push(`PCT DOC cap (Premium/High): ${s.pctDocCap}D → ${c.pctDocCap}D`);
+  if(c.pctDocCapLow!==s.pctDocCapLow) logicChangelog.push(`PCT DOC cap (Medium/Low): ${s.pctDocCapLow??60}D → ${c.pctDocCapLow}D`);
   if(c.pctMinNZD!==s.pctMinNZD) logicChangelog.push(`PCT min NZD: ${s.pctMinNZD} → ${c.pctMinNZD}`);
   if(c.spikeMultiplier!==s.spikeMultiplier) logicChangelog.push(`Spike multiplier: ${s.spikeMultiplier}× → ${c.spikeMultiplier}×`);
   if(c.spikePctFrequent!==s.spikePctFrequent) logicChangelog.push(`Spike frequent: ${s.spikePctFrequent}% → ${c.spikePctFrequent}%`);
@@ -4120,7 +4121,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
   const configuredBrands=Object.keys(bltC).filter(k=>k!=="_default");
   const availableBrands=[...new Set(Object.values(skuMaster).map(s=>s.brand).filter(Boolean))].sort().filter(b=>!configuredBrands.includes(b));
   const capDays=params.pctDocCap??30;
-  const capTags=params.pctDocCapPriceTags||["High","Premium"];
+  const capDaysLow=params.pctDocCapLow??60;
   const minNZD=params.pctMinNZD??2;
   const skuFloorMultMin=params.skuFloorDCMultMin??0.2;
   const skuFloorMultMax=params.skuFloorDCMultMax??0.3;
@@ -4270,29 +4271,31 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
           </div>
           <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Guards</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-            <div style={S.card}>
-              <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Min NZD for PCT</div>
+            {/* Premium / High block */}
+            <div style={{...S.card,borderLeft:"3px solid #C0392B"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#C0392B",marginBottom:8}}>Premium &amp; High price SKUs</div>
+              <div style={{fontSize:9,color:HR.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em"}}>Min NZD for PCT</div>
               <NumInput value={minNZD} min={1} max={10} step={1}
                 onChange={v=>saveParams({...params,pctMinNZD:v})}
-                style={{width:"100%",fontWeight:700,color:"#C0392B"}}/>
-              <div style={{fontSize:9,color:HR.muted,marginTop:4}}>Below this → Standard fallback</div>
-            </div>
-            <div style={S.card}>
-              <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DOC Cap (days)</div>
+                style={{width:"100%",fontWeight:700,color:"#C0392B",marginBottom:4}}/>
+              <div style={{fontSize:9,color:HR.muted,marginBottom:10}}>NZD below this → falls back to Standard strategy</div>
+              <div style={{fontSize:9,color:HR.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em"}}>DOC Cap (days)</div>
               <NumInput value={capDays} min={0} max={90} step={1}
                 onChange={v=>saveParams({...params,pctDocCap:v})}
-                style={{width:"100%",fontWeight:700,color:"#C0392B"}}/>
-              <div style={{fontSize:9,color:HR.muted,marginTop:4}}>0 = disabled</div>
+                style={{width:"100%",fontWeight:700,color:"#C0392B",marginBottom:4}}/>
+              <div style={{fontSize:9,color:HR.muted}}>Prevents capital lock-up on expensive SKUs · 0 = no cap</div>
             </div>
-          </div>
-          <div style={S.card}>
-            <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DOC Cap applies to</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {["Premium","High","Medium","Low","Super Low","No Price"].map(tag=>{
-                const isOn=capTags.includes(tag);
-                return <button key={tag} onClick={()=>{const next=isOn?capTags.filter(t=>t!==tag):[...capTags,tag];saveParams({...params,pctDocCapPriceTags:next});}}
-                  style={{padding:"4px 8px",borderRadius:4,fontSize:10,fontWeight:600,cursor:"pointer",border:`1px solid ${isOn?"#C0392B":HR.border}`,background:isOn?"#FEE2E2":"#fff",color:isOn?"#C0392B":HR.muted}}>{tag}</button>;
-              })}
+            {/* Medium / Low / Super Low / No Price block */}
+            <div style={{...S.card,borderLeft:"3px solid #B8860B"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#B8860B",marginBottom:8}}>Medium / Low / Super Low / No Price SKUs</div>
+              <div style={{fontSize:9,color:HR.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em"}}>Min NZD for PCT</div>
+              <div style={{fontSize:13,fontWeight:700,color:"#B8860B",marginBottom:4,padding:"5px 10px",background:"#FEF9E7",borderRadius:4,textAlign:"center"}}>1 (fixed — any sale uses PCT)</div>
+              <div style={{fontSize:9,color:HR.muted,marginBottom:10}}>Cheap items stocked aggressively — hard to emergency-source</div>
+              <div style={{fontSize:9,color:HR.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em"}}>DOC Cap (days)</div>
+              <NumInput value={capDaysLow} min={0} max={180} step={5}
+                onChange={v=>saveParams({...params,pctDocCapLow:v})}
+                style={{width:"100%",fontWeight:700,color:"#B8860B",marginBottom:4}}/>
+              <div style={{fontSize:9,color:HR.muted}}>Higher cap acceptable — cheap stock ties up less capital · 0 = no cap</div>
             </div>
           </div>
         </Section>

@@ -149,14 +149,22 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       let strategyTag = strategy;
       let strategyDetails = {};
 
-      if (strategy === "percentile_cover" && s90.nonZeroDays >= (p.pctMinNZD || 2)) {
+      // Price-tag-aware NZD threshold:
+      // Premium/High require pctMinNZD (default 2) — 1 observation insufficient for a reliable distribution
+      // Medium/Low/Super Low/No Price use 1 — cheap items stocked aggressively even with sparse history
+      const HIGH_PCT_TAGS = ["Premium", "High"];
+      const LOW_PCT_TAGS = ["Medium", "Low", "Super Low", "No Price"];
+      const nzdThreshold = HIGH_PCT_TAGS.includes(prTag) ? (p.pctMinNZD || 2) : 1;
+
+      if (strategy === "percentile_cover" && s90.nonZeroDays >= nzdThreshold) {
         const r = percentileCoverStrategy({ q90, prTag, mvTag90, params: p });
         ({ minQty, maxQty } = r);
         strategyDetails = r.details || {};
-        // DOC cap for configured price tags
-        const capDays = p.pctDocCap || 0;
-        const capTags = p.pctDocCapPriceTags || [];
-        if (capDays > 0 && capTags.includes(prTag) && s90.dailyAvg > 0) {
+        // DOC cap — Premium/High use pctDocCap; Medium/Low/Super Low/No Price use pctDocCapLow
+        const isHighTag = HIGH_PCT_TAGS.includes(prTag);
+        const capDays = isHighTag ? (p.pctDocCap ?? 30) : (p.pctDocCapLow ?? 60);
+        const capApplies = isHighTag ? true : LOW_PCT_TAGS.includes(prTag);
+        if (capDays > 0 && capApplies && s90.dailyAvg > 0) {
           const capMin = Math.ceil(s90.dailyAvg * capDays);
           if (minQty > capMin) {
             const uncappedMin = minQty, uncappedMax = maxQty;
@@ -167,12 +175,12 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
             strategyDetails.docCap = { applied: false, capDays, priceTag: prTag };
           }
         }
-      } else if (strategy === "percentile_cover" && s90.nonZeroDays < (p.pctMinNZD || 2)) {
-        // PCT assigned but NZD too low — fall back to standard
+      } else if (strategy === "percentile_cover" && s90.nonZeroDays < nzdThreshold) {
+        // PCT assigned but NZD below threshold — fall back to standard
         const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
         ({ minQty, maxQty } = r);
         strategyDetails = r.details || {};
-        strategyDetails.pctFallback = { reason: "NZD", nzd: s90.nonZeroDays, threshold: p.pctMinNZD || 2 };
+        strategyDetails.pctFallback = { reason: "NZD", nzd: s90.nonZeroDays, threshold: nzdThreshold };
         strategyTag = "standard";
       } else if (strategy === "fixed_unit_floor") {
         const result = fixedUnitFloorStrategy({ orderQtys: collectOrderQtys(invSliced, skuId, dsId), params: p });
