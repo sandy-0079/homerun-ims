@@ -51,7 +51,9 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 - **Percentile by price:** Low/Super Low/No Price=95, Medium=85, High=80, Premium=75. Cheap items stocked aggressively — hard to emergency-source.
 - **Cover days:** Super Fast/Fast=2, Moderate/Slow/Super Slow=1. DC restocks daily so only 1 day needed for slow movers.
 - **Note:** constants.js and percentileCover.js fallbacks must match these values exactly — they're the authoritative source if Supabase params predate the `percentileCover` key.
-- **PCT Guards:** NZD<2 → fall back to Standard (1 observation = no distribution). DOC cap 30D on High/Premium only — prevents capital lock-up on expensive items. Low-priced items intentionally uncapped.
+- **PCT Guards (price-tag-aware):**
+  - Premium/High: NZD < `pctMinNZD` (default 2) → fall back to Standard. DOC cap `pctDocCap` (default 30D) — prevents capital lock-up on expensive items.
+  - Medium/Low/Super Low/No Price: NZD ≥ 1 always uses PCT (cheap items stocked aggressively). DOC cap `pctDocCapLow` (default 60D) — higher cap acceptable since cheap stock ties up less capital.
 - **Max formula:** Min + dailyAvg × buffer (not a multiplier of Min).
 
 ### DC Calculation
