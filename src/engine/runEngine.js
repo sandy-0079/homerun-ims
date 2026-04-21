@@ -225,15 +225,17 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       const preFloorMin = Math.round(minQty), preFloorMax = Math.round(maxQty);
 
       // 3. SKU Floors — runs last, wins if floor Min OR floor Max exceeds engine values
-      if (nsq && nsq[skuId]) {
-        const fl = nsq[skuId][dsId];
+      // Case-insensitive lookup — guards against casing differences between SKU Master and floor CSV
+      const nsqKey = nsq && (nsq[skuId] ? skuId : Object.keys(nsq).find(k => k.toLowerCase() === skuId.toLowerCase()));
+      if (nsqKey) {
+        const fl = nsq[nsqKey][dsId];
         const fMin = !fl ? 0 : typeof fl === "number" ? fl : (fl.min || 0);
         const fMax = !fl ? 0 : typeof fl === "number" ? fl : (fl.max || fMin);
         if (fMin > minQty || fMax > maxQty) {
           postBlendSteps.push({ rule: "SKU Floor", floorMin: fMin, floorMax: fMax, beforeMin: minQty, beforeMax: maxQty });
           if (fMin > minQty) minQty = fMin;
           if (fMax > maxQty) maxQty = fMax;
-          maxQty = Math.max(maxQty, minQty); // ensure Max ≥ Min always
+          maxQty = Math.max(maxQty, minQty);
           logicTag = "SKU Floor";
         }
       }
