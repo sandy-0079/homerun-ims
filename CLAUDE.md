@@ -44,8 +44,8 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 | Strategy | Categories | Key Logic |
 |---|---|---|
 | **Standard** | Cement, General Hardware, Painting, Fevicol, Water Proofing | Daily avg × base min days, long/recent blend |
-| **Percentile Cover (PCT)** | Furniture & Arch HW, Tiling, CPVC, Plywood/MDF, Switches, Conduits, Lighting | Pxx of non-zero daily qty × cover days |
-| **Fixed Unit Floor** | Wires/MCB, Sanitary & Bath, Overhead Tanks | P90 of individual order quantities |
+| **Percentile Cover (PCT)** | Furniture & Arch HW, Tiling, CPVC, Plywood/MDF, Switches, Conduits, Lighting, Sanitary & Bath | Pxx of non-zero daily qty × cover days |
+| **Fixed Unit Floor** | Wires/MCB, Overhead Tanks | P90 of individual order quantities |
 
 ### PCT Design Decisions
 - **Percentile by price:** Low/Super Low/No Price=95, Medium=85, High=80, Premium=75. Cheap items stocked aggressively — hard to emergency-source.
