@@ -3650,7 +3650,8 @@ const visibleOutput = useMemo(() => {
 
       {(()=>{
         const dlCSV=(filename,csv)=>{
-          const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=filename;a.click();
+          // BOM ensures Excel/Sheets opens as UTF-8 and respects quoted fields with commas
+          const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"}));a.download=filename;a.click();
         };
         const dlTemplate=(filename,headers,rows)=>{
           dlCSV(filename,[headers.join(","),...rows.map(r=>r.join(","))].join("\n"));
