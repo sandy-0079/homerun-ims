@@ -3650,8 +3650,7 @@ const visibleOutput = useMemo(() => {
 
       {(()=>{
         const dlCSV=(filename,csv)=>{
-          // BOM ensures Excel/Sheets opens as UTF-8 and respects quoted fields with commas
-          const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"}));a.download=filename;a.click();
+          const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=filename;a.click();
         };
         const dlTemplate=(filename,headers,rows)=>{
           dlCSV(filename,[headers.join(","),...rows.map(r=>r.join(","))].join("\n"));
@@ -3769,7 +3768,13 @@ const visibleOutput = useMemo(() => {
                 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                   <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handleSKU} style={{display:"none"}}/></label>
                   <button onClick={()=>{const t=templates.skuMaster;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
-                  {Object.keys(skuMaster).length>0&&<button onClick={()=>{const csv=buildDataCSV("skuMaster");if(csv)dlCSV("skuMaster_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
+                  {Object.keys(skuMaster).length>0&&<button onClick={()=>{
+                    const q=v=>`"${(v||"").replace(/"/g,'""')}"`;
+                    const h=["Name","Inventorised At","SKU","Category","Brand","Status"];
+                    const rows=Object.values(skuMaster).map(s=>[q(s.name),q(s.inventorisedAt||"DS"),q(s.sku),q(s.category),q(s.brand),q(s.status||"Active")].join(","));
+                    const blob=new Blob([[h.join(","),...rows].join("\n")],{type:"text/csv"});
+                    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="skuMaster_data.csv";a.click();
+                  }} style={dlBtnS}>⬇ Data</button>}
                   {Object.keys(skuMaster).length>0&&<button onClick={()=>clearData("skuMaster")} style={clrBtnS}>🗑 Clear</button>}
                 </div>
               </div>
