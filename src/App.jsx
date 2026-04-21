@@ -3962,7 +3962,7 @@ const visibleOutput = useMemo(() => {
                       });
                       return[
                         `"${(s.name||s.sku).replace(/"/g,'""')}"`,
-                        s.sku,
+                        `"${s.sku.replace(/"/g,'""')}"`,
                         `"${(s.category||"").replace(/"/g,'""')}"`,
                         ...dsCols,
                       ].join(",");
@@ -3978,7 +3978,7 @@ const visibleOutput = useMemo(() => {
                       const r=results[s.sku];
                       return[
                         `"${(s.name||s.sku).replace(/"/g,'""')}"`,
-                        s.sku,
+                        `"${s.sku.replace(/"/g,'""')}"`,
                         `"${(s.category||"").replace(/"/g,'""')}"`,
                         r?.dc.min??0,
                         r?.dc.max??0,
