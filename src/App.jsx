@@ -3940,7 +3940,7 @@ const visibleOutput = useMemo(() => {
                         return[
                           `"${(s.name||"").replace(/"/g,'""')}"`,
                           `"${(s.inventorisedAt||"").replace(/"/g,'""')}"`,
-                          s.sku,
+                          `"${s.sku.replace(/"/g,'""')}"`,
                           `"${(s.category||"").replace(/"/g,'""')}"`,
                           `"${(s.status||"").trim()}"`,
                           `"${(s.brand||"").replace(/"/g,'""')}"`,
