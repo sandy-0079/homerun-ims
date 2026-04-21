@@ -3769,11 +3769,10 @@ const visibleOutput = useMemo(() => {
                   <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handleSKU} style={{display:"none"}}/></label>
                   <button onClick={()=>{const t=templates.skuMaster;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
                   {Object.keys(skuMaster).length>0&&<button onClick={()=>{
-                    const q=v=>`"${(v||"").replace(/"/g,'""')}"`;
                     const h=["Name","Inventorised At","SKU","Category","Brand","Status"];
-                    const rows=Object.values(skuMaster).map(s=>[q(s.name),q(s.inventorisedAt||"DS"),q(s.sku),q(s.category),q(s.brand),q(s.status||"Active")].join(","));
-                    const blob=new Blob([[h.join(","),...rows].join("\n")],{type:"text/csv"});
-                    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="skuMaster_data.csv";a.click();
+                    const rows=Object.values(skuMaster).map(s=>[s.name||"",s.inventorisedAt||"DS",s.sku,s.category||"",s.brand||"",s.status||"Active"].join("\t"));
+                    const blob=new Blob([[h.join("\t"),...rows].join("\n")],{type:"text/tab-separated-values"});
+                    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="skuMaster_data.tsv";a.click();
                   }} style={dlBtnS}>⬇ Data</button>}
                   {Object.keys(skuMaster).length>0&&<button onClick={()=>clearData("skuMaster")} style={clrBtnS}>🗑 Clear</button>}
                 </div>
