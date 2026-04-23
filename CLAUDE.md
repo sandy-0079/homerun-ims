@@ -124,15 +124,8 @@ Both tabs live in production. `src/tabs/BasketAnalysisTab.jsx` + `src/tabs/Plywo
 - **Baskets**: category selector (click-cycle), period L45D→L3D + custom, DS filter, 5 cards, donut, co-category bar, insight. Selections persist to localStorage, auto-runs on load.
 - **Plywood**: per-DS Thick/Thin configs (Supabase), SKU table (Running/Fallback/Super Slow), capacity bar (3-state), per-SKU modal (histogram + timeline). Auto-computes on load. Recommendation only — does NOT write into Min/Max engine.
 
-### 2. OOS Simulation Redesign ⚠️ Built — pending full local test before push
-**Built but not fully tested.** Local commits exist, not pushed. Test before pushing:
-- Loaded Data mode: preset bar (L45D→L3D), custom date picker, drill-down navigation
-- Fresh CSV / Ideal Restock: upload invoice CSV, run, drill into category/brand, breadcrumbs
-- Fresh CSV / Actual Stock: upload invoice + 5 DS CSVs, pick date, run, root cause strip + filter
-
-Original spec:
-- Replace "Last N days" slider with preset bar + date picker on existing Loaded Data mode
-- Fresh CSV mode (temporary, doesn't replace loaded data): Ideal Restock (any date range, OOS breakdown) and Actual Stock (single day, 5 DS stock CSVs, root cause classification: Ops Failure / Tool Failure / Unstocked / Could Have Been Saved)
+### 2. OOS Simulation Redesign ❌ Dropped (2026-04-21)
+Dropped — existing simulation (slider, DS filter, override comparison) covers ops needs. Redesign was UX-only (preset periods, drill-down navigation). Untested code discarded to avoid repeat of the params corruption incident. If Fresh CSV / Actual Stock root cause mode is needed in future, rebuild cleanly from scratch.
 
 ### 3. Polish Stock Health Tab
 Make it more rich and actionable (specifics TBD).
