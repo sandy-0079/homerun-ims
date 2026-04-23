@@ -519,6 +519,12 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   useEffect(() => {
     if (networkConfigs === null) return; // still loading from Supabase — wait for final configs
     if (!thickCfg || !thinCfg || !baseSkus.length) return;
+    // Guard: ensure thickCfg reflects the CURRENT dsFilter before auto-running.
+    // Without this, the effect fires with the previous DS's config when dsFilter changes,
+    // pollutes autoRanRef with the wrong key, and the correct config never triggers a re-run.
+    const expectedSaved = networkConfigs?.[dsFilter] || DS_DEFAULTS[dsFilter];
+    const expectedThick = { ...DS_DEFAULTS[dsFilter].thick, ...expectedSaved.thick };
+    if (JSON.stringify(thickCfg) !== JSON.stringify(expectedThick)) return;
     const cacheKey = `${dsFilter}-${period}`;
     if (autoRanRef.current.has(cacheKey)) return;
     autoRanRef.current.add(cacheKey);
