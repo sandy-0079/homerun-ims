@@ -136,8 +136,38 @@ Decide whether a dedicated Tool Output tab is needed, or whether the 3 key downl
 ### 5. Full UI Polish Pass — All Tabs
 Revisit entire UI across all tabs: Overview, SKU Detail, OOS Simulation, Stock Health, Tool Output, Logic Tweaker, Manual Overrides, Upload Data. Make each tab sharper and more actionable.
 
+### 6. Plywood IMS Engine Integration ⏳ Brainstorm in progress — NOT ready to implement
+Integrate Plywood Network recommendations into the Min/Max engine. Brainstorm started 2026-04-21. **Do not implement until explicitly asked.**
+
+**Aligned so far:**
+
+**DS logic (Plywood SKUs at each DS):**
+- Use same median-based algorithm as Plywood Network tab (median of ALL daily totals, unfiltered — median is robust to large outlier orders)
+- Tier classification (Running / Fallback / Super Slow) per DS using per-thickness NZD thresholds from networkConfigs
+- Running SKU → DS Min/Max computed; Fallback + Super Slow → DS Min = Max = 0
+- Fallback threshold (P75 of individual order qtys) retained for routing logic
+- New per-thickness config fields in networkConfigs: `fallbackType: "DC"|"Supplier"` and `superSlowType: "DC"|"Supplier"` — added inside each ConfigPanel (Thick/Thin) — determines whether DC or external supplier serves that tier for each DS×thickness combination
+
+**DC logic (Plywood SKUs at DC):**
+- DC demand formula base: `Σ DS Mins × multMin`, `Σ DS Maxes × multMax` (same as floored SKU approach, NOT daily avg — daily avg understates DC need for erratic/lumpy demand)
+- Which DSes contribute to DC demand per SKU: Running SKUs always contribute; Fallback SKUs contribute only if `fallbackType = "DC"`; Super Slow SKUs contribute only if `superSlowType = "DC"`
+- Multipliers configurable in Logic Tweaker (separate from existing `skuFloorDCMultMin/Max`)
+
+**Still to align before proceeding:**
+- Full scenario walkthrough (4 scenarios raised, not yet validated — Running with threshold, Fallback→DC, SuperSlow→DC, mixed tiers across DSes)
+- DC multiplier values for Plywood specifically
+- Archidply brand exception: deferred (resolved if supplier changes)
+- How this integrates with the existing `isFlooredSKU` DC override (likely bypassed for Plywood)
+- Spec and implementation plan
+
+### 7. DC Calculation Fix for PCT + Fixed Unit Floor Categories
+Current engine uses `sumDailyAvg × (leadTime+1)` for ALL non-Standard categories at DC, which understocks for erratic demand. Aligned fix:
+- **Standard**: keep `sumDailyAvg × (leadTime+1)` — smooth demand, daily avg works
+- **PCT + Fixed Unit Floor**: switch to `Σ DS Mins × multMin` / `Σ DS Maxes × multMax` — same approach as floored SKUs
+- Multipliers configurable in Logic Tweaker (can reuse `skuFloorDCMultMin/Max` or add separate ones)
+- Pick up after Plywood engine integration is complete
+
 ## Deferred
-- Category Stocking → IMS engine integration (write Min/Max back for Plywood category — needs broader scoping including DC implications)
 - Cluster fulfillment — build into tool or ops process?
 - Stock Health — actionables design (TBD)
 
