@@ -10,6 +10,7 @@ import { getPriceTag, getMovTag, getSpikeTag, computeStats } from "./utils.js";
 import { standardStrategy } from "./strategies/standard.js";
 import { percentileCoverStrategy } from "./strategies/percentileCover.js";
 import { fixedUnitFloorStrategy } from "./strategies/fixedUnitFloor.js";
+import { computePlywoodNetworkResults } from "./strategies/plywoodNetwork.js";
 
 /* ── DC movement tag (moved verbatim from App.jsx) ──────────────────────── */
 export function getDCStats(inv, skuId, activeDSCount, intervals, op) {
@@ -94,7 +95,54 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     activeDSCount = p.activeDSCount || 4,
     res = {};
 
+  // Network Design: only runs when explicitly selected in categoryStrategies.
+  // Uses full inv (not invSliced) so lookbackDays is independent of overallPeriod.
+  const isNetworkDesign = (p.categoryStrategies?.["Plywood, MDF & HDHMR"] === "network_design");
+  const plywoodNetworkResults = isNetworkDesign ? computePlywoodNetworkResults(inv, skuM, p) : {};
+
   allSKUs.forEach(skuId => {
+    // ── NETWORK DESIGN BYPASS ────────────────────────────────────────────────
+    // For covered plywood brand SKUs: use pre-computed results directly.
+    // Bypasses strategy dispatch, New DS Floor, and SKU Floor Override.
+    // Dead Stock cap still applied. All other categories unaffected.
+    const networkResult = plywoodNetworkResults[skuId];
+    if (networkResult) {
+      const _meta = skuM[skuId] || { sku: skuId, name: skuId, category: 'Plywood, MDF & HDHMR', brand: '', status: 'Active' };
+      const _isDead = deadStockSet.has(skuId);
+      const _prTag = getPriceTag(pd[skuId] || 0, priceTiers);
+      const _t150Tag = t150[skuId] || 'No';
+      const _stores = {};
+      DS_LIST.forEach(dsId => {
+        const { min, max, nonZeroCount = 0 } = networkResult.storeResults[dsId] || { min: 0, max: 0, nonZeroCount: 0 };
+        const finalMax = _isDead ? min : max;
+        _stores[dsId] = {
+          min, max: finalMax,
+          preFloorMin: min, preFloorMax: max,
+          dailyAvg: 0, abq: 0, nonZeroDays: nonZeroCount,
+          mvTag: 'N/A', spTag: 'N/A',
+          logicTag: 'Network Design', strategyTag: 'network_design',
+          strategyDetails: { brand: networkResult.brand },
+          postBlendSteps: [],
+        };
+      });
+      const _dc = networkResult.dcResult;
+      const _dcDeadMult = p.dcDeadMult || DC_DEAD_MULT_DEFAULT;
+      const _dcMin = _isDead ? Math.round(_dc.min * _dcDeadMult.min) : _dc.min;
+      const _dcMax = _isDead ? Math.round(_dc.max * _dcDeadMult.max) : Math.max(_dc.max, _dc.min);
+      res[skuId] = {
+        meta: { ..._meta, priceTag: _prTag, t150Tag: _t150Tag },
+        stores: _stores,
+        dc: {
+          min: _dcMin, max: _dcMax,
+          preFloorMin: _dc.min, preFloorMax: _dc.max,
+          mvTag: 'N/A', nonZeroDays: 0,
+          dcDetails: { strategy: 'network_design', brand: networkResult.brand, isDead: _isDead },
+        },
+      };
+      return;
+    }
+    // ── END NETWORK DESIGN BYPASS ────────────────────────────────────────────
+
     const meta = skuM[skuId] || { sku: skuId, name: skuId, category: "Unknown", brand: "", status: "Active", inventorisedAt: "DS" };
     const prTag = getPriceTag(pd[skuId] || 0, priceTiers),
       t150Tag = t150[skuId] || "No",

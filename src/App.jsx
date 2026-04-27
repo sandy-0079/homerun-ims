@@ -3183,7 +3183,14 @@ export default function App(){
 
       // Load networkConfigs from Supabase
       const sbNetCfg = await loadFromSupabase("params", "networkConfigs");
-      setNetworkConfigs(sbNetCfg || {}); // {} = loaded but no saved config; null = still loading
+      setNetworkConfigs(sbNetCfg || {});
+
+      // Load plywoodNetworkConfig and embed into params so all runEngine calls get it automatically
+      const sbPnc = await loadFromSupabase("params", "plywoodNetworkConfig");
+      if (sbPnc) {
+        setParams(prev => ({ ...prev, plywoodNetworkConfig: sbPnc }));
+        setSaved(prev => ({ ...prev, plywoodNetworkConfig: sbPnc }));
+      }
     })();
   },[]);
 
@@ -3192,6 +3199,16 @@ export default function App(){
     setNetworkConfigs(configs);
     await saveToSupabase("params", "networkConfigs", configs);
   }, []);
+
+  // ── handleSavePlywoodNetworkConfig: saves plywood network design config ──────
+  // Embeds into params state (so all runEngine calls get it) and saves separately
+  const handleSavePlywoodNetworkConfig = useCallback(async (cfg) => {
+    setParams(prev => ({ ...prev, plywoodNetworkConfig: cfg }));
+    setSaved(prev => ({ ...prev, plywoodNetworkConfig: cfg }));
+    setModelDirty(true);
+    addChange("Plywood Network Design config updated");
+    await saveToSupabase("params", "plywoodNetworkConfig", cfg);
+  }, [addChange]);
 
   // ── saveCoreOverrides: writes to both Supabase + localStorage ───────────────
   const saveCoreOverrides = useCallback(async(ov)=>{
@@ -3226,6 +3243,8 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   // Load params first, then run engine with correct params
   const sbParams = await loadFromSupabase("params","global");
   const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
+  const sbPncAuto = await loadFromSupabase("params", "plywoodNetworkConfig");
+  if (sbPncAuto) activeParams.plywoodNetworkConfig = sbPncAuto;
   setParams(activeParams);setSaved(activeParams);
 
   setTimeout(()=>{
@@ -3252,6 +3271,8 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       // Load params first, then run engine with correct params
       const sbParams = await loadFromSupabase("params","global");
       const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
+      const sbPncBundle = await loadFromSupabase("params", "plywoodNetworkConfig");
+      if (sbPncBundle) activeParams.plywoodNetworkConfig = sbPncBundle;
       setParams(activeParams);setSaved(activeParams);
 
       setTimeout(()=>{
@@ -3396,11 +3417,13 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     setParams(np);
     setSaved(np);
     // Save params to Supabase + localStorage
-    LS.set("params", JSON.stringify(np));
+    // Strip plywoodNetworkConfig — it lives in params/plywoodNetworkConfig, not params/global
+    const { plywoodNetworkConfig: _pnc, ...saveableParams } = np;
+    LS.set("params", JSON.stringify(saveableParams));
     setSyncStatus("saving");
-    const ok = await saveToSupabase("params","global",np);
+    const ok = await saveToSupabase("params","global",saveableParams);
     // Always keep a timestamped backup — restore from params/paramsBackup if params/global is corrupted
-    saveToSupabase("params","paramsBackup",{ ...np, _backedUpAt: new Date().toISOString() });
+    saveToSupabase("params","paramsBackup",{ ...saveableParams, _backedUpAt: new Date().toISOString() });
     setSyncStatus(ok?"saved":"error");
     setTimeout(()=>setSyncStatus("idle"),3000);
     if (invoiceData.length > 0 && Object.keys(skuMaster).length > 0) {
@@ -3918,6 +3941,9 @@ const visibleOutput = useMemo(() => {
             isAdmin={isAdmin}
             networkConfigs={networkConfigs}
             onSaveConfigs={handleSaveNetworkConfigs}
+            plywoodNetworkConfig={params.plywoodNetworkConfig || null}
+            onSavePlywoodNetworkConfig={handleSavePlywoodNetworkConfig}
+            isNetworkDesignActive={params.categoryStrategies?.["Plywood, MDF & HDHMR"] === "network_design"}
           />
         </div>
 
@@ -4219,6 +4245,9 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                       <option value="percentile_cover">Percentile Cover</option>
                       <option value="fixed_unit_floor">Fixed Unit Floor</option>
                       <option value="manual">Manual</option>
+                      {cat === "Plywood, MDF & HDHMR" && (
+                        <option value="network_design">Network Design</option>
+                      )}
                     </select>
                   </td>
                 </tr>

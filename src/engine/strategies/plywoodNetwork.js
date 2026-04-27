@@ -1,0 +1,176 @@
+// Plywood Network Design strategy
+// Pre-computes Min/Max for all Network Design brand SKUs before the main engine loop.
+// Only runs when categoryStrategies["Plywood, MDF & HDHMR"] === "network_design".
+// Brands not in config (e.g. Merino) fall through to existing PCT strategy in runEngine.
+
+import { percentile } from '../utils.js';
+import { DS_LIST } from '../constants.js';
+
+const PLYWOOD_CATEGORY = 'Plywood, MDF & HDHMR';
+
+function isNetworkDesignSKU(meta, brands) {
+  return meta.category === PLYWOOD_CATEGORY && !!brands[meta.brand];
+}
+
+// Build daily-demand and order-qty maps for the plywood lookback window.
+function buildMaps(inv, cutoffStr) {
+  const dailyDemand = {};
+  const orderQtys = {};
+  for (const r of inv) {
+    if (r.date < cutoffStr) continue;
+    const { sku, ds, date } = r;
+    const qty = Number(r.qty) || 0;
+    if (qty <= 0) continue;
+    if (!dailyDemand[sku]) dailyDemand[sku] = {};
+    if (!dailyDemand[sku][ds]) dailyDemand[sku][ds] = {};
+    dailyDemand[sku][ds][date] = (dailyDemand[sku][ds][date] || 0) + qty;
+    if (!orderQtys[sku]) orderQtys[sku] = {};
+    if (!orderQtys[sku][ds]) orderQtys[sku][ds] = [];
+    orderQtys[sku][ds].push(qty);
+  }
+  return { dailyDemand, orderQtys };
+}
+
+// Aggregate daily totals across a list of DSes for one SKU.
+function aggregateDailyTotals(sku, coveredDSes, dailyDemand) {
+  const totals = {};
+  for (const ds of coveredDSes) {
+    for (const [date, qty] of Object.entries(dailyDemand[sku]?.[ds] || {})) {
+      totals[date] = (totals[date] || 0) + qty;
+    }
+  }
+  return totals;
+}
+
+// P{pct} of non-zero aggregated daily demand → node Min.
+function computeNodeMin(sku, coveredDSes, dailyDemand, minPct) {
+  const totals = aggregateDailyTotals(sku, coveredDSes, dailyDemand);
+  const nonZero = Object.values(totals).filter(q => q > 0).sort((a, b) => a - b);
+  if (nonZero.length === 0) return { min: 0, nonZeroCount: 0 };
+  return { min: Math.ceil(percentile(nonZero, minPct)), nonZeroCount: nonZero.length };
+}
+
+// P{pct} of individual order quantities across covered DSes → Max buffer.
+function computeOrderBuffer(sku, coveredDSes, orderQtys, maxBufPct) {
+  const all = [];
+  for (const ds of coveredDSes) all.push(...(orderQtys[sku]?.[ds] || []));
+  if (all.length === 0) return 0;
+  all.sort((a, b) => a - b);
+  return Math.ceil(percentile(all, maxBufPct));
+}
+
+/**
+ * Pre-compute Network Design stocking results for all covered brand SKUs.
+ * Called once before the main allSKUs.forEach loop in runEngine, only when
+ * categoryStrategies["Plywood, MDF & HDHMR"] === "network_design".
+ *
+ * Returns:
+ *   { [skuId]: { brand, storeResults: { [dsId]: {min,max,nonZeroCount,covers} }, dcResult: {min,max} } }
+ *
+ * SKUs absent from result → runEngine falls through to existing PCT strategy.
+ */
+export function computePlywoodNetworkResults(inv, skuM, params) {
+  const cfg = params?.plywoodNetworkConfig;
+  if (!cfg?.brands) return {};
+
+  const {
+    lookbackDays = 90,
+    minPercentile = 95,
+    maxBufferPercentile = 75,
+    maxCap = 20,
+    brands,
+  } = cfg;
+
+  // Cutoff date: lookbackDays before the latest invoice date
+  const allDates = [...new Set(inv.map(r => r.date))].sort();
+  if (allDates.length === 0) return {};
+  const latest = new Date(allDates[allDates.length - 1]);
+  latest.setDate(latest.getDate() - lookbackDays);
+  const cutoffStr = latest.toISOString().slice(0, 10);
+
+  const { dailyDemand, orderQtys } = buildMaps(inv, cutoffStr);
+  const results = {};
+
+  for (const [skuId, meta] of Object.entries(skuM)) {
+    if (!isNetworkDesignSKU(meta, brands)) continue;
+    const brandCfg = brands[meta.brand];
+    const { nodes, dcMultMin, dcMultMax } = brandCfg;
+
+    const storeResults = {};
+    const nodeMinMax = {};
+
+    // Compute Min/Max for each DS stocking node
+    for (const [nodeId, nodeCfg] of Object.entries(nodes)) {
+      if (nodeId === 'DC') continue;
+      const { min: minQty, nonZeroCount } = computeNodeMin(skuId, nodeCfg.covers, dailyDemand, minPercentile);
+      const orderBuf = computeOrderBuffer(skuId, nodeCfg.covers, orderQtys, maxBufferPercentile);
+      const maxQty = Math.min(Math.max(minQty + orderBuf, minQty), maxCap);
+      nodeMinMax[nodeId] = { min: minQty, max: maxQty };
+      // Store covers so the tab can display "Covered DSes: DS01, DS05"
+      storeResults[nodeId] = { min: minQty, max: maxQty, nonZeroCount, covers: nodeCfg.covers };
+    }
+
+    // Non-stocking DSes → 0
+    for (const ds of DS_LIST) {
+      if (!storeResults[ds]) storeResults[ds] = { min: 0, max: 0, nonZeroCount: 0, covers: [] };
+    }
+
+    // DC: P95 direct-serving component (if DC node defined) + multiplier component
+    let dcP95 = 0;
+    if (nodes.DC) {
+      const { min } = computeNodeMin(skuId, nodes.DC.covers, dailyDemand, minPercentile);
+      dcP95 = min;
+    }
+
+    const sumDiff = Object.values(nodeMinMax).reduce((acc, { min, max }) => acc + (max - min), 0);
+    const dcMin = dcP95 + Math.ceil(sumDiff * dcMultMin);
+    const dcMax = Math.max(dcP95 + Math.ceil(sumDiff * dcMultMax), dcMin);
+
+    results[skuId] = {
+      brand: meta.brand,
+      storeResults,
+      dcResult: { min: dcMin, max: dcMax },
+    };
+  }
+
+  return results;
+}
+
+/**
+ * Compute aggregated SKU stats for the Plywood tab display.
+ * For a given stocking node (dsId) and its covered DSes, returns per-SKU demand data.
+ * Used by the tab independently of runEngine for visualization.
+ */
+export function computeNetworkNodeStats(inv, skuMaster, brand, coveredDSes, lookbackDays = 90) {
+  const allDates = [...new Set(inv.map(r => r.date))].sort();
+  if (allDates.length === 0) return [];
+  const latest = new Date(allDates[allDates.length - 1]);
+  latest.setDate(latest.getDate() - lookbackDays);
+  const cutoffStr = latest.toISOString().slice(0, 10);
+
+  const { dailyDemand, orderQtys } = buildMaps(inv, cutoffStr);
+
+  const brandSKUs = Object.values(skuMaster).filter(
+    m => m.brand === brand && m.category === PLYWOOD_CATEGORY && (m.status || 'Active').toLowerCase() === 'active'
+  );
+
+  return brandSKUs.map(meta => {
+    const sku = meta.sku;
+    const totals = aggregateDailyTotals(sku, coveredDSes, dailyDemand);
+    const nonZeroTotals = Object.values(totals).filter(q => q > 0).sort((a, b) => a - b);
+    const allOrders = [];
+    for (const ds of coveredDSes) allOrders.push(...(orderQtys[sku]?.[ds] || []));
+
+    // Daily totals map for histogram/timeline in modal
+    const dailyMap = totals;
+
+    return {
+      sku,
+      name: meta.name,
+      nzd: nonZeroTotals.length,
+      dailyTotals: nonZeroTotals,
+      dailyMap,
+      orderQtys: allOrders.sort((a, b) => a - b),
+    };
+  }).filter(s => s.nzd > 0 || s.orderQtys.length > 0);
+}

@@ -19,6 +19,51 @@ export const DEFAULT_BRAND_BUFFER = {
   "Supreme":3,"Saint-Gobain":2,"Alagar":3,"Legrand":1,"Archidply":1,
 };
 
+export const PLYWOOD_NETWORK_CONFIG_DEFAULT = {
+  lookbackDays: 90,
+  minPercentile: 95,
+  maxBufferPercentile: 75,
+  maxCap: 20,
+  brands: {
+    "Action Tesa": {
+      nodes: {
+        DS01: { covers: ["DS01", "DS05"] },
+        DS03: { covers: ["DS03", "DS04", "DS05"] },
+        DC:   { covers: ["DS02", "DS04"] },
+      },
+      dcMultMin: 0.8,
+      dcMultMax: 1.5,
+    },
+    "CenturyPly": {
+      nodes: {
+        DS01: { covers: ["DS01", "DS05"] },
+        DS03: { covers: ["DS03", "DS04", "DS05"] },
+        DC:   { covers: ["DS02", "DS04"] },
+      },
+      dcMultMin: 0.8,
+      dcMultMax: 1.5,
+    },
+    "ArchidPly": {
+      nodes: {
+        DS02: { covers: ["DS02", "DS01"] },
+        DS04: { covers: ["DS04", "DS03"] },
+        DS05: { covers: ["DS05", "DS01", "DS03"] },
+      },
+      dcMultMin: 0.8,
+      dcMultMax: 1.5,
+    },
+    "GreenPly": {
+      nodes: {
+        DS02: { covers: ["DS02", "DS01"] },
+        DS04: { covers: ["DS04", "DS03"] },
+        DS05: { covers: ["DS05", "DS01", "DS03"] },
+      },
+      dcMultMin: 0.8,
+      dcMultMax: 1.5,
+    },
+  },
+};
+
 export const DEFAULT_PARAMS = {
   overallPeriod:90,recencyWindow:15,recencyWt:RECENCY_WT_DEFAULT,movIntervals:[2,4,7,10],
   priceTiers:[3000,1500,400,100],spikeMultiplier:5,spikePctFrequent:10,spikePctOnce:5,

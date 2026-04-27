@@ -4,6 +4,8 @@ import {
   ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import { saveToSupabase } from "../supabase";
+import { computeNetworkNodeStats } from "../engine/strategies/plywoodNetwork.js";
+import { PLYWOOD_NETWORK_CONFIG_DEFAULT } from "../engine/constants.js";
 
 const HR = {
   yellow:"#F5C400",black:"#1A1A1A",white:"#FFFFFF",
@@ -451,7 +453,43 @@ function SummaryCards({ skuList, skuMaster, thickCfg, thinCfg, thickBoundaryMm =
   );
 }
 
-export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateRange, isAdmin, networkConfigs, onSaveConfigs }) {
+// SKU table for Network Design mode — shows aggregated demand + P95-based min/max
+function NetworkDesignSKUTable({ skus, onSelectSku }) {
+  if (!skus || skus.length === 0) return (
+    <div style={{padding:16,color:"#888",fontSize:12,textAlign:"center"}}>No SKUs with demand in this period.</div>
+  );
+  const S2 = { th:{padding:"6px 8px",fontWeight:700,fontSize:10,color:"#555",borderBottom:"1px solid #E0E0D0",textAlign:"left",whiteSpace:"nowrap"}, td:{padding:"6px 8px",fontSize:11,borderBottom:"1px solid #F0F0E8",verticalAlign:"middle"} };
+  return (
+    <div style={{overflowX:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead>
+          <tr style={{background:"#F8F8F2"}}>
+            <th style={S2.th}>SKU</th>
+            <th style={S2.th}>Name</th>
+            <th style={{...S2.th,textAlign:"right"}}>mm</th>
+            <th style={{...S2.th,textAlign:"right"}}>NZD</th>
+            <th style={{...S2.th,textAlign:"right"}}>Min</th>
+            <th style={{...S2.th,textAlign:"right"}}>Max</th>
+          </tr>
+        </thead>
+        <tbody>
+          {skus.sort((a,b) => b.nzd - a.nzd).map((s,i) => (
+            <tr key={s.sku} style={{background:i%2===0?"#fff":"#F8F8F2",cursor:"pointer"}} onClick={() => onSelectSku(s)}>
+              <td style={{...S2.td,fontFamily:"monospace",fontSize:10,color:"#666"}}>{s.sku}</td>
+              <td style={{...S2.td,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
+              <td style={{...S2.td,textAlign:"right",color:"#888"}}>{s.mm !== null ? `${s.mm}mm` : "—"}</td>
+              <td style={{...S2.td,textAlign:"right"}}>{s.nzd}</td>
+              <td style={{...S2.td,textAlign:"right",fontWeight:700,color:"#1e40af"}}>{s.minQty}</td>
+              <td style={{...S2.td,textAlign:"right",fontWeight:700,color:"#166534"}}>{s.maxQty}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateRange, isAdmin, networkConfigs, onSaveConfigs, plywoodNetworkConfig, onSavePlywoodNetworkConfig, isNetworkDesignActive }) {
   const [dsFilter, setDsFilter] = useState("DS01");
   const [period, setPeriod] = useState(45);
   const [thickCfg, setThickCfg] = useState(null);
@@ -466,6 +504,12 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const [thickBoundaryMm, setThickBoundaryMm] = useState(GLOBAL_DEFAULTS.thickBoundaryMm);
   const [committedBoundaryMm, setCommittedBoundaryMm] = useState(null); // locked at last Run; null = use live value
   const autoRanRef = useRef(new Set()); // tracks which "DS-period" combos have been auto-computed
+
+  // Network Design config — use saved config or fall back to defaults
+  const effectiveNetCfg = plywoodNetworkConfig || PLYWOOD_NETWORK_CONFIG_DEFAULT;
+  const [localNetCfg, setLocalNetCfg] = useState(null); // null = not editing
+  const editingNetCfg = localNetCfg || effectiveNetCfg;
+  const [netCfgDirty, setNetCfgDirty] = useState(false);
 
   // Reload configs when DS or saved configs change
   useEffect(() => {
@@ -513,6 +557,61 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   );
   const thickSkus = useMemo(() => baseSkus.filter(s => s.thicknessCat === "Thick"), [baseSkus]);
   const thinSkus  = useMemo(() => baseSkus.filter(s => s.thicknessCat !== "Thick"), [baseSkus]);
+
+  // Network Design: derive stocking info for selected DS
+  const ndDsInfo = useMemo(() => {
+    if (!isNetworkDesignActive || !effectiveNetCfg?.brands) return null;
+    const brands = effectiveNetCfg.brands;
+    const stocked = []; // [{brand, covers, dcServes}]
+    const notStocked = []; // [{brand, fulfilledFrom}]
+    Object.entries(brands).forEach(([brand, cfg]) => {
+      const dsNode = cfg.nodes[dsFilter];
+      if (dsNode) {
+        stocked.push({ brand, covers: dsNode.covers });
+      } else {
+        // Find fulfillment sources for this DS from other nodes
+        const sources = [];
+        Object.entries(cfg.nodes).forEach(([nodeId, nodeCfg]) => {
+          if (nodeId !== 'DC' && nodeCfg.covers.includes(dsFilter)) sources.push(nodeId);
+        });
+        if (cfg.nodes.DC?.covers.includes(dsFilter)) sources.push('DC');
+        notStocked.push({ brand, fulfilledFrom: sources.join(' or ') || 'Supplier' });
+      }
+    });
+    // Aggregate covered DSes across all stocked brands (for display)
+    const coveredDSes = [...new Set(stocked.flatMap(s => s.covers))];
+    return { stocked, notStocked, coveredDSes };
+  }, [isNetworkDesignActive, effectiveNetCfg, dsFilter]);
+
+  // Network Design: compute aggregated SKU stats for this stocking node
+  const ndSkuStats = useMemo(() => {
+    if (!ndDsInfo || !ndDsInfo.stocked.length) return { thick: [], thin: [] };
+    const allStats = [];
+    ndDsInfo.stocked.forEach(({ brand, covers }) => {
+      const stats = computeNetworkNodeStats(invoiceData, skuMaster, brand, covers, effectiveNetCfg.lookbackDays || 90);
+      allStats.push(...stats);
+    });
+    // Attach thickness classification and apply P95 min / P75 max formula
+    const pMin = effectiveNetCfg.minPercentile || 95;
+    const pBuf = effectiveNetCfg.maxBufferPercentile || 75;
+    const cap  = effectiveNetCfg.maxCap || 20;
+    const withMM = allStats.map(s => {
+      const mm = inferThickness(s.name);
+      const isLam = (mm !== null && mm <= 1);
+      const thicknessCat = isLam ? "Laminate" : thicknessCategory(mm, 1, appliedBoundary);
+      const minQty = s.dailyTotals.length > 0 ? Math.ceil(percentile(s.dailyTotals, pMin)) : 0;
+      const orderBuf = s.orderQtys.length > 0 ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0;
+      const maxQty = Math.min(Math.max(minQty + orderBuf, minQty), cap);
+      // dailyMedian needed by SKUModal
+      const dt = s.dailyTotals, mid = Math.floor(dt.length / 2);
+      const dailyMedian = dt.length === 0 ? 0 : dt.length % 2 === 0 ? (dt[mid-1]+dt[mid])/2 : dt[mid];
+      return { ...s, mm, thicknessCat, minQty, maxQty, dailyMedian };
+    }).filter(s => s.thicknessCat !== "Laminate");
+    return {
+      thick: withMM.filter(s => s.thicknessCat === "Thick"),
+      thin:  withMM.filter(s => s.thicknessCat !== "Thick"),
+    };
+  }, [ndDsInfo, invoiceData, skuMaster, effectiveNetCfg, appliedBoundary]);
 
   // Auto-compute on first load for each DS (runs once per DS per session, covers page refresh)
   // Must be declared AFTER baseSkus/thickSkus/thinSkus to avoid TDZ error
@@ -609,8 +708,91 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const thinDirty  = boundaryDirty || !committedThinCfg  || JSON.stringify(thinCfg)  !== JSON.stringify(committedThinCfg);
   const dsFallbackLabel = networkConfigs?.[dsFilter]?.fallbackLabel || DS_DEFAULTS[dsFilter]?.fallbackLabel || "DC";
 
+  const handleNetCfgChange = (key, value) => {
+    setLocalNetCfg(prev => ({ ...(prev || effectiveNetCfg), [key]: value }));
+    setNetCfgDirty(true);
+  };
+  const handleNetBrandCfgChange = (brand, key, value) => {
+    setLocalNetCfg(prev => {
+      const base = prev || effectiveNetCfg;
+      return { ...base, brands: { ...base.brands, [brand]: { ...base.brands[brand], [key]: value } } };
+    });
+    setNetCfgDirty(true);
+  };
+  const saveNetCfg = () => {
+    if (!onSavePlywoodNetworkConfig || !localNetCfg) return;
+    onSavePlywoodNetworkConfig(localNetCfg);
+    setNetCfgDirty(false);
+  };
+
   return (
     <div style={{fontFamily:"Inter,sans-serif",color:HR.text}}>
+
+      {/* ── Brand Strategy Transparency ─────────────────────────────────────── */}
+      {effectiveNetCfg?.brands && (
+        <div style={{background:"#1a2a1a",border:"1px solid #2d4a2d",borderRadius:8,padding:"10px 16px",marginBottom:16,display:"flex",gap:32,alignItems:"flex-start",flexWrap:"wrap"}}>
+          <div>
+            <div style={{fontSize:11,color:"#7aab7a",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>
+              Network Design Brands {isNetworkDesignActive ? "● Active" : "○ Inactive — enable in Logic Tweaker"}
+            </div>
+            {Object.keys(effectiveNetCfg.brands).map(b => (
+              <div key={b} style={{fontSize:12,color:isNetworkDesignActive?"#c8e6c9":"#778877",marginBottom:2}}>● {b}</div>
+            ))}
+          </div>
+          <div>
+            <div style={{fontSize:11,color:"#ffe082",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>PCT Strategy (this tab excluded)</div>
+            <div style={{fontSize:12,color:"#ffe082",marginBottom:2}}>● Merino</div>
+            <div style={{fontSize:12,color:"#888"}}>● All unrecognised plywood brands</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Network Design Config Editor (admin only) ────────────────────────── */}
+      {isAdmin && effectiveNetCfg?.brands && (
+        <details style={{marginBottom:16}} open={false}>
+          <summary style={{cursor:"pointer",fontSize:12,fontWeight:700,color:"#7C3AED",padding:"6px 0",userSelect:"none"}}>
+            ⚙ Network Design Config {netCfgDirty ? " · unsaved changes" : ""}
+          </summary>
+          <div style={{...S.card,marginTop:8,padding:12}}>
+            <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:12}}>
+              {[
+                {label:"Lookback Days",key:"lookbackDays",min:30,max:365},
+                {label:"Min Percentile",key:"minPercentile",min:50,max:99},
+                {label:"Max Buffer Pct",key:"maxBufferPercentile",min:50,max:99},
+                {label:"Max Cap / Location",key:"maxCap",min:1,max:100},
+              ].map(({label,key,min,max}) => (
+                <label key={key} style={{fontSize:11,display:"flex",flexDirection:"column",gap:3}}>
+                  {label}
+                  <input type="number" min={min} max={max} step={1}
+                    value={editingNetCfg[key] ?? ""}
+                    onChange={e => handleNetCfgChange(key, Number(e.target.value))}
+                    style={{...S.input,width:70}}/>
+                </label>
+              ))}
+            </div>
+            <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DC Multipliers per Brand</div>
+            {Object.entries(editingNetCfg.brands || {}).map(([brand, cfg]) => (
+              <div key={brand} style={{display:"flex",gap:12,alignItems:"center",marginBottom:6}}>
+                <span style={{width:110,fontSize:12,fontWeight:600}}>{brand}</span>
+                {[{label:"DC Mult Min",key:"dcMultMin"},{label:"DC Mult Max",key:"dcMultMax"}].map(({label,key}) => (
+                  <label key={key} style={{fontSize:11,display:"flex",flexDirection:"column",gap:2}}>
+                    {label}
+                    <input type="number" min={0.1} max={5} step={0.1}
+                      value={cfg[key] ?? ""}
+                      onChange={e => handleNetBrandCfgChange(brand, key, Number(e.target.value))}
+                      style={{...S.input,width:60}}/>
+                  </label>
+                ))}
+              </div>
+            ))}
+            <button onClick={saveNetCfg} disabled={!netCfgDirty}
+              style={{...S.btn(netCfgDirty),marginTop:8,background:netCfgDirty?"#7C3AED":HR.surfaceLight,color:netCfgDirty?HR.white:HR.muted,border:"none"}}>
+              Save Network Design Config
+            </button>
+          </div>
+        </details>
+      )}
+
       {/* DS + Period selectors */}
       <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
         <div style={{display:"flex",gap:4}}>
@@ -625,6 +807,32 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         </div>
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
+
+      {/* ── Per-DS brand stocking status (Network Design mode) ──────────────── */}
+      {isNetworkDesignActive && ndDsInfo && (
+        <div style={{...S.card,marginBottom:12,padding:"10px 14px",display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-start"}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:"#166534",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Stocked at {dsFilter}</div>
+            {ndDsInfo.stocked.length === 0
+              ? <div style={{fontSize:12,color:HR.muted}}>No brands stocked here</div>
+              : ndDsInfo.stocked.map(({brand, covers}) => (
+                  <div key={brand} style={{fontSize:12,color:"#166534",marginBottom:2}}>
+                    ● {brand} <span style={{color:HR.muted,fontWeight:400}}>(demand from {covers.join(", ")})</span>
+                  </div>
+                ))}
+          </div>
+          {ndDsInfo.notStocked.length > 0 && (
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:"#92400E",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Not stocked at {dsFilter}</div>
+              {ndDsInfo.notStocked.map(({brand, fulfilledFrom}) => (
+                <div key={brand} style={{fontSize:12,color:"#92400E",marginBottom:2}}>
+                  ○ {brand} <span style={{color:HR.muted,fontWeight:400}}>→ fulfilled from {fulfilledFrom}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
 
@@ -643,33 +851,77 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             style={{width:40,padding:"0 4px",fontSize:12,fontWeight:700,border:`1px solid #C05A00`,borderRadius:4,color:"#92400E",background:isAdmin?HR.white:HR.surfaceLight,textAlign:"center"}}
           />
           mm {!isAdmin && <span style={{fontSize:9,color:HR.muted,fontWeight:400}}>(admin to edit)</span>}
+          {isNetworkDesignActive && ndDsInfo?.coveredDSes?.length > 0 && (
+            <span style={{fontSize:10,color:"#7C3AED",fontWeight:600,marginLeft:8}}>
+              Aggregated: {ndDsInfo.coveredDSes.join(", ")}
+            </span>
+          )}
         </div>
-        <ConfigPanel type="thick" cfg={thickCfg} onChange={setThickCfg} isAdmin={isAdmin} onRun={runThick} dirty={thickDirty} boundary={thickBoundaryMm}/>
-        {thickResults ? (
+        {isNetworkDesignActive && ndDsInfo ? (
           <>
-            <CapacityBar used={thickResults.capUsed} total={thickCfg.capacity} label="Vertical Storage Capacity" cfg={thickCfg}/>
-            <div style={S.card}>
-              <SKUTable skus={thickResults.skus} cfg={committedThickCfg || thickCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }}/>
-            </div>
+            {ndDsInfo.stocked.length === 0
+              ? <div style={{padding:16,color:HR.muted,fontSize:12}}>No brands stocked at {dsFilter} — see fulfillment above.</div>
+              : <>
+                  <CapacityBar used={ndSkuStats.thick.reduce((s,x)=>s+x.maxQty,0)} total={thickCfg.capacity} label="Vertical Storage Capacity (estimated)" cfg={thickCfg}/>
+                  <div style={S.card}>
+                    <NetworkDesignSKUTable skus={ndSkuStats.thick} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }}/>
+                  </div>
+                </>
+            }
           </>
         ) : (
-          <div style={{padding:24,textAlign:"center",color:HR.muted,fontSize:12}}>Configure thresholds above and click ▶ Run</div>
+          <>
+            <ConfigPanel type="thick" cfg={thickCfg} onChange={setThickCfg} isAdmin={isAdmin} onRun={runThick} dirty={thickDirty} boundary={thickBoundaryMm}/>
+            {thickResults ? (
+              <>
+                <CapacityBar used={thickResults.capUsed} total={thickCfg.capacity} label="Vertical Storage Capacity" cfg={thickCfg}/>
+                <div style={S.card}>
+                  <SKUTable skus={thickResults.skus} cfg={committedThickCfg || thickCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }}/>
+                </div>
+              </>
+            ) : (
+              <div style={{padding:24,textAlign:"center",color:HR.muted,fontSize:12}}>Configure thresholds above and click ▶ Run</div>
+            )}
+          </>
         )}
       </div>
 
       {/* Thin section */}
       <div style={{marginBottom:24}}>
-        <div style={S.sectionTitle}>Thin SKUs — Tub Storage: Up to {thickBoundaryMm}mm</div>
-        <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin} dirty={thinDirty} boundary={thickBoundaryMm}/>
-        {thinResults ? (
+        <div style={{...S.sectionTitle,display:"flex",alignItems:"center",gap:6}}>
+          Thin SKUs — Tub Storage: Up to {thickBoundaryMm}mm
+          {isNetworkDesignActive && ndDsInfo?.coveredDSes?.length > 0 && (
+            <span style={{fontSize:10,color:"#7C3AED",fontWeight:600,marginLeft:8}}>
+              Aggregated: {ndDsInfo.coveredDSes.join(", ")}
+            </span>
+          )}
+        </div>
+        {isNetworkDesignActive && ndDsInfo ? (
           <>
-            <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Tub Storage Capacity" cfg={thinCfg}/>
-            <div style={S.card}>
-              <SKUTable skus={thinResults.skus} cfg={committedThinCfg || thinCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
-            </div>
+            {ndDsInfo.stocked.length === 0
+              ? <div style={{padding:16,color:HR.muted,fontSize:12}}>No brands stocked at {dsFilter}.</div>
+              : <>
+                  <CapacityBar used={ndSkuStats.thin.reduce((s,x)=>s+x.maxQty,0)} total={thinCfg.capacity} label="Tub Storage Capacity (estimated)" cfg={thinCfg}/>
+                  <div style={S.card}>
+                    <NetworkDesignSKUTable skus={ndSkuStats.thin} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
+                  </div>
+                </>
+            }
           </>
         ) : (
-          <div style={{padding:24,textAlign:"center",color:HR.muted,fontSize:12}}>Configure thresholds above and click ▶ Run</div>
+          <>
+            <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin} dirty={thinDirty} boundary={thickBoundaryMm}/>
+            {thinResults ? (
+              <>
+                <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Tub Storage Capacity" cfg={thinCfg}/>
+                <div style={S.card}>
+                  <SKUTable skus={thinResults.skus} cfg={committedThinCfg || thinCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
+                </div>
+              </>
+            ) : (
+              <div style={{padding:24,textAlign:"center",color:HR.muted,fontSize:12}}>Configure thresholds above and click ▶ Run</div>
+            )}
+          </>
         )}
       </div>
 
