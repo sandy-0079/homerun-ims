@@ -1084,7 +1084,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                       <thead>
                         <tr style={{background:"#FAFAF8"}}>
                           <th style={{padding:"4px 8px",textAlign:"left",color:HR.muted,fontWeight:600,width:52}}>Node</th>
-                          <th style={{padding:"4px 8px",textAlign:"center",color:HR.muted,fontWeight:600,width:64}}>Stocks here</th>
+                          <th style={{padding:"4px 8px",textAlign:"center",color:HR.muted,fontWeight:600,width:72}}>Stocks / Direct orders</th>
                           <th style={{padding:"4px 8px",textAlign:"left",color:HR.muted,fontWeight:600}}>Aggregates demand from</th>
                         </tr>
                       </thead>
@@ -1092,16 +1092,44 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                         {[...DS_LIST, 'DC'].map((loc, i) => {
                           const isNode = !!nodes[loc];
                           const covers = nodes[loc]?.covers || [];
+                          const isDCRow = loc === 'DC';
                           return (
                             <tr key={loc} style={{background:i%2===0?"#fff":"#FAFAF8",borderTop:`1px solid ${HR.border}`}}>
-                              <td style={{padding:"5px 8px",fontWeight:700,color:isNode?"#166534":"#aaa"}}>{loc}</td>
+                              <td style={{padding:"5px 8px",fontWeight:700,color:isNode?(isDCRow?"#7C3AED":"#166534"):"#aaa"}}>{loc}</td>
                               <td style={{padding:"5px 8px",textAlign:"center"}}>
-                                <input type="checkbox" checked={isNode} disabled={!isAdmin}
-                                  onChange={() => toggleNode(loc)}
-                                  style={{cursor:isAdmin?"pointer":"default",accentColor:"#166534"}}/>
+                                {isDCRow
+                                  ? <input type="checkbox" checked={isNode} disabled={!isAdmin}
+                                      title="Check to enable DC direct customer fulfillment (P95 component)"
+                                      onChange={() => toggleNode(loc)}
+                                      style={{cursor:isAdmin?"pointer":"default",accentColor:"#7C3AED"}}/>
+                                  : <input type="checkbox" checked={isNode} disabled={!isAdmin}
+                                      onChange={() => toggleNode(loc)}
+                                      style={{cursor:isAdmin?"pointer":"default",accentColor:"#166534"}}/>
+                                }
                               </td>
                               <td style={{padding:"5px 8px"}}>
-                                {isNode ? (
+                                {isDCRow ? (
+                                  <div>
+                                    {isNode ? (
+                                      <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
+                                        <span style={{fontSize:10,color:"#7C3AED",fontWeight:600,marginRight:2}}>Fulfills customer orders from:</span>
+                                        {DS_LIST.map(ds => (
+                                          <button key={ds} disabled={!isAdmin} onClick={() => toggleCover(loc, ds)}
+                                            style={{padding:"2px 7px",borderRadius:10,fontSize:10,fontWeight:700,
+                                              cursor:isAdmin?"pointer":"default",border:"1px solid",
+                                              borderColor:covers.includes(ds)?"#7C3AED":"#D0D0C0",
+                                              background:covers.includes(ds)?"#EDE9FE":"#F8F8F2",
+                                              color:covers.includes(ds)?"#7C3AED":"#bbb"}}>
+                                            {ds}
+                                          </button>
+                                        ))}
+                                        <span style={{fontSize:10,color:HR.muted,marginLeft:4}}>· also replenishes all DS stocking nodes</span>
+                                      </div>
+                                    ) : (
+                                      <span style={{fontSize:10,color:"#7C3AED"}}>Replenishes all DS stocking nodes · no direct customer orders</span>
+                                    )}
+                                  </div>
+                                ) : isNode ? (
                                   <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
                                     {DS_LIST.map(ds => (
                                       <button key={ds} disabled={!isAdmin} onClick={() => toggleCover(loc, ds)}
