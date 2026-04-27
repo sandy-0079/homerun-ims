@@ -1054,6 +1054,80 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                 ))}
               </div>
             ))}
+            {/* Brand Network Assignments */}
+            <div style={{borderTop:`1px solid ${HR.border}`,marginTop:14,paddingTop:12}}>
+              <div style={{fontSize:11,color:"#555",fontWeight:700,marginBottom:10}}>Brand Network Assignments</div>
+              {Object.entries(editingNetCfg.brands || {}).map(([brand, cfg]) => {
+                const nodes = cfg.nodes || {};
+
+                const toggleNode = (loc) => {
+                  if (!isAdmin) return;
+                  const next = { ...nodes };
+                  if (next[loc]) { delete next[loc]; }
+                  else { next[loc] = { covers: loc === 'DC' ? [] : [loc] }; }
+                  handleNetBrandCfgChange(brand, 'nodes', next);
+                };
+
+                const toggleCover = (loc, ds) => {
+                  if (!isAdmin) return;
+                  const cur = nodes[loc]?.covers || [];
+                  const next = { ...nodes, [loc]: { ...nodes[loc], covers: cur.includes(ds) ? cur.filter(d => d !== ds) : [...cur, ds] } };
+                  handleNetBrandCfgChange(brand, 'nodes', next);
+                };
+
+                return (
+                  <div key={brand} style={{marginBottom:14,border:`1px solid ${HR.border}`,borderRadius:6,overflow:"hidden"}}>
+                    <div style={{background:HR.surfaceLight,padding:"5px 10px",fontSize:12,fontWeight:700,color:HR.text,borderBottom:`1px solid ${HR.border}`}}>
+                      {brand}
+                    </div>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                      <thead>
+                        <tr style={{background:"#FAFAF8"}}>
+                          <th style={{padding:"4px 8px",textAlign:"left",color:HR.muted,fontWeight:600,width:52}}>Node</th>
+                          <th style={{padding:"4px 8px",textAlign:"center",color:HR.muted,fontWeight:600,width:64}}>Stocks here</th>
+                          <th style={{padding:"4px 8px",textAlign:"left",color:HR.muted,fontWeight:600}}>Aggregates demand from</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...DS_LIST, 'DC'].map((loc, i) => {
+                          const isNode = !!nodes[loc];
+                          const covers = nodes[loc]?.covers || [];
+                          return (
+                            <tr key={loc} style={{background:i%2===0?"#fff":"#FAFAF8",borderTop:`1px solid ${HR.border}`}}>
+                              <td style={{padding:"5px 8px",fontWeight:700,color:isNode?"#166534":"#aaa"}}>{loc}</td>
+                              <td style={{padding:"5px 8px",textAlign:"center"}}>
+                                <input type="checkbox" checked={isNode} disabled={!isAdmin}
+                                  onChange={() => toggleNode(loc)}
+                                  style={{cursor:isAdmin?"pointer":"default",accentColor:"#166534"}}/>
+                              </td>
+                              <td style={{padding:"5px 8px"}}>
+                                {isNode ? (
+                                  <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                                    {DS_LIST.map(ds => (
+                                      <button key={ds} disabled={!isAdmin} onClick={() => toggleCover(loc, ds)}
+                                        style={{padding:"2px 7px",borderRadius:10,fontSize:10,fontWeight:700,
+                                          cursor:isAdmin?"pointer":"default",border:"1px solid",
+                                          borderColor:covers.includes(ds)?"#166534":"#D0D0C0",
+                                          background:covers.includes(ds)?"#D1FAE5":"#F8F8F2",
+                                          color:covers.includes(ds)?"#166534":"#bbb"}}>
+                                        {ds}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span style={{color:"#ccc",fontSize:10,fontStyle:"italic"}}>not stocked here</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
+
             <button onClick={saveNetCfg} disabled={!netCfgDirty}
               style={{...S.btn(netCfgDirty),marginTop:8,background:netCfgDirty?"#7C3AED":HR.surfaceLight,color:netCfgDirty?HR.white:HR.muted,border:"none"}}>
               Save Network Design Config
