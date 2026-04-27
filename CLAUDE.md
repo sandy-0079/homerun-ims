@@ -108,29 +108,24 @@ Decide whether a dedicated Tool Output tab is needed, or whether the 3 key downl
 ### 5. Full UI Polish Pass — All Tabs
 Revisit entire UI across all tabs: Overview, SKU Detail, OOS Simulation, Stock Health, Tool Output, Logic Tweaker, Manual Overrides, Upload Data. Make each tab sharper and more actionable.
 
-### 6. Plywood IMS Engine Integration ⏳ Brainstorm in progress — NOT ready to implement
+### 6. Plywood IMS Engine Integration ✅ Shipped (2026-04-27)
 Integrate Plywood Network recommendations into the Min/Max engine. Brainstorm started 2026-04-21. **Do not implement until explicitly asked.**
 
-**Aligned so far:**
+**Strategy: Network Design** — brand-level stocking assignments, not per-SKU tiers.
 
-**DS logic (Plywood SKUs at each DS):**
-- Use same median-based algorithm as Plywood Network tab (median of ALL daily totals, unfiltered — median is robust to large outlier orders)
-- Tier classification (Running / Fallback / Super Slow) per DS using per-thickness NZD thresholds from networkConfigs
-- Running SKU → DS Min/Max computed; Fallback + Super Slow → DS Min = Max = 0
-- Fallback threshold (P75 of individual order qtys) retained for routing logic
-- New per-thickness config fields in networkConfigs: `fallbackType: "DC"|"Supplier"` and `superSlowType: "DC"|"Supplier"` — added inside each ConfigPanel (Thick/Thin) — determines whether DC or external supplier serves that tier for each DS×thickness combination
+**Activated via:** Logic Tweaker → Category Strategy Map → "Plywood, MDF & HDHMR" → "Network Design". Off by default (PCT runs as before when not selected).
 
-**DC logic (Plywood SKUs at DC):**
-- DC demand formula base: `Σ DS Mins × multMin`, `Σ DS Maxes × multMax` (same as floored SKU approach, NOT daily avg — daily avg understates DC need for erratic/lumpy demand)
-- Which DSes contribute to DC demand per SKU: Running SKUs always contribute; Fallback SKUs contribute only if `fallbackType = "DC"`; Super Slow SKUs contribute only if `superSlowType = "DC"`
-- Multipliers configurable in Logic Tweaker (separate from existing `skuFloorDCMultMin/Max`)
+**DS logic:** For each brand, config defines which DSes are stocking nodes and which other DSes each node aggregates demand from. Min = P95 of winsorized non-zero daily aggregated demand (guards: minNZD threshold, spike cap = median × spikeCapMultiplier). Max = min(Min + P75 of order qtys, maxCap). Non-stocking DSes → Min = Max = 0. Bypasses New DS Floor, SKU Floor Override; Dead Stock cap still applies.
 
-**Still to align before proceeding:**
-- Full scenario walkthrough (4 scenarios raised, not yet validated — Running with threshold, Fallback→DC, SuperSlow→DC, mixed tiers across DSes)
-- DC multiplier values for Plywood specifically
-- Archidply brand exception: deferred (resolved if supplier changes)
-- How this integrates with the existing `isFlooredSKU` DC override (likely bypassed for Plywood)
-- Spec and implementation plan
+**DC logic:** DC Min = P95(direct-serving DSes) + ceil(Σ DS_Min × dcMultMin). DC Max = P95 + ceil(Σ DS_Min × dcMultMax). Using Σ DS_Min (not Σ(Max-Min)) so fast-movers get proportional DC buffer. dcMultMin/dcMultMax configurable per brand.
+
+**Config location:** Plywood tab → ⚙ Network Design Config (admin only). Stores in Supabase `params/plywoodNetworkConfig` (separate from `params/global`). Saving auto-reruns engine.
+
+**Key config params:** lookbackDays (90), minPercentile (95), maxBufferPercentile (75), maxCap (20), spikeCapMultiplier (3), minNZD (2), dcCapacity {thick:400, thin:400}, per-brand dcMultMin/dcMultMax (tuned to 0.3/0.5 given Σ DS_Min base).
+
+**Brands:** Action Tesa, CenturyPly (stock at DS01+DS03; DC directly serves DS02+DS04). ArchidPly, GreenPly (stock at DS02+DS04+DS05; DC replenishment only). Brand-DS assignments fully editable in the config editor. Brand matching is case-insensitive.
+
+**Tab:** Existing Plywood tab evolved. DC button added (purple). In Network Design mode: per-DS stocked/not-stocked labels, aggregated SKU table, computation trace modal showing exact P95 derivation, capacity bars (PCT formula text removed). DC tab shows replenishment formula breakdown.
 
 ### 7. DC Calculation Fix for PCT + Fixed Unit Floor Categories
 Current engine uses `sumDailyAvg × (leadTime+1)` for ALL non-Standard categories at DC, which understocks for erratic demand. Aligned fix:
