@@ -643,20 +643,25 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       allStats.push(...stats);
     });
     // Attach thickness classification and apply P95 min / P75 max formula
-    const pMin = effectiveNetCfg.minPercentile || 95;
-    const pBuf = effectiveNetCfg.maxBufferPercentile || 75;
-    const cap  = effectiveNetCfg.maxCap || 20;
+    const pMin      = effectiveNetCfg.minPercentile || 95;
+    const pBuf      = effectiveNetCfg.maxBufferPercentile || 75;
+    const cap       = effectiveNetCfg.maxCap || 20;
+    const spikeMult = effectiveNetCfg.spikeCapMultiplier || 3;
     const withMM = allStats.map(s => {
       const mm = inferThickness(s.name);
       const isLam = (mm !== null && mm <= 1);
       const thicknessCat = isLam ? "Laminate" : thicknessCategory(mm, 1, appliedBoundary);
-      const minQty = s.dailyTotals.length > 0 ? Math.ceil(percentile(s.dailyTotals, pMin)) : 0;
+      const dt = s.dailyTotals; // already sorted non-zero values
+      const dtMid = Math.floor(dt.length / 2);
+      const dtMedian = dt.length === 0 ? 0 : dt.length % 2 === 0 ? (dt[dtMid-1]+dt[dtMid])/2 : dt[dtMid];
+      const spikeCap = dtMedian * spikeMult;
+      const winsorized = dt.map(v => Math.min(v, spikeCap));
+      const minQty = winsorized.length > 0 ? Math.ceil(percentile(winsorized, pMin)) : 0;
       const orderBuf = s.orderQtys.length > 0 ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0;
       const maxQty = Math.min(minQty + orderBuf, cap);
       const minQtyFinal = Math.min(minQty, Math.max(0, maxQty - orderBuf));
-      // dailyMedian needed by SKUModal
-      const dt = s.dailyTotals, mid = Math.floor(dt.length / 2);
-      const dailyMedian = dt.length === 0 ? 0 : dt.length % 2 === 0 ? (dt[mid-1]+dt[mid])/2 : dt[mid];
+      // dailyMedian needed by SKUModal (reuse dtMedian computed above)
+      const dailyMedian = dtMedian;
       return { ...s, mm, thicknessCat, minQty: minQtyFinal, maxQty, dailyMedian };
     }).filter(s => s.thicknessCat !== "Laminate");
     return {
@@ -808,14 +813,15 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           <div style={{...S.card,marginTop:8,padding:12}}>
             <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:12}}>
               {[
-                {label:"Lookback Days",key:"lookbackDays",min:30,max:365},
-                {label:"Min Percentile",key:"minPercentile",min:50,max:99},
-                {label:"Max Buffer Pct",key:"maxBufferPercentile",min:50,max:99},
-                {label:"Max Cap / Location",key:"maxCap",min:1,max:100},
-              ].map(({label,key,min,max}) => (
+                {label:"Lookback Days",key:"lookbackDays",min:30,max:365,step:1},
+                {label:"Min Percentile",key:"minPercentile",min:50,max:99,step:1},
+                {label:"Max Buffer Pct",key:"maxBufferPercentile",min:50,max:99,step:1},
+                {label:"Max Cap / Location",key:"maxCap",min:1,max:100,step:1},
+                {label:"Spike Cap ×Median",key:"spikeCapMultiplier",min:1,max:20,step:0.5},
+              ].map(({label,key,min,max,step}) => (
                 <label key={key} style={{fontSize:11,display:"flex",flexDirection:"column",gap:3}}>
                   {label}
-                  <input type="number" min={min} max={max} step={1}
+                  <input type="number" min={min} max={max} step={step ?? 1}
                     value={editingNetCfg[key] ?? ""}
                     onChange={e => handleNetCfgChange(key, Number(e.target.value))}
                     style={{...S.input,width:70}}/>

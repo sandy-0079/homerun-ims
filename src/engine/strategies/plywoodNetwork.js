@@ -42,12 +42,23 @@ function aggregateDailyTotals(sku, coveredDSes, dailyDemand) {
   return totals;
 }
 
-// P{pct} of non-zero aggregated daily demand → node Min.
-function computeNodeMin(sku, coveredDSes, dailyDemand, minPct) {
+// P{pct} of winsorized non-zero aggregated daily demand → node Min.
+// Winsorizing caps outlier days at median × spikeCapMultiplier before P95,
+// preventing one-off project orders from inflating baseline stocking levels.
+function computeNodeMin(sku, coveredDSes, dailyDemand, minPct, spikeCapMult) {
   const totals = aggregateDailyTotals(sku, coveredDSes, dailyDemand);
   const nonZero = Object.values(totals).filter(q => q > 0).sort((a, b) => a - b);
   if (nonZero.length === 0) return { min: 0, nonZeroCount: 0 };
-  return { min: Math.ceil(percentile(nonZero, minPct)), nonZeroCount: nonZero.length };
+
+  // Winsorize: cap values above median × spikeCapMult
+  const mid = Math.floor(nonZero.length / 2);
+  const med = nonZero.length % 2 === 0
+    ? (nonZero[mid - 1] + nonZero[mid]) / 2
+    : nonZero[mid];
+  const cap = med * (spikeCapMult || 3);
+  const winsorized = nonZero.map(v => Math.min(v, cap));
+
+  return { min: Math.ceil(percentile(winsorized, minPct)), nonZeroCount: nonZero.length };
 }
 
 // P{pct} of individual order quantities across covered DSes → Max buffer.
@@ -78,6 +89,7 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
     minPercentile = 95,
     maxBufferPercentile = 75,
     maxCap = 20,
+    spikeCapMultiplier = 3,
     brands,
   } = cfg;
 
@@ -102,7 +114,7 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
     // Compute Min/Max for each DS stocking node
     for (const [nodeId, nodeCfg] of Object.entries(nodes)) {
       if (nodeId === 'DC') continue;
-      const { min: minQty, nonZeroCount } = computeNodeMin(skuId, nodeCfg.covers, dailyDemand, minPercentile);
+      const { min: minQty, nonZeroCount } = computeNodeMin(skuId, nodeCfg.covers, dailyDemand, minPercentile, spikeCapMultiplier);
       const orderBuf = computeOrderBuffer(skuId, nodeCfg.covers, orderQtys, maxBufferPercentile);
       // Gap = orderBuf in both normal and capped cases, so DC formula (Max − Min) stays meaningful.
       // When P95 demand exceeds maxCap: Max = cap, Min = cap − orderBuf (not zero-gap).
@@ -121,7 +133,7 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
     // DC: P95 direct-serving component (if DC node defined) + multiplier component
     let dcP95 = 0;
     if (nodes.DC) {
-      const { min } = computeNodeMin(skuId, nodes.DC.covers, dailyDemand, minPercentile);
+      const { min } = computeNodeMin(skuId, nodes.DC.covers, dailyDemand, minPercentile, spikeCapMultiplier);
       dcP95 = min;
     }
 
