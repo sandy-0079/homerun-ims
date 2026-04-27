@@ -453,6 +453,57 @@ function SummaryCards({ skuList, skuMaster, thickCfg, thinCfg, thickBoundaryMm =
   );
 }
 
+function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, lookbackDays, skuMaster, stockedBrands, thickBoundaryMm }) {
+  // Total active SKUs from stocked brands (to derive zero-demand count)
+  const allStocked = Object.values(skuMaster).filter(m =>
+    PLYWOOD_CATEGORIES.includes(m.category) &&
+    stockedBrands.includes(m.brand) &&
+    (m.status || "Active").toLowerCase() === "active"
+  );
+  const allThick = allStocked.filter(s => {
+    const mm = inferThickness(s.name);
+    if (mm !== null && mm <= 1) return false;
+    return thicknessCategory(mm, 1, thickBoundaryMm) === "Thick";
+  }).length;
+  const allThin = allStocked.filter(s => {
+    const mm = inferThickness(s.name);
+    if (mm !== null && mm <= 1) return false;
+    const cat = thicknessCategory(mm, 1, thickBoundaryMm);
+    return cat === "Thin" || cat === "Unknown";
+  }).length;
+
+  const f = (list, fn) => list.filter(fn);
+  const hasDemand   = s => s.nzd > 0;
+  const isStocked   = s => s.minQty > 0;
+  const isCapped    = s => s.maxQty >= maxCap;
+
+  const demandTk = f(thickSkus, hasDemand).length, demandTn = f(thinSkus, hasDemand).length;
+  const stockTk  = f(thickSkus, isStocked).length,  stockTn  = f(thinSkus, isStocked).length;
+  const capTk    = f(thickSkus, isCapped).length,   capTn    = f(thinSkus, isCapped).length;
+  const zeroTk   = Math.max(0, allThick - thickSkus.length);
+  const zeroTn   = Math.max(0, allThin  - thinSkus.length);
+
+  const sub = (tk, tn) => `Thick: ${tk} · Thin: ${tn}`;
+  const cards = [
+    { num: demandTk + demandTn, lbl: `SKUs with demand`,          sub: sub(demandTk, demandTn) + ` · ${lookbackDays}d lookback`, color: "#0077A8" },
+    { num: stockTk  + stockTn,  lbl: "Stocked at this node",      sub: sub(stockTk, stockTn),                                    color: "#16a34a" },
+    { num: capTk    + capTn,    lbl: `At cap (Max = ${maxCap})`,   sub: sub(capTk, capTn) + " · demand exceeds capacity",         color: "#D97706" },
+    { num: zeroTk   + zeroTn,   lbl: "No demand in lookback",      sub: sub(zeroTk, zeroTn) + " · consider reviewing",           color: "#6B7280" },
+  ];
+
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:16}}>
+      {cards.map((c,i) => (
+        <div key={i} style={S.card}>
+          <div style={{fontSize:22,fontWeight:800,color:c.color}}>{c.num}</div>
+          <div style={{fontSize:11,fontWeight:600,color:"#555",margin:"2px 0"}}>{c.lbl}</div>
+          <div style={{fontSize:10,color:HR.muted,lineHeight:1.5}}>{c.sub}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // SKU table for Network Design mode — shows aggregated demand + P95-based min/max
 function NetworkDesignSKUTable({ skus, onSelectSku }) {
   if (!skus || skus.length === 0) return (
@@ -801,11 +852,18 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             <button key={ds} onClick={() => setDsFilter(ds)} style={S.btn(dsFilter===ds)}>{ds}</button>
           ))}
         </div>
-        <div style={{display:"flex",gap:4,marginLeft:12}}>
-          {[{v:45,l:"L45D"},{v:30,l:"L30D"},{v:15,l:"L15D"},{v:7,l:"L7D"}].map(p => (
-            <button key={p.v} onClick={() => setPeriod(p.v)} style={S.btn(period===p.v)}>{p.l}</button>
-          ))}
-        </div>
+        {!isNetworkDesignActive && (
+          <div style={{display:"flex",gap:4,marginLeft:12}}>
+            {[{v:45,l:"L45D"},{v:30,l:"L30D"},{v:15,l:"L15D"},{v:7,l:"L7D"}].map(p => (
+              <button key={p.v} onClick={() => setPeriod(p.v)} style={S.btn(period===p.v)}>{p.l}</button>
+            ))}
+          </div>
+        )}
+        {isNetworkDesignActive && (
+          <span style={{fontSize:10,color:"#7C3AED",marginLeft:12,fontWeight:600}}>
+            Lookback: {effectiveNetCfg.lookbackDays || 90}d (set in Network Design Config ↑)
+          </span>
+        )}
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
 
@@ -835,7 +893,18 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         </div>
       )}
 
-      <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
+      {isNetworkDesignActive && ndDsInfo
+        ? <NetworkDesignSummaryCards
+            thickSkus={ndSkuStats.thick}
+            thinSkus={ndSkuStats.thin}
+            maxCap={effectiveNetCfg.maxCap || 20}
+            lookbackDays={effectiveNetCfg.lookbackDays || 90}
+            skuMaster={skuMaster}
+            stockedBrands={ndDsInfo.stocked.map(s => s.brand)}
+            thickBoundaryMm={appliedBoundary}
+          />
+        : <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
+      }
 
       {/* Thick section */}
       <div style={{marginBottom:24}}>
