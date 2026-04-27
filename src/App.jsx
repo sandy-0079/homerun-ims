@@ -3201,14 +3201,36 @@ export default function App(){
   }, []);
 
   // ── handleSavePlywoodNetworkConfig: saves plywood network design config ──────
-  // Embeds into params state (so all runEngine calls get it) and saves separately
-  const handleSavePlywoodNetworkConfig = useCallback(async (cfg) => {
-    setParams(prev => ({ ...prev, plywoodNetworkConfig: cfg }));
-    setSaved(prev => ({ ...prev, plywoodNetworkConfig: cfg }));
-    setModelDirty(true);
+  // Not wrapped in useCallback so it always captures latest state — called only on
+  // explicit user action so recreating on every render is negligible.
+  const handleSavePlywoodNetworkConfig = async (cfg) => {
+    const newParams = { ...params, plywoodNetworkConfig: cfg };
+    setParams(newParams);
+    setSaved(newParams);
     addChange("Plywood Network Design config updated");
     await saveToSupabase("params", "plywoodNetworkConfig", cfg);
-  }, [addChange]);
+    // Re-run engine immediately so Overview updates without needing Apply & Re-run
+    if (invoiceData?.length > 0 && Object.keys(skuMaster || {}).length > 0) {
+      setLoading(true);
+      setTimeout(() => {
+        try {
+          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, newParams);
+          const merged = { ...raw };
+          Object.entries(coreOverrides || {}).forEach(([skuId, dsList]) => {
+            if (!merged[skuId]) return;
+            const ns = { ...merged[skuId].stores };
+            Object.entries(dsList).forEach(([dsId, ov]) => {
+              if (!ns[dsId]) return;
+              ns[dsId] = { ...ns[dsId], min: Math.max(ns[dsId].min, ov.min), max: Math.max(ns[dsId].max, ov.max) };
+            });
+            merged[skuId] = { ...merged[skuId], stores: ns };
+          });
+          setResults(merged);
+        } catch(err) { console.error("Plywood config re-run error:", err); }
+        setLoading(false);
+      }, 100);
+    }
+  };
 
   // ── saveCoreOverrides: writes to both Supabase + localStorage ───────────────
   const saveCoreOverrides = useCallback(async(ov)=>{
