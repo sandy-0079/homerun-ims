@@ -453,6 +453,128 @@ function SummaryCards({ skuList, skuMaster, thickCfg, thinCfg, thickBoundaryMm =
   );
 }
 
+function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
+  if (!sku) return null;
+  const t = sku.trace || {};
+  const capped = v => v !== sku.trace?.rawNonZero?.find((_, i) => sku.trace?.winsorized?.[i] !== v);
+
+  // Timeline over full date range using aggregated dailyMap
+  const timelineData = (invoiceDateRange?.dates || []).map(date => ({
+    date: date.slice(5),
+    qty: sku.dailyMap[date] || 0,
+  }));
+  const barSize = Math.max(4, Math.min(24, Math.floor(400 / Math.max(timelineData.length, 1))));
+
+  const row = (label, value, note) => (
+    <div style={{display:"flex",gap:8,alignItems:"baseline",padding:"4px 0",borderBottom:"1px solid #F0F0E8"}}>
+      <span style={{width:200,fontSize:11,color:"#555",flexShrink:0}}>{label}</span>
+      <span style={{fontSize:12,fontWeight:700,color:"#1A1A1A"}}>{value}</span>
+      {note && <span style={{fontSize:10,color:"#888",marginLeft:4}}>{note}</span>}
+    </div>
+  );
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
+      <div style={{background:"#fff",borderRadius:12,padding:24,width:"min(860px,96vw)",maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:800}}>{sku.name}</div>
+            <div style={{fontSize:11,color:"#888",marginTop:2}}>
+              {sku.sku} · {sku.mm != null ? `${sku.mm}mm` : "—"} · Aggregated: {(t.covers||[]).join(", ")}
+            </div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"1px solid #E0E0D0",borderRadius:6,padding:"4px 14px",cursor:"pointer",fontSize:12,color:"#888",fontWeight:600}}>Close ✕</button>
+        </div>
+
+        {/* Result */}
+        <div style={{display:"flex",gap:12,marginBottom:16}}>
+          {[
+            {label:"Min",val:sku.minQty,color:"#B91C1C"},
+            {label:"Max",val:sku.maxQty,color:"#16a34a"},
+            {label:"NZD",val:t.nzd||0,color:"#0077A8"},
+            {label:"Orders",val:t.orderQtyCount||0,color:"#555"},
+          ].map(c => (
+            <div key={c.label} style={{background:"#F8F8F2",borderRadius:8,padding:"8px 16px",textAlign:"center",minWidth:64}}>
+              <div style={{fontSize:20,fontWeight:800,color:c.color}}>{c.val}</div>
+              <div style={{fontSize:10,color:"#888",fontWeight:600}}>{c.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Computation trace */}
+        <div style={{fontSize:12,fontWeight:700,color:"#7C3AED",marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>How Min & Max were computed</div>
+        <div style={{background:"#FAFAF8",borderRadius:8,padding:"10px 14px",marginBottom:16}}>
+          {t.belowMinNZD
+            ? <div style={{color:"#92400E",fontSize:12,fontWeight:600}}>
+                ⚠ NZD ({t.nzd}) &lt; minNZD ({t.minNZDThreshold}) → Min = Max = 0 (insufficient demand history, sourced on demand)
+              </div>
+            : <>
+                {row(`Non-zero days (NZD)`, `${t.nzd} days`, `across ${(t.covers||[]).join(", ")}`)}
+                {row(`Daily totals (non-zero)`, (t.rawNonZero||[]).join(", ") || "—", "sorted ascending")}
+                {t.spikeCap != null && (t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v) && (
+                  row(`Winsorized at ${t.dtMedian?.toFixed(1)} × ${sku.trace?.spikeCap != null ? (t.spikeCap / (t.dtMedian||1)).toFixed(1) : "—"} = ${t.spikeCap?.toFixed(1)}`,
+                    (t.winsorized||[]).join(", "),
+                    "outlier days capped")
+                )}
+                {t.spikeCap != null && !(t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v) && (
+                  row(`Winsorize cap (${t.dtMedian?.toFixed(1)} × ${(t.spikeCap/(t.dtMedian||1)).toFixed(0)} = ${t.spikeCap?.toFixed(1)})`, "no days capped", "all within threshold")
+                )}
+                {row(`P${t.pMin} of winsorized series`, `${t.p95Raw?.toFixed(2)} → ceil = ${Math.ceil(t.p95Raw||0)}`, `→ raw Min before cap guard`)}
+                {row(`P${t.pBuf} of order quantities`, `${t.orderBuf} sheets`, `buffer above Min`)}
+                {row(`Raw Max (Min + buffer)`, `${t.rawMax}`, t.capApplied ? `> cap ${t.cap} → capped` : `≤ cap ${t.cap} ✓`)}
+                {t.capApplied && row(`Cap applied`, `Max = ${t.cap}`, `Min adjusted to ${sku.minQty} (Max − buffer = ${t.cap} − ${t.orderBuf} = ${t.cap - t.orderBuf})`)}
+                <div style={{marginTop:10,padding:"6px 10px",background:"#F0FFF4",borderRadius:6,fontSize:11,color:"#166534",fontWeight:600}}>
+                  → Min = {sku.minQty} · Max = {sku.maxQty}
+                </div>
+              </>
+          }
+        </div>
+
+        {/* Daily consumption timeline */}
+        <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}}>Daily Consumption — Aggregated ({(t.covers||[]).join(" + ")})</div>
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={timelineData} margin={{left:8,right:64,top:4,bottom:20}}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false}/>
+            <XAxis dataKey="date" tick={{fontSize:9}} interval={Math.floor(timelineData.length/6)}
+              label={{value:"Date",position:"insideBottom",offset:-10,fontSize:10}}/>
+            <YAxis tick={{fontSize:10}} label={{value:"Qty",angle:-90,position:"insideLeft",offset:10,fontSize:10}}/>
+            <RTooltip/>
+            {sku.minQty > 0 && <ReferenceLine y={sku.minQty} stroke="#B91C1C" strokeDasharray="5 4"
+              label={{value:`Min=${sku.minQty}`,position:"right",fontSize:9,fill:"#B91C1C"}}/>}
+            {sku.maxQty > 0 && <ReferenceLine y={sku.maxQty} stroke="#16a34a" strokeDasharray="5 4"
+              label={{value:`Max=${sku.maxQty}`,position:"right",fontSize:9,fill:"#16a34a"}}/>}
+            <Bar dataKey="qty" barSize={barSize} fill="#0077A8" radius={[2,2,0,0]}/>
+          </BarChart>
+        </ResponsiveContainer>
+
+        {/* Order qty histogram */}
+        {(sku.orderQtys||[]).length > 0 && (() => {
+          const buckets = {};
+          sku.orderQtys.forEach(q => { const b = Math.ceil(q); buckets[b] = (buckets[b]||0) + 1; });
+          const histData = Object.entries(buckets).sort((a,b)=>+a[0]-+b[0]).map(([qty,count])=>({qty:+qty,count}));
+          const hs = Math.max(4, Math.min(24, Math.floor(400/Math.max(histData.length,1))));
+          return (
+            <>
+              <div style={{fontSize:11,fontWeight:700,color:"#555",margin:"16px 0 8px"}}>Order Qty Distribution ({t.orderQtyCount} orders)</div>
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart data={histData} margin={{left:8,right:8,top:4,bottom:20}}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false}/>
+                  <XAxis dataKey="qty" tick={{fontSize:9}} label={{value:"Order Qty",position:"insideBottom",offset:-10,fontSize:10}}/>
+                  <YAxis tick={{fontSize:10}}/>
+                  <RTooltip formatter={v=>[v,"Orders"]} labelFormatter={l=>`Qty: ${l}`}/>
+                  <Bar dataKey="count" barSize={hs} fill="#7C3AED" radius={[2,2,0,0]}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}
+
 function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, lookbackDays, skuMaster, stockedBrands, thickBoundaryMm }) {
   // Total active SKUs from stocked brands (to derive zero-demand count)
   const allStocked = Object.values(skuMaster).filter(m =>
@@ -640,7 +762,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     const allStats = [];
     ndDsInfo.stocked.forEach(({ brand, covers }) => {
       const stats = computeNetworkNodeStats(invoiceData, skuMaster, brand, covers, effectiveNetCfg.lookbackDays || 90);
-      allStats.push(...stats);
+      // Tag each SKU with its brand covers so the modal can show which DSes were aggregated
+      allStats.push(...stats.map(s => ({ ...s, covers })));
     });
     // Attach thickness classification and apply P95 min / P75 max formula
     const pMin      = effectiveNetCfg.minPercentile || 95;
@@ -666,7 +789,26 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       const minQtyFinal = Math.min(minQty, Math.max(0, maxQty - orderBuf));
       // dailyMedian needed by SKUModal (reuse dtMedian computed above)
       const dailyMedian = dtMedian;
-      return { ...s, mm, thicknessCat, minQty: minQtyFinal, maxQty, dailyMedian };
+      // Computation trace — drives NetworkDesignSKUModal breakdown
+      const trace = {
+        covers: s.covers || [],
+        nzd: dt.length,
+        belowMinNZD,
+        minNZDThreshold: minNZDTab,
+        rawNonZero: dt,
+        dtMedian,
+        spikeCap: dtMedian > 0 ? spikeCap : null,
+        winsorized,
+        p95Raw: winsorized.length > 0 ? percentile(winsorized, pMin) : 0,
+        pMin,
+        orderBuf,
+        pBuf,
+        orderQtyCount: s.orderQtys.length,
+        rawMax: minQty + orderBuf,
+        capApplied: (minQty + orderBuf) > cap,
+        cap,
+      };
+      return { ...s, mm, thicknessCat, minQty: minQtyFinal, maxQty, dailyMedian, trace };
     }).filter(s => s.thicknessCat !== "Laminate");
     return {
       thick: withMM.filter(s => s.thicknessCat === "Thick"),
@@ -1007,12 +1149,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       </div>
 
       {selectedSku && (
-        <SKUModal
-          sku={selectedSku}
-          cfg={selectedSkuType === "thick" ? thickCfg : thinCfg}
-          onClose={() => setSelectedSku(null)}
-          invoiceDateRange={invoiceDateRange}
-        />
+        isNetworkDesignActive && selectedSku.trace
+          ? <NetworkDesignSKUModal sku={selectedSku} onClose={() => setSelectedSku(null)} invoiceDateRange={invoiceDateRange}/>
+          : <SKUModal sku={selectedSku} cfg={selectedSkuType === "thick" ? thickCfg : thinCfg} onClose={() => setSelectedSku(null)} invoiceDateRange={invoiceDateRange}/>
       )}
     </div>
   );
