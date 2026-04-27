@@ -71,6 +71,62 @@ function computeBaskets(rows, skuMaster, primaryCats, secondaryCats) {
   return { totalOrders, primaryOrders, primaryOnlyOrders, primarySecondaryOrders, primaryOtherOrders, coCatCounts };
 }
 
+function computeBrandDSDistribution(rows, skuMaster, selectedCategory) {
+  // For each brand in the category: count unique orders per DS
+  const brandDS = {}; // brand → ds → Set(orderId)
+  rows.forEach(r => {
+    if (skuMaster[r.sku]?.category !== selectedCategory) return;
+    const brand = skuMaster[r.sku]?.brand;
+    if (!brand) return;
+    const orderId = r.shopifyOrder || `${r.sku}__${r.date}`;
+    if (!brandDS[brand]) brandDS[brand] = {};
+    if (!brandDS[brand][r.ds]) brandDS[brand][r.ds] = new Set();
+    brandDS[brand][r.ds].add(orderId);
+  });
+  return Object.entries(brandDS).map(([brand, dsCounts]) => {
+    const counts = {};
+    let total = 0;
+    DS_LIST.forEach(ds => { counts[ds] = dsCounts[ds]?.size || 0; total += counts[ds]; });
+    const pcts = {};
+    DS_LIST.forEach(ds => { pcts[ds] = total > 0 ? Math.round((counts[ds] / total) * 100) : 0; });
+    return { brand, total, counts, pcts };
+  }).sort((a, b) => b.total - a.total);
+}
+
+function computeBrandBaskets(rows, skuMaster, selectedCategory, primaryBrands, secondaryBrands, excludedBrands = new Set()) {
+  const isPrimary = b => primaryBrands.has(b);
+  const isSecondary = b => secondaryBrands.has(b);
+
+  // Filter to selected category only; skip excluded brands entirely
+  const orderMap = {};
+  rows.forEach(r => {
+    if (skuMaster[r.sku]?.category !== selectedCategory) return;
+    const brand = skuMaster[r.sku]?.brand || "";
+    if (!brand || excludedBrands.has(brand)) return;
+    const orderId = r.shopifyOrder || `${r.sku}__${r.date}`;
+    if (!orderMap[orderId]) orderMap[orderId] = new Set();
+    orderMap[orderId].add(brand);
+  });
+
+  let totalOrders = 0, primaryOrders = 0, primaryOnlyOrders = 0;
+  let primarySecondaryOrders = 0, primaryOtherOrders = 0;
+  const coBrandCounts = {};
+
+  Object.values(orderMap).forEach(brands => {
+    totalOrders++;
+    const allBrands = [...brands];
+    if (!allBrands.some(isPrimary)) return;
+    primaryOrders++;
+    const nonPrimary = allBrands.filter(b => !isPrimary(b));
+    if (nonPrimary.length === 0) { primaryOnlyOrders++; return; }
+    if (nonPrimary.every(isSecondary)) { primarySecondaryOrders++; }
+    else { primaryOtherOrders++; }
+    nonPrimary.forEach(b => { coBrandCounts[b] = (coBrandCounts[b] || 0) + 1; });
+  });
+
+  return { totalOrders, primaryOrders, primaryOnlyOrders, primarySecondaryOrders, primaryOtherOrders, coBrandCounts };
+}
+
 export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateRange, isAdmin }) {
   const [period, setPeriod] = useState(() => localStorage.getItem("hrBasketPeriod") || "L45D");
   const [dateFrom, setDateFrom] = useState("");
@@ -85,6 +141,23 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
   const [results, setResults] = useState(null);
   const [cachedResults, setCachedResults] = useState(null);
   const autoRanRef = useRef(false);
+
+  // ── Brand Basket state ────────────────────────────────────────────────────
+  const [brandCategory, setBrandCategory] = useState(() => localStorage.getItem("hrBrandCat") || "");
+  const [brandPrimary, setBrandPrimary] = useState(() => {
+    try { const s = localStorage.getItem("hrBrandPrimary"); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
+  });
+  const [brandSecondary, setBrandSecondary] = useState(() => {
+    try { const s = localStorage.getItem("hrBrandSecondary"); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
+  });
+  const [brandPeriod, setBrandPeriod] = useState(() => localStorage.getItem("hrBrandPeriod") || "L45D");
+  const [brandDateFrom, setBrandDateFrom] = useState("");
+  const [brandDateTo, setBrandDateTo] = useState("");
+  const [brandDsFilter, setBrandDsFilter] = useState(() => localStorage.getItem("hrBrandDS") || "All");
+  const [brandResults, setBrandResults] = useState(null);
+  const [brandCachedResults, setBrandCachedResults] = useState(null);
+  const [brandExcluded, setBrandExcluded] = useState(new Set()); // excluded brands per category
+  const brandAutoRanRef = useRef(false);
 
   const hasShopifyOrder = useMemo(() => invoiceData.some(r => r.shopifyOrder), [invoiceData]);
   const allCategories = useMemo(() =>
@@ -155,6 +228,105 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
     }
   }, [dsFilter, period, cachedResults]);
 
+  // ── Brand Basket derived values ───────────────────────────────────────────
+  // Load exclusions from localStorage when category changes
+  useEffect(() => {
+    if (!brandCategory) { setBrandExcluded(new Set()); return; }
+    try {
+      const s = localStorage.getItem(`hrBrandExclude_${brandCategory}`);
+      setBrandExcluded(s ? new Set(JSON.parse(s)) : new Set());
+    } catch { setBrandExcluded(new Set()); }
+  }, [brandCategory]);
+
+  // Persist exclusions per category
+  useEffect(() => {
+    if (!brandCategory) return;
+    localStorage.setItem(`hrBrandExclude_${brandCategory}`, JSON.stringify([...brandExcluded]));
+  }, [brandExcluded, brandCategory]);
+
+  const brandsInCategory = useMemo(() => {
+    if (!brandCategory) return [];
+    return [...new Set(Object.values(skuMaster)
+      .filter(s => s.category === brandCategory && s.brand && !brandExcluded.has(s.brand))
+      .map(s => s.brand))].sort();
+  }, [skuMaster, brandCategory, brandExcluded]);
+
+  const excludedBrandsList = useMemo(() => {
+    if (!brandCategory) return [];
+    return [...new Set(Object.values(skuMaster)
+      .filter(s => s.category === brandCategory && s.brand && brandExcluded.has(s.brand))
+      .map(s => s.brand))].sort();
+  }, [skuMaster, brandCategory, brandExcluded]);
+
+  const excludeBrand = (brand) => {
+    setBrandPrimary(prev => { const n = new Set(prev); n.delete(brand); return n; });
+    setBrandSecondary(prev => { const n = new Set(prev); n.delete(brand); return n; });
+    setBrandExcluded(prev => { const n = new Set(prev); n.add(brand); return n; });
+    setBrandResults(null); setBrandCachedResults(null);
+    brandAutoRanRef.current = false; // allow auto-run to re-fire with updated exclusions
+  };
+
+  const restoreBrand = (brand) => {
+    setBrandExcluded(prev => { const n = new Set(prev); n.delete(brand); return n; });
+    setBrandResults(null); setBrandCachedResults(null);
+    brandAutoRanRef.current = false;
+  };
+
+  const brandDSDistribution = useMemo(() => {
+    if (!brandCategory || !invoiceData.length) return [];
+    const periodRows = filterByPeriod(invoiceData, brandPeriod, brandDateFrom, brandDateTo, invoiceDateRange);
+    const allDSRows = periodRows.filter(r => DS_LIST.includes(r.ds));
+    return computeBrandDSDistribution(allDSRows, skuMaster, brandCategory).filter(r => !brandExcluded.has(r.brand));
+  }, [invoiceData, skuMaster, brandCategory, brandPeriod, brandDateFrom, brandDateTo, invoiceDateRange, brandExcluded]);
+
+  const brandPrimaryLabel = brandPrimary.size > 0 ? [...brandPrimary].join(" + ") : "Primary Brand";
+  const brandSecondaryLabel = brandSecondary.size > 0 ? [...brandSecondary].join(" + ") : "Secondary Brand";
+
+  const canBrandRun = brandCategory && brandPrimary.size > 0 && invoiceData.length > 0 && hasShopifyOrder
+    && (brandPeriod !== "CUSTOM" || (brandDateFrom && brandDateTo));
+  const brandResultsUpToDate = !!(brandCachedResults?.[brandPeriod]?.[brandDsFilter]);
+  const brandRunActive = canBrandRun && !brandResultsUpToDate;
+
+  const handleBrandRun = useCallback(() => {
+    const cache = {};
+    BA_PERIODS.filter(p => p.days).forEach(preset => {
+      const periodRows = filterByPeriod(invoiceData, preset.key, "", "", invoiceDateRange);
+      cache[preset.key] = {};
+      ["All", ...DS_LIST].forEach(ds => {
+        const dsRows = ds === "All" ? periodRows.filter(r => DS_LIST.includes(r.ds)) : periodRows.filter(r => r.ds === ds);
+        cache[preset.key][ds] = computeBrandBaskets(dsRows, skuMaster, brandCategory, brandPrimary, brandSecondary, brandExcluded);
+      });
+    });
+    if (brandPeriod === "CUSTOM" && brandDateFrom && brandDateTo) {
+      const periodRows = filterByPeriod(invoiceData, "CUSTOM", brandDateFrom, brandDateTo, invoiceDateRange);
+      cache["CUSTOM"] = {};
+      ["All", ...DS_LIST].forEach(ds => {
+        const dsRows = ds === "All" ? periodRows.filter(r => DS_LIST.includes(r.ds)) : periodRows.filter(r => r.ds === ds);
+        cache["CUSTOM"][ds] = computeBrandBaskets(dsRows, skuMaster, brandCategory, brandPrimary, brandSecondary, brandExcluded);
+      });
+    }
+    setBrandCachedResults(cache);
+    setBrandResults(cache[brandPeriod]?.[brandDsFilter] || null);
+  }, [invoiceData, skuMaster, brandCategory, brandPrimary, brandSecondary, brandExcluded, brandPeriod, brandDateFrom, brandDateTo, brandDsFilter, invoiceDateRange]);
+
+  const toggleBrand = (brand) => {
+    const isPrim = brandPrimary.has(brand);
+    const isSec = brandSecondary.has(brand);
+    if (!isPrim && !isSec) {
+      setBrandPrimary(prev => { const n = new Set(prev); n.add(brand); return n; });
+    } else if (isPrim) {
+      setBrandPrimary(prev => { const n = new Set(prev); n.delete(brand); return n; });
+      setBrandSecondary(prev => { const n = new Set(prev); n.add(brand); return n; });
+    } else {
+      setBrandSecondary(prev => { const n = new Set(prev); n.delete(brand); return n; });
+    }
+    setBrandResults(null); setBrandCachedResults(null);
+  };
+
+  useEffect(() => {
+    if (brandCachedResults) setBrandResults(brandCachedResults[brandPeriod]?.[brandDsFilter] || null);
+  }, [brandDsFilter, brandPeriod, brandCachedResults]);
+
   // Persist selections to localStorage
   useEffect(() => { localStorage.setItem("hrBasketPrimary",   JSON.stringify([...primaryCats]));   }, [primaryCats]);
   useEffect(() => { localStorage.setItem("hrBasketSecondary", JSON.stringify([...secondaryCats])); }, [secondaryCats]);
@@ -168,6 +340,21 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
     autoRanRef.current = true;
     handleRun();
   }); // no dep array — runs every render until autoRanRef is set
+
+  // Brand Basket — localStorage persistence
+  useEffect(() => { localStorage.setItem("hrBrandCat",       brandCategory); }, [brandCategory]);
+  useEffect(() => { localStorage.setItem("hrBrandPrimary",   JSON.stringify([...brandPrimary])); }, [brandPrimary]);
+  useEffect(() => { localStorage.setItem("hrBrandSecondary", JSON.stringify([...brandSecondary])); }, [brandSecondary]);
+  useEffect(() => { localStorage.setItem("hrBrandPeriod",    brandPeriod); }, [brandPeriod]);
+  useEffect(() => { localStorage.setItem("hrBrandDS",        brandDsFilter); }, [brandDsFilter]);
+
+  // Brand Basket — auto-run on load if state restored from localStorage
+  useEffect(() => {
+    if (brandAutoRanRef.current) return;
+    if (!invoiceData.length || !hasShopifyOrder || !brandCategory || brandPrimary.size === 0) return;
+    brandAutoRanRef.current = true;
+    handleBrandRun();
+  }); // no dep array — runs every render until brandAutoRanRef is set
 
   if (!invoiceData.length) return (
     <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>
@@ -241,13 +428,12 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
         </div>
       </div>
 
-      {!results && (
-        <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>
+      <div style={{minHeight:440}}>
+      {!results ? (
+        <div style={{height:440,display:"flex",alignItems:"center",justifyContent:"center",color:HR.muted,fontSize:13}}>
           {primaryCats.size === 0 ? "Select at least one Primary category to begin." : "Click Run Basket Analysis."}
         </div>
-      )}
-
-      {results && (
+      ) : (
         <>
           {/* 5 Summary Cards */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
@@ -342,6 +528,249 @@ export default function BasketAnalysisTab({ invoiceData, skuMaster, invoiceDateR
           })()}
         </>
       )}
+      </div>
+
+      {/* ── Brand Basket Analysis ─────────────────────────────────────────── */}
+      <div style={{borderTop:`2px solid ${HR.border}`,marginTop:24,paddingTop:20}}>
+        <div style={{fontSize:13,fontWeight:700,color:HR.text,marginBottom:12}}>Brand Basket Analysis</div>
+
+        {/* Category dropdown + Brand selector */}
+        <div style={{...S.card,marginBottom:12}}>
+          <div style={{display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
+            <div style={{minWidth:200}}>
+              <div style={{fontSize:11,fontWeight:700,color:HR.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Category</div>
+              <select
+                value={brandCategory}
+                onChange={e => { setBrandCategory(e.target.value); setBrandPrimary(new Set()); setBrandSecondary(new Set()); setBrandResults(null); setBrandCachedResults(null); }}
+                style={{...S.input,width:"100%"}}
+              >
+                <option value="">Select a category…</option>
+                {allCategories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            {brandCategory && (
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,fontWeight:700,color:HR.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Brands in {brandCategory}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {brandsInCategory.map(brand => {
+                    const isPrim = brandPrimary.has(brand);
+                    const isSec = brandSecondary.has(brand);
+                    const bg = isPrim ? "#D1FAE5" : isSec ? "#FEF3C7" : HR.white;
+                    const color = isPrim ? "#065F46" : isSec ? "#92400E" : HR.muted;
+                    const borderColor = isPrim ? "#6EE7B7" : isSec ? "#FDE68A" : HR.border;
+                    return (
+                      <span key={brand} style={{display:"inline-flex",alignItems:"center",gap:2}}>
+                        <button onClick={() => toggleBrand(brand)}
+                          style={{...S.btn(isPrim||isSec), background:bg, color, borderColor}}>
+                          {brand}
+                        </button>
+                        <button onClick={() => excludeBrand(brand)}
+                          title="Exclude from analysis"
+                          style={{padding:"1px 4px",borderRadius:4,border:`1px solid ${HR.border}`,background:HR.white,color:HR.muted,cursor:"pointer",fontSize:9,lineHeight:"14px"}}>
+                          ✕
+                        </button>
+                      </span>
+                    );
+                  })}
+                  {excludedBrandsList.length > 0 && (
+                    <div style={{width:"100%",marginTop:6,fontSize:10,color:HR.muted}}>
+                      <span style={{fontWeight:600}}>Excluded:</span>{" "}
+                      {excludedBrandsList.map(brand => (
+                        <span key={brand} style={{marginRight:8}}>
+                          {brand}
+                          <button onClick={() => restoreBrand(brand)}
+                            style={{marginLeft:3,padding:"0 4px",borderRadius:3,border:`1px solid ${HR.border}`,background:HR.white,color:"#0077A8",cursor:"pointer",fontSize:9}}>
+                            restore
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{fontSize:10,color:HR.muted,marginTop:8}}>
+                  Click once → <span style={{background:"#D1FAE5",color:"#065F46",padding:"1px 4px",borderRadius:3}}>Primary</span> &nbsp;
+                  Click again → <span style={{background:"#FEF3C7",color:"#92400E",padding:"1px 4px",borderRadius:3}}>Secondary</span> &nbsp;
+                  Click again → Unselect
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{marginTop:10,display:"flex",justifyContent:"flex-end"}}>
+            <button onClick={handleBrandRun} disabled={!brandRunActive}
+              style={{padding:"5px 18px",borderRadius:6,border:"none",background:brandRunActive?HR.yellow:"#E5E5E5",color:brandRunActive?HR.black:"#999",fontWeight:800,fontSize:12,cursor:brandRunActive?"pointer":"not-allowed"}}>
+              ▶ Run Brand Analysis
+            </button>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+          <div style={{display:"flex",gap:4}}>
+            {BA_PERIODS.filter(p => p.key !== "CUSTOM").map(p => (
+              <button key={p.key} onClick={() => setBrandPeriod(p.key)} style={S.btn(brandPeriod === p.key)}>{p.label}</button>
+            ))}
+            <button onClick={() => { setBrandPeriod("CUSTOM"); setBrandCachedResults(null); setBrandResults(null); }} style={S.btn(brandPeriod === "CUSTOM")}>Custom</button>
+          </div>
+          {brandPeriod === "CUSTOM" && (
+            <>
+              <input type="date" value={brandDateFrom} onChange={e => { setBrandDateFrom(e.target.value); setBrandResults(null); setBrandCachedResults(null); }} style={S.input}/>
+              <input type="date" value={brandDateTo} onChange={e => { setBrandDateTo(e.target.value); setBrandResults(null); setBrandCachedResults(null); }} style={S.input}/>
+            </>
+          )}
+          <div style={{display:"flex",gap:4,marginLeft:8}}>
+            {["All",...DS_LIST].map(ds => (
+              <button key={ds} onClick={() => setBrandDsFilter(ds)} style={S.btn(brandDsFilter === ds)}>{ds}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{minHeight:440}}>
+        {(!brandCategory || !brandResults) ? (
+          <div style={{height:440,display:"flex",alignItems:"center",justifyContent:"center",color:HR.muted,fontSize:13}}>
+            {!brandCategory ? "Select a category above to begin brand analysis." : brandPrimary.size === 0 ? "Select at least one Primary brand to begin." : "Click Run Brand Analysis."}
+          </div>
+        ) : (() => {
+          const r = brandResults;
+          const sortedCoBrands = Object.entries(r.coBrandCounts).sort((a,b) => b[1]-a[1]).slice(0,10);
+          return (
+            <>
+              {/* 5 Summary Cards */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
+                {[
+                  {num:r.totalOrders,pct:null,lbl:"Total Orders",sub:`${brandDsFilter} · ${brandPeriod}`,color:"#0077A8"},
+                  {num:r.primaryOrders,pct:r.totalOrders?`${((r.primaryOrders/r.totalOrders)*100).toFixed(1)}%`:null,lbl:`Orders with ${brandPrimaryLabel}`,sub:"of total orders",color:"#92400E"},
+                  {num:r.primaryOnlyOrders,pct:r.primaryOrders?`${((r.primaryOnlyOrders/r.primaryOrders)*100).toFixed(1)}%`:null,lbl:`${brandPrimaryLabel} Only`,sub:`of ${brandPrimaryLabel} orders`,color:"#16a34a"},
+                  {num:r.primarySecondaryOrders,pct:r.primaryOrders?`${((r.primarySecondaryOrders/r.primaryOrders)*100).toFixed(1)}%`:null,lbl:`${brandPrimaryLabel} + ${brandSecondaryLabel} Only`,sub:`of ${brandPrimaryLabel} orders`,color:"#B8860B"},
+                  {num:r.primaryOtherOrders,pct:r.primaryOrders?`${((r.primaryOtherOrders/r.primaryOrders)*100).toFixed(1)}%`:null,lbl:"+ Other Brands",sub:`of ${brandPrimaryLabel} orders`,color:"#C05A00"},
+                ].map((c,i) => (
+                  <div key={i} style={S.card}>
+                    <div style={{fontSize:24,fontWeight:800,color:c.color}}>{c.num.toLocaleString()}</div>
+                    {c.pct && <div style={{fontSize:16,fontWeight:800,color:c.color,margin:"-2px 0 2px"}}>{c.pct}</div>}
+                    <div style={{fontSize:11,fontWeight:600,color:"#555"}}>{c.lbl}</div>
+                    <div style={{fontSize:10,color:HR.muted,marginTop:2}}>{c.sub}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Charts */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1.5fr",gap:12,marginBottom:16}}>
+                <div style={S.card}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>Basket Composition</div>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <PieChart>
+                      <Pie data={[
+                        {name:`${brandPrimaryLabel} Only`,value:r.primaryOnlyOrders},
+                        {name:`+ ${brandSecondaryLabel}`,value:r.primarySecondaryOrders},
+                        {name:"+ Other Brands",value:r.primaryOtherOrders},
+                      ]} cx="50%" cy="50%" innerRadius={75} outerRadius={115} dataKey="value">
+                        {DONUT_COLORS.map((c,i) => <Cell key={i} fill={c}/>)}
+                      </Pie>
+                      <RTooltip/><Legend iconSize={10} wrapperStyle={{fontSize:10}}/>
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div style={S.card}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>Co-Brand Frequency in {brandCategory} (top 10)</div>
+                  {sortedCoBrands.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart layout="vertical"
+                        data={sortedCoBrands.map(([brand,count]) => ({brand:brand.length>28?brand.slice(0,26)+"…":brand,count}))}
+                        margin={{left:8,right:16,top:0,bottom:0}}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
+                        <XAxis type="number" tick={{fontSize:10}}/>
+                        <YAxis type="category" dataKey="brand" width={140} tick={{fontSize:10}}/>
+                        <RTooltip formatter={(v) => [v, `${brandCategory} orders also containing this brand`]}/>
+                        <Bar dataKey="count">
+                          {sortedCoBrands.map(([brand],i) => <Cell key={i} fill={brandSecondary.has(brand)?"#F5C400":"#0077A8"}/>)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:12}}>No other brands found in the same orders.</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Insight */}
+              {(() => {
+                const mixedPct = r.primaryOrders > 0 ? Math.round(((r.primarySecondaryOrders + r.primaryOtherOrders) / r.primaryOrders) * 100) : 0;
+                const onlyPct = r.primaryOrders > 0 ? Math.round((r.primaryOnlyOrders / r.primaryOrders) * 100) : 0;
+                const insight = mixedPct > 60
+                  ? `High brand mix rate — splitting ${brandPrimaryLabel} and other ${brandCategory} brands across DSes would affect most orders. Consider stocking multiple brands at the same DS.`
+                  : onlyPct > 60
+                  ? `Most ${brandPrimaryLabel} orders are brand-exclusive — safe to consider stocking ${brandPrimaryLabel} at a dedicated DS without impacting order fulfilment.`
+                  : `Mixed and exclusive orders are roughly balanced — analyse per-DS brand volume before deciding on brand-level DS assignment.`;
+                const secNote = brandSecondary.size > 0
+                  ? ` ${brandSecondaryLabel} appears exclusively alongside ${brandPrimaryLabel} in ${r.primarySecondaryOrders} orders (${r.primaryOrders > 0 ? Math.round((r.primarySecondaryOrders/r.primaryOrders)*100) : 0}%).`
+                  : "";
+                return (
+                  <div style={{background:"#FFF9E6",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#92400E",lineHeight:1.6}}>
+                    <strong>Stocking Signal:</strong> {mixedPct}% of {brandPrimaryLabel} orders contain other {brandCategory} brands. {insight}{secNote}
+                  </div>
+                );
+              })()}
+            </>
+          );
+        })()}
+        </div>
+        {/* ── Brand × DS Distribution Table ───────────────────────────────── */}
+        {brandCategory && brandDSDistribution.length > 0 && (
+          <div style={{marginTop:20}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>
+              Brand × DS Distribution — {brandCategory}
+              <span style={{fontSize:10,color:HR.muted,fontWeight:400,marginLeft:8}}>% of each brand's orders per DS · {brandPeriod}</span>
+            </div>
+            <div style={S.card}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                <thead>
+                  <tr style={{background:HR.surfaceLight}}>
+                    <th style={{padding:"6px 10px",textAlign:"left",color:HR.muted,fontWeight:600,fontSize:10,borderBottom:`1px solid ${HR.border}`}}>Brand</th>
+                    <th style={{padding:"6px 8px",textAlign:"center",color:HR.muted,fontWeight:600,fontSize:10,borderBottom:`1px solid ${HR.border}`}}>Total Orders</th>
+                    {DS_LIST.map(ds => (
+                      <th key={ds} style={{padding:"6px 8px",textAlign:"center",color:HR.muted,fontWeight:600,fontSize:10,borderBottom:`1px solid ${HR.border}`}}>{ds}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {brandDSDistribution.map(row => {
+                    const maxPct = Math.max(...DS_LIST.map(ds => row.pcts[ds]));
+                    return (
+                      <tr key={row.brand} style={{borderTop:`1px solid ${HR.border}`}}>
+                        <td style={{padding:"5px 10px",fontWeight:600}}>{row.brand}</td>
+                        <td style={{padding:"5px 8px",textAlign:"center",color:HR.muted}}>{row.total}</td>
+                        {(() => {
+                          // Per-row relative heat map: normalize against this brand's own min/max
+                          const nonZero = DS_LIST.map(ds => row.pcts[ds]).filter(p => p > 0);
+                          const rowMin = nonZero.length ? Math.min(...nonZero) : 0;
+                          const rowMax = nonZero.length ? Math.max(...nonZero) : 0;
+                          return DS_LIST.map(ds => {
+                            const pct = row.pcts[ds];
+                            const count = row.counts[ds];
+                            // Interpolate hue: 0 (red) → 120 (green) based on position within this brand's range
+                            const normalized = rowMax > rowMin ? (pct - rowMin) / (rowMax - rowMin) : pct > 0 ? 1 : 0;
+                            const hue = Math.round(normalized * 120);
+                            const cellBg = pct > 0 ? `hsl(${hue},60%,90%)` : "";
+                            return (
+                              <td key={ds} style={{padding:"5px 8px",textAlign:"center",background:cellBg,borderRadius:4}}>
+                                {pct > 0 ? (
+                                  <>
+                                    <span style={{fontWeight: pct === maxPct ? 800 : 500, color:"#374151", fontSize:12}}>{pct}%</span>
+                                    <span style={{fontSize:9,color:"#6B7280",marginLeft:3}}>({count})</span>
+                                  </>
+                                ) : <span style={{color:HR.border}}>—</span>}
+                              </td>
+                            );
+                          });
+                        })()}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

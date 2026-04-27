@@ -121,7 +121,7 @@ Cluster analysis: 65% OOS reduction (134→46) via cross-DS fulfillment. Cluster
 
 ### 1. Category Network Analysis ✅ Shipped (2026-04-18)
 Both tabs live in production. `src/tabs/BasketAnalysisTab.jsx` + `src/tabs/PlywoodNetworkTab.jsx`.
-- **Baskets**: category selector (click-cycle), period L45D→L3D + custom, DS filter, 5 cards, donut, co-category bar, insight. Selections persist to localStorage, auto-runs on load.
+- **Baskets**: category selector (click-cycle), period L45D→L3D + custom, DS filter, 5 cards, donut, co-category bar, insight. Selections persist to localStorage, auto-runs on load. Also includes Brand Basket Analysis (below category basket): select category → brand selector with exclude/restore per brand → 5 cards, donut, co-brand bar + DS×Brand heat map table (relative per-row green→red gradient showing brand DS concentration).
 - **Plywood**: per-DS Thick/Thin configs (Supabase), SKU table (Running/Fallback/Super Slow), capacity bar (3-state), per-SKU modal (histogram + timeline). Auto-computes on load. Recommendation only — does NOT write into Min/Max engine.
 
 ### 2. OOS Simulation Redesign ❌ Dropped (2026-04-21)
