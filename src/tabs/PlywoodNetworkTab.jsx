@@ -511,9 +511,9 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
                 ? row(`P95 direct-serving demand`, `${t.dcP95} sheets`, `aggregated from ${(t.dcCovers||[]).join(", ")}`)
                 : row(`Direct-serving component`, `0`, `brand not directly served by DC`)
               }
-              {row(`Σ(DS Max − DS Min) across stocking nodes`, `${t.sumDiff} sheets`, `replenishment demand base`)}
-              {row(`DC Min = ${t.dcP95} + ceil(${t.sumDiff} × ${t.dcMultMin})`, `= ${t.dcP95} + ${Math.ceil(t.sumDiff * t.dcMultMin)} = ${sku.minQty}`, ``)}
-              {row(`DC Max = ${t.dcP95} + ceil(${t.sumDiff} × ${t.dcMultMax})`, `= ${t.dcP95} + ${Math.ceil(t.sumDiff * t.dcMultMax)} = ${sku.maxQty}`, `(≥ DC Min)`)}
+              {row(`Σ DS_Min across stocking nodes`, `${t.sumMin} sheets`, `scales with demand — fast movers contribute more`)}
+              {row(`DC Min = ${t.dcP95} + ceil(${t.sumMin} × ${t.dcMultMin})`, `= ${t.dcP95} + ${Math.ceil(t.sumMin * t.dcMultMin)} = ${sku.minQty}`, ``)}
+              {row(`DC Max = ${t.dcP95} + ceil(${t.sumMin} × ${t.dcMultMax})`, `= ${t.dcP95} + ${Math.ceil(t.sumMin * t.dcMultMax)} = ${sku.maxQty}`, `(≥ DC Min)`)}
               <div style={{marginTop:10,padding:"6px 10px",background:"#F0FFF4",borderRadius:6,fontSize:11,color:"#166534",fontWeight:600}}>
                 → DC Min = {sku.minQty} · DC Max = {sku.maxQty}
               </div>
@@ -850,14 +850,14 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             if (computed.length) dcP95 = computed[0].minQty;
           }
         }
-        // Replenishment component
-        let sumDiff = 0;
+        // Replenishment component: Σ DS_Min × mult (scales with demand velocity)
+        let sumMin = 0;
         Object.keys(nodes).filter(n => n !== 'DC').forEach(nodeId => {
           const match = (allNodeStats[brand]?.[nodeId] || []).find(s => s.sku === meta.sku);
-          if (match) sumDiff += (match.maxQty - match.minQty);
+          if (match) sumMin += match.minQty;
         });
-        const dcMin = dcP95 + Math.ceil(sumDiff * dcMultMin);
-        const dcMax = Math.max(dcP95 + Math.ceil(sumDiff * dcMultMax), dcMin);
+        const dcMin = dcP95 + Math.ceil(sumMin * dcMultMin);
+        const dcMax = Math.max(dcP95 + Math.ceil(sumMin * dcMultMax), dcMin);
         if (dcMin === 0 && dcMax === 0) return;
         const mm = inferThickness(meta.name);
         if (mm !== null && mm <= 1) return;
@@ -866,7 +866,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         allSkus.push({
           sku: meta.sku, name: meta.name, brand, mm, thicknessCat,
           minQty: dcMin, maxQty: dcMax, nzd: 0, dailyMedian: 0, orderQtys: [], dailyMap: {},
-          trace: { dcP95, dcCovers, sumDiff, dcMultMin, dcMultMax, isDC: true },
+          trace: { dcP95, dcCovers, sumMin, dcMultMin, dcMultMax, isDC: true },
         });
       });
     });

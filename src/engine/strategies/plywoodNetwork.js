@@ -144,9 +144,12 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
       dcP95 = dcBelow ? 0 : min;
     }
 
-    const sumDiff = Object.values(nodeMinMax).reduce((acc, { min, max }) => acc + (max - min), 0);
-    const dcMin = dcP95 + Math.ceil(sumDiff * dcMultMin);
-    const dcMax = Math.max(dcP95 + Math.ceil(sumDiff * dcMultMax), dcMin);
+    // Σ DS_Min × mult: scales with demand velocity (Min ≈ P95 of daily demand).
+    // Faster SKUs have higher Min → DC holds more, which is correct.
+    // Σ(Max-Min) would collapse to near-zero for capped fast-movers, understocking DC.
+    const sumMin = Object.values(nodeMinMax).reduce((acc, { min }) => acc + min, 0);
+    const dcMin = dcP95 + Math.ceil(sumMin * dcMultMin);
+    const dcMax = Math.max(dcP95 + Math.ceil(sumMin * dcMultMax), dcMin);
 
     results[skuId] = {
       brand: meta.brand,
