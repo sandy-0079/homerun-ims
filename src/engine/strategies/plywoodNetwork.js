@@ -104,10 +104,13 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
       if (nodeId === 'DC') continue;
       const { min: minQty, nonZeroCount } = computeNodeMin(skuId, nodeCfg.covers, dailyDemand, minPercentile);
       const orderBuf = computeOrderBuffer(skuId, nodeCfg.covers, orderQtys, maxBufferPercentile);
-      const maxQty = Math.min(Math.max(minQty + orderBuf, minQty), maxCap);
-      nodeMinMax[nodeId] = { min: minQty, max: maxQty };
+      // Gap = orderBuf in both normal and capped cases, so DC formula (Max − Min) stays meaningful.
+      // When P95 demand exceeds maxCap: Max = cap, Min = cap − orderBuf (not zero-gap).
+      const finalMax = Math.min(minQty + orderBuf, maxCap);
+      const finalMin = Math.min(minQty, Math.max(0, finalMax - orderBuf));
+      nodeMinMax[nodeId] = { min: finalMin, max: finalMax };
       // Store covers so the tab can display "Covered DSes: DS01, DS05"
-      storeResults[nodeId] = { min: minQty, max: maxQty, nonZeroCount, covers: nodeCfg.covers };
+      storeResults[nodeId] = { min: finalMin, max: finalMax, nonZeroCount, covers: nodeCfg.covers };
     }
 
     // Non-stocking DSes → 0

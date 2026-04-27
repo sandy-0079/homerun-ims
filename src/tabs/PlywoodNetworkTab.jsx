@@ -601,11 +601,12 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       const thicknessCat = isLam ? "Laminate" : thicknessCategory(mm, 1, appliedBoundary);
       const minQty = s.dailyTotals.length > 0 ? Math.ceil(percentile(s.dailyTotals, pMin)) : 0;
       const orderBuf = s.orderQtys.length > 0 ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0;
-      const maxQty = Math.min(Math.max(minQty + orderBuf, minQty), cap);
+      const maxQty = Math.min(minQty + orderBuf, cap);
+      const minQtyFinal = Math.min(minQty, Math.max(0, maxQty - orderBuf));
       // dailyMedian needed by SKUModal
       const dt = s.dailyTotals, mid = Math.floor(dt.length / 2);
       const dailyMedian = dt.length === 0 ? 0 : dt.length % 2 === 0 ? (dt[mid-1]+dt[mid])/2 : dt[mid];
-      return { ...s, mm, thicknessCat, minQty, maxQty, dailyMedian };
+      return { ...s, mm, thicknessCat, minQty: minQtyFinal, maxQty, dailyMedian };
     }).filter(s => s.thicknessCat !== "Laminate");
     return {
       thick: withMM.filter(s => s.thicknessCat === "Thick"),
