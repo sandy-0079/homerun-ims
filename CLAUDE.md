@@ -59,58 +59,30 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 ### DC Calculation
 Three paths depending on SKU type:
 
-**Standard (no manual floors):**
-`DC Min = ceil(sumDailyAvg × (brandLeadTimeDays + 1))` — lead time + 1 safety day. Default lead time 3 days; configurable per brand in Logic Tweaker.
-`DC Max = DC Min + ceil(sumDailyAvg × 2)`
-Movement-tag multipliers removed — lead time is the sole driver.
+**Standard:** `DC Min = ceil(sumDailyAvg × (brandLeadTimeDays + 1))` · `DC Max = DC Min + ceil(sumDailyAvg × 2)`. Default lead time 3 days; configurable per brand.
 
-**Floored SKUs (SKU is in "SKU Floors - DS Level" CSV):**
-`DC Min = Σ effective DS Mins × skuFloorDCMultMin (default 0.2)`
-`DC Max = Σ effective DS Maxes × skuFloorDCMultMax (default 0.3)`
-Demand erratic for these SKUs so DC stays lean. Configurable in Logic Tweaker.
+**Floored SKUs:** `DC Min = Σ DS Mins × skuFloorDCMultMin (0.2)` · `DC Max = Σ DS Maxes × skuFloorDCMultMax (0.3)`. Erratic demand so DC stays lean.
 
-**Dead Stock SKUs:**
-`DC Min = Σ DS Mins × 0.25` / `DC Max = Σ DS Maxes × 0.25`
+**Dead Stock:** `DC Min = Σ DS Mins × 0.25` / `DC Max = Σ DS Maxes × 0.25`
 
 ### Post-Blend Adjustment Order (strict)
 New DS Floor → SKU Floor Override → Dead Stock cap → Final rounding
 
-**Brand Buffer removed** — was compensating for supplier lead time at DS level, which is wrong. Lead time is now correctly modelled at DC via brandLeadTimeDays.
-
-**SKU Floor Min and Max are checked independently** — if floor Min > engine Min, floor Min wins. If floor Max > engine Max, floor Max wins. Either can trigger without the other.
+**SKU Floor Min and Max are checked independently** — either can trigger without the other.
 
 ---
 
-## Replenishment Logic (Critical for Simulation)
+## Replenishment Logic
 
-- Trading: 8 AM – 8 PM daily
-- End of day: if closing stock ≤ Min → restock to Max overnight from DC
-- ~Midnight: Transfer Orders raised DC → each DS; once marked "In Transit" stock leaves DC, not yet at DS
-- ~Noon next day: TOs arrive at DS
-
-**By 8 AM, only two valid states:** restocked to Max (prev day closed ≤ Min) OR same as prev close (prev day > Min, no restock needed).
-
-### OOS Root Cause (Mode 2 Simulation)
-| Root Cause | Detection |
-|---|---|
-| **Ops Failure** | Opening stock ≤ Min AND OOS occurs — DC failed to replenish |
-| **Tool Failure** | Opening stock > Min AND OOS occurs — model undersized |
-| **Unstocked** | Min=Max=0 — SKU not stocked here |
-| **Could have been saved** | OOS AND physical + in_transit ≥ order qty — TO was close |
-
-### Cluster Geography (for fulfillment analysis)
-| Cluster | Stores |
-|---|---|
-| 1 | DS01 (Sarjapur) + DS05 (Basavanapura) |
-| 2 | DS02 (Bileshivale) + DC (Rampura) |
-| 3 | DS03 (Kengeri) + DS04 (Chikkabanavara) |
-Cluster analysis: 65% OOS reduction (134→46) via cross-DS fulfillment. Cluster 2 (DS02+DC) achieved 95.6% due to DC buffer.
+- Trading: 8 AM – 8 PM daily. End of day: closing stock ≤ Min → restock to Max overnight from DC.
+- ~Midnight: TOs raised DC→DS. ~Noon next day: TOs arrive at DS.
+- Clusters: DS01+DS05 (Cluster 1), DS02+DC/Rampura (Cluster 2), DS03+DS04 (Cluster 3).
 
 ---
 
 ## What's Parked (don't revisit without new data)
 
-- **CV-based demand shaping:** 96.3% combos have CV>2.0 (sparsity-driven, not order variability). No segmentation power.
+- **CV-based demand shaping:** 96.3% combos have CV>2.0 (sparsity-driven). No segmentation power.
 - **Movement-based periods:** Simulated — worse (+8 OOS, +₹38.5L). Standard 45D flat is better.
 - **Base min days adjustment (+1 for Slow/Super Slow):** Only 0.1% OOS reduction. Not worth it.
 - **ROP:** 86.5% of OOS is single order > Max, not restock timing. Only 6 of 392 saved. Parked.
@@ -125,7 +97,7 @@ Both tabs live in production. `src/tabs/BasketAnalysisTab.jsx` + `src/tabs/Plywo
 - **Plywood**: per-DS Thick/Thin configs (Supabase), SKU table (Running/Fallback/Super Slow), capacity bar (3-state), per-SKU modal (histogram + timeline). Auto-computes on load. Recommendation only — does NOT write into Min/Max engine.
 
 ### 2. OOS Simulation Redesign ❌ Dropped (2026-04-21)
-Dropped — existing simulation (slider, DS filter, override comparison) covers ops needs. Redesign was UX-only (preset periods, drill-down navigation). Untested code discarded to avoid repeat of the params corruption incident. If Fresh CSV / Actual Stock root cause mode is needed in future, rebuild cleanly from scratch.
+Dropped — existing simulation covers ops needs. Untested code discarded to avoid repeat of the params corruption incident. If Fresh CSV / Actual Stock root cause mode is needed in future, rebuild cleanly from scratch.
 
 ### 3. Polish Stock Health Tab
 Make it more rich and actionable (specifics TBD).
@@ -173,81 +145,20 @@ Current engine uses `sumDailyAvg × (leadTime+1)` for ALL non-Standard categorie
 
 ---
 
-## Key Vocabulary
+## Key Non-Obvious Terms
 
 | Term | Meaning |
 |---|---|
-| DS / DC | Dark Store (DS01–DS05) / Distribution Centre |
-| Min / Max | Reorder trigger / Target stock level |
 | NZD | Non-Zero Days — days with at least one sale |
-| ABQ | Average Basket Qty — avg qty per order line |
 | DOC | Days of Cover — stock ÷ daily average |
 | TO | Transfer Order — stock movement DC→DS |
-| In Transit | Dispatched but not yet received |
 | Dead Stock | SKU with Max forced = Min |
-| Brand Buffer | Extra buffer days for brands with long lead times |
-| Core Override | OOS Simulation override baked into model output |
-| Logic Tag | Which post-blend rule modified final Min/Max |
-| PCT Fallback | PCT SKU with NZD < threshold → uses Standard |
-| Ops Failure | OOS because DC didn't restock when it should have |
-| Tool Failure | OOS because Min/Max was too low for order size |
+| PCT Fallback | PCT SKU with NZD < threshold → uses Standard strategy |
 
 ---
 
 ## Logic Tweaker Params Backup
 
-**Last saved:** 2026-04-20T12:09 IST — restore via Logic Tweaker if Supabase `params/global` is corrupted.
+**Last saved:** 2026-04-20T12:09 IST. Full backup auto-saved to Supabase `params/paramsBackup` on every "Apply & Re-run Model" click — restore from there if `params/global` is corrupted.
 
-```json
-{
-  "overallPeriod": 45,
-  "recencyWindow": 15,
-  "recencyWt": { "Super Fast": 5, "Fast": 5, "Moderate": 4, "Slow": 4, "Super Slow": 4 },
-  "movIntervals": [2, 4, 7, 10],
-  "priceTiers": [3000, 1500, 400, 100],
-  "spikeMultiplier": 5,
-  "spikePctFrequent": 10,
-  "spikePctOnce": 5,
-  "maxDaysBuffer": 2,
-  "abqMaxMultiplier": 1.5,
-  "baseMinDays": { "Super Fast": 6, "Fast": 5, "Moderate": 3, "Slow": 3, "Super Slow": 3 },
-  "brandBuffer": {
-    "Asian Paints": 3, "VIP Extrusions": 3, "MYK Laticrete": 3, "Roff": 3,
-    "Supreme": 3, "Saint-Gobain": 2, "Alagar": 3, "Legrand": 1, "Archidply": 1
-  },
-  "newDSList": ["DS04", "DS05", "DS03"],
-  "newDSFloorTopN": 250,
-  "activeDSCount": 4,
-  "dcMult": {
-    "Super Fast": { "min": 0.75, "max": 1 },
-    "Fast": { "min": 0.5, "max": 0.75 },
-    "Moderate": { "min": 0.5, "max": 0.75 },
-    "Slow": { "min": 0.25, "max": 0.5 },
-    "Super Slow": { "min": 0.25, "max": 0.5 }
-  },
-  "dcDeadMult": { "min": 0.25, "max": 0.25 },
-  "categoryStrategies": {
-    "Tiling": "percentile_cover",
-    "Lighting": "percentile_cover",
-    "Switches & Sockets": "percentile_cover",
-    "Conduits & GI Boxes": "percentile_cover",
-    "Plywood, MDF & HDHMR": "percentile_cover",
-    "CPVC Pipes & Fittings": "percentile_cover",
-    "Furniture & Architectural Hardware": "percentile_cover",
-    "Sanitary & Bath Fittings": "percentile_cover",
-    "Overhead Tanks": "fixed_unit_floor",
-    "Wires, MCB & Distribution Boards": "fixed_unit_floor"
-  },
-  "percentileCover": {
-    "percentileByPrice": { "Low": 95, "Super Low": 95, "No Price": 95, "Medium": 85, "High": 80, "Premium": 75 },
-    "coverDaysByMovement": { "Super Fast": 2, "Fast": 2, "Moderate": 1, "Slow": 1, "Super Slow": 1 }
-  },
-  "fixedUnitFloor": { "orderQtyPercentile": 90, "maxMultiplier": 1.5, "maxAdditive": 1 },
-  "brandLeadTimeDays": { "_default": 3, "Asian Paints": 4 },
-  "pctDocCap": 30,
-  "pctDocCapPriceTags": ["High", "Premium"],
-  "pctMinNZD": 2,
-  "skuFloorDCMultMin": 0.2,
-  "skuFloorDCMultMax": 0.3
-}
-```
+Key non-default values: `overallPeriod=45`, `newDSFloorTopN=250`, `newDSList=["DS04","DS05","DS03"]`, `recencyWt={SuperFast:5,Fast:5,Moderate:4,Slow:4,SuperSlow:4}`, `brandLeadTimeDays={_default:3,AsianPaints:4}`, `pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`. Category strategies: 8 PCT + 2 Fixed Unit Floor (see Supabase for full list).
