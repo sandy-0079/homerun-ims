@@ -590,7 +590,7 @@ function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, lookbackDays, 
   // Total active SKUs from stocked brands (to derive zero-demand count)
   const allStocked = Object.values(skuMaster).filter(m =>
     PLYWOOD_CATEGORIES.includes(m.category) &&
-    stockedBrands.includes(m.brand) &&
+    stockedBrands.some(b => b.toLowerCase() === m.brand?.toLowerCase()) &&
     (m.status || "Active").toLowerCase() === "active"
   );
   const allThick = allStocked.filter(s => {
@@ -638,7 +638,7 @@ function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, lookbackDays, 
 }
 
 // SKU table for Network Design mode — shows aggregated demand + P95-based min/max
-function NetworkDesignSKUTable({ skus, onSelectSku, showNZD = true }) {
+function NetworkDesignSKUTable({ skus, onSelectSku, showNZD = true, isDC = false }) {
   if (!skus || skus.length === 0) return (
     <div style={{padding:16,color:"#888",fontSize:12,textAlign:"center"}}>No SKUs with demand in this period.</div>
   );
@@ -652,8 +652,8 @@ function NetworkDesignSKUTable({ skus, onSelectSku, showNZD = true }) {
             <th style={S2.th}>Name</th>
             <th style={{...S2.th,textAlign:"right"}}>mm</th>
             {showNZD && <th style={{...S2.th,textAlign:"right"}}>NZD</th>}
-            <th style={{...S2.th,textAlign:"right"}}>DC Min</th>
-            <th style={{...S2.th,textAlign:"right"}}>DC Max</th>
+            <th style={{...S2.th,textAlign:"right"}}>{isDC ? "DC Min" : "Min"}</th>
+            <th style={{...S2.th,textAlign:"right"}}>{isDC ? "DC Max" : "Max"}</th>
           </tr>
         </thead>
         <tbody>
@@ -836,7 +836,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     Object.entries(effectiveNetCfg.brands).forEach(([brand, brandCfg]) => {
       const { nodes, dcMultMin = 0.8, dcMultMax = 1.5 } = brandCfg;
       const brandMaster = Object.values(skuMaster).filter(m =>
-        m.brand === brand && m.category === PLYWOOD_CATEGORIES[0] && (m.status || 'Active').toLowerCase() === 'active'
+        m.brand?.toLowerCase() === brand.toLowerCase() && m.category === PLYWOOD_CATEGORIES[0] && (m.status || 'Active').toLowerCase() === 'active'
       );
       brandMaster.forEach(meta => {
         // Direct-serving component
@@ -1187,7 +1187,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
               </div>
               <CapacityBar used={dcSkuStats.thick.reduce((s,x)=>s+x.maxQty,0)} total={dcCap.thick} label="DC Vertical Storage Capacity" cfg={null}/>
               <div style={S.card}>
-                <NetworkDesignSKUTable skus={dcSkuStats.thick} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }} showNZD={false}/>
+                <NetworkDesignSKUTable skus={dcSkuStats.thick} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }} showNZD={false} isDC={true}/>
               </div>
             </div>
             {/* DC Thin */}
@@ -1207,7 +1207,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
               </div>
               <CapacityBar used={dcSkuStats.thin.reduce((s,x)=>s+x.maxQty,0)} total={dcCap.thin} label="DC Tub Storage Capacity" cfg={null}/>
               <div style={S.card}>
-                <NetworkDesignSKUTable skus={dcSkuStats.thin} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }} showNZD={false}/>
+                <NetworkDesignSKUTable skus={dcSkuStats.thin} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }} showNZD={false} isDC={true}/>
               </div>
             </div>
           </div>

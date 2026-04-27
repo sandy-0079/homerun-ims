@@ -8,8 +8,16 @@ import { DS_LIST } from '../constants.js';
 
 const PLYWOOD_CATEGORY = 'Plywood, MDF & HDHMR';
 
+// Case-insensitive brand lookup — guards against "ArchidPly" vs "Archidply" mismatches
+// between the config and what's actually stored in skuMaster.
+function findBrandConfig(brand, brands) {
+  if (!brand || !brands) return null;
+  const key = Object.keys(brands).find(k => k.toLowerCase() === brand.toLowerCase());
+  return key ? brands[key] : null;
+}
+
 function isNetworkDesignSKU(meta, brands) {
-  return meta.category === PLYWOOD_CATEGORY && !!brands[meta.brand];
+  return meta.category === PLYWOOD_CATEGORY && !!findBrandConfig(meta.brand, brands);
 }
 
 // Build daily-demand and order-qty maps for the plywood lookback window.
@@ -110,7 +118,7 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
 
   for (const [skuId, meta] of Object.entries(skuM)) {
     if (!isNetworkDesignSKU(meta, brands)) continue;
-    const brandCfg = brands[meta.brand];
+    const brandCfg = findBrandConfig(meta.brand, brands);
     const { nodes, dcMultMin, dcMultMax } = brandCfg;
 
     const storeResults = {};
@@ -175,8 +183,9 @@ export function computeNetworkNodeStats(inv, skuMaster, brand, coveredDSes, look
 
   const { dailyDemand, orderQtys } = buildMaps(inv, cutoffStr);
 
+  const brandLower = brand.toLowerCase();
   const brandSKUs = Object.values(skuMaster).filter(
-    m => m.brand === brand && m.category === PLYWOOD_CATEGORY && (m.status || 'Active').toLowerCase() === 'active'
+    m => m.brand?.toLowerCase() === brandLower && m.category === PLYWOOD_CATEGORY && (m.status || 'Active').toLowerCase() === 'active'
   );
 
   return brandSKUs.map(meta => {
