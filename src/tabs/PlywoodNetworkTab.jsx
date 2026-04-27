@@ -717,8 +717,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const editingNetCfg = localNetCfg || effectiveNetCfg;
   const [netCfgDirty, setNetCfgDirty] = useState(false);
 
-  // Reload configs when DS or saved configs change
+  // Reload configs when DS or saved configs change — skip for DC (no DS_DEFAULTS entry)
   useEffect(() => {
+    if (!DS_LIST.includes(dsFilter)) return;
     const saved = networkConfigs?.[dsFilter] || DS_DEFAULTS[dsFilter];
     setThickCfg({ ...DS_DEFAULTS[dsFilter].thick, ...saved.thick });
     setThinCfg({ ...DS_DEFAULTS[dsFilter].thin, ...saved.thin });
@@ -745,7 +746,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   }, [networkConfigs, onSaveConfigs, isAdmin]);
 
   const handleSaveConfig = useCallback((type, newCfg) => {
-    if (!isAdmin) return;
+    if (!isAdmin || !DS_LIST.includes(dsFilter)) return;
     const merged = {
       ...(networkConfigs || {}),
       [dsFilter]: {
@@ -863,11 +864,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   // Auto-compute on first load for each DS (runs once per DS per session, covers page refresh)
   // Must be declared AFTER baseSkus/thickSkus/thinSkus to avoid TDZ error
   useEffect(() => {
-    if (networkConfigs === null) return; // still loading from Supabase — wait for final configs
+    if (networkConfigs === null) return;
+    if (!DS_LIST.includes(dsFilter)) return; // DC has no auto-compute
     if (!thickCfg || !thinCfg || !baseSkus.length) return;
-    // Guard: ensure thickCfg reflects the CURRENT dsFilter before auto-running.
-    // Without this, the effect fires with the previous DS's config when dsFilter changes,
-    // pollutes autoRanRef with the wrong key, and the correct config never triggers a re-run.
     const expectedSaved = networkConfigs?.[dsFilter] || DS_DEFAULTS[dsFilter];
     const expectedThick = { ...DS_DEFAULTS[dsFilter].thick, ...expectedSaved.thick };
     if (JSON.stringify(thickCfg) !== JSON.stringify(expectedThick)) return;
@@ -1227,7 +1226,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             {ndDsInfo.stocked.length === 0
               ? <div style={{padding:16,color:HR.muted,fontSize:12}}>No brands stocked at {dsFilter} — see fulfillment above.</div>
               : <>
-                  <CapacityBar used={ndSkuStats.thick.reduce((s,x)=>s+x.maxQty,0)} total={thickCfg.capacity} label="Vertical Storage Capacity (estimated)" cfg={thickCfg}/>
+                  <CapacityBar used={ndSkuStats.thick.reduce((s,x)=>s+x.maxQty,0)} total={thickCfg.capacity} label="Vertical Storage — estimated Max load" cfg={null}/>
                   <div style={S.card}>
                     <NetworkDesignSKUTable skus={ndSkuStats.thick} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }}/>
                   </div>
@@ -1266,7 +1265,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             {ndDsInfo.stocked.length === 0
               ? <div style={{padding:16,color:HR.muted,fontSize:12}}>No brands stocked at {dsFilter}.</div>
               : <>
-                  <CapacityBar used={ndSkuStats.thin.reduce((s,x)=>s+x.maxQty,0)} total={thinCfg.capacity} label="Tub Storage Capacity (estimated)" cfg={thinCfg}/>
+                  <CapacityBar used={ndSkuStats.thin.reduce((s,x)=>s+x.maxQty,0)} total={thinCfg.capacity} label="Tub Storage — estimated Max load" cfg={null}/>
                   <div style={S.card}>
                     <NetworkDesignSKUTable skus={ndSkuStats.thin} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
                   </div>
