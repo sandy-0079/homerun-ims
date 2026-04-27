@@ -647,6 +647,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     const pBuf      = effectiveNetCfg.maxBufferPercentile || 75;
     const cap       = effectiveNetCfg.maxCap || 20;
     const spikeMult = effectiveNetCfg.spikeCapMultiplier || 3;
+    const minNZDTab = effectiveNetCfg.minNZD || 2;
     const withMM = allStats.map(s => {
       const mm = inferThickness(s.name);
       const isLam = (mm !== null && mm <= 1);
@@ -654,9 +655,12 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       const dt = s.dailyTotals; // already sorted non-zero values
       const dtMid = Math.floor(dt.length / 2);
       const dtMedian = dt.length === 0 ? 0 : dt.length % 2 === 0 ? (dt[dtMid-1]+dt[dtMid])/2 : dt[dtMid];
+      // Guard 1: insufficient NZD → do not stock (Min = 0)
+      const belowMinNZD = dt.length < minNZDTab;
+      // Guard 2: winsorize before P95
       const spikeCap = dtMedian * spikeMult;
       const winsorized = dt.map(v => Math.min(v, spikeCap));
-      const minQty = winsorized.length > 0 ? Math.ceil(percentile(winsorized, pMin)) : 0;
+      const minQty = belowMinNZD || winsorized.length === 0 ? 0 : Math.ceil(percentile(winsorized, pMin));
       const orderBuf = s.orderQtys.length > 0 ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0;
       const maxQty = Math.min(minQty + orderBuf, cap);
       const minQtyFinal = Math.min(minQty, Math.max(0, maxQty - orderBuf));
@@ -818,6 +822,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                 {label:"Max Buffer Pct",key:"maxBufferPercentile",min:50,max:99,step:1},
                 {label:"Max Cap / Location",key:"maxCap",min:1,max:100,step:1},
                 {label:"Spike Cap ×Median",key:"spikeCapMultiplier",min:1,max:20,step:0.5},
+                {label:"Min NZD to Stock",key:"minNZD",min:1,max:20,step:1},
               ].map(({label,key,min,max,step}) => (
                 <label key={key} style={{fontSize:11,display:"flex",flexDirection:"column",gap:3}}>
                   {label}

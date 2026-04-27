@@ -25,6 +25,7 @@ export const PLYWOOD_NETWORK_CONFIG_DEFAULT = {
   maxBufferPercentile: 75,
   maxCap: 20,
   spikeCapMultiplier: 3,
+  minNZD: 2,
   brands: {
     "Action Tesa": {
       nodes: {
