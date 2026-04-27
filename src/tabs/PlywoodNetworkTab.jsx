@@ -692,7 +692,8 @@ function applyNetworkFormula(statsList, cfg, boundary) {
     const spikeCap = dtMedian * spike;
     const winsorized = dt.map(v => Math.min(v, spikeCap));
     const minQty  = belowMinNZD || !winsorized.length ? 0 : Math.ceil(percentile(winsorized, pMin));
-    const orderBuf = s.orderQtys.length ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0;
+    // No buffer when below NZD threshold — both Min and Max must be 0
+    const orderBuf = belowMinNZD ? 0 : (s.orderQtys.length ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0);
     const maxQty  = Math.min(minQty + orderBuf, cap);
     const minFinal = Math.min(minQty, Math.max(0, maxQty - 1));
     const trace = {

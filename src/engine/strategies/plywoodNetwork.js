@@ -49,10 +49,10 @@ function aggregateDailyTotals(sku, coveredDSes, dailyDemand) {
 function computeNodeMin(sku, coveredDSes, dailyDemand, minPct, spikeCapMult, minNZD) {
   const totals = aggregateDailyTotals(sku, coveredDSes, dailyDemand);
   const nonZero = Object.values(totals).filter(q => q > 0).sort((a, b) => a - b);
-  if (nonZero.length === 0) return { min: 0, nonZeroCount: 0 };
+  if (nonZero.length === 0) return { min: 0, nonZeroCount: 0, belowMinNZD: true };
 
   // Guard 1: insufficient demand history → do not stock
-  if (nonZero.length < (minNZD || 2)) return { min: 0, nonZeroCount: nonZero.length };
+  if (nonZero.length < (minNZD || 2)) return { min: 0, nonZeroCount: nonZero.length, belowMinNZD: true };
 
   // Guard 2: winsorize — cap values above median × spikeCapMult
   const mid = Math.floor(nonZero.length / 2);
@@ -119,8 +119,9 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
     // Compute Min/Max for each DS stocking node
     for (const [nodeId, nodeCfg] of Object.entries(nodes)) {
       if (nodeId === 'DC') continue;
-      const { min: minQty, nonZeroCount } = computeNodeMin(skuId, nodeCfg.covers, dailyDemand, minPercentile, spikeCapMultiplier, minNZD);
-      const orderBuf = computeOrderBuffer(skuId, nodeCfg.covers, orderQtys, maxBufferPercentile);
+      const { min: minQty, nonZeroCount, belowMinNZD } = computeNodeMin(skuId, nodeCfg.covers, dailyDemand, minPercentile, spikeCapMultiplier, minNZD);
+      // No buffer when below NZD threshold — both Min and Max must be 0
+      const orderBuf = belowMinNZD ? 0 : computeOrderBuffer(skuId, nodeCfg.covers, orderQtys, maxBufferPercentile);
       // Min stays at P95 — reorder trigger reflects actual demand, not artificially lowered
       // by subtracting orderBuf from cap (which over-widens gap and increases OOS risk).
       // Max is capped at maxCap. Gap = orderBuf when uncapped; Cap − P95 when capped (≥ 1).
@@ -139,8 +140,8 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
     // DC: P95 direct-serving component (if DC node defined) + multiplier component
     let dcP95 = 0;
     if (nodes.DC) {
-      const { min } = computeNodeMin(skuId, nodes.DC.covers, dailyDemand, minPercentile, spikeCapMultiplier, minNZD);
-      dcP95 = min;
+      const { min, belowMinNZD: dcBelow } = computeNodeMin(skuId, nodes.DC.covers, dailyDemand, minPercentile, spikeCapMultiplier, minNZD);
+      dcP95 = dcBelow ? 0 : min;
     }
 
     const sumDiff = Object.values(nodeMinMax).reduce((acc, { min, max }) => acc + (max - min), 0);
