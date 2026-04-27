@@ -524,7 +524,7 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
                 {row(`P${t.pMin} of winsorized series`, `${t.p95Raw?.toFixed(2)} → ceil = ${Math.ceil(t.p95Raw||0)}`, `→ raw Min before cap guard`)}
                 {row(`P${t.pBuf} of order quantities`, `${t.orderBuf} sheets`, `buffer above Min`)}
                 {row(`Raw Max (Min + buffer)`, `${t.rawMax}`, t.capApplied ? `> cap ${t.cap} → capped` : `≤ cap ${t.cap} ✓`)}
-                {t.capApplied && row(`Cap applied`, `Max = ${t.cap}`, `Min adjusted to ${sku.minQty} (Max − buffer = ${t.cap} − ${t.orderBuf} = ${t.cap - t.orderBuf})`)}
+                {t.capApplied && row(`Cap applied`, `Max = ${t.cap}`, `Min stays at P95 = ${sku.minQty} (gap = ${t.cap} − ${sku.minQty} = ${t.cap - sku.minQty})`)}
                 <div style={{marginTop:10,padding:"6px 10px",background:"#F0FFF4",borderRadius:6,fontSize:11,color:"#166534",fontWeight:600}}>
                   → Min = {sku.minQty} · Max = {sku.maxQty}
                 </div>
@@ -786,7 +786,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       const minQty = belowMinNZD || winsorized.length === 0 ? 0 : Math.ceil(percentile(winsorized, pMin));
       const orderBuf = s.orderQtys.length > 0 ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0;
       const maxQty = Math.min(minQty + orderBuf, cap);
-      const minQtyFinal = Math.min(minQty, Math.max(0, maxQty - orderBuf));
+      const minQtyFinal = Math.min(minQty, Math.max(0, maxQty - 1)); // gap always ≥ 1
       // dailyMedian needed by SKUModal (reuse dtMedian computed above)
       const dailyMedian = dtMedian;
       // Computation trace — drives NetworkDesignSKUModal breakdown

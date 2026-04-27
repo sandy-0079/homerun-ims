@@ -121,10 +121,11 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
       if (nodeId === 'DC') continue;
       const { min: minQty, nonZeroCount } = computeNodeMin(skuId, nodeCfg.covers, dailyDemand, minPercentile, spikeCapMultiplier, minNZD);
       const orderBuf = computeOrderBuffer(skuId, nodeCfg.covers, orderQtys, maxBufferPercentile);
-      // Gap = orderBuf in both normal and capped cases, so DC formula (Max − Min) stays meaningful.
-      // When P95 demand exceeds maxCap: Max = cap, Min = cap − orderBuf (not zero-gap).
+      // Min stays at P95 — reorder trigger reflects actual demand, not artificially lowered
+      // by subtracting orderBuf from cap (which over-widens gap and increases OOS risk).
+      // Max is capped at maxCap. Gap = orderBuf when uncapped; Cap − P95 when capped (≥ 1).
       const finalMax = Math.min(minQty + orderBuf, maxCap);
-      const finalMin = Math.min(minQty, Math.max(0, finalMax - orderBuf));
+      const finalMin = Math.min(minQty, Math.max(0, finalMax - 1)); // gap always ≥ 1
       nodeMinMax[nodeId] = { min: finalMin, max: finalMax };
       // Store covers so the tab can display "Covered DSes: DS01, DS05"
       storeResults[nodeId] = { min: finalMin, max: finalMax, nonZeroCount, covers: nodeCfg.covers };
