@@ -482,7 +482,8 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
           <div>
             <div style={{fontSize:16,fontWeight:800}}>{sku.name}</div>
             <div style={{fontSize:11,color:"#888",marginTop:2}}>
-              {sku.sku} · {sku.mm != null ? `${sku.mm}mm` : "—"} · Aggregated: {(t.covers||[]).join(", ")}
+              {sku.sku} · {sku.mm != null ? `${sku.mm}mm` : "—"}
+              {t.isDC ? " · DC stocking" : ` · Aggregated: ${(t.covers||[]).join(", ")}`}
             </div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"1px solid #E0E0D0",borderRadius:6,padding:"4px 14px",cursor:"pointer",fontSize:12,color:"#888",fontWeight:600}}>Close ✕</button>
@@ -490,12 +491,10 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
 
         {/* Result */}
         <div style={{display:"flex",gap:12,marginBottom:16}}>
-          {[
-            {label:"Min",val:sku.minQty,color:"#B91C1C"},
-            {label:"Max",val:sku.maxQty,color:"#16a34a"},
-            {label:"NZD",val:t.nzd||0,color:"#0077A8"},
-            {label:"Orders",val:t.orderQtyCount||0,color:"#555"},
-          ].map(c => (
+          {(t.isDC
+            ? [{label:"DC Min",val:sku.minQty,color:"#B91C1C"},{label:"DC Max",val:sku.maxQty,color:"#16a34a"}]
+            : [{label:"Min",val:sku.minQty,color:"#B91C1C"},{label:"Max",val:sku.maxQty,color:"#16a34a"},{label:"NZD",val:t.nzd||0,color:"#0077A8"},{label:"Orders",val:t.orderQtyCount||0,color:"#555"}]
+          ).map(c => (
             <div key={c.label} style={{background:"#F8F8F2",borderRadius:8,padding:"8px 16px",textAlign:"center",minWidth:64}}>
               <div style={{fontSize:20,fontWeight:800,color:c.color}}>{c.val}</div>
               <div style={{fontSize:10,color:"#888",fontWeight:600}}>{c.label}</div>
@@ -504,36 +503,48 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
         </div>
 
         {/* Computation trace */}
-        <div style={{fontSize:12,fontWeight:700,color:"#7C3AED",marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>How Min & Max were computed</div>
-        <div style={{background:"#FAFAF8",borderRadius:8,padding:"10px 14px",marginBottom:16}}>
-          {t.belowMinNZD
-            ? <div style={{color:"#92400E",fontSize:12,fontWeight:600}}>
-                ⚠ NZD ({t.nzd}) &lt; minNZD ({t.minNZDThreshold}) → Min = Max = 0 (insufficient demand history, sourced on demand)
+        <div style={{fontSize:12,fontWeight:700,color:"#7C3AED",marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>How DC Min &amp; Max were computed</div>
+        <div style={{background:"#FAFAF8",borderRadius:8,padding:"10px 14px",marginBottom:t.isDC?0:16}}>
+          {t.isDC ? (
+            <>
+              {t.dcP95 > 0
+                ? row(`P95 direct-serving demand`, `${t.dcP95} sheets`, `aggregated from ${(t.dcCovers||[]).join(", ")}`)
+                : row(`Direct-serving component`, `0`, `brand not directly served by DC`)
+              }
+              {row(`Σ(DS Max − DS Min) across stocking nodes`, `${t.sumDiff} sheets`, `replenishment demand base`)}
+              {row(`DC Min = ${t.dcP95} + ceil(${t.sumDiff} × ${t.dcMultMin})`, `= ${t.dcP95} + ${Math.ceil(t.sumDiff * t.dcMultMin)} = ${sku.minQty}`, ``)}
+              {row(`DC Max = ${t.dcP95} + ceil(${t.sumDiff} × ${t.dcMultMax})`, `= ${t.dcP95} + ${Math.ceil(t.sumDiff * t.dcMultMax)} = ${sku.maxQty}`, `(≥ DC Min)`)}
+              <div style={{marginTop:10,padding:"6px 10px",background:"#F0FFF4",borderRadius:6,fontSize:11,color:"#166534",fontWeight:600}}>
+                → DC Min = {sku.minQty} · DC Max = {sku.maxQty}
               </div>
-            : <>
-                {row(`Non-zero days (NZD)`, `${t.nzd} days`, `across ${(t.covers||[]).join(", ")}`)}
-                {row(`Daily totals (non-zero)`, (t.rawNonZero||[]).join(", ") || "—", "sorted ascending")}
-                {t.spikeCap != null && (t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v) && (
-                  row(`Winsorized at ${t.dtMedian?.toFixed(1)} × ${sku.trace?.spikeCap != null ? (t.spikeCap / (t.dtMedian||1)).toFixed(1) : "—"} = ${t.spikeCap?.toFixed(1)}`,
-                    (t.winsorized||[]).join(", "),
-                    "outlier days capped")
-                )}
-                {t.spikeCap != null && !(t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v) && (
-                  row(`Winsorize cap (${t.dtMedian?.toFixed(1)} × ${(t.spikeCap/(t.dtMedian||1)).toFixed(0)} = ${t.spikeCap?.toFixed(1)})`, "no days capped", "all within threshold")
-                )}
-                {row(`P${t.pMin} of winsorized series`, `${t.p95Raw?.toFixed(2)} → ceil = ${Math.ceil(t.p95Raw||0)}`, `→ raw Min before cap guard`)}
-                {row(`P${t.pBuf} of order quantities`, `${t.orderBuf} sheets`, `buffer above Min`)}
-                {row(`Raw Max (Min + buffer)`, `${t.rawMax}`, t.capApplied ? `> cap ${t.cap} → capped` : `≤ cap ${t.cap} ✓`)}
-                {t.capApplied && row(`Cap applied`, `Max = ${t.cap}`, `Min stays at P95 = ${sku.minQty} (gap = ${t.cap} − ${sku.minQty} = ${t.cap - sku.minQty})`)}
-                <div style={{marginTop:10,padding:"6px 10px",background:"#F0FFF4",borderRadius:6,fontSize:11,color:"#166534",fontWeight:600}}>
-                  → Min = {sku.minQty} · Max = {sku.maxQty}
-                </div>
-              </>
-          }
+            </>
+          ) : t.belowMinNZD ? (
+            <div style={{color:"#92400E",fontSize:12,fontWeight:600}}>
+              ⚠ NZD ({t.nzd}) &lt; minNZD ({t.minNZDThreshold}) → Min = Max = 0 (insufficient demand history, sourced on demand)
+            </div>
+          ) : (
+            <>
+              {row(`Non-zero days (NZD)`, `${t.nzd} days`, `across ${(t.covers||[]).join(", ")}`)}
+              {row(`Daily totals (non-zero)`, (t.rawNonZero||[]).join(", ") || "—", "sorted ascending")}
+              {t.spikeCap != null && (t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v) && (
+                row(`Winsorized at ${t.dtMedian?.toFixed(1)} × ${(t.spikeCap/(t.dtMedian||1)).toFixed(1)} = ${t.spikeCap?.toFixed(1)}`, (t.winsorized||[]).join(", "), "outlier days capped")
+              )}
+              {t.spikeCap != null && !(t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v) && (
+                row(`Winsorize cap (${t.dtMedian?.toFixed(1)} × ${(t.spikeCap/(t.dtMedian||1)).toFixed(0)} = ${t.spikeCap?.toFixed(1)})`, "no days capped", "all within threshold")
+              )}
+              {row(`P${t.pMin} of winsorized series`, `${t.p95Raw?.toFixed(2)} → ceil = ${Math.ceil(t.p95Raw||0)}`, `→ raw Min before cap guard`)}
+              {row(`P${t.pBuf} of order quantities`, `${t.orderBuf} sheets`, `buffer above Min`)}
+              {row(`Raw Max (Min + buffer)`, `${t.rawMax}`, t.capApplied ? `> cap ${t.cap} → capped` : `≤ cap ${t.cap} ✓`)}
+              {t.capApplied && row(`Cap applied`, `Max = ${t.cap}`, `Min stays at P95 = ${sku.minQty} (gap = ${t.cap} − ${sku.minQty} = ${t.cap - sku.minQty})`)}
+              <div style={{marginTop:10,padding:"6px 10px",background:"#F0FFF4",borderRadius:6,fontSize:11,color:"#166534",fontWeight:600}}>
+                → Min = {sku.minQty} · Max = {sku.maxQty}
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Daily consumption timeline */}
-        <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}}>Daily Consumption — Aggregated ({(t.covers||[]).join(" + ")})</div>
+        {/* Charts — DS nodes only, not DC */}
+        {!t.isDC && <><div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8,marginTop:16}}>Daily Consumption — Aggregated ({(t.covers||[]).join(" + ")})</div>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={timelineData} margin={{left:8,right:64,top:4,bottom:20}}>
             <CartesianGrid strokeDasharray="3 3" vertical={false}/>
@@ -569,7 +580,7 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
               </ResponsiveContainer>
             </>
           );
-        })()}
+        })()}</>}
       </div>
     </div>
   );
@@ -627,7 +638,7 @@ function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, lookbackDays, 
 }
 
 // SKU table for Network Design mode — shows aggregated demand + P95-based min/max
-function NetworkDesignSKUTable({ skus, onSelectSku }) {
+function NetworkDesignSKUTable({ skus, onSelectSku, showNZD = true }) {
   if (!skus || skus.length === 0) return (
     <div style={{padding:16,color:"#888",fontSize:12,textAlign:"center"}}>No SKUs with demand in this period.</div>
   );
@@ -640,18 +651,18 @@ function NetworkDesignSKUTable({ skus, onSelectSku }) {
             <th style={S2.th}>SKU</th>
             <th style={S2.th}>Name</th>
             <th style={{...S2.th,textAlign:"right"}}>mm</th>
-            <th style={{...S2.th,textAlign:"right"}}>NZD</th>
-            <th style={{...S2.th,textAlign:"right"}}>Min</th>
-            <th style={{...S2.th,textAlign:"right"}}>Max</th>
+            {showNZD && <th style={{...S2.th,textAlign:"right"}}>NZD</th>}
+            <th style={{...S2.th,textAlign:"right"}}>DC Min</th>
+            <th style={{...S2.th,textAlign:"right"}}>DC Max</th>
           </tr>
         </thead>
         <tbody>
-          {skus.sort((a,b) => b.nzd - a.nzd).map((s,i) => (
+          {skus.sort((a,b) => b.minQty - a.minQty).map((s,i) => (
             <tr key={s.sku} style={{background:i%2===0?"#fff":"#F8F8F2",cursor:"pointer"}} onClick={() => onSelectSku(s)}>
               <td style={{...S2.td,fontFamily:"monospace",fontSize:10,color:"#666"}}>{s.sku}</td>
               <td style={{...S2.td,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
               <td style={{...S2.td,textAlign:"right",color:"#888"}}>{s.mm !== null ? `${s.mm}mm` : "—"}</td>
-              <td style={{...S2.td,textAlign:"right"}}>{s.nzd}</td>
+              {showNZD && <td style={{...S2.td,textAlign:"right"}}>{s.nzd}</td>}
               <td style={{...S2.td,textAlign:"right",fontWeight:700,color:"#1e40af"}}>{s.minQty}</td>
               <td style={{...S2.td,textAlign:"right",fontWeight:700,color:"#166534"}}>{s.maxQty}</td>
             </tr>
@@ -1075,8 +1086,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
 
-      {/* ── Per-DS brand stocking status (Network Design mode) ──────────────── */}
-      {isNetworkDesignActive && ndDsInfo && (
+      {/* ── Per-DS brand stocking status (Network Design mode, DS nodes only) ── */}
+      {isNetworkDesignActive && ndDsInfo && dsFilter !== 'DC' && (
         <div style={{...S.card,marginBottom:12,padding:"10px 14px",display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-start"}}>
           <div>
             <div style={{fontSize:11,fontWeight:700,color:"#166534",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Stocked at {dsFilter}</div>
@@ -1118,7 +1129,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         </div>
       )}
 
-      {isNetworkDesignActive && ndDsInfo
+      {isNetworkDesignActive && ndDsInfo && dsFilter !== 'DC'
         ? <NetworkDesignSummaryCards
             thickSkus={ndSkuStats.thick}
             thinSkus={ndSkuStats.thin}
@@ -1128,7 +1139,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             stockedBrands={ndDsInfo.stocked.map(s => s.brand)}
             thickBoundaryMm={appliedBoundary}
           />
-        : <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
+        : !isNetworkDesignActive
+          ? <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
+          : null
       }
 
       {/* ── DC Tab ──────────────────────────────────────────────────────────── */}
@@ -1173,7 +1186,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
               </div>
               <CapacityBar used={dcSkuStats.thick.reduce((s,x)=>s+x.maxQty,0)} total={dcCap.thick} label="DC Vertical Storage Capacity" cfg={null}/>
               <div style={S.card}>
-                <NetworkDesignSKUTable skus={dcSkuStats.thick} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }}/>
+                <NetworkDesignSKUTable skus={dcSkuStats.thick} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }} showNZD={false}/>
               </div>
             </div>
             {/* DC Thin */}
@@ -1193,7 +1206,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
               </div>
               <CapacityBar used={dcSkuStats.thin.reduce((s,x)=>s+x.maxQty,0)} total={dcCap.thin} label="DC Tub Storage Capacity" cfg={null}/>
               <div style={S.card}>
-                <NetworkDesignSKUTable skus={dcSkuStats.thin} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
+                <NetworkDesignSKUTable skus={dcSkuStats.thin} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }} showNZD={false}/>
               </div>
             </div>
           </div>
