@@ -1064,8 +1064,6 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
               <span style={{fontSize:10,color:HR.muted,display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
                 <span><span style={{color:"#166534",fontWeight:600}}>☑ Stocked</span> — caters to demand of selected DSes</span>
                 <span style={{color:HR.border}}>|</span>
-                <span><span style={{fontWeight:600}}>N DSes ▾</span> = click to edit which DSes demand is pulled from</span>
-                <span style={{color:HR.border}}>|</span>
                 <span><span style={{fontWeight:600}}>☐ Not stocked</span> — fulfillment source shown below</span>
               </span>
             </div>
