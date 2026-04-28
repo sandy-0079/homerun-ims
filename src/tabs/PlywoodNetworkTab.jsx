@@ -1176,9 +1176,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         </details>
       )}
 
-      {/* DS + Period selectors */}
+      {/* DS + Period selectors + inline brand stocking info */}
       <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
-        <div style={{display:"flex",gap:4}}>
+        <div style={{display:"flex",gap:4,flexShrink:0}}>
           {DS_LIST.map(ds => (
             <button key={ds} onClick={() => setDsFilter(ds)} style={S.btn(dsFilter===ds)}>{ds}</button>
           ))}
@@ -1187,46 +1187,40 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           )}
         </div>
         {!isNetworkDesignActive && (
-          <div style={{display:"flex",gap:4,marginLeft:12}}>
+          <div style={{display:"flex",gap:4,marginLeft:4}}>
             {[{v:45,l:"L45D"},{v:30,l:"L30D"},{v:15,l:"L15D"},{v:7,l:"L7D"}].map(p => (
               <button key={p.v} onClick={() => setPeriod(p.v)} style={S.btn(period===p.v)}>{p.l}</button>
             ))}
           </div>
         )}
-        {isNetworkDesignActive && (
-          <span style={{fontSize:10,color:"#7C3AED",marginLeft:12,fontWeight:600}}>
-            Lookback: {effectiveNetCfg.lookbackDays || 90}d (set in Network Design Config ↑)
+        {/* Brand stocking info inline — replaces separate card */}
+        {isNetworkDesignActive && ndDsInfo && dsFilter !== 'DC' && (
+          <span style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",fontSize:11,marginLeft:8}}>
+            {ndDsInfo.stocked.length > 0 && (
+              <span>
+                <span style={{fontWeight:700,color:"#166534"}}>Stocked: </span>
+                {ndDsInfo.stocked.map(({brand}) => (
+                  <span key={brand} style={{color:"#166534",marginRight:6}}>● {brand}</span>
+                ))}
+              </span>
+            )}
+            {ndDsInfo.stocked.length > 0 && ndDsInfo.notStocked.length > 0 && (
+              <span style={{color:HR.border}}>|</span>
+            )}
+            {ndDsInfo.notStocked.length > 0 && (
+              <span>
+                <span style={{fontWeight:700,color:"#92400E"}}>Fulfilled elsewhere: </span>
+                {ndDsInfo.notStocked.map(({brand, fulfilledFrom}) => (
+                  <span key={brand} style={{color:HR.muted,marginRight:8}}>
+                    {brand} <span style={{color:"#92400E"}}>→ {fulfilledFrom}</span>
+                  </span>
+                ))}
+              </span>
+            )}
           </span>
         )}
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
-
-      {/* ── Per-DS brand stocking status (Network Design mode, DS nodes only) ── */}
-      {isNetworkDesignActive && ndDsInfo && dsFilter !== 'DC' && (
-        <div style={{...S.card,marginBottom:12,padding:"6px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11}}>
-          {ndDsInfo.stocked.length > 0 && (
-            <span>
-              <span style={{fontWeight:700,color:"#166534"}}>Stocked: </span>
-              {ndDsInfo.stocked.map(({brand}) => (
-                <span key={brand} style={{color:"#166534",marginRight:8}}>● {brand}</span>
-              ))}
-            </span>
-          )}
-          {ndDsInfo.stocked.length > 0 && ndDsInfo.notStocked.length > 0 && (
-            <span style={{color:HR.border}}>|</span>
-          )}
-          {ndDsInfo.notStocked.length > 0 && (
-            <span>
-              <span style={{fontWeight:700,color:"#92400E"}}>Fulfilled elsewhere: </span>
-              {ndDsInfo.notStocked.map(({brand, fulfilledFrom}) => (
-                <span key={brand} style={{color:HR.muted,marginRight:10}}>
-                  {brand} <span style={{color:"#92400E"}}>→ {fulfilledFrom}</span>
-                </span>
-              ))}
-            </span>
-          )}
-        </div>
-      )}
 
       {/* ── DS Capacity inputs (Network Design mode, DS nodes only) ────────── */}
       {isNetworkDesignActive && dsFilter !== 'DC' && thickCfg && thinCfg && (
