@@ -818,7 +818,7 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
       <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",fontSize:11}}>
           <colgroup>
-            <col style={{width:148}}/><col/><col style={{width:100}}/><col style={{width:100}}/><col style={{width:50}}/><col style={{width:50}}/><col style={{width:50}}/>
+            <col style={{width:190}}/><col style={{width:260}}/><col style={{width:96}}/><col style={{width:96}}/><col style={{width:46}}/><col style={{width:46}}/><col style={{width:46}}/>
           </colgroup>
           <thead>
             <tr>
@@ -841,12 +841,15 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
                   style={{background:i%2===0?"#fff":"#FAFAF8",cursor:"pointer"}}>
                   <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#666",borderBottom:"1px solid #F5F5F0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.sku}</td>
                   <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
-                  <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0",whiteSpace:"nowrap"}}>
-                    <span style={{fontSize:10,color:"#555",marginRight:5}}>{s.mm!=null?`${s.mm}mm`:"—"}</span>
-                    <span style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,
-                      background:isThick?"#FEF3C7":"#DBEAFE",color:isThick?"#92400E":"#1e40af"}}>
-                      {isThick?"Thick":"Thin"}
-                    </span>
+                  <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <span style={{display:"inline-block",width:28,textAlign:"right",fontSize:10,color:"#555",flexShrink:0}}>{s.mm!=null?s.mm:"—"}</span>
+                      <span style={{fontSize:10,color:"#888",flexShrink:0}}>mm</span>
+                      <span style={{display:"inline-block",width:34,textAlign:"center",fontSize:9,fontWeight:700,padding:"1px 0",borderRadius:3,flexShrink:0,
+                        background:isThick?"#FEF3C7":"#DBEAFE",color:isThick?"#92400E":"#1e40af"}}>
+                        {isThick?"Thick":"Thin"}
+                      </span>
+                    </div>
                   </td>
                   <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"#555"}}>{s.brand||"—"}</td>
                   <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid #F5F5F0"}}>{s.nzd}</td>
@@ -1430,6 +1433,16 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       {isNetworkDesignActive && dsFilter !== 'DC' && thickCfg && thinCfg && (
         <div style={{...S.card,marginBottom:12,padding:"9px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11}}>
           <span style={{fontWeight:700,color:"#555"}}>Physical Capacity at {dsFilter}</span>
+          {isNetworkDesignActive && isAdmin && (
+            <><span style={{color:HR.border}}>|</span>
+            <label style={{fontSize:11,display:"flex",alignItems:"center",gap:4}}>
+              Thick boundary
+              <input type="number" value={thickBoundaryMm} min={1} max={30} step={1}
+                onChange={e => handleSaveBoundary(parseFloat(e.target.value)||6)}
+                style={{width:32,padding:"0 3px",fontSize:11,fontWeight:700,border:`1px solid #C05A00`,borderRadius:4,color:"#92400E",background:HR.white,textAlign:"center"}}/>
+              mm
+            </label></>
+          )}
           <span style={{color:HR.border}}>|</span>
           {[{label:"Thick (sheets)",type:"thick",cfg:thickCfg,setCfg:setThickCfg},{label:"Thin (sheets)",type:"thin",cfg:thinCfg,setCfg:setThinCfg}].map(({label,type,cfg,setCfg},i) => (
             <span key={type} style={{display:"flex",alignItems:"center",gap:6}}>
@@ -1510,37 +1523,19 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       })()}
 
       {/* Thick section */}
-      {dsFilter !== 'DC' && <div style={{marginBottom:24}}>
+      {/* Thick section — PCT mode only; heading + boundary moved to capacity card in ND mode */}
+      {dsFilter !== 'DC' && !isNetworkDesignActive && <div style={{marginBottom:24}}>
         <div style={{...S.sectionTitle,display:"flex",alignItems:"center",gap:6}}>
           Thick SKUs — Vertical Storage: Greater than
-          <input
-            type="number"
-            value={thickBoundaryMm}
-            disabled={!isAdmin}
-            min={1} max={30} step={1}
+          <input type="number" value={thickBoundaryMm} disabled={!isAdmin} min={1} max={30} step={1}
             onChange={e => handleSaveBoundary(parseFloat(e.target.value) || 6)}
             onFocus={e => e.target.select()}
             onKeyDown={e => { if (e.key === 'Enter' && boundaryDirty) { const freshBase = computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDateRange, thickBoundaryMm); runBothSections(freshBase); } }}
             style={{width:40,padding:"0 4px",fontSize:12,fontWeight:700,border:`1px solid #C05A00`,borderRadius:4,color:"#92400E",background:isAdmin?HR.white:HR.surfaceLight,textAlign:"center"}}
           />
           mm {!isAdmin && <span style={{fontSize:9,color:HR.muted,fontWeight:400}}>(admin to edit)</span>}
-          {isNetworkDesignActive && (() => {
-            const skus = ndSkuStats.thick;
-            const stk = skus.filter(s => s.minQty > 0).length;
-            const nstk = skus.filter(s => s.minQty === 0).length;
-            const nzd1 = skus.filter(s => s.minQty === 0 && s.trace?.nzd === 1).length;
-            return skus.length > 0 && (
-              <span style={{fontSize:10,color:HR.muted,fontWeight:400,marginLeft:10}}>
-                {skus.length} SKUs · <span style={{color:"#16a34a"}}>{stk} stocked</span>{nstk > 0 && <span> · <span style={{color:"#6B7280"}}>{nstk} not stocked{nzd1 > 0 ? ` (${nzd1} at 1 NZD)` : ""}</span></span>}
-              </span>
-            );
-          })()}
         </div>
-        {isNetworkDesignActive && ndDsInfo ? (
-          ndDsInfo.stocked.length === 0
-            ? <div style={{padding:16,color:HR.muted,fontSize:12}}>No brands stocked at {dsFilter} — see fulfillment above.</div>
-            : null
-        ) : (
+        {(
           <>
             <ConfigPanel type="thick" cfg={thickCfg} onChange={setThickCfg} isAdmin={isAdmin} onRun={runThick} dirty={thickDirty} boundary={thickBoundaryMm}/>
             {thickResults ? (
