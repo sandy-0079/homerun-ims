@@ -788,6 +788,9 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
           &nbsp;·&nbsp;
           Thin: <b style={{color:"#1e40af"}}>{stockedThin} stocked</b> / {activeThin} active
         </span>
+        <span style={{marginLeft:"auto",fontSize:11,color:"#555",whiteSpace:"nowrap"}}>
+          Max Ply Stock: <b style={{color:"#1A1A1A"}}>{thickUsed + thinUsed}</b>
+        </span>
       </div>
 
       {/* Capacity bars — side by side at 50% each */}
