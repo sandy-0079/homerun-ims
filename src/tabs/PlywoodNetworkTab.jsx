@@ -469,8 +469,13 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
   })();
   const timelineData = lookbackDates.map(d => ({ date: d.slice(5), qty: sku.dailyMap[d] || 0 }));
   const tBarSize = Math.max(3, Math.min(20, Math.floor(340 / Math.max(timelineData.length, 1))));
+  // Ensure Y-axis includes Max so reference line is never clipped
+  const timelineYMax = Math.ceil(Math.max(...timelineData.map(d=>d.qty||0), sku.maxQty||0, 1) * 1.15);
 
   // Order qty histogram
+  // Ensure histogram X-axis includes Max so reference line is visible
+  const histXMax = Math.ceil(Math.max(...(sku.orderQtys||[]), sku.maxQty||0, 1) * 1.15);
+
   const histData = (() => {
     const b = {};
     (sku.orderQtys||[]).forEach(q => { const k = Math.ceil(q); b[k] = (b[k]||0)+1; });
@@ -569,7 +574,7 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
                 <BarChart data={timelineData} margin={{left:0,right:52,top:4,bottom:16}}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false}/>
                   <XAxis dataKey="date" tick={{fontSize:8}} interval={Math.max(0,Math.floor(timelineData.length/5)-1)}/>
-                  <YAxis tick={{fontSize:8}} width={24}/>
+                  <YAxis tick={{fontSize:8}} width={24} domain={[0, timelineYMax]}/>
                   <RTooltip contentStyle={{fontSize:10}}/>
                   {sku.minQty > 0 && <ReferenceLine y={sku.minQty} stroke="#B91C1C" strokeDasharray="4 3"
                     label={{value:`Min=${sku.minQty}`,position:"right",fontSize:8,fill:"#B91C1C"}}/>}
@@ -588,7 +593,7 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
                 <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={histData} margin={{left:0,right:8,top:4,bottom:16}}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false}/>
-                    <XAxis dataKey="qty" type="number" domain={[0, 'auto']} tick={{fontSize:8}}/>
+                    <XAxis dataKey="qty" type="number" domain={[0, histXMax]} tick={{fontSize:8}}/>
                     <YAxis tick={{fontSize:8}} width={24}/>
                     <RTooltip contentStyle={{fontSize:10}} formatter={v=>[v,"orders"]} labelFormatter={l=>`Qty: ${l}`}/>
                     {sku.minQty > 0 && <ReferenceLine x={sku.minQty} stroke="#B91C1C" strokeDasharray="4 3"
@@ -1284,11 +1289,11 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                   {label:"History Window",key:"lookbackDays",min:30,max:365,step:1,hint:"Days of sales history used to compute Min & Max"},
                   {label:"Min Qty Percentile",key:"minPercentile",min:50,max:99,step:1,hint:"P95 = stock enough for 95% of peak demand days"},
                   {label:"Max Buffer Percentile",key:"maxBufferPercentile",min:50,max:99,step:1,hint:"P75 = buffer of ~one typical large order above Min"},
-                  {label:"Min Sales Days to Stock",key:"minNZD",min:1,max:20,step:1,hint:"Skip SKUs with fewer non-zero demand days than this"},
+                  {label:"Rare Zone Threshold (NZD)",key:"minNZD",min:1,max:20,step:1,hint:"Below this NZD → Rare zone (not stocked at all)"},
+                  {label:"Sparse Zone Threshold (NZD)",key:"sparseNZD",min:2,max:20,step:1,hint:"Below this NZD → Sparse (ABQ-based). Above → Frequent (P95-based)"},
+                  {label:"Sparse Zone Multiplier",key:"abqMultiplier",min:1,max:5,step:0.1,hint:"Sparse Max = ceil(ABQ × this). Default 1.5 = 50% above Min"},
                   {label:"Outlier Cap (× median)",key:"spikeCapMultiplier",min:1,max:20,step:0.5,hint:"Winsorise spike days at N × median before P95"},
                   {label:"Max Sheets per Location",key:"maxCap",min:1,max:100,step:1,hint:"Hard ceiling on Max per SKU per location"},
-                  {label:"Sparse Zone Threshold (NZD)",key:"sparseNZD",min:2,max:20,step:1,hint:"Below this NZD → Sparse (ABQ-based). Above → Frequent (P95-based)"},
-                  {label:"Sparse Zone Max Multiplier",key:"abqMultiplier",min:1,max:5,step:0.1,hint:"Sparse Max = ceil(ABQ × this). Default 1.5 = 50% above Min"},
                 ].map(({label,key,min,max,step,hint}) => (
                   <label key={key} style={{display:"flex",flexDirection:"column",gap:2}}>
                     <span style={{fontSize:11,fontWeight:600,color:"#444"}}>{label}</span>
