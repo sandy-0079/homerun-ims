@@ -1084,18 +1084,28 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                           const isNode = !!nodes[loc];
                           const isDCCol = loc === "DC";
                           const isThisExpanded = isExpanded && expandedLoc === loc;
+                          // For unchecked DS cells: which stocking nodes cover this DS?
+                          const servedBy = (!isNode && !isDCCol)
+                            ? Object.entries(nodes)
+                                .filter(([nId, nCfg]) => nId !== 'DC' && nCfg.covers?.includes(loc))
+                                .map(([nId]) => nId)
+                            : [];
                           return (
                             <td key={loc} style={{padding:"6px 10px",textAlign:"center",borderBottom:`1px solid ${HR.border}`,background:isThisExpanded?(isDCCol?"#F5F3FF":"#F0FFF4"):undefined}}>
-                              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
                                 <input type="checkbox" checked={isNode} disabled={!isAdmin}
                                   onChange={() => toggleNodeForBrand(brand, loc)}
                                   style={{cursor:isAdmin?"pointer":"default",accentColor:isDCCol?"#7C3AED":"#166534"}}/>
-                                {isNode && (
+                                {isNode ? (
                                   <button onClick={() => setExpandedCell(isThisExpanded ? null : {brand,loc})}
                                     style={{fontSize:9,color:isDCCol?"#7C3AED":"#166534",background:"none",border:"none",cursor:"pointer",padding:0,fontWeight:600}}>
                                     {isThisExpanded ? "▲ close" : `${(nodes[loc]?.covers||[]).length} DSes ▾`}
                                   </button>
-                                )}
+                                ) : servedBy.length > 0 ? (
+                                  <span style={{fontSize:9,color:HR.muted,lineHeight:1.3,textAlign:"center"}}>
+                                    {servedBy.join(' · ')}
+                                  </span>
+                                ) : null}
                               </div>
                             </td>
                           );
