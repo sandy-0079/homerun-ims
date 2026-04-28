@@ -1019,7 +1019,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             {Object.keys(effectiveNetCfg.brands).join(" · ")}
           </span>
           <span style={{color:"#b7ddb7",fontSize:12}}>|</span>
-          <span style={{fontSize:11,fontWeight:700,color:"#92400E",whiteSpace:"nowrap"}}>PCT (this tab excluded)</span>
+          <span style={{fontSize:11,fontWeight:700,color:"#92400E",whiteSpace:"nowrap"}}>Excluded</span>
           <span style={{fontSize:11,color:"#92400E"}}>Merino</span>
         </div>
       )}
