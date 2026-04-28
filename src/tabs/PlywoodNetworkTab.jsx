@@ -1059,7 +1059,16 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             </div>
 
             {/* ── Brand Network Assignments — matrix (DC mult columns on right) ── */}
-            <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}}>Brand Network Assignments</div>
+            <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:8}}>
+              <span style={{fontSize:11,fontWeight:700,color:"#555",flexShrink:0}}>Brand Network Assignments</span>
+              <span style={{fontSize:10,color:HR.muted,display:"flex",gap:12,flexWrap:"wrap"}}>
+                <span><span style={{color:"#166534",fontWeight:700}}>☑</span> Stocked here — aggregates demand from selected DSes</span>
+                <span style={{color:HR.border}}>|</span>
+                <span><span style={{color:"#166534",fontWeight:700}}>N DSes ▾</span> Click to edit which DSes demand is pulled from</span>
+                <span style={{color:HR.border}}>|</span>
+                <span><span style={{fontWeight:700}}>☐</span> Not stocked — fulfillment source shown below checkbox</span>
+              </span>
+            </div>
             <div style={{overflowX:"auto"}}>
               <table style={{borderCollapse:"collapse",fontSize:11,width:"100%"}}>
                 <thead>
