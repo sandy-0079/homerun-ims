@@ -1001,7 +1001,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     const allStats = [];
     ndDsInfo.stocked.forEach(({ brand, covers }) => {
       const stats = computeNetworkNodeStats(invoiceData, skuMaster, brand, covers, effectiveNetCfg.lookbackDays || 90);
-      allStats.push(...stats.map(s => ({ ...s, covers })));
+      allStats.push(...stats.map(s => ({ ...s, covers, brand })));
     });
     const withMM = applyNetworkFormula(allStats, effectiveNetCfg, appliedBoundary);
     return { thick: withMM.filter(s => s.thicknessCat === 'Thick'), thin: withMM.filter(s => s.thicknessCat !== 'Thick') };
