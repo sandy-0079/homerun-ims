@@ -1249,17 +1249,19 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
 
       {/* ── DS Physical Capacity — between summary cards and Thick/Thin sections ── */}
       {isNetworkDesignActive && dsFilter !== 'DC' && thickCfg && thinCfg && (
-        <div style={{...S.card,marginBottom:12,padding:"7px 14px",display:"flex",gap:24,alignItems:"center",flexWrap:"wrap"}}>
-          <span style={{fontSize:11,fontWeight:700,color:"#555"}}>Physical Capacity at {dsFilter}</span>
-          {[{label:"Thick (sheets)",type:"thick",cfg:thickCfg,setCfg:setThickCfg},{label:"Thin (sheets)",type:"thin",cfg:thinCfg,setCfg:setThinCfg}].map(({label,type,cfg,setCfg}) => (
-            <label key={type} style={{fontSize:11,display:"flex",alignItems:"center",gap:6}}>
-              {label}
+        <div style={{...S.card,marginBottom:12,padding:"7px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11}}>
+          <span style={{fontWeight:700,color:"#555"}}>Physical Capacity at {dsFilter}</span>
+          <span style={{color:HR.border}}>|</span>
+          {[{label:"Thick (sheets)",type:"thick",cfg:thickCfg,setCfg:setThickCfg},{label:"Thin (sheets)",type:"thin",cfg:thinCfg,setCfg:setThinCfg}].map(({label,type,cfg,setCfg},i) => (
+            <span key={type} style={{display:"flex",alignItems:"center",gap:6}}>
+              {i > 0 && <span style={{color:HR.border,marginRight:6}}>·</span>}
+              <span style={{color:"#555"}}>{label}</span>
               <input type="number" min={1} max={2000} step={10}
                 value={cfg.capacity ?? ''}
                 disabled={!isAdmin}
                 onChange={e => { const v = parseFloat(e.target.value)||0; setCfg(c=>({...c,capacity:v})); handleSaveConfig(type,{...cfg,capacity:v}); }}
-                style={{...S.input,width:70,opacity:isAdmin?1:0.7}}/>
-            </label>
+                style={{...S.input,width:60,fontSize:11,padding:"2px 6px",opacity:isAdmin?1:0.7}}/>
+            </span>
           ))}
         </div>
       )}
