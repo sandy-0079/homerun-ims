@@ -1058,33 +1058,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
               ))}
             </div>
 
-            {/* ── DC Multipliers ───────────────────────────────────────────── */}
-            <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}}>DC Multipliers per Brand</div>
-            <table style={{borderCollapse:"collapse",marginBottom:16,fontSize:11}}>
-              <thead>
-                <tr style={{background:HR.surfaceLight}}>
-                  <th style={{padding:"4px 12px 4px 8px",textAlign:"left",color:HR.muted,fontWeight:600,borderBottom:`1px solid ${HR.border}`}}>Brand</th>
-                  <th style={{padding:"4px 16px",textAlign:"center",color:HR.muted,fontWeight:600,borderBottom:`1px solid ${HR.border}`}}>DC Mult Min</th>
-                  <th style={{padding:"4px 16px",textAlign:"center",color:HR.muted,fontWeight:600,borderBottom:`1px solid ${HR.border}`}}>DC Mult Max</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(editingNetCfg.brands || {}).map(([brand, cfg], i) => (
-                  <tr key={brand} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                    <td style={{padding:"5px 12px 5px 8px",fontWeight:600}}>{brand}</td>
-                    {["dcMultMin","dcMultMax"].map(key => (
-                      <td key={key} style={{padding:"4px 16px",textAlign:"center"}}>
-                        <input type="number" min={0.1} max={5} step={0.1}
-                          value={cfg[key] ?? ""}
-                          onChange={e => handleNetBrandCfgChange(brand, key, Number(e.target.value))}
-                          style={{...S.input,width:60,textAlign:"center"}}/>
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {/* ── Brand Network Assignments — matrix ───────────────────── */}
+            {/* ── Brand Network Assignments — matrix (DC mult columns on right) ── */}
             <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}}>Brand Network Assignments</div>
             <div style={{overflowX:"auto"}}>
               <table style={{borderCollapse:"collapse",fontSize:11,width:"100%"}}>
@@ -1094,6 +1068,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                     {[...DS_LIST,"DC"].map(loc => (
                       <th key={loc} style={{padding:"5px 10px",textAlign:"center",color:loc==="DC"?"#7C3AED":HR.muted,fontWeight:700,borderBottom:`1px solid ${HR.border}`,minWidth:72}}>{loc}</th>
                     ))}
+                    <th style={{padding:"5px 10px",textAlign:"center",color:HR.muted,fontWeight:600,borderBottom:`1px solid ${HR.border}`,minWidth:72,borderLeft:`1px solid ${HR.border}`}}>DC Mult Min</th>
+                    <th style={{padding:"5px 10px",textAlign:"center",color:HR.muted,fontWeight:600,borderBottom:`1px solid ${HR.border}`,minWidth:72}}>DC Mult Max</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1124,6 +1100,15 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                             </td>
                           );
                         })}
+                        {["dcMultMin","dcMultMax"].map((key, ki) => (
+                          <td key={key} style={{padding:"5px 8px",textAlign:"center",borderBottom:`1px solid ${HR.border}`,borderLeft:ki===0?`1px solid ${HR.border}`:undefined}}>
+                            <input type="number" min={0.1} max={5} step={0.1}
+                              value={cfg[key] ?? ""}
+                              disabled={!isAdmin}
+                              onChange={e => handleNetBrandCfgChange(brand, key, Number(e.target.value))}
+                              style={{...S.input,width:52,textAlign:"center",opacity:isAdmin?1:0.7}}/>
+                          </td>
+                        ))}
                       </tr>
                     );
                     if (!isExpanded) return [brandRow];
@@ -1133,7 +1118,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                         <td style={{padding:"8px 10px",fontSize:10,color:HR.muted,fontStyle:"italic",borderBottom:`1px solid ${HR.border}`}}>
                           {brand} · {expandedLoc}
                         </td>
-                        <td colSpan={6} style={{padding:"8px 10px",borderBottom:`1px solid ${HR.border}`,background:isDCExpanded?"#F5F3FF":"#F0FFF4"}}>
+                        <td colSpan={8} style={{padding:"8px 10px",borderBottom:`1px solid ${HR.border}`,background:isDCExpanded?"#F5F3FF":"#F0FFF4"}}>
                           <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
                             <span style={{fontSize:10,fontWeight:600,color:isDCExpanded?"#7C3AED":"#166534",marginRight:4}}>
                               {isDCExpanded ? "Fulfils customer orders from:" : "Aggregates demand from:"}
