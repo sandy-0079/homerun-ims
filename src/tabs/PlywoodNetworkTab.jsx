@@ -571,8 +571,6 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
                   <XAxis dataKey="date" tick={{fontSize:8}} interval={Math.max(0,Math.floor(timelineData.length/5)-1)}/>
                   <YAxis tick={{fontSize:8}} width={24}/>
                   <RTooltip contentStyle={{fontSize:10}}/>
-                  {sku.dailyMedian > 0 && <ReferenceLine y={sku.dailyMedian} stroke="#888" strokeDasharray="3 2"
-                    label={{value:`Median=${sku.dailyMedian.toFixed(0)}`,position:"right",fontSize:8,fill:"#888"}}/>}
                   {sku.minQty > 0 && <ReferenceLine y={sku.minQty} stroke="#B91C1C" strokeDasharray="4 3"
                     label={{value:`Min=${sku.minQty}`,position:"right",fontSize:8,fill:"#B91C1C"}}/>}
                   {sku.maxQty > 0 && <ReferenceLine y={sku.maxQty} stroke="#16a34a" strokeDasharray="4 3"
