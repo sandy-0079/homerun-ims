@@ -57,10 +57,10 @@ function aggregateDailyTotals(sku, coveredDSes, dailyDemand) {
 function computeNodeMin(sku, coveredDSes, dailyDemand, minPct, spikeCapMult, minNZD) {
   const totals = aggregateDailyTotals(sku, coveredDSes, dailyDemand);
   const nonZero = Object.values(totals).filter(q => q > 0).sort((a, b) => a - b);
-  if (nonZero.length === 0) return { min: 0, nonZeroCount: 0, belowMinNZD: true };
+  if (nonZero.length === 0) return { min: 0, nonZeroCount: 0, belowMinNZD: true, p95Raw: 0 };
 
-  // Guard 1: insufficient demand history → do not stock
-  if (nonZero.length < (minNZD || 2)) return { min: 0, nonZeroCount: nonZero.length, belowMinNZD: true };
+  // Guard 1: insufficient demand history → do not stock (Rare zone)
+  if (nonZero.length < (minNZD || 2)) return { min: 0, nonZeroCount: nonZero.length, belowMinNZD: true, p95Raw: 0 };
 
   // Guard 2: winsorize — cap values above median × spikeCapMult
   const mid = Math.floor(nonZero.length / 2);
@@ -70,7 +70,8 @@ function computeNodeMin(sku, coveredDSes, dailyDemand, minPct, spikeCapMult, min
   const cap = med * (spikeCapMult || 3);
   const winsorized = nonZero.map(v => Math.min(v, cap));
 
-  return { min: Math.ceil(percentile(winsorized, minPct)), nonZeroCount: nonZero.length };
+  const p95Raw = percentile(winsorized, minPct);
+  return { min: Math.ceil(p95Raw), nonZeroCount: nonZero.length, p95Raw };
 }
 
 // P{pct} of individual order quantities across covered DSes → Max buffer.
@@ -103,6 +104,8 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
     maxCap = 20,
     spikeCapMultiplier = 3,
     minNZD = 2,
+    sparseNZD = 5,
+    abqMultiplier = 1.5,
     brands,
   } = cfg;
 
@@ -127,17 +130,36 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
     // Compute Min/Max for each DS stocking node
     for (const [nodeId, nodeCfg] of Object.entries(nodes)) {
       if (nodeId === 'DC') continue;
-      const { min: minQty, nonZeroCount, belowMinNZD } = computeNodeMin(skuId, nodeCfg.covers, dailyDemand, minPercentile, spikeCapMultiplier, minNZD);
-      // No buffer when below NZD threshold — both Min and Max must be 0
-      const orderBuf = belowMinNZD ? 0 : computeOrderBuffer(skuId, nodeCfg.covers, orderQtys, maxBufferPercentile);
-      // Min stays at P95 — reorder trigger reflects actual demand, not artificially lowered
-      // by subtracting orderBuf from cap (which over-widens gap and increases OOS risk).
-      // Max is capped at maxCap. Gap = orderBuf when uncapped; Cap − P95 when capped (≥ 1).
-      const finalMax = Math.min(minQty + orderBuf, maxCap);
-      const finalMin = Math.min(minQty, Math.max(0, finalMax - 1)); // gap always ≥ 1
+      const { min: p95Min, nonZeroCount, belowMinNZD, p95Raw } =
+        computeNodeMin(skuId, nodeCfg.covers, dailyDemand, minPercentile, spikeCapMultiplier, minNZD);
+
+      let finalMin, finalMax, zone, abq = null, demandSignal = null;
+
+      if (belowMinNZD) {
+        // Rare: too few observations — do not stock
+        zone = 'rare'; finalMin = 0; finalMax = 0;
+      } else if (nonZeroCount < sparseNZD) {
+        // Sparse: ABQ-based stocking — P95 unreliable with few data points
+        zone = 'sparse';
+        const allOrders = [];
+        for (const ds of nodeCfg.covers) allOrders.push(...(orderQtys[skuId]?.[ds] || []));
+        const totalQty = allOrders.reduce((a, b) => a + b, 0);
+        abq = allOrders.length > 0 ? totalQty / allOrders.length : 0;
+        demandSignal = abq;
+        finalMin = Math.ceil(abq);
+        finalMax = Math.min(Math.max(Math.ceil(abq * abqMultiplier), finalMin), maxCap);
+      } else {
+        // Frequent: P95-based stocking
+        zone = 'frequent';
+        demandSignal = p95Raw;
+        const orderBuf = computeOrderBuffer(skuId, nodeCfg.covers, orderQtys, maxBufferPercentile);
+        finalMax = Math.min(p95Min + orderBuf, maxCap);
+        finalMin = Math.min(p95Min, Math.max(0, finalMax - 1));
+      }
+
       nodeMinMax[nodeId] = { min: finalMin, max: finalMax };
       // Store covers so the tab can display "Covered DSes: DS01, DS05"
-      storeResults[nodeId] = { min: finalMin, max: finalMax, nonZeroCount, covers: nodeCfg.covers };
+      storeResults[nodeId] = { min: finalMin, max: finalMax, nonZeroCount, covers: nodeCfg.covers, zone, abq, demandSignal };
     }
 
     // Non-stocking DSes → 0

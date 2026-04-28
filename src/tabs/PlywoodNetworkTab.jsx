@@ -482,9 +482,11 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
   const winsorised = t.spikeCap != null && (t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v);
 
   const fmtCovers = (arr) => (arr||[]).join(', ');
+  const totalOrderQty = (sku.orderQtys||[]).reduce((a,b)=>a+b,0);
+  const abqVal = (sku.orderQtys||[]).length > 0 ? (totalOrderQty / sku.orderQtys.length) : 0;
   const statLine = t.isDC
     ? `DC Min: ${sku.minQty} · DC Max: ${sku.maxQty}`
-    : `Min: ${sku.minQty} · Max: ${sku.maxQty} · ${t.nzd||0} NZD · ${t.orderQtyCount||0} orders`;
+    : `Min: ${sku.minQty} · Max: ${sku.maxQty} · ${t.nzd||0} NZD · ${t.orderQtyCount||0} orders · ${totalOrderQty} qty · ABQ: ${abqVal.toFixed(1)}`;
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
@@ -519,12 +521,26 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
             <div>Replenishment: <b>Σ DS_Min × {t.dcMultMin}</b> = {Math.ceil((t.sumMin||0) * (t.dcMultMin||0.3))} sheets &nbsp;|&nbsp; DC Min = {t.dcP95} + {Math.ceil((t.sumMin||0)*(t.dcMultMin||0.3))} = <b style={{color:"#B91C1C"}}>{sku.minQty}</b></div>
             <div>Replenishment: <b>Σ DS_Min × {t.dcMultMax}</b> = {Math.ceil((t.sumMin||0) * (t.dcMultMax||0.5))} sheets &nbsp;|&nbsp; DC Max = {t.dcP95} + {Math.ceil((t.sumMin||0)*(t.dcMultMax||0.5))} = <b style={{color:"#16a34a"}}>{sku.maxQty}</b></div>
           </div>
-        ) : t.belowMinNZD ? (
-          <div style={{fontSize:11,color:"#92400E",background:"#FFF7ED",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
-            ⚠ Only {t.nzd} NZD day{t.nzd!==1?"s":""} in lookback — below minimum threshold ({t.minNZDThreshold}). Not stocked (Min = Max = 0).
+        ) : t.zone === 'rare' || t.belowMinNZD ? (
+          <div style={{fontSize:11,color:"#6B7280",background:"#F8F8F8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            <span style={{...ZONE_STYLES.rare.badge,padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,marginRight:8}}>Rare</span>
+            Only {t.nzd||0} NZD day{(t.nzd||0)!==1?"s":""} in lookback — below minimum threshold ({t.minNZDThreshold}). Not stocked.
+          </div>
+        ) : t.zone === 'sparse' ? (
+          <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FFFBEB",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            <span style={{...ZONE_STYLES.sparse.badge,padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,marginRight:8}}>Sparse</span>
+            <span style={{color:"#888",fontSize:10}}>{t.nzd} NZD days — using ABQ instead of P{t.pMin} (too few observations for reliable P95)</span>
+            <div style={{marginTop:4}}>
+              ABQ &nbsp;=&nbsp; {totalOrderQty} total qty ÷ {t.orderQtyCount} orders &nbsp;=&nbsp; <b>{abqVal.toFixed(1)}</b> &nbsp;→&nbsp; <b style={{color:"#B91C1C"}}>Min = {sku.minQty}</b>
+            </div>
+            <div>
+              Min ({sku.minQty}) × {t.abqMultiplier||1.5} &nbsp;=&nbsp; {(sku.minQty*(t.abqMultiplier||1.5)).toFixed(1)} &nbsp;→&nbsp; <b style={{color:"#16a34a"}}>Max = {sku.maxQty}</b>
+              {sku.maxQty >= (t.cap||20) && <span style={{color:"#888"}}> (cap {t.cap})</span>}
+            </div>
           </div>
         ) : (
           <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FAFAF8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            <span style={{...ZONE_STYLES.frequent.badge,padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,marginRight:8}}>Frequent</span>
             <div>
               <b>P{t.pMin}</b> of daily demand ({t.nzd} NZD days, median <b>{t.dtMedian?.toFixed(1)}</b> sheets)
               {winsorised && <span style={{color:"#888",marginLeft:6}}>— outliers winsorised at {t.dtMedian?.toFixed(1)} × {((t.spikeCap||0)/(t.dtMedian||1)).toFixed(0)}</span>}
@@ -677,6 +693,7 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
   const [filterBrand, setFilterBrand] = React.useState('All');
   const [filterType,  setFilterType]  = React.useState('All');
   const [filterMm,    setFilterMm]    = React.useState('All');
+  const [filterZone,  setFilterZone]  = React.useState('All');
   const [sortBy,      setSortBy]      = React.useState('nzd');
   const [sortDir,     setSortDir]     = React.useState(-1);
 
@@ -693,6 +710,7 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
   // Dropdown options
   const brands   = ['All', ...[...new Set(allSkus.map(s=>s.brand).filter(Boolean))].sort()];
   const mmOpts   = ['All', ...[...new Set(allSkus.map(s=>s.mm).filter(v=>v!=null))].sort((a,b)=>a-b).map(v=>`${v}mm`)];
+  const zoneOrder = { frequent:0, sparse:1, rare:2 };
 
   const handleSort = col => {
     if (sortBy === col) setSortDir(d => d*-1);
@@ -706,6 +724,7 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
       if (filterType  === 'Thick' && s.thicknessCat !== 'Thick') return false;
       if (filterType  === 'Thin'  && s.thicknessCat === 'Thick') return false;
       if (filterMm    !== 'All'   && `${s.mm}mm` !== filterMm)   return false;
+      if (filterZone  !== 'All'   && s.zone !== filterZone)       return false;
       if (q && !s.sku.toLowerCase().includes(q) && !s.name.toLowerCase().includes(q)) return false;
       return true;
     })
@@ -718,6 +737,8 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
         case 'nzd':   return (b.nzd - a.nzd) * sortDir;
         case 'min':   return (b.minQty - a.minQty) * sortDir;
         case 'max':   return (b.maxQty - a.maxQty) * sortDir;
+        case 'zone':  return ((zoneOrder[a.zone]||0) - (zoneOrder[b.zone]||0)) * sortDir;
+        case 'signal': return ((b.demandSignal||0) - (a.demandSignal||0)) * sortDir;
         default: return 0;
       }
     });
@@ -752,7 +773,7 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
     );
   };
 
-  const hasFilter = query || filterBrand!=='All' || filterType!=='All' || filterMm!=='All';
+  const hasFilter = query || filterBrand!=='All' || filterType!=='All' || filterMm!=='All' || filterZone!=='All';
 
   return (
     <div>
@@ -788,8 +809,14 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
         <select value={filterMm} onChange={e=>setFilterMm(e.target.value)} style={sel}>
           {mmOpts.map(v => <option key={v} value={v}>{v==='All'?'All mm':v}</option>)}
         </select>
+        <select value={filterZone} onChange={e=>setFilterZone(e.target.value)} style={sel}>
+          <option value="All">All Zones</option>
+          <option value="frequent">Frequent</option>
+          <option value="sparse">Sparse</option>
+          <option value="rare">Rare</option>
+        </select>
         {hasFilter && (
-          <button onClick={() => {setQuery('');setFilterBrand('All');setFilterType('All');setFilterMm('All');}}
+          <button onClick={() => {setQuery('');setFilterBrand('All');setFilterType('All');setFilterMm('All');setFilterZone('All');}}
             style={{fontSize:10,color:"#7C3AED",background:"none",border:"1px solid #7C3AED",borderRadius:4,padding:"3px 8px",cursor:"pointer"}}>
             Clear
           </button>
@@ -801,7 +828,7 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
       <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",fontSize:11}}>
           <colgroup>
-            <col style={{width:"22%"}}/><col style={{width:"33%"}}/><col style={{width:"11%"}}/><col style={{width:"12%"}}/><col style={{width:"7%"}}/><col style={{width:"7%"}}/><col style={{width:"8%"}}/>
+            <col style={{width:"18%"}}/><col style={{width:"25%"}}/><col style={{width:"9%"}}/><col style={{width:"9%"}}/><col style={{width:"8%"}}/><col style={{width:"6%"}}/><col style={{width:"8%"}}/><col style={{width:"8%"}}/><col style={{width:"9%"}}/>
           </colgroup>
           <thead>
             <tr>
@@ -809,7 +836,9 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
               {sh('name','Item Name',false)}
               {sh('mm','Thickness',true)}
               {sh('brand','Brand',false)}
+              {sh('zone','Zone',true)}
               {sh('nzd','NZD',true)}
+              {sh('signal','P95/ABQ',true)}
               {sh('min','Min',true)}
               {sh('max','Max',true)}
             </tr>
@@ -817,14 +846,16 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
           <tbody>
             {filtered.length === 0 ? (
               <tr><td colSpan={7} style={{padding:16,textAlign:"center",color:"#aaa",fontSize:11}}>No SKUs match the current filters</td></tr>
-            ) : filtered.map((s,i) => {
+            ) : filtered.map((s) => {
               const isThick = s.thicknessCat === 'Thick';
+              const zs = ZONE_STYLES[s.zone] || ZONE_STYLES.rare;
+              const signal = s.demandSignal != null ? s.demandSignal.toFixed(1) : "—";
               return (
                 <tr key={s.sku} onClick={() => onSelectSku(s)}
-                  style={{background:i%2===0?"#fff":"#FAFAF8",cursor:"pointer"}}>
-                  <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#666",borderBottom:"1px solid #F5F5F0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.sku}</td>
-                  <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
-                  <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0"}}>
+                  style={{background:zs.bg, cursor:"pointer"}}>
+                  <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#555",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.sku}</td>
+                  <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
+                  <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
                       <span style={{display:"inline-block",width:28,textAlign:"right",fontSize:10,color:"#555",flexShrink:0}}>{s.mm!=null?s.mm:"—"}</span>
                       <span style={{fontSize:10,color:"#888",flexShrink:0}}>mm</span>
@@ -834,10 +865,14 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
                       </span>
                     </div>
                   </td>
-                  <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"#555"}}>{s.brand||"—"}</td>
-                  <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid #F5F5F0"}}>{s.nzd}</td>
-                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:"#1e40af",borderBottom:"1px solid #F5F5F0"}}>{s.minQty}</td>
-                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:"#166534",borderBottom:"1px solid #F5F5F0"}}>{s.maxQty}</td>
+                  <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"#555"}}>{s.brand||"—"}</td>
+                  <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
+                    <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,...zs.badge}}>{zs.label}</span>
+                  </td>
+                  <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{s.nzd}</td>
+                  <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555"}}>{signal}</td>
+                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:s.minQty>0?"#1e40af":"#bbb",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{s.minQty}</td>
+                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:s.maxQty>0?"#166534":"#bbb",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{s.maxQty}</td>
                 </tr>
               );
             })}
@@ -850,15 +885,25 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
 
 // Shared formula: apply P95/winsorize/cap logic to a list of SKU stats.
 // Used by both DS node view and DC computation.
+// Zone constants — exported for reuse in table/modal
+const ZONE_STYLES = {
+  frequent: { bg:'#F0FFF4', badge:{background:'#D1FAE5',color:'#065F46'}, label:'Frequent' },
+  sparse:   { bg:'#FFFBEB', badge:{background:'#FEF3C7',color:'#92400E'}, label:'Sparse'   },
+  rare:     { bg:'#F8F8F8', badge:{background:'#F3F4F6',color:'#6B7280'}, label:'Rare'     },
+};
+
 function applyNetworkFormula(statsList, cfg, boundary) {
-  const pMin  = cfg.minPercentile      || 95;
-  const pBuf  = cfg.maxBufferPercentile || 75;
-  const cap   = cfg.maxCap             || 20;
-  const spike = cfg.spikeCapMultiplier  || 3;
-  const nzdTh = cfg.minNZD             || 2;
+  const pMin     = cfg.minPercentile       || 95;
+  const pBuf     = cfg.maxBufferPercentile  || 75;
+  const cap      = cfg.maxCap              || 20;
+  const spike    = cfg.spikeCapMultiplier   || 3;
+  const nzdTh    = cfg.minNZD              || 2;
+  const sparseNZD   = cfg.sparseNZD        || 5;
+  const abqMult  = cfg.abqMultiplier       || 1.5;
+
   return statsList.map(s => {
     const mm = inferThickness(s.name);
-    if (mm !== null && mm <= 1) return null; // laminate
+    if (mm !== null && mm <= 1) return null;
     const thicknessCat = thicknessCategory(mm, 1, boundary);
     const dt = s.dailyTotals;
     const mid = Math.floor(dt.length / 2);
@@ -866,20 +911,45 @@ function applyNetworkFormula(statsList, cfg, boundary) {
     const belowMinNZD = dt.length < nzdTh;
     const spikeCap = dtMedian * spike;
     const winsorized = dt.map(v => Math.min(v, spikeCap));
-    const minQty  = belowMinNZD || !winsorized.length ? 0 : Math.ceil(percentile(winsorized, pMin));
-    // No buffer when below NZD threshold — both Min and Max must be 0
-    const orderBuf = belowMinNZD ? 0 : (s.orderQtys.length ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0);
-    const maxQty  = Math.min(minQty + orderBuf, cap);
-    const minFinal = Math.min(minQty, Math.max(0, maxQty - 1));
+    const p95Raw = winsorized.length ? percentile(winsorized, pMin) : 0;
+
+    let minFinal, maxQty, zone, abq = null, demandSignal = null;
+
+    if (belowMinNZD) {
+      // Rare zone — not stocked
+      zone = 'rare'; minFinal = 0; maxQty = 0;
+    } else if (dt.length < sparseNZD) {
+      // Sparse zone — ABQ-based: P95 unreliable with few observations
+      zone = 'sparse';
+      const totalQty = s.orderQtys.reduce((a, b) => a + b, 0);
+      abq = s.orderQtys.length > 0 ? totalQty / s.orderQtys.length : 0;
+      demandSignal = abq;
+      minFinal = Math.ceil(abq);
+      maxQty   = Math.min(Math.max(Math.ceil(abq * abqMult), minFinal), cap);
+    } else {
+      // Frequent zone — P95-based
+      zone = 'frequent';
+      demandSignal = p95Raw;
+      const minQty  = Math.ceil(p95Raw);
+      const orderBuf = s.orderQtys.length ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0;
+      maxQty  = Math.min(minQty + orderBuf, cap);
+      minFinal = Math.min(minQty, Math.max(0, maxQty - 1));
+    }
+
+    const orderBufForTrace = zone === 'frequent'
+      ? (s.orderQtys.length ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0) : 0;
+
     const trace = {
       covers: s.covers || [], nzd: dt.length, belowMinNZD, minNZDThreshold: nzdTh,
       rawNonZero: dt, dtMedian, spikeCap: dtMedian > 0 ? spikeCap : null, winsorized,
-      p95Raw: winsorized.length ? percentile(winsorized, pMin) : 0, pMin,
-      orderBuf, pBuf, orderQtyCount: s.orderQtys.length,
-      rawMax: minQty + orderBuf, capApplied: (minQty + orderBuf) > cap, cap,
-      lookbackDays: cfg.lookbackDays || 90,
+      p95Raw, pMin, orderBuf: orderBufForTrace, pBuf,
+      orderQtyCount: s.orderQtys.length,
+      rawMax: zone === 'frequent' ? Math.ceil(p95Raw) + orderBufForTrace : maxQty,
+      capApplied: zone === 'frequent' && (Math.ceil(p95Raw) + orderBufForTrace) > cap,
+      cap, lookbackDays: cfg.lookbackDays || 90,
+      zone, abq, abqMultiplier: abqMult, demandSignal,
     };
-    return { ...s, mm, thicknessCat, minQty: minFinal, maxQty, dailyMedian: dtMedian, trace };
+    return { ...s, mm, thicknessCat, minQty: minFinal, maxQty, dailyMedian: dtMedian, zone, abq, demandSignal, trace };
   }).filter(Boolean).filter(s => s.thicknessCat !== 'Laminate');
 }
 
@@ -1219,6 +1289,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                   {label:"Min Sales Days to Stock",key:"minNZD",min:1,max:20,step:1,hint:"Skip SKUs with fewer non-zero demand days than this"},
                   {label:"Outlier Cap (× median)",key:"spikeCapMultiplier",min:1,max:20,step:0.5,hint:"Winsorise spike days at N × median before P95"},
                   {label:"Max Sheets per Location",key:"maxCap",min:1,max:100,step:1,hint:"Hard ceiling on Max per SKU per location"},
+                  {label:"Sparse Zone Threshold (NZD)",key:"sparseNZD",min:2,max:20,step:1,hint:"Below this NZD → Sparse (ABQ-based). Above → Frequent (P95-based)"},
+                  {label:"Sparse Zone Max Multiplier",key:"abqMultiplier",min:1,max:5,step:0.1,hint:"Sparse Max = ceil(ABQ × this). Default 1.5 = 50% above Min"},
                 ].map(({label,key,min,max,step,hint}) => (
                   <label key={key} style={{display:"flex",flexDirection:"column",gap:2}}>
                     <span style={{fontSize:11,fontWeight:600,color:"#444"}}>{label}</span>

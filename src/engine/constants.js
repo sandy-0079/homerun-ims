@@ -26,6 +26,8 @@ export const PLYWOOD_NETWORK_CONFIG_DEFAULT = {
   maxCap: 20,
   spikeCapMultiplier: 3,
   minNZD: 2,
+  sparseNZD: 5,
+  abqMultiplier: 1.5,
   dcCapacity: { thick: 400, thin: 400 },
   brands: {
     "Action Tesa": {
