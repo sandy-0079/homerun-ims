@@ -1032,31 +1032,36 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       {isAdmin && effectiveNetCfg?.brands && (
         <details style={{marginBottom:16}} open={false}>
           <summary style={{cursor:"pointer",fontSize:12,fontWeight:700,color:"#7C3AED",padding:"6px 0",userSelect:"none"}}>
-            ⚙ Network Design Config {netCfgDirty ? " · unsaved changes" : ""}
+            ⚙ Network Design Configuration {netCfgDirty ? " · unsaved changes" : ""}
           </summary>
-          <div style={{...S.card,marginTop:8,padding:14}}>
+          <div style={{...S.card,marginTop:8,padding:0,overflow:"hidden"}}>
 
-            {/* ── Global Settings ─────────────────────────────────────────── */}
-            <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}}>Global Settings</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px 24px",marginBottom:16}}>
-              {[
-                {label:"History Window",key:"lookbackDays",min:30,max:365,step:1,hint:"Days of sales history used to compute Min & Max"},
-                {label:"Min Qty Percentile",key:"minPercentile",min:50,max:99,step:1,hint:"P95 = stock enough for 95% of peak demand days"},
-                {label:"Max Sheets per Location",key:"maxCap",min:1,max:100,step:1,hint:"Hard ceiling on Max per SKU per location"},
-                {label:"Max Buffer Percentile",key:"maxBufferPercentile",min:50,max:99,step:1,hint:"P75 = buffer of ~one typical large order above Min"},
-                {label:"Outlier Cap (× median)",key:"spikeCapMultiplier",min:1,max:20,step:0.5,hint:"Winsorise spike days at N × median before P95"},
-                {label:"Min Sales Days to Stock",key:"minNZD",min:1,max:20,step:1,hint:"Skip SKUs with fewer non-zero demand days than this"},
-              ].map(({label,key,min,max,step,hint}) => (
-                <label key={key} style={{display:"flex",flexDirection:"column",gap:2}}>
-                  <span style={{fontSize:11,fontWeight:600,color:"#444"}}>{label}</span>
-                  <input type="number" min={min} max={max} step={step}
-                    value={editingNetCfg[key] ?? ""}
-                    onChange={e => handleNetCfgChange(key, Number(e.target.value))}
-                    style={{...S.input,width:"100%"}}/>
-                  <span style={{fontSize:9,color:HR.muted,lineHeight:1.4}}>{hint}</span>
-                </label>
-              ))}
+            {/* ── Global Settings — tinted background to distinguish from brand table ── */}
+            <div style={{background:"#F5F3FF",padding:"12px 14px 14px",borderBottom:`1px solid #E5E0F8`}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#7C3AED",marginBottom:10,letterSpacing:0.2}}>Global Settings</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px 24px"}}>
+                {[
+                  {label:"History Window",key:"lookbackDays",min:30,max:365,step:1,hint:"Days of sales history used to compute Min & Max"},
+                  {label:"Min Qty Percentile",key:"minPercentile",min:50,max:99,step:1,hint:"P95 = stock enough for 95% of peak demand days"},
+                  {label:"Max Buffer Percentile",key:"maxBufferPercentile",min:50,max:99,step:1,hint:"P75 = buffer of ~one typical large order above Min"},
+                  {label:"Min Sales Days to Stock",key:"minNZD",min:1,max:20,step:1,hint:"Skip SKUs with fewer non-zero demand days than this"},
+                  {label:"Outlier Cap (× median)",key:"spikeCapMultiplier",min:1,max:20,step:0.5,hint:"Winsorise spike days at N × median before P95"},
+                  {label:"Max Sheets per Location",key:"maxCap",min:1,max:100,step:1,hint:"Hard ceiling on Max per SKU per location"},
+                ].map(({label,key,min,max,step,hint}) => (
+                  <label key={key} style={{display:"flex",flexDirection:"column",gap:2}}>
+                    <span style={{fontSize:11,fontWeight:600,color:"#444"}}>{label}</span>
+                    <input type="number" min={min} max={max} step={step}
+                      value={editingNetCfg[key] ?? ""}
+                      onChange={e => handleNetCfgChange(key, Number(e.target.value))}
+                      style={{...S.input,width:"100%",background:"#fff"}}/>
+                    <span style={{fontSize:9,color:"#9B8EC4",lineHeight:1.4}}>{hint}</span>
+                  </label>
+                ))}
+              </div>
             </div>
+
+            {/* ── Brand table section — default white background ── */}
+            <div style={{padding:"12px 14px 14px"}}>
 
             {/* ── Brand Network Assignments — matrix (DC mult columns on right) ── */}
             <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:8}}>
@@ -1168,8 +1173,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
 
             <button onClick={saveNetCfg} disabled={!netCfgDirty}
               style={{...S.btn(netCfgDirty),marginTop:12,background:netCfgDirty?"#7C3AED":HR.surfaceLight,color:netCfgDirty?HR.white:HR.muted,border:"none"}}>
-              Save Network Design Config
+              Save Network Design Configuration
             </button>
+            </div>{/* end brand section */}
           </div>
         </details>
       )}
