@@ -683,140 +683,180 @@ function NetworkDesignSKUTable({ skus, onSelectSku, showNZD = true, isDC = false
   );
 }
 
-// Unified Thick+Thin table for DS Network Design view — sortable, searchable, collapsible sections
-function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onSelectSku }) {
-  const [query, setQuery] = React.useState('');
-  const [sortBy, setSortBy] = React.useState('nzd');
-  const [sortDir, setSortDir] = React.useState(-1); // -1 = desc, 1 = asc
-  const [thickOpen, setThickOpen] = React.useState(true);
-  const [thinOpen, setThinOpen] = React.useState(true);
+// Unified DS SKU table for Network Design — flat list, filterable, sortable
+function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onSelectSku, skuMaster, stockedBrands, thickBoundaryMm }) {
+  const [query,       setQuery]       = React.useState('');
+  const [filterBrand, setFilterBrand] = React.useState('All');
+  const [filterType,  setFilterType]  = React.useState('All');
+  const [filterMm,    setFilterMm]    = React.useState('All');
+  const [sortBy,      setSortBy]      = React.useState('nzd');
+  const [sortDir,     setSortDir]     = React.useState(-1);
+
+  const allSkus = [...thickSkus, ...thinSkus];
+  const thickUsed = thickSkus.reduce((s,x) => s + x.maxQty, 0);
+  const thinUsed  = thinSkus.reduce((s,x)  => s + x.maxQty, 0);
+
+  // Active counts from skuMaster (ground truth)
+  const activeAll = Object.values(skuMaster || {}).filter(m =>
+    PLYWOOD_CATEGORIES.includes(m.category) &&
+    (stockedBrands||[]).some(b => b.toLowerCase() === m.brand?.toLowerCase()) &&
+    (m.status||'Active').toLowerCase() === 'active'
+  );
+  const activeThick = activeAll.filter(s => { const mm = inferThickness(s.name); return mm !== null && mm > 1 && thicknessCategory(mm,1,thickBoundaryMm||9) === 'Thick'; }).length;
+  const activeThin  = activeAll.length - activeThick - activeAll.filter(s => { const mm = inferThickness(s.name); return mm !== null && mm <= 1; }).length;
+  const stockedThick = thickSkus.filter(s => s.minQty > 0).length;
+  const stockedThin  = thinSkus.filter(s  => s.minQty > 0).length;
+
+  // Dropdown options
+  const brands   = ['All', ...[...new Set(allSkus.map(s=>s.brand).filter(Boolean))].sort()];
+  const mmOpts   = ['All', ...[...new Set(allSkus.map(s=>s.mm).filter(v=>v!=null))].sort((a,b)=>a-b).map(v=>`${v}mm`)];
 
   const handleSort = col => {
-    if (sortBy === col) setSortDir(d => d * -1);
-    else { setSortBy(col); setSortDir(-1); }
+    if (sortBy === col) setSortDir(d => d*-1);
+    else { setSortBy(col); setSortDir(['sku','name','brand'].includes(col) ? 1 : -1); }
   };
 
   const q = query.toLowerCase();
-  const filterAndSort = list => list
-    .filter(s => !q || s.sku.toLowerCase().includes(q) || s.name.toLowerCase().includes(q))
-    .sort((a, b) => {
-      const av = sortBy === 'mm' ? (a.mm ?? -1) : sortBy === 'nzd' ? a.nzd : sortBy === 'min' ? a.minQty : a.maxQty;
-      const bv = sortBy === 'mm' ? (b.mm ?? -1) : sortBy === 'nzd' ? b.nzd : sortBy === 'min' ? b.minQty : b.maxQty;
-      return (bv - av) * sortDir;
+  const filtered = allSkus
+    .filter(s => {
+      if (filterBrand !== 'All' && s.brand !== filterBrand) return false;
+      if (filterType  === 'Thick' && s.thicknessCat !== 'Thick') return false;
+      if (filterType  === 'Thin'  && s.thicknessCat === 'Thick') return false;
+      if (filterMm    !== 'All'   && `${s.mm}mm` !== filterMm)   return false;
+      if (q && !s.sku.toLowerCase().includes(q) && !s.name.toLowerCase().includes(q)) return false;
+      return true;
+    })
+    .sort((a,b) => {
+      switch(sortBy) {
+        case 'sku':   return a.sku.localeCompare(b.sku) * sortDir;
+        case 'name':  return a.name.localeCompare(b.name) * sortDir;
+        case 'brand': return (a.brand||'').localeCompare(b.brand||'') * sortDir;
+        case 'mm':    return ((b.mm??-1) - (a.mm??-1)) * sortDir;
+        case 'nzd':   return (b.nzd - a.nzd) * sortDir;
+        case 'min':   return (b.minQty - a.minQty) * sortDir;
+        case 'max':   return (b.maxQty - a.maxQty) * sortDir;
+        default: return 0;
+      }
     });
 
-  const filteredThick = filterAndSort(thickSkus);
-  const filteredThin  = filterAndSort(thinSkus);
-
-  const thickUsed = thickSkus.reduce((s, x) => s + x.maxQty, 0);
-  const thinUsed  = thinSkus.reduce((s, x) => s + x.maxQty, 0);
-
-  const SH = { // sortable header helper
-    th: (col, label, center) => {
-      const active = sortBy === col;
-      return (
-        <th onClick={() => handleSort(col)}
-          style={{padding:"6px 8px",fontWeight:700,fontSize:10,color:active?"#7C3AED":"#555",
-            borderBottom:"1px solid #E0E0D0",textAlign:center?"center":"left",
-            whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2"}}>
-          {label} {active ? (sortDir === -1 ? "↓" : "↑") : <span style={{color:"#ccc"}}>↕</span>}
-        </th>
-      );
-    }
-  };
-
-  const td = (content, center, color, mono) => (
-    <td style={{padding:"5px 8px",fontSize:11,borderBottom:"1px solid #F0F0E8",
-      textAlign:center?"center":"left",color:color||"inherit",
-      fontFamily:mono?"monospace":"inherit",verticalAlign:"middle"}}>
-      {content}
-    </td>
-  );
-
-  const capBar = (used, total, label) => {
-    const pct = total > 0 ? used/total*100 : 0;
-    const over = pct > 110, atLim = pct > 100;
-    const col = over ? "#DC2626" : atLim ? "#F59E0B" : "#16a34a";
+  const sel = {fontSize:11,padding:"4px 8px",border:"1px solid #E0E0D0",borderRadius:5,background:"#fff",color:"#555",cursor:"pointer",outline:"none"};
+  const sh = (col, label, center) => {
+    const on = sortBy === col;
     return (
-      <tr>
-        <td colSpan={6} style={{padding:"4px 8px",borderBottom:"1px solid #E0E0D0",background:"#FAFAF8"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:10,color:"#555",fontWeight:600,flexShrink:0}}>{label}</span>
-            <div style={{flex:1,height:4,background:"#E5E5D0",borderRadius:2,overflow:"hidden"}}>
-              <div style={{height:"100%",width:`${Math.min(100,pct)}%`,background:col,borderRadius:2}}/>
-            </div>
-            <span style={{fontSize:10,fontWeight:700,color:col,flexShrink:0}}>
-              {used}/{total} · {pct.toFixed(0)}%{over?" Over Capacity":atLim?" At Limit":" Within Capacity"}
-            </span>
-          </div>
-        </td>
-      </tr>
+      <th onClick={() => handleSort(col)}
+        style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:on?"#7C3AED":"#666",
+          borderBottom:"1px solid #E0E0D0",textAlign:center?"center":"left",
+          whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2"}}>
+        {label}{on?(sortDir===-1?"↓":"↑"):<span style={{color:"#ccc",fontSize:8}}>↕</span>}
+      </th>
     );
   };
 
-  const sectionRow = (label, count, open, onToggle) => (
-    <tr onClick={onToggle} style={{cursor:"pointer",background:"#F0F0E8"}}>
-      <td colSpan={6} style={{padding:"5px 10px",fontSize:11,fontWeight:700,color:"#555",borderBottom:"1px solid #E0E0D0",userSelect:"none"}}>
-        {open ? "▾" : "▸"} {label} <span style={{fontWeight:400,color:"#888",marginLeft:6}}>{count} SKU{count!==1?"s":""}</span>
-      </td>
-    </tr>
-  );
+  const inlineCapBar = (used, total, label) => {
+    const pct = total > 0 ? used/total*100 : 0;
+    const over = pct>110, atLim = pct>100;
+    const col = over?"#DC2626":atLim?"#F59E0B":"#16a34a";
+    return (
+      <div style={{flex:1,padding:"5px 10px",border:"1px solid #E0E0D0",borderRadius:6,background:"#FAFAF8"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:3}}>
+          <span style={{fontSize:10,fontWeight:600,color:"#555"}}>{label}</span>
+          <span style={{fontSize:10,fontWeight:700,color:col}}>{used}/{total} · {pct.toFixed(0)}%{over?" Over":atLim?" At Limit":""}</span>
+        </div>
+        <div style={{height:4,background:"#E5E5D0",borderRadius:2,overflow:"hidden"}}>
+          <div style={{height:"100%",width:`${Math.min(100,pct)}%`,background:col,borderRadius:2}}/>
+        </div>
+      </div>
+    );
+  };
 
-  const dataRow = (s, i) => (
-    <tr key={s.sku} onClick={() => onSelectSku(s)}
-      style={{background:i%2===0?"#fff":"#F8F8F2",cursor:"pointer"}}>
-      {td(s.sku, false, "#666", true)}
-      <td style={{padding:"5px 8px",fontSize:11,borderBottom:"1px solid #F0F0E8",maxWidth:280,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
-      {td(s.mm != null ? `${s.mm}mm` : "—", true, "#888")}
-      {td(s.nzd, true)}
-      {td(s.minQty, true, "#1e40af", false)}
-      {td(s.maxQty, true, "#166534", false)}
-    </tr>
-  );
+  const hasFilter = query || filterBrand!=='All' || filterType!=='All' || filterMm!=='All';
 
   return (
     <div>
-      {/* Search */}
-      <input
-        type="text" placeholder="Search SKU or name…" value={query}
-        onChange={e => setQuery(e.target.value)}
-        style={{...HR, width:"100%", fontSize:11, padding:"6px 10px",
-          border:"1px solid #E0E0D0", borderRadius:6, marginBottom:8,
-          background:"#fff", color:"#1A1A1A", outline:"none", boxSizing:"border-box"}}/>
+      {/* Heading */}
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+        <span style={{fontSize:12,fontWeight:700,color:"#333"}}>SKU Level Stocking</span>
+        <span style={{fontSize:10,color:"#888"}}>
+          Thick: <b style={{color:"#92400E"}}>{stockedThick} stocked</b> / {activeThick} active
+          &nbsp;·&nbsp;
+          Thin: <b style={{color:"#1e40af"}}>{stockedThin} stocked</b> / {activeThin} active
+        </span>
+      </div>
+
+      {/* Capacity bars — side by side at 50% each */}
+      <div style={{display:"flex",gap:8,marginBottom:8}}>
+        {inlineCapBar(thickUsed, thickCap, "Vertical Storage — Thick")}
+        {inlineCapBar(thinUsed,  thinCap,  "Tub Storage — Thin")}
+      </div>
+
+      {/* Filters */}
+      <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+        <input type="text" placeholder="Search SKU or name…" value={query}
+          onChange={e => setQuery(e.target.value)}
+          style={{...sel,width:200,padding:"4px 10px"}}/>
+        <select value={filterBrand} onChange={e=>setFilterBrand(e.target.value)} style={sel}>
+          {brands.map(b => <option key={b} value={b}>{b==='All'?'All Brands':b}</option>)}
+        </select>
+        <select value={filterType} onChange={e=>setFilterType(e.target.value)} style={sel}>
+          <option value="All">Thick &amp; Thin</option>
+          <option value="Thick">Thick only</option>
+          <option value="Thin">Thin only</option>
+        </select>
+        <select value={filterMm} onChange={e=>setFilterMm(e.target.value)} style={sel}>
+          {mmOpts.map(v => <option key={v} value={v}>{v==='All'?'All mm':v}</option>)}
+        </select>
+        {hasFilter && (
+          <button onClick={() => {setQuery('');setFilterBrand('All');setFilterType('All');setFilterMm('All');}}
+            style={{fontSize:10,color:"#7C3AED",background:"none",border:"1px solid #7C3AED",borderRadius:4,padding:"3px 8px",cursor:"pointer"}}>
+            Clear
+          </button>
+        )}
+        <span style={{fontSize:10,color:"#bbb",marginLeft:"auto"}}>{filtered.length} SKUs</span>
+      </div>
+
+      {/* Table */}
       <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",fontSize:11}}>
           <colgroup>
-            <col style={{width:160}}/>
-            <col/>
-            <col style={{width:72}}/>
-            <col style={{width:64}}/>
-            <col style={{width:64}}/>
-            <col style={{width:64}}/>
+            <col style={{width:148}}/><col/><col style={{width:100}}/><col style={{width:100}}/><col style={{width:50}}/><col style={{width:50}}/><col style={{width:50}}/>
           </colgroup>
           <thead>
-            <tr style={{background:"#F8F8F2"}}>
-              <th style={{padding:"6px 8px",fontWeight:700,fontSize:10,color:"#555",borderBottom:"1px solid #E0E0D0",textAlign:"left",background:"#F8F8F2"}}>SKU</th>
-              <th style={{padding:"6px 8px",fontWeight:700,fontSize:10,color:"#555",borderBottom:"1px solid #E0E0D0",textAlign:"left",background:"#F8F8F2"}}>Name</th>
-              {SH.th('mm','mm',true)}
-              {SH.th('nzd','NZD',true)}
-              {SH.th('min','Min',true)}
-              {SH.th('max','Max',true)}
+            <tr>
+              {sh('sku','SKU',false)}
+              {sh('name','Item Name',false)}
+              {sh('mm','Thickness',false)}
+              {sh('brand','Brand',false)}
+              {sh('nzd','NZD',true)}
+              {sh('min','Min',true)}
+              {sh('max','Max',true)}
             </tr>
           </thead>
           <tbody>
-            {/* Thick section */}
-            {sectionRow(`Thick — Vertical Storage (>${(thickSkus[0]?.mm||9)}mm)`, filteredThick.length, thickOpen, () => setThickOpen(o => !o))}
-            {thickOpen && capBar(thickUsed, thickCap, "Vertical Capacity")}
-            {thickOpen && filteredThick.map((s,i) => dataRow(s,i))}
-            {/* Thin section */}
-            {sectionRow(`Thin — Tub Storage`, filteredThin.length, thinOpen, () => setThinOpen(o => !o))}
-            {thinOpen && capBar(thinUsed, thinCap, "Tub Capacity")}
-            {thinOpen && filteredThin.map((s,i) => dataRow(s,i))}
+            {filtered.length === 0 ? (
+              <tr><td colSpan={7} style={{padding:16,textAlign:"center",color:"#aaa",fontSize:11}}>No SKUs match the current filters</td></tr>
+            ) : filtered.map((s,i) => {
+              const isThick = s.thicknessCat === 'Thick';
+              return (
+                <tr key={s.sku} onClick={() => onSelectSku(s)}
+                  style={{background:i%2===0?"#fff":"#FAFAF8",cursor:"pointer"}}>
+                  <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#666",borderBottom:"1px solid #F5F5F0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.sku}</td>
+                  <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
+                  <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0",whiteSpace:"nowrap"}}>
+                    <span style={{fontSize:10,color:"#555",marginRight:5}}>{s.mm!=null?`${s.mm}mm`:"—"}</span>
+                    <span style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,
+                      background:isThick?"#FEF3C7":"#DBEAFE",color:isThick?"#92400E":"#1e40af"}}>
+                      {isThick?"Thick":"Thin"}
+                    </span>
+                  </td>
+                  <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"#555"}}>{s.brand||"—"}</td>
+                  <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid #F5F5F0"}}>{s.nzd}</td>
+                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:"#1e40af",borderBottom:"1px solid #F5F5F0"}}>{s.minQty}</td>
+                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:"#166534",borderBottom:"1px solid #F5F5F0"}}>{s.maxQty}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
-        {filteredThick.length + filteredThin.length === 0 && (
-          <div style={{padding:16,textAlign:"center",color:"#888",fontSize:11}}>No SKUs match "{query}"</div>
-        )}
       </div>
     </div>
   );
@@ -1544,6 +1584,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             thinSkus={ndSkuStats.thin}
             thickCap={thickCfg?.capacity || 150}
             thinCap={thinCfg?.capacity || 60}
+            skuMaster={skuMaster}
+            stockedBrands={ndDsInfo.stocked.map(s => s.brand)}
+            thickBoundaryMm={appliedBoundary}
             onSelectSku={s => { setSelectedSku(s); setSelectedSkuType(s.thicknessCat === 'Thick' ? 'thick' : 'thin'); }}
           />
         </div>
