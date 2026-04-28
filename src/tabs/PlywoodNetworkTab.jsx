@@ -1087,7 +1087,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                           // For unchecked DS cells: which stocking nodes cover this DS?
                           const servedBy = (!isNode && !isDCCol)
                             ? Object.entries(nodes)
-                                .filter(([nId, nCfg]) => nId !== 'DC' && nCfg.covers?.includes(loc))
+                                .filter(([, nCfg]) => nCfg.covers?.includes(loc))
                                 .map(([nId]) => nId)
                             : [];
                           return (
