@@ -625,7 +625,7 @@ function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD, skuMas
   const sep = <span style={{color:HR.border,margin:"0 10px"}}>|</span>;
 
   return (
-    <div style={{...S.card,padding:"7px 14px",marginBottom:12,display:"flex",alignItems:"center",flexWrap:"wrap",gap:4,fontSize:11}}>
+    <div style={{...S.card,padding:"9px 14px",marginBottom:12,display:"flex",alignItems:"center",flexWrap:"wrap",gap:4,fontSize:11}}>
       <span>
         <span style={{fontWeight:700,color:"#0077A8"}}>{total}</span>
         <span style={{color:"#555",marginLeft:5}}>Total Active</span>
@@ -1249,7 +1249,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
 
       {/* ── DS Physical Capacity — between summary cards and Thick/Thin sections ── */}
       {isNetworkDesignActive && dsFilter !== 'DC' && thickCfg && thinCfg && (
-        <div style={{...S.card,marginBottom:12,padding:"7px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11,lineHeight:"1.2"}}>
+        <div style={{...S.card,marginBottom:12,padding:"9px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11}}>
           <span style={{fontWeight:700,color:"#555"}}>Physical Capacity at {dsFilter}</span>
           <span style={{color:HR.border}}>|</span>
           {[{label:"Thick (sheets)",type:"thick",cfg:thickCfg,setCfg:setThickCfg},{label:"Thin (sheets)",type:"thin",cfg:thinCfg,setCfg:setThinCfg}].map(({label,type,cfg,setCfg},i) => (
@@ -1260,7 +1260,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                 value={cfg.capacity ?? ''}
                 disabled={!isAdmin}
                 onChange={e => { const v = parseFloat(e.target.value)||0; setCfg(c=>({...c,capacity:v})); handleSaveConfig(type,{...cfg,capacity:v}); }}
-                style={{...S.input,width:60,fontSize:11,padding:"0 6px",height:"20px",boxSizing:"border-box",opacity:isAdmin?1:0.7}}/>
+                style={{...S.input,width:60,fontSize:11,opacity:isAdmin?1:0.7}}/>
             </span>
           ))}
         </div>
