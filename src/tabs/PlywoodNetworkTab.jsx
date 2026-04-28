@@ -728,6 +728,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const [localNetCfg, setLocalNetCfg] = useState(null); // null = not editing
   const editingNetCfg = localNetCfg || effectiveNetCfg;
   const [netCfgDirty, setNetCfgDirty] = useState(false);
+  const [expandedCell, setExpandedCell] = useState(null); // {brand, loc} for matrix covers editor
 
   // Reload configs when DS or saved configs change — skip for DC (no DS_DEFAULTS entry)
   useEffect(() => {
@@ -984,6 +985,21 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     });
     setNetCfgDirty(true);
   };
+  // Matrix assignment helpers — defined at component level so they work across brands
+  const toggleNodeForBrand = (brand, loc) => {
+    if (!isAdmin) return;
+    const nodes = { ...(editingNetCfg.brands?.[brand]?.nodes || {}) };
+    if (nodes[loc]) { delete nodes[loc]; setExpandedCell(null); }
+    else { nodes[loc] = { covers: loc === 'DC' ? [] : [loc] }; setExpandedCell({ brand, loc }); }
+    handleNetBrandCfgChange(brand, 'nodes', nodes);
+  };
+  const toggleCoverForBrand = (brand, loc, ds) => {
+    if (!isAdmin) return;
+    const nodes = editingNetCfg.brands?.[brand]?.nodes || {};
+    const cur = nodes[loc]?.covers || [];
+    handleNetBrandCfgChange(brand, 'nodes', { ...nodes, [loc]: { ...nodes[loc], covers: cur.includes(ds) ? cur.filter(d => d !== ds) : [...cur, ds] } });
+  };
+
   const saveNetCfg = () => {
     if (!onSavePlywoodNetworkConfig || !localNetCfg) return;
     onSavePlywoodNetworkConfig(localNetCfg);
@@ -1018,146 +1034,136 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           <summary style={{cursor:"pointer",fontSize:12,fontWeight:700,color:"#7C3AED",padding:"6px 0",userSelect:"none"}}>
             ⚙ Network Design Config {netCfgDirty ? " · unsaved changes" : ""}
           </summary>
-          <div style={{...S.card,marginTop:8,padding:12}}>
-            <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:12}}>
+          <div style={{...S.card,marginTop:8,padding:14}}>
+
+            {/* ── Global Settings ─────────────────────────────────────────── */}
+            <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}}>Global Settings</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px 24px",marginBottom:16}}>
               {[
-                {label:"Lookback Days",key:"lookbackDays",min:30,max:365,step:1},
-                {label:"Min Percentile",key:"minPercentile",min:50,max:99,step:1},
-                {label:"Max Buffer Pct",key:"maxBufferPercentile",min:50,max:99,step:1},
-                {label:"Max Cap / Location",key:"maxCap",min:1,max:100,step:1},
-                {label:"Spike Cap ×Median",key:"spikeCapMultiplier",min:1,max:20,step:0.5},
-                {label:"Min NZD to Stock",key:"minNZD",min:1,max:20,step:1},
-                {label:"DC Thick Capacity",key:"dcCapacity.thick",min:1,max:2000,step:10},
-                {label:"DC Thin Capacity",key:"dcCapacity.thin",min:1,max:2000,step:10},
-              ].map(({label,key,min,max,step}) => (
-                <label key={key} style={{fontSize:11,display:"flex",flexDirection:"column",gap:3}}>
-                  {label}
-                  <input type="number" min={min} max={max} step={step ?? 1}
-                    value={(key.includes('.') ? key.split('.').reduce((o,k)=>o?.[k], editingNetCfg) : editingNetCfg[key]) ?? ""}
+                {label:"History Window",key:"lookbackDays",min:30,max:365,step:1,hint:"Days of sales history used to compute Min & Max"},
+                {label:"Min Qty Percentile",key:"minPercentile",min:50,max:99,step:1,hint:"P95 = stock enough for 95% of peak demand days"},
+                {label:"Max Sheets per Location",key:"maxCap",min:1,max:100,step:1,hint:"Hard ceiling on Max per SKU per location"},
+                {label:"Max Buffer Percentile",key:"maxBufferPercentile",min:50,max:99,step:1,hint:"P75 = buffer of ~one typical large order above Min"},
+                {label:"Outlier Cap (× median)",key:"spikeCapMultiplier",min:1,max:20,step:0.5,hint:"Winsorise spike days at N × median before P95"},
+                {label:"Min Sales Days to Stock",key:"minNZD",min:1,max:20,step:1,hint:"Skip SKUs with fewer non-zero demand days than this"},
+              ].map(({label,key,min,max,step,hint}) => (
+                <label key={key} style={{display:"flex",flexDirection:"column",gap:2}}>
+                  <span style={{fontSize:11,fontWeight:600,color:"#444"}}>{label}</span>
+                  <input type="number" min={min} max={max} step={step}
+                    value={editingNetCfg[key] ?? ""}
                     onChange={e => handleNetCfgChange(key, Number(e.target.value))}
-                    style={{...S.input,width:70}}/>
+                    style={{...S.input,width:"100%"}}/>
+                  <span style={{fontSize:9,color:HR.muted,lineHeight:1.4}}>{hint}</span>
                 </label>
               ))}
             </div>
-            <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>DC Multipliers per Brand</div>
-            {Object.entries(editingNetCfg.brands || {}).map(([brand, cfg]) => (
-              <div key={brand} style={{display:"flex",gap:12,alignItems:"center",marginBottom:6}}>
-                <span style={{width:110,fontSize:12,fontWeight:600}}>{brand}</span>
-                {[{label:"DC Mult Min",key:"dcMultMin"},{label:"DC Mult Max",key:"dcMultMax"}].map(({label,key}) => (
-                  <label key={key} style={{fontSize:11,display:"flex",flexDirection:"column",gap:2}}>
-                    {label}
-                    <input type="number" min={0.1} max={5} step={0.1}
-                      value={cfg[key] ?? ""}
-                      onChange={e => handleNetBrandCfgChange(brand, key, Number(e.target.value))}
-                      style={{...S.input,width:60}}/>
-                  </label>
+
+            {/* ── DC Multipliers ───────────────────────────────────────────── */}
+            <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}}>DC Multipliers per Brand</div>
+            <table style={{borderCollapse:"collapse",marginBottom:16,fontSize:11}}>
+              <thead>
+                <tr style={{background:HR.surfaceLight}}>
+                  <th style={{padding:"4px 12px 4px 8px",textAlign:"left",color:HR.muted,fontWeight:600,borderBottom:`1px solid ${HR.border}`}}>Brand</th>
+                  <th style={{padding:"4px 16px",textAlign:"center",color:HR.muted,fontWeight:600,borderBottom:`1px solid ${HR.border}`}}>DC Mult Min</th>
+                  <th style={{padding:"4px 16px",textAlign:"center",color:HR.muted,fontWeight:600,borderBottom:`1px solid ${HR.border}`}}>DC Mult Max</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(editingNetCfg.brands || {}).map(([brand, cfg], i) => (
+                  <tr key={brand} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                    <td style={{padding:"5px 12px 5px 8px",fontWeight:600}}>{brand}</td>
+                    {["dcMultMin","dcMultMax"].map(key => (
+                      <td key={key} style={{padding:"4px 16px",textAlign:"center"}}>
+                        <input type="number" min={0.1} max={5} step={0.1}
+                          value={cfg[key] ?? ""}
+                          onChange={e => handleNetBrandCfgChange(brand, key, Number(e.target.value))}
+                          style={{...S.input,width:60,textAlign:"center"}}/>
+                      </td>
+                    ))}
+                  </tr>
                 ))}
-              </div>
-            ))}
-            {/* Brand Network Assignments */}
-            <div style={{borderTop:`1px solid ${HR.border}`,marginTop:14,paddingTop:12}}>
-              <div style={{fontSize:11,color:"#555",fontWeight:700,marginBottom:10}}>Brand Network Assignments</div>
-              {Object.entries(editingNetCfg.brands || {}).map(([brand, cfg]) => {
-                const nodes = cfg.nodes || {};
-
-                const toggleNode = (loc) => {
-                  if (!isAdmin) return;
-                  const next = { ...nodes };
-                  if (next[loc]) { delete next[loc]; }
-                  else { next[loc] = { covers: loc === 'DC' ? [] : [loc] }; }
-                  handleNetBrandCfgChange(brand, 'nodes', next);
-                };
-
-                const toggleCover = (loc, ds) => {
-                  if (!isAdmin) return;
-                  const cur = nodes[loc]?.covers || [];
-                  const next = { ...nodes, [loc]: { ...nodes[loc], covers: cur.includes(ds) ? cur.filter(d => d !== ds) : [...cur, ds] } };
-                  handleNetBrandCfgChange(brand, 'nodes', next);
-                };
-
-                return (
-                  <div key={brand} style={{marginBottom:14,border:`1px solid ${HR.border}`,borderRadius:6,overflow:"hidden"}}>
-                    <div style={{background:HR.surfaceLight,padding:"5px 10px",fontSize:12,fontWeight:700,color:HR.text,borderBottom:`1px solid ${HR.border}`}}>
-                      {brand}
-                    </div>
-                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                      <thead>
-                        <tr style={{background:"#FAFAF8"}}>
-                          <th style={{padding:"4px 8px",textAlign:"left",color:HR.muted,fontWeight:600,width:52}}>Node</th>
-                          <th style={{padding:"4px 8px",textAlign:"center",color:HR.muted,fontWeight:600,width:72}}>Stocks / Direct orders</th>
-                          <th style={{padding:"4px 8px",textAlign:"left",color:HR.muted,fontWeight:600}}>Aggregates demand from</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...DS_LIST, 'DC'].map((loc, i) => {
+              </tbody>
+            </table>
+            {/* ── Brand Network Assignments — matrix ───────────────────── */}
+            <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8}}>Brand Network Assignments</div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{borderCollapse:"collapse",fontSize:11,width:"100%"}}>
+                <thead>
+                  <tr style={{background:HR.surfaceLight}}>
+                    <th style={{padding:"5px 10px",textAlign:"left",color:HR.muted,fontWeight:600,borderBottom:`1px solid ${HR.border}`,minWidth:110}}>Brand</th>
+                    {[...DS_LIST,"DC"].map(loc => (
+                      <th key={loc} style={{padding:"5px 10px",textAlign:"center",color:loc==="DC"?"#7C3AED":HR.muted,fontWeight:700,borderBottom:`1px solid ${HR.border}`,minWidth:72}}>{loc}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(editingNetCfg.brands || {}).flatMap(([brand, cfg], bi) => {
+                    const nodes = cfg.nodes || {};
+                    const isExpanded = expandedCell?.brand === brand;
+                    const expandedLoc = expandedCell?.loc;
+                    const brandRow = (
+                      <tr key={brand} style={{background:bi%2===0?HR.white:HR.surfaceLight}}>
+                        <td style={{padding:"6px 10px",fontWeight:700,color:HR.text,borderBottom:`1px solid ${HR.border}`}}>{brand}</td>
+                        {[...DS_LIST,"DC"].map(loc => {
                           const isNode = !!nodes[loc];
-                          const covers = nodes[loc]?.covers || [];
-                          const isDCRow = loc === 'DC';
+                          const isDCCol = loc === "DC";
+                          const isThisExpanded = isExpanded && expandedLoc === loc;
                           return (
-                            <tr key={loc} style={{background:i%2===0?"#fff":"#FAFAF8",borderTop:`1px solid ${HR.border}`}}>
-                              <td style={{padding:"5px 8px",fontWeight:700,color:isNode?(isDCRow?"#7C3AED":"#166534"):"#aaa"}}>{loc}</td>
-                              <td style={{padding:"5px 8px",textAlign:"center"}}>
-                                {isDCRow
-                                  ? <input type="checkbox" checked={isNode} disabled={!isAdmin}
-                                      title="Check to enable DC direct customer fulfillment (P95 component)"
-                                      onChange={() => toggleNode(loc)}
-                                      style={{cursor:isAdmin?"pointer":"default",accentColor:"#7C3AED"}}/>
-                                  : <input type="checkbox" checked={isNode} disabled={!isAdmin}
-                                      onChange={() => toggleNode(loc)}
-                                      style={{cursor:isAdmin?"pointer":"default",accentColor:"#166534"}}/>
-                                }
-                              </td>
-                              <td style={{padding:"5px 8px"}}>
-                                {isDCRow ? (
-                                  <div>
-                                    {isNode ? (
-                                      <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
-                                        <span style={{fontSize:10,color:"#7C3AED",fontWeight:600,marginRight:2}}>Fulfills customer orders from:</span>
-                                        {DS_LIST.map(ds => (
-                                          <button key={ds} disabled={!isAdmin} onClick={() => toggleCover(loc, ds)}
-                                            style={{padding:"2px 7px",borderRadius:10,fontSize:10,fontWeight:700,
-                                              cursor:isAdmin?"pointer":"default",border:"1px solid",
-                                              borderColor:covers.includes(ds)?"#7C3AED":"#D0D0C0",
-                                              background:covers.includes(ds)?"#EDE9FE":"#F8F8F2",
-                                              color:covers.includes(ds)?"#7C3AED":"#bbb"}}>
-                                            {ds}
-                                          </button>
-                                        ))}
-                                        <span style={{fontSize:10,color:HR.muted,marginLeft:4}}>· also replenishes all DS stocking nodes</span>
-                                      </div>
-                                    ) : (
-                                      <span style={{fontSize:10,color:"#7C3AED"}}>Replenishes all DS stocking nodes · no direct customer orders</span>
-                                    )}
-                                  </div>
-                                ) : isNode ? (
-                                  <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
-                                    {DS_LIST.map(ds => (
-                                      <button key={ds} disabled={!isAdmin} onClick={() => toggleCover(loc, ds)}
-                                        style={{padding:"2px 7px",borderRadius:10,fontSize:10,fontWeight:700,
-                                          cursor:isAdmin?"pointer":"default",border:"1px solid",
-                                          borderColor:covers.includes(ds)?"#166534":"#D0D0C0",
-                                          background:covers.includes(ds)?"#D1FAE5":"#F8F8F2",
-                                          color:covers.includes(ds)?"#166534":"#bbb"}}>
-                                        {ds}
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <span style={{color:"#ccc",fontSize:10,fontStyle:"italic"}}>not stocked here</span>
+                            <td key={loc} style={{padding:"6px 10px",textAlign:"center",borderBottom:`1px solid ${HR.border}`,background:isThisExpanded?(isDCCol?"#F5F3FF":"#F0FFF4"):undefined}}>
+                              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                                <input type="checkbox" checked={isNode} disabled={!isAdmin}
+                                  onChange={() => toggleNodeForBrand(brand, loc)}
+                                  style={{cursor:isAdmin?"pointer":"default",accentColor:isDCCol?"#7C3AED":"#166534"}}/>
+                                {isNode && (
+                                  <button onClick={() => setExpandedCell(isThisExpanded ? null : {brand,loc})}
+                                    style={{fontSize:9,color:isDCCol?"#7C3AED":"#166534",background:"none",border:"none",cursor:"pointer",padding:0,fontWeight:600}}>
+                                    {isThisExpanded ? "▲ close" : `${(nodes[loc]?.covers||[]).length} DSes ▾`}
+                                  </button>
                                 )}
-                              </td>
-                            </tr>
+                              </div>
+                            </td>
                           );
                         })}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })}
+                      </tr>
+                    );
+                    if (!isExpanded) return [brandRow];
+                    const isDCExpanded = expandedLoc === "DC";
+                    const coversRow = (
+                      <tr key={`${brand}-covers`}>
+                        <td style={{padding:"8px 10px",fontSize:10,color:HR.muted,fontStyle:"italic",borderBottom:`1px solid ${HR.border}`}}>
+                          {brand} · {expandedLoc}
+                        </td>
+                        <td colSpan={6} style={{padding:"8px 10px",borderBottom:`1px solid ${HR.border}`,background:isDCExpanded?"#F5F3FF":"#F0FFF4"}}>
+                          <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+                            <span style={{fontSize:10,fontWeight:600,color:isDCExpanded?"#7C3AED":"#166534",marginRight:4}}>
+                              {isDCExpanded ? "Fulfils customer orders from:" : "Aggregates demand from:"}
+                            </span>
+                            {DS_LIST.map(ds => {
+                              const covers = nodes[expandedLoc]?.covers || [];
+                              const on = covers.includes(ds);
+                              return (
+                                <button key={ds} disabled={!isAdmin} onClick={() => toggleCoverForBrand(brand, expandedLoc, ds)}
+                                  style={{padding:"3px 9px",borderRadius:10,fontSize:10,fontWeight:700,cursor:isAdmin?"pointer":"default",
+                                    border:"1px solid",borderColor:on?(isDCExpanded?"#7C3AED":"#166534"):"#D0D0C0",
+                                    background:on?(isDCExpanded?"#EDE9FE":"#D1FAE5"):"#F8F8F2",
+                                    color:on?(isDCExpanded?"#7C3AED":"#166534"):"#bbb"}}>
+                                  {ds}
+                                </button>
+                              );
+                            })}
+                            {isDCExpanded && <span style={{fontSize:9,color:HR.muted,marginLeft:4}}>· also replenishes all DS stocking nodes</span>}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                    return [brandRow, coversRow];
+                  })}
+                </tbody>
+              </table>
             </div>
 
             <button onClick={saveNetCfg} disabled={!netCfgDirty}
-              style={{...S.btn(netCfgDirty),marginTop:8,background:netCfgDirty?"#7C3AED":HR.surfaceLight,color:netCfgDirty?HR.white:HR.muted,border:"none"}}>
+              style={{...S.btn(netCfgDirty),marginTop:12,background:netCfgDirty?"#7C3AED":HR.surfaceLight,color:netCfgDirty?HR.white:HR.muted,border:"none"}}>
               Save Network Design Config
             </button>
           </div>
@@ -1254,8 +1260,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         const replenishBrands = Object.keys(effectiveNetCfg.brands || {}).filter(b => !effectiveNetCfg.brands[b].nodes.DC);
         return (
           <div>
-            {/* DC brand status */}
-            <div style={{...S.card,marginBottom:12,padding:"10px 14px",display:"flex",gap:24,flexWrap:"wrap"}}>
+            {/* DC brand status + capacity in one card */}
+            <div style={{...S.card,marginBottom:12,padding:"10px 14px",display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-start"}}>
               {directBrands.length > 0 && (
                 <div>
                   <div style={{fontSize:11,fontWeight:700,color:"#166534",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Directly Serves</div>
@@ -1271,22 +1277,29 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                   : replenishBrands.map(b => <div key={b} style={{fontSize:12,color:"#7C3AED",marginBottom:2}}>● {b}</div>)
                 }
               </div>
+              {/* DC Capacity — same card, right-aligned */}
+              <div style={{marginLeft:"auto"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Physical Capacity</div>
+                {[{label:"Thick (sheets)",key:"dcCapacity.thick"},{label:"Thin (sheets)",key:"dcCapacity.thin"}].map(({label,key}) => (
+                  <label key={key} style={{fontSize:11,display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                    {label}
+                    <input type="number" min={1} max={2000} step={10}
+                      value={(localNetCfg||effectiveNetCfg).dcCapacity?.[key.split('.')[1]] ?? ""}
+                      disabled={!isAdmin}
+                      onChange={e => handleNetCfgChange(key, Number(e.target.value))}
+                      style={{...S.input,width:70,opacity:isAdmin?1:0.7}}/>
+                  </label>
+                ))}
+                {netCfgDirty && isAdmin && (
+                  <button onClick={saveNetCfg} style={{fontSize:10,color:"#7C3AED",background:"none",border:"1px solid #7C3AED",borderRadius:4,padding:"2px 8px",cursor:"pointer",marginTop:2}}>
+                    Save
+                  </button>
+                )}
+              </div>
             </div>
             {/* DC Thick */}
             <div style={{marginBottom:24}}>
-              <div style={{...S.sectionTitle,display:"flex",alignItems:"center",gap:8}}>
-                DC Thick SKUs — Vertical Storage
-                {isAdmin && (
-                  <label style={{fontSize:11,fontWeight:400,display:"flex",alignItems:"center",gap:4,marginLeft:8}}>
-                    Capacity
-                    <input type="number" min={1} max={2000} step={10}
-                      value={(localNetCfg||effectiveNetCfg).dcCapacity?.thick ?? 400}
-                      onChange={e => handleNetCfgChange('dcCapacity.thick', Number(e.target.value))}
-                      style={{width:60,padding:"0 4px",fontSize:12,fontWeight:700,border:"1px solid #7C3AED",borderRadius:4,color:"#7C3AED",background:HR.white,textAlign:"center"}}/>
-                    sheets
-                  </label>
-                )}
-              </div>
+              <div style={S.sectionTitle}>DC Thick SKUs — Vertical Storage</div>
               <CapacityBar used={dcSkuStats.thick.reduce((s,x)=>s+x.maxQty,0)} total={dcCap.thick} label="DC Vertical Storage Capacity" cfg={null}/>
               <div style={S.card}>
                 <NetworkDesignSKUTable skus={dcSkuStats.thick} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }} showNZD={false} isDC={true}/>
@@ -1294,19 +1307,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             </div>
             {/* DC Thin */}
             <div style={{marginBottom:24}}>
-              <div style={{...S.sectionTitle,display:"flex",alignItems:"center",gap:8}}>
-                DC Thin SKUs — Tub Storage
-                {isAdmin && (
-                  <label style={{fontSize:11,fontWeight:400,display:"flex",alignItems:"center",gap:4,marginLeft:8}}>
-                    Capacity
-                    <input type="number" min={1} max={2000} step={10}
-                      value={(localNetCfg||effectiveNetCfg).dcCapacity?.thin ?? 400}
-                      onChange={e => handleNetCfgChange('dcCapacity.thin', Number(e.target.value))}
-                      style={{width:60,padding:"0 4px",fontSize:12,fontWeight:700,border:"1px solid #7C3AED",borderRadius:4,color:"#7C3AED",background:HR.white,textAlign:"center"}}/>
-                    sheets
-                  </label>
-                )}
-              </div>
+              <div style={S.sectionTitle}>DC Thin SKUs — Tub Storage</div>
               <CapacityBar used={dcSkuStats.thin.reduce((s,x)=>s+x.maxQty,0)} total={dcCap.thin} label="DC Tub Storage Capacity" cfg={null}/>
               <div style={S.card}>
                 <NetworkDesignSKUTable skus={dcSkuStats.thin} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }} showNZD={false} isDC={true}/>
