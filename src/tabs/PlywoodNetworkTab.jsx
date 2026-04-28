@@ -586,40 +586,21 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
   );
 }
 
-function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD, skuMaster, stockedBrands, thickBoundaryMm }) {
-  // Total active from skuMaster — ground truth regardless of lookback
-  const classify = s => {
-    const mm = inferThickness(s.name);
-    if (mm !== null && mm <= 1) return null;
-    return thicknessCategory(mm, 1, thickBoundaryMm);
-  };
-  const allActive = Object.values(skuMaster).filter(m =>
-    PLYWOOD_CATEGORIES.includes(m.category) &&
-    stockedBrands.some(b => b.toLowerCase() === m.brand?.toLowerCase()) &&
-    (m.status || "Active").toLowerCase() === "active"
-  );
-  const allTk = allActive.filter(s => classify(s) === "Thick").length;
-  const allTn = allActive.filter(s => { const c = classify(s); return c === "Thin" || c === "Unknown"; }).length;
+function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD }) {
+  // All active SKUs now included (zero-demand ones have NZD=0, Min=Max=0)
+  const allTk = thickSkus.length;
+  const allTn = thinSkus.length;
   const total = allTk + allTn;
 
-  // Stocked: Min > 0
   const stockTk = thickSkus.filter(s => s.minQty > 0).length;
   const stockTn = thinSkus.filter(s => s.minQty > 0).length;
   const stocked = stockTk + stockTn;
 
-  // At cap (sub-line in stocked card)
   const capCount = [...thickSkus, ...thinSkus].filter(s => s.minQty > 0 && s.maxQty >= maxCap).length;
 
-  // Not stocked breakdown
   const notStocked = total - stocked;
-  // NZD = 1: in ndSkuStats but trace.nzd === 1 (below minNZD threshold)
-  const nzd1 = [...thickSkus, ...thinSkus].filter(s => s.minQty === 0 && s.trace?.nzd === 1).length;
-  // No sales: active but absent from ndSkuStats entirely (NZD = 0 across covered DSes)
-  const noSales = notStocked - nzd1;
-
-  // Not-stocked Thick/Thin
-  const notStockedTk = Math.max(0, allTk - stockTk);
-  const notStockedTn = Math.max(0, allTn - stockTn);
+  const nzd1    = [...thickSkus, ...thinSkus].filter(s => s.minQty === 0 && s.trace?.nzd === 1).length;
+  const noSales = [...thickSkus, ...thinSkus].filter(s => s.minQty === 0 && (s.trace?.nzd || 0) === 0).length;
 
   const pct = (n, d) => d > 0 ? ` (${Math.round(n / d * 100)}%)` : "";
   const sep = <span style={{color:HR.border,margin:"0 10px"}}>|</span>;
@@ -684,7 +665,7 @@ function NetworkDesignSKUTable({ skus, onSelectSku, showNZD = true, isDC = false
 }
 
 // Unified DS SKU table for Network Design — flat list, filterable, sortable
-function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onSelectSku, skuMaster, stockedBrands, thickBoundaryMm }) {
+function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onSelectSku }) {
   const [query,       setQuery]       = React.useState('');
   const [filterBrand, setFilterBrand] = React.useState('All');
   const [filterType,  setFilterType]  = React.useState('All');
@@ -696,14 +677,9 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
   const thickUsed = thickSkus.reduce((s,x) => s + x.maxQty, 0);
   const thinUsed  = thinSkus.reduce((s,x)  => s + x.maxQty, 0);
 
-  // Active counts from skuMaster (ground truth)
-  const activeAll = Object.values(skuMaster || {}).filter(m =>
-    PLYWOOD_CATEGORIES.includes(m.category) &&
-    (stockedBrands||[]).some(b => b.toLowerCase() === m.brand?.toLowerCase()) &&
-    (m.status||'Active').toLowerCase() === 'active'
-  );
-  const activeThick = activeAll.filter(s => { const mm = inferThickness(s.name); return mm !== null && mm > 1 && thicknessCategory(mm,1,thickBoundaryMm||9) === 'Thick'; }).length;
-  const activeThin  = activeAll.length - activeThick - activeAll.filter(s => { const mm = inferThickness(s.name); return mm !== null && mm <= 1; }).length;
+  // All active SKUs are now in thickSkus/thinSkus — no skuMaster lookup needed
+  const activeThick  = thickSkus.length;
+  const activeThin   = thinSkus.length;
   const stockedThick = thickSkus.filter(s => s.minQty > 0).length;
   const stockedThin  = thinSkus.filter(s  => s.minQty > 0).length;
 
@@ -1420,9 +1396,6 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             thinSkus={ndSkuStats.thin}
             maxCap={effectiveNetCfg.maxCap || 20}
             minNZD={effectiveNetCfg.minNZD || 2}
-            skuMaster={skuMaster}
-            stockedBrands={ndDsInfo.stocked.map(s => s.brand)}
-            thickBoundaryMm={appliedBoundary}
           />
         : !isNetworkDesignActive
           ? <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
@@ -1579,9 +1552,6 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             thinSkus={ndSkuStats.thin}
             thickCap={thickCfg?.capacity || 150}
             thinCap={thinCfg?.capacity || 60}
-            skuMaster={skuMaster}
-            stockedBrands={ndDsInfo.stocked.map(s => s.brand)}
-            thickBoundaryMm={appliedBoundary}
             onSelectSku={s => { setSelectedSku(s); setSelectedSkuType(s.thicknessCat === 'Thick' ? 'thick' : 'thin'); }}
           />
         </div>

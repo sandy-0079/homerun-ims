@@ -206,5 +206,5 @@ export function computeNetworkNodeStats(inv, skuMaster, brand, coveredDSes, look
       dailyMap,
       orderQtys: allOrders.sort((a, b) => a - b),
     };
-  }).filter(s => s.nzd > 0 || s.orderQtys.length > 0);
+  }); // all active SKUs returned — zero-demand ones show NZD=0, Min=Max=0 in the table
 }
