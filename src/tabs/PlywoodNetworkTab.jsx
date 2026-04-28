@@ -816,9 +816,10 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
 
       {/* Table */}
       <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",fontSize:11}}>
+        <table style={{borderCollapse:"collapse",tableLayout:"fixed",fontSize:11}}>
+
           <colgroup>
-            <col style={{width:160}}/><col/><col style={{width:96}}/><col style={{width:110}}/><col style={{width:52}}/><col style={{width:52}}/><col style={{width:52}}/>
+            <col style={{width:180}}/><col style={{width:280}}/><col style={{width:90}}/><col style={{width:100}}/><col style={{width:56}}/><col style={{width:56}}/><col style={{width:56}}/>
           </colgroup>
           <thead>
             <tr>
