@@ -683,6 +683,145 @@ function NetworkDesignSKUTable({ skus, onSelectSku, showNZD = true, isDC = false
   );
 }
 
+// Unified Thick+Thin table for DS Network Design view — sortable, searchable, collapsible sections
+function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onSelectSku }) {
+  const [query, setQuery] = React.useState('');
+  const [sortBy, setSortBy] = React.useState('nzd');
+  const [sortDir, setSortDir] = React.useState(-1); // -1 = desc, 1 = asc
+  const [thickOpen, setThickOpen] = React.useState(true);
+  const [thinOpen, setThinOpen] = React.useState(true);
+
+  const handleSort = col => {
+    if (sortBy === col) setSortDir(d => d * -1);
+    else { setSortBy(col); setSortDir(-1); }
+  };
+
+  const q = query.toLowerCase();
+  const filterAndSort = list => list
+    .filter(s => !q || s.sku.toLowerCase().includes(q) || s.name.toLowerCase().includes(q))
+    .sort((a, b) => {
+      const av = sortBy === 'mm' ? (a.mm ?? -1) : sortBy === 'nzd' ? a.nzd : sortBy === 'min' ? a.minQty : a.maxQty;
+      const bv = sortBy === 'mm' ? (b.mm ?? -1) : sortBy === 'nzd' ? b.nzd : sortBy === 'min' ? b.minQty : b.maxQty;
+      return (bv - av) * sortDir;
+    });
+
+  const filteredThick = filterAndSort(thickSkus);
+  const filteredThin  = filterAndSort(thinSkus);
+
+  const thickUsed = thickSkus.reduce((s, x) => s + x.maxQty, 0);
+  const thinUsed  = thinSkus.reduce((s, x) => s + x.maxQty, 0);
+
+  const SH = { // sortable header helper
+    th: (col, label, center) => {
+      const active = sortBy === col;
+      return (
+        <th onClick={() => handleSort(col)}
+          style={{padding:"6px 8px",fontWeight:700,fontSize:10,color:active?"#7C3AED":"#555",
+            borderBottom:"1px solid #E0E0D0",textAlign:center?"center":"left",
+            whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2"}}>
+          {label} {active ? (sortDir === -1 ? "↓" : "↑") : <span style={{color:"#ccc"}}>↕</span>}
+        </th>
+      );
+    }
+  };
+
+  const td = (content, center, color, mono) => (
+    <td style={{padding:"5px 8px",fontSize:11,borderBottom:"1px solid #F0F0E8",
+      textAlign:center?"center":"left",color:color||"inherit",
+      fontFamily:mono?"monospace":"inherit",verticalAlign:"middle"}}>
+      {content}
+    </td>
+  );
+
+  const capBar = (used, total, label) => {
+    const pct = total > 0 ? used/total*100 : 0;
+    const over = pct > 110, atLim = pct > 100;
+    const col = over ? "#DC2626" : atLim ? "#F59E0B" : "#16a34a";
+    return (
+      <tr>
+        <td colSpan={6} style={{padding:"4px 8px",borderBottom:"1px solid #E0E0D0",background:"#FAFAF8"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:10,color:"#555",fontWeight:600,flexShrink:0}}>{label}</span>
+            <div style={{flex:1,height:4,background:"#E5E5D0",borderRadius:2,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${Math.min(100,pct)}%`,background:col,borderRadius:2}}/>
+            </div>
+            <span style={{fontSize:10,fontWeight:700,color:col,flexShrink:0}}>
+              {used}/{total} · {pct.toFixed(0)}%{over?" Over Capacity":atLim?" At Limit":" Within Capacity"}
+            </span>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  const sectionRow = (label, count, open, onToggle) => (
+    <tr onClick={onToggle} style={{cursor:"pointer",background:"#F0F0E8"}}>
+      <td colSpan={6} style={{padding:"5px 10px",fontSize:11,fontWeight:700,color:"#555",borderBottom:"1px solid #E0E0D0",userSelect:"none"}}>
+        {open ? "▾" : "▸"} {label} <span style={{fontWeight:400,color:"#888",marginLeft:6}}>{count} SKU{count!==1?"s":""}</span>
+      </td>
+    </tr>
+  );
+
+  const dataRow = (s, i) => (
+    <tr key={s.sku} onClick={() => onSelectSku(s)}
+      style={{background:i%2===0?"#fff":"#F8F8F2",cursor:"pointer"}}>
+      {td(s.sku, false, "#666", true)}
+      <td style={{padding:"5px 8px",fontSize:11,borderBottom:"1px solid #F0F0E8",maxWidth:280,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
+      {td(s.mm != null ? `${s.mm}mm` : "—", true, "#888")}
+      {td(s.nzd, true)}
+      {td(s.minQty, true, "#1e40af", false)}
+      {td(s.maxQty, true, "#166534", false)}
+    </tr>
+  );
+
+  return (
+    <div>
+      {/* Search */}
+      <input
+        type="text" placeholder="Search SKU or name…" value={query}
+        onChange={e => setQuery(e.target.value)}
+        style={{...HR, width:"100%", fontSize:11, padding:"6px 10px",
+          border:"1px solid #E0E0D0", borderRadius:6, marginBottom:8,
+          background:"#fff", color:"#1A1A1A", outline:"none", boxSizing:"border-box"}}/>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
+          <colgroup>
+            <col style={{width:160}}/>
+            <col/>
+            <col style={{width:72}}/>
+            <col style={{width:64}}/>
+            <col style={{width:64}}/>
+            <col style={{width:64}}/>
+          </colgroup>
+          <thead>
+            <tr style={{background:"#F8F8F2"}}>
+              <th style={{padding:"6px 8px",fontWeight:700,fontSize:10,color:"#555",borderBottom:"1px solid #E0E0D0",textAlign:"left",background:"#F8F8F2"}}>SKU</th>
+              <th style={{padding:"6px 8px",fontWeight:700,fontSize:10,color:"#555",borderBottom:"1px solid #E0E0D0",textAlign:"left",background:"#F8F8F2"}}>Name</th>
+              {SH.th('mm','mm',true)}
+              {SH.th('nzd','NZD',true)}
+              {SH.th('min','Min',true)}
+              {SH.th('max','Max',true)}
+            </tr>
+          </thead>
+          <tbody>
+            {/* Thick section */}
+            {sectionRow(`Thick — Vertical Storage (>${(thickSkus[0]?.mm||9)}mm)`, filteredThick.length, thickOpen, () => setThickOpen(o => !o))}
+            {thickOpen && capBar(thickUsed, thickCap, "Vertical Capacity")}
+            {thickOpen && filteredThick.map((s,i) => dataRow(s,i))}
+            {/* Thin section */}
+            {sectionRow(`Thin — Tub Storage`, filteredThin.length, thinOpen, () => setThinOpen(o => !o))}
+            {thinOpen && capBar(thinUsed, thinCap, "Tub Capacity")}
+            {thinOpen && filteredThin.map((s,i) => dataRow(s,i))}
+          </tbody>
+        </table>
+        {filteredThick.length + filteredThin.length === 0 && (
+          <div style={{padding:16,textAlign:"center",color:"#888",fontSize:11}}>No SKUs match "{query}"</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Shared formula: apply P95/winsorize/cap logic to a list of SKU stats.
 // Used by both DS node view and DC computation.
 function applyNetworkFormula(statsList, cfg, boundary) {
@@ -1358,17 +1497,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           })()}
         </div>
         {isNetworkDesignActive && ndDsInfo ? (
-          <>
-            {ndDsInfo.stocked.length === 0
-              ? <div style={{padding:16,color:HR.muted,fontSize:12}}>No brands stocked at {dsFilter} — see fulfillment above.</div>
-              : <>
-                  <CapacityBar used={ndSkuStats.thick.reduce((s,x)=>s+x.maxQty,0)} total={thickCfg.capacity} label="Vertical Storage — estimated Max load" cfg={null}/>
-                  <div style={S.card}>
-                    <NetworkDesignSKUTable skus={ndSkuStats.thick} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thick"); }}/>
-                  </div>
-                </>
-            }
-          </>
+          ndDsInfo.stocked.length === 0
+            ? <div style={{padding:16,color:HR.muted,fontSize:12}}>No brands stocked at {dsFilter} — see fulfillment above.</div>
+            : null
         ) : (
           <>
             <ConfigPanel type="thick" cfg={thickCfg} onChange={setThickCfg} isAdmin={isAdmin} onRun={runThick} dirty={thickDirty} boundary={thickBoundaryMm}/>
@@ -1386,43 +1517,17 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         )}
       </div>}
 
-      {/* Thin section */}
-      {dsFilter !== 'DC' && <div style={{marginBottom:24}}>
-        <div style={{...S.sectionTitle,display:"flex",alignItems:"center",gap:6}}>
-          Thin SKUs — Tub Storage: Up to {thickBoundaryMm}mm
-          {isNetworkDesignActive && (() => {
-            const skus = ndSkuStats.thin;
-            const stk = skus.filter(s => s.minQty > 0).length;
-            const nstk = skus.filter(s => s.minQty === 0).length;
-            const nzd1 = skus.filter(s => s.minQty === 0 && s.trace?.nzd === 1).length;
-            return skus.length > 0 && (
-              <span style={{fontSize:10,color:HR.muted,fontWeight:400,marginLeft:10}}>
-                {skus.length} SKUs · <span style={{color:"#16a34a"}}>{stk} stocked</span>{nstk > 0 && <span> · <span style={{color:"#6B7280"}}>{nstk} not stocked{nzd1 > 0 ? ` (${nzd1} at 1 NZD)` : ""}</span></span>}
-              </span>
-            );
-          })()}
-        </div>
-        {isNetworkDesignActive && ndDsInfo ? (
-          <>
-            {ndDsInfo.stocked.length === 0
-              ? <div style={{padding:16,color:HR.muted,fontSize:12}}>No brands stocked at {dsFilter}.</div>
-              : <>
-                  <CapacityBar used={ndSkuStats.thin.reduce((s,x)=>s+x.maxQty,0)} total={thinCfg.capacity} label="Tub Storage — estimated Max load" cfg={null}/>
-                  <div style={S.card}>
-                    <NetworkDesignSKUTable skus={ndSkuStats.thin} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
-                  </div>
-                </>
-            }
-          </>
-        ) : (
-          <>
-            <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin} dirty={thinDirty} boundary={thickBoundaryMm}/>
-            {thinResults ? (
-              <>
-                <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Tub Storage Capacity" cfg={thinCfg}/>
-                <div style={S.card}>
-                  <SKUTable skus={thinResults.skus} cfg={committedThinCfg || thinCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
-                </div>
+      {/* Thin section — PCT mode only; ND mode uses unified table below */}
+      {dsFilter !== 'DC' && !isNetworkDesignActive && <div style={{marginBottom:24}}>
+        <div style={S.sectionTitle}>Thin SKUs — Tub Storage: Up to {thickBoundaryMm}mm</div>
+        <>
+          <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin} dirty={thinDirty} boundary={thickBoundaryMm}/>
+          {thinResults ? (
+            <>
+              <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Tub Storage Capacity" cfg={thinCfg}/>
+              <div style={S.card}>
+                <SKUTable skus={thinResults.skus} cfg={committedThinCfg || thinCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
+              </div>
               </>
             ) : (
               <div style={{padding:24,textAlign:"center",color:HR.muted,fontSize:12}}>Configure thresholds above and click ▶ Run</div>
@@ -1430,6 +1535,19 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           </>
         )}
       </div>}
+
+      {/* ── Network Design unified Thick+Thin table ─────────────────────────── */}
+      {isNetworkDesignActive && dsFilter !== 'DC' && ndDsInfo?.stocked.length > 0 && (
+        <div style={{...S.card,padding:12,marginBottom:24}}>
+          <NetworkDesignUnifiedTable
+            thickSkus={ndSkuStats.thick}
+            thinSkus={ndSkuStats.thin}
+            thickCap={thickCfg?.capacity || 150}
+            thinCap={thinCfg?.capacity || 60}
+            onSelectSku={s => { setSelectedSku(s); setSelectedSkuType(s.thicknessCat === 'Thick' ? 'thick' : 'thin'); }}
+          />
+        </div>
+      )}
 
       {selectedSku && (
         isNetworkDesignActive && selectedSku.trace
