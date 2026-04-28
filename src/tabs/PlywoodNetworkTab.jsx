@@ -1302,8 +1302,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                     <span style={{fontSize:11,fontWeight:600,color:"#444"}}>{label}</span>
                     <input type="number" min={min} max={max} step={step}
                       value={editingNetCfg[key] ?? ""}
+                      disabled={!isAdmin}
                       onChange={e => handleNetCfgChange(key, Number(e.target.value))}
-                      style={{...S.input,width:"100%",background:"#fff"}}/>
+                      style={{...S.input,width:"100%",background:isAdmin?"#fff":"#EDE9FE",opacity:isAdmin?1:0.75}}/>
                     <span style={{fontSize:9,color:"#9B8EC4",lineHeight:1.4}}>{hint}</span>
                   </label>
                 ))}
