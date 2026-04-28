@@ -1249,7 +1249,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
 
       {/* ── DS Physical Capacity — between summary cards and Thick/Thin sections ── */}
       {isNetworkDesignActive && dsFilter !== 'DC' && thickCfg && thinCfg && (
-        <div style={{...S.card,marginBottom:12,padding:"7px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11}}>
+        <div style={{...S.card,marginBottom:12,padding:"7px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11,lineHeight:"1.2"}}>
           <span style={{fontWeight:700,color:"#555"}}>Physical Capacity at {dsFilter}</span>
           <span style={{color:HR.border}}>|</span>
           {[{label:"Thick (sheets)",type:"thick",cfg:thickCfg,setCfg:setThickCfg},{label:"Thin (sheets)",type:"thin",cfg:thinCfg,setCfg:setThinCfg}].map(({label,type,cfg,setCfg},i) => (
@@ -1260,7 +1260,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                 value={cfg.capacity ?? ''}
                 disabled={!isAdmin}
                 onChange={e => { const v = parseFloat(e.target.value)||0; setCfg(c=>({...c,capacity:v})); handleSaveConfig(type,{...cfg,capacity:v}); }}
-                style={{...S.input,width:60,fontSize:11,padding:"2px 6px",opacity:isAdmin?1:0.7}}/>
+                style={{...S.input,width:60,fontSize:11,padding:"0 6px",height:"20px",boxSizing:"border-box",opacity:isAdmin?1:0.7}}/>
             </span>
           ))}
         </div>
@@ -1345,11 +1345,17 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             style={{width:40,padding:"0 4px",fontSize:12,fontWeight:700,border:`1px solid #C05A00`,borderRadius:4,color:"#92400E",background:isAdmin?HR.white:HR.surfaceLight,textAlign:"center"}}
           />
           mm {!isAdmin && <span style={{fontSize:9,color:HR.muted,fontWeight:400}}>(admin to edit)</span>}
-          {isNetworkDesignActive && ndDsInfo?.coveredDSes?.length > 0 && (
-            <span style={{fontSize:10,color:"#7C3AED",fontWeight:600,marginLeft:8}}>
-              Aggregated: {ndDsInfo.coveredDSes.join(", ")}
-            </span>
-          )}
+          {isNetworkDesignActive && (() => {
+            const skus = ndSkuStats.thick;
+            const stk = skus.filter(s => s.minQty > 0).length;
+            const nstk = skus.filter(s => s.minQty === 0).length;
+            const nzd1 = skus.filter(s => s.minQty === 0 && s.trace?.nzd === 1).length;
+            return skus.length > 0 && (
+              <span style={{fontSize:10,color:HR.muted,fontWeight:400,marginLeft:10}}>
+                {skus.length} SKUs · <span style={{color:"#16a34a"}}>{stk} stocked</span>{nstk > 0 && <span> · <span style={{color:"#6B7280"}}>{nstk} not stocked{nzd1 > 0 ? ` (${nzd1} at 1 NZD)` : ""}</span></span>}
+              </span>
+            );
+          })()}
         </div>
         {isNetworkDesignActive && ndDsInfo ? (
           <>
@@ -1384,11 +1390,17 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       {dsFilter !== 'DC' && <div style={{marginBottom:24}}>
         <div style={{...S.sectionTitle,display:"flex",alignItems:"center",gap:6}}>
           Thin SKUs — Tub Storage: Up to {thickBoundaryMm}mm
-          {isNetworkDesignActive && ndDsInfo?.coveredDSes?.length > 0 && (
-            <span style={{fontSize:10,color:"#7C3AED",fontWeight:600,marginLeft:8}}>
-              Aggregated: {ndDsInfo.coveredDSes.join(", ")}
-            </span>
-          )}
+          {isNetworkDesignActive && (() => {
+            const skus = ndSkuStats.thin;
+            const stk = skus.filter(s => s.minQty > 0).length;
+            const nstk = skus.filter(s => s.minQty === 0).length;
+            const nzd1 = skus.filter(s => s.minQty === 0 && s.trace?.nzd === 1).length;
+            return skus.length > 0 && (
+              <span style={{fontSize:10,color:HR.muted,fontWeight:400,marginLeft:10}}>
+                {skus.length} SKUs · <span style={{color:"#16a34a"}}>{stk} stocked</span>{nstk > 0 && <span> · <span style={{color:"#6B7280"}}>{nstk} not stocked{nzd1 > 0 ? ` (${nzd1} at 1 NZD)` : ""}</span></span>}
+              </span>
+            );
+          })()}
         </div>
         {isNetworkDesignActive && ndDsInfo ? (
           <>
