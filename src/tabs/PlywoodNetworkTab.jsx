@@ -818,13 +818,13 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
       <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",fontSize:11}}>
           <colgroup>
-            <col style={{width:190}}/><col style={{width:260}}/><col style={{width:96}}/><col style={{width:96}}/><col style={{width:46}}/><col style={{width:46}}/><col style={{width:46}}/>
+            <col style={{width:160}}/><col/><col style={{width:96}}/><col style={{width:110}}/><col style={{width:52}}/><col style={{width:52}}/><col style={{width:52}}/>
           </colgroup>
           <thead>
             <tr>
               {sh('sku','SKU',false)}
               {sh('name','Item Name',false)}
-              {sh('mm','Thickness',false)}
+              {sh('mm','Thickness',true)}
               {sh('brand','Brand',false)}
               {sh('nzd','NZD',true)}
               {sh('min','Min',true)}
@@ -842,7 +842,7 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
                   <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#666",borderBottom:"1px solid #F5F5F0",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.sku}</td>
                   <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
                   <td style={{padding:"3px 6px",borderBottom:"1px solid #F5F5F0"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
                       <span style={{display:"inline-block",width:28,textAlign:"right",fontSize:10,color:"#555",flexShrink:0}}>{s.mm!=null?s.mm:"—"}</span>
                       <span style={{fontSize:10,color:"#888",flexShrink:0}}>mm</span>
                       <span style={{display:"inline-block",width:34,textAlign:"center",fontSize:9,fontWeight:700,padding:"1px 0",borderRadius:3,flexShrink:0,
