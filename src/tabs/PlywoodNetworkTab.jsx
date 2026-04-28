@@ -521,7 +521,7 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
         ) : (
           <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FAFAF8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
             <div>
-              <b>P{t.pMin}</b> of daily demand ({t.nzd} NZD days, {fmtCovers(t.covers)})
+              <b>P{t.pMin}</b> of daily demand ({t.nzd} NZD days, median <b>{t.dtMedian?.toFixed(1)}</b> sheets, {fmtCovers(t.covers)})
               {winsorised && <span style={{color:"#888",marginLeft:6}}>— outliers winsorised at {t.dtMedian?.toFixed(1)} × {((t.spikeCap||0)/(t.dtMedian||1)).toFixed(0)}</span>}
               {" "}&nbsp;=&nbsp; {t.p95Raw?.toFixed(1)} &nbsp;→&nbsp; <b style={{color:"#B91C1C"}}>Min = {sku.minQty}</b>
             </div>
@@ -550,6 +550,8 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
                   <XAxis dataKey="date" tick={{fontSize:8}} interval={Math.max(0,Math.floor(timelineData.length/5)-1)}/>
                   <YAxis tick={{fontSize:8}} width={24}/>
                   <RTooltip contentStyle={{fontSize:10}}/>
+                  {sku.dailyMedian > 0 && <ReferenceLine y={sku.dailyMedian} stroke="#888" strokeDasharray="3 2"
+                    label={{value:`Median=${sku.dailyMedian.toFixed(0)}`,position:"right",fontSize:8,fill:"#888"}}/>}
                   {sku.minQty > 0 && <ReferenceLine y={sku.minQty} stroke="#B91C1C" strokeDasharray="4 3"
                     label={{value:`Min=${sku.minQty}`,position:"right",fontSize:8,fill:"#B91C1C"}}/>}
                   {sku.maxQty > 0 && <ReferenceLine y={sku.maxQty} stroke="#16a34a" strokeDasharray="4 3"
