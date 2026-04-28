@@ -456,131 +456,131 @@ function SummaryCards({ skuList, skuMaster, thickCfg, thinCfg, thickBoundaryMm =
 function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
   if (!sku) return null;
   const t = sku.trace || {};
-  const capped = v => v !== sku.trace?.rawNonZero?.find((_, i) => sku.trace?.winsorized?.[i] !== v);
 
-  // Timeline over full date range using aggregated dailyMap
-  const timelineData = (invoiceDateRange?.dates || []).map(date => ({
-    date: date.slice(5),
-    qty: sku.dailyMap[date] || 0,
-  }));
-  const barSize = Math.max(4, Math.min(24, Math.floor(400 / Math.max(timelineData.length, 1))));
+  // Timeline: filter to lookback window only
+  const allDates = invoiceDateRange?.dates || [];
+  const latestDate = allDates[allDates.length - 1];
+  const lookbackDates = (() => {
+    if (!latestDate || !t.lookbackDays) return allDates;
+    const cutoff = new Date(latestDate);
+    cutoff.setDate(cutoff.getDate() - t.lookbackDays);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    return allDates.filter(d => d >= cutoffStr);
+  })();
+  const timelineData = lookbackDates.map(d => ({ date: d.slice(5), qty: sku.dailyMap[d] || 0 }));
+  const tBarSize = Math.max(3, Math.min(20, Math.floor(340 / Math.max(timelineData.length, 1))));
 
-  const row = (label, value, note) => (
-    <div style={{display:"flex",gap:8,alignItems:"baseline",padding:"4px 0",borderBottom:"1px solid #F0F0E8"}}>
-      <span style={{width:200,fontSize:11,color:"#555",flexShrink:0}}>{label}</span>
-      <span style={{fontSize:12,fontWeight:700,color:"#1A1A1A"}}>{value}</span>
-      {note && <span style={{fontSize:10,color:"#888",marginLeft:4}}>{note}</span>}
-    </div>
-  );
+  // Order qty histogram
+  const histData = (() => {
+    const b = {};
+    (sku.orderQtys||[]).forEach(q => { const k = Math.ceil(q); b[k] = (b[k]||0)+1; });
+    return Object.entries(b).sort((a,c)=>+a[0]-+c[0]).map(([qty,count])=>({qty:+qty,count}));
+  })();
+  const hBarSize = Math.max(3, Math.min(20, Math.floor(340 / Math.max(histData.length, 1))));
+
+  // Winsorisation note
+  const winsorised = t.spikeCap != null && (t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v);
+
+  const fmtCovers = (arr) => (arr||[]).join(', ');
+  const statLine = t.isDC
+    ? `DC Min: ${sku.minQty} · DC Max: ${sku.maxQty}`
+    : `Min: ${sku.minQty} · Max: ${sku.maxQty} · ${t.nzd||0} NZD · ${t.orderQtyCount||0} orders`;
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
-      <div style={{background:"#fff",borderRadius:12,padding:24,width:"min(860px,96vw)",maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
+      <div style={{background:"#fff",borderRadius:10,padding:"16px 20px",width:"min(860px,96vw)",maxHeight:"88vh",overflowY:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}} onClick={e=>e.stopPropagation()}>
 
-        {/* Header */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+        {/* Compact header */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
           <div>
-            <div style={{fontSize:16,fontWeight:800}}>{sku.name}</div>
-            <div style={{fontSize:11,color:"#888",marginTop:2}}>
-              {sku.sku} · {sku.mm != null ? `${sku.mm}mm` : "—"}
-              {t.isDC ? " · DC stocking" : ` · Aggregated: ${(t.covers||[]).join(", ")}`}
+            <div style={{fontSize:13,fontWeight:700,color:"#1A1A1A",lineHeight:1.3}}>{sku.name}</div>
+            <div style={{fontSize:10,color:"#888",marginTop:2}}>
+              {sku.sku} · {sku.mm != null ? `${sku.mm}mm` : "—"} · {t.isDC ? "DC stocking" : fmtCovers(t.covers)}
+              <span style={{marginLeft:12,color:"#333",fontWeight:600}}>{statLine}</span>
             </div>
           </div>
-          <button onClick={onClose} style={{background:"none",border:"1px solid #E0E0D0",borderRadius:6,padding:"4px 14px",cursor:"pointer",fontSize:12,color:"#888",fontWeight:600}}>Close ✕</button>
+          <button onClick={onClose} style={{background:"none",border:"1px solid #E0E0D0",borderRadius:5,padding:"3px 10px",cursor:"pointer",fontSize:11,color:"#888",flexShrink:0,marginLeft:12}}>Close ✕</button>
         </div>
 
-        {/* Result */}
-        <div style={{display:"flex",gap:12,marginBottom:16}}>
-          {(t.isDC
-            ? [{label:"DC Min",val:sku.minQty,color:"#B91C1C"},{label:"DC Max",val:sku.maxQty,color:"#16a34a"}]
-            : [{label:"Min",val:sku.minQty,color:"#B91C1C"},{label:"Max",val:sku.maxQty,color:"#16a34a"},{label:"NZD",val:t.nzd||0,color:"#0077A8"},{label:"Orders",val:t.orderQtyCount||0,color:"#555"}]
-          ).map(c => (
-            <div key={c.label} style={{background:"#F8F8F2",borderRadius:8,padding:"8px 16px",textAlign:"center",minWidth:64}}>
-              <div style={{fontSize:20,fontWeight:800,color:c.color}}>{c.val}</div>
-              <div style={{fontSize:10,color:"#888",fontWeight:600}}>{c.label}</div>
+        <div style={{borderTop:"1px solid #F0F0E8",marginBottom:10}}/>
+
+        {/* Computation — compact formula lines */}
+        {t.isDC ? (
+          <div style={{fontSize:11,lineHeight:1.8,color:"#444",background:"#FAFAF8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            {t.dcP95 > 0
+              ? <div>Direct serving: <b>P{t.pMin ?? 95}(demand from {fmtCovers(t.dcCovers)}) = {t.dcP95} sheets</b></div>
+              : <div style={{color:"#888"}}>Direct serving: 0 (brand not directly served by DC)</div>
+            }
+            <div>Replenishment: <b>Σ DS_Min × {t.dcMultMin}</b> = {Math.ceil((t.sumMin||0) * (t.dcMultMin||0.3))} sheets &nbsp;|&nbsp; DC Min = {t.dcP95} + {Math.ceil((t.sumMin||0)*(t.dcMultMin||0.3))} = <b style={{color:"#B91C1C"}}>{sku.minQty}</b></div>
+            <div>Replenishment: <b>Σ DS_Min × {t.dcMultMax}</b> = {Math.ceil((t.sumMin||0) * (t.dcMultMax||0.5))} sheets &nbsp;|&nbsp; DC Max = {t.dcP95} + {Math.ceil((t.sumMin||0)*(t.dcMultMax||0.5))} = <b style={{color:"#16a34a"}}>{sku.maxQty}</b></div>
+          </div>
+        ) : t.belowMinNZD ? (
+          <div style={{fontSize:11,color:"#92400E",background:"#FFF7ED",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            ⚠ Only {t.nzd} NZD day{t.nzd!==1?"s":""} in lookback — below minimum threshold ({t.minNZDThreshold}). Not stocked (Min = Max = 0).
+          </div>
+        ) : (
+          <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FAFAF8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            <div>
+              <b>P{t.pMin}</b> of daily demand ({t.nzd} NZD days, {fmtCovers(t.covers)})
+              {winsorised && <span style={{color:"#888",marginLeft:6}}>— outliers winsorised at {t.dtMedian?.toFixed(1)} × {((t.spikeCap||0)/(t.dtMedian||1)).toFixed(0)}</span>}
+              {" "}&nbsp;=&nbsp; {t.p95Raw?.toFixed(1)} &nbsp;→&nbsp; <b style={{color:"#B91C1C"}}>Min = {sku.minQty}</b>
             </div>
-          ))}
-        </div>
-
-        {/* Computation trace */}
-        <div style={{fontSize:12,fontWeight:700,color:"#7C3AED",marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>How DC Min &amp; Max were computed</div>
-        <div style={{background:"#FAFAF8",borderRadius:8,padding:"10px 14px",marginBottom:t.isDC?0:16}}>
-          {t.isDC ? (
-            <>
-              {t.dcP95 > 0
-                ? row(`P95 direct-serving demand`, `${t.dcP95} sheets`, `aggregated from ${(t.dcCovers||[]).join(", ")}`)
-                : row(`Direct-serving component`, `0`, `brand not directly served by DC`)
+            <div>
+              <b>P{t.pBuf}</b> of {t.orderQtyCount} orders &nbsp;=&nbsp; {t.orderBuf} sheets (Max buffer) &nbsp;→&nbsp;
+              {" "}{sku.minQty} + {t.orderBuf} = {t.rawMax}
+              {t.capApplied
+                ? <span> → capped to {t.cap} &nbsp;<b style={{color:"#16a34a"}}>Max = {sku.maxQty}</b></span>
+                : <span> ≤ cap {t.cap} ✓ &nbsp;<b style={{color:"#16a34a"}}>Max = {sku.maxQty}</b></span>
               }
-              {row(`Σ DS_Min across stocking nodes`, `${t.sumMin} sheets`, `scales with demand — fast movers contribute more`)}
-              {row(`DC Min = ${t.dcP95} + ceil(${t.sumMin} × ${t.dcMultMin})`, `= ${t.dcP95} + ${Math.ceil(t.sumMin * t.dcMultMin)} = ${sku.minQty}`, ``)}
-              {row(`DC Max = ${t.dcP95} + ceil(${t.sumMin} × ${t.dcMultMax})`, `= ${t.dcP95} + ${Math.ceil(t.sumMin * t.dcMultMax)} = ${sku.maxQty}`, `(≥ DC Min)`)}
-              <div style={{marginTop:10,padding:"6px 10px",background:"#F0FFF4",borderRadius:6,fontSize:11,color:"#166534",fontWeight:600}}>
-                → DC Min = {sku.minQty} · DC Max = {sku.maxQty}
-              </div>
-            </>
-          ) : t.belowMinNZD ? (
-            <div style={{color:"#92400E",fontSize:12,fontWeight:600}}>
-              ⚠ NZD ({t.nzd}) &lt; minNZD ({t.minNZDThreshold}) → Min = Max = 0 (insufficient demand history, sourced on demand)
             </div>
-          ) : (
-            <>
-              {row(`Non-zero days (NZD)`, `${t.nzd} days`, `across ${(t.covers||[]).join(", ")}`)}
-              {row(`Daily totals (non-zero)`, (t.rawNonZero||[]).join(", ") || "—", "sorted ascending")}
-              {t.spikeCap != null && (t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v) && (
-                row(`Winsorized at ${t.dtMedian?.toFixed(1)} × ${(t.spikeCap/(t.dtMedian||1)).toFixed(1)} = ${t.spikeCap?.toFixed(1)}`, (t.winsorized||[]).join(", "), "outlier days capped")
-              )}
-              {t.spikeCap != null && !(t.rawNonZero||[]).some((v,i) => (t.winsorized||[])[i] < v) && (
-                row(`Winsorize cap (${t.dtMedian?.toFixed(1)} × ${(t.spikeCap/(t.dtMedian||1)).toFixed(0)} = ${t.spikeCap?.toFixed(1)})`, "no days capped", "all within threshold")
-              )}
-              {row(`P${t.pMin} of winsorized series`, `${t.p95Raw?.toFixed(2)} → ceil = ${Math.ceil(t.p95Raw||0)}`, `→ raw Min before cap guard`)}
-              {row(`P${t.pBuf} of order quantities`, `${t.orderBuf} sheets`, `buffer above Min`)}
-              {row(`Raw Max (Min + buffer)`, `${t.rawMax}`, t.capApplied ? `> cap ${t.cap} → capped` : `≤ cap ${t.cap} ✓`)}
-              {t.capApplied && row(`Cap applied`, `Max = ${t.cap}`, `Min stays at P95 = ${sku.minQty} (gap = ${t.cap} − ${sku.minQty} = ${t.cap - sku.minQty})`)}
-              <div style={{marginTop:10,padding:"6px 10px",background:"#F0FFF4",borderRadius:6,fontSize:11,color:"#166534",fontWeight:600}}>
-                → Min = {sku.minQty} · Max = {sku.maxQty}
+          </div>
+        )}
+
+        {/* Charts side by side — DS nodes only */}
+        {!t.isDC && (timelineData.length > 0 || histData.length > 0) && (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            {/* Timeline */}
+            <div>
+              <div style={{fontSize:10,fontWeight:600,color:"#555",marginBottom:4}}>
+                Daily Demand — {fmtCovers(t.covers)} ({t.lookbackDays||90}d lookback)
               </div>
-            </>
-          )}
-        </div>
-
-        {/* Charts — DS nodes only, not DC */}
-        {!t.isDC && <><div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:8,marginTop:16}}>Daily Consumption — Aggregated ({(t.covers||[]).join(" + ")})</div>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={timelineData} margin={{left:8,right:64,top:4,bottom:20}}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false}/>
-            <XAxis dataKey="date" tick={{fontSize:9}} interval={Math.floor(timelineData.length/6)}
-              label={{value:"Date",position:"insideBottom",offset:-10,fontSize:10}}/>
-            <YAxis tick={{fontSize:10}} label={{value:"Qty",angle:-90,position:"insideLeft",offset:10,fontSize:10}}/>
-            <RTooltip/>
-            {sku.minQty > 0 && <ReferenceLine y={sku.minQty} stroke="#B91C1C" strokeDasharray="5 4"
-              label={{value:`Min=${sku.minQty}`,position:"right",fontSize:9,fill:"#B91C1C"}}/>}
-            {sku.maxQty > 0 && <ReferenceLine y={sku.maxQty} stroke="#16a34a" strokeDasharray="5 4"
-              label={{value:`Max=${sku.maxQty}`,position:"right",fontSize:9,fill:"#16a34a"}}/>}
-            <Bar dataKey="qty" barSize={barSize} fill="#0077A8" radius={[2,2,0,0]}/>
-          </BarChart>
-        </ResponsiveContainer>
-
-        {/* Order qty histogram */}
-        {(sku.orderQtys||[]).length > 0 && (() => {
-          const buckets = {};
-          sku.orderQtys.forEach(q => { const b = Math.ceil(q); buckets[b] = (buckets[b]||0) + 1; });
-          const histData = Object.entries(buckets).sort((a,b)=>+a[0]-+b[0]).map(([qty,count])=>({qty:+qty,count}));
-          const hs = Math.max(4, Math.min(24, Math.floor(400/Math.max(histData.length,1))));
-          return (
-            <>
-              <div style={{fontSize:11,fontWeight:700,color:"#555",margin:"16px 0 8px"}}>Order Qty Distribution ({t.orderQtyCount} orders)</div>
-              <ResponsiveContainer width="100%" height={160}>
-                <BarChart data={histData} margin={{left:8,right:8,top:4,bottom:20}}>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={timelineData} margin={{left:0,right:52,top:4,bottom:16}}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false}/>
-                  <XAxis dataKey="qty" tick={{fontSize:9}} label={{value:"Order Qty",position:"insideBottom",offset:-10,fontSize:10}}/>
-                  <YAxis tick={{fontSize:10}}/>
-                  <RTooltip formatter={v=>[v,"Orders"]} labelFormatter={l=>`Qty: ${l}`}/>
-                  <Bar dataKey="count" barSize={hs} fill="#7C3AED" radius={[2,2,0,0]}/>
+                  <XAxis dataKey="date" tick={{fontSize:8}} interval={Math.max(0,Math.floor(timelineData.length/5)-1)}/>
+                  <YAxis tick={{fontSize:8}} width={24}/>
+                  <RTooltip contentStyle={{fontSize:10}}/>
+                  {sku.minQty > 0 && <ReferenceLine y={sku.minQty} stroke="#B91C1C" strokeDasharray="4 3"
+                    label={{value:`Min=${sku.minQty}`,position:"right",fontSize:8,fill:"#B91C1C"}}/>}
+                  {sku.maxQty > 0 && <ReferenceLine y={sku.maxQty} stroke="#16a34a" strokeDasharray="4 3"
+                    label={{value:`Max=${sku.maxQty}`,position:"right",fontSize:8,fill:"#16a34a"}}/>}
+                  <Bar dataKey="qty" barSize={tBarSize} fill="#0077A8" radius={[2,2,0,0]}/>
                 </BarChart>
               </ResponsiveContainer>
-            </>
-          );
-        })()}</>}
+            </div>
+            {/* Histogram */}
+            {histData.length > 0 && (
+              <div>
+                <div style={{fontSize:10,fontWeight:600,color:"#555",marginBottom:4}}>
+                  Order Qty Distribution ({t.orderQtyCount} orders)
+                </div>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={histData} margin={{left:0,right:8,top:4,bottom:16}}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false}/>
+                    <XAxis dataKey="qty" tick={{fontSize:8}}/>
+                    <YAxis tick={{fontSize:8}} width={24}/>
+                    <RTooltip contentStyle={{fontSize:10}} formatter={v=>[v,"orders"]} labelFormatter={l=>`Qty: ${l}`}/>
+                    {sku.minQty > 0 && <ReferenceLine x={sku.minQty} stroke="#B91C1C" strokeDasharray="4 3"
+                      label={{value:`Min=${sku.minQty}`,position:"top",fontSize:8,fill:"#B91C1C"}}/>}
+                    {sku.maxQty > 0 && <ReferenceLine x={sku.maxQty} stroke="#16a34a" strokeDasharray="4 3"
+                      label={{value:`Max=${sku.maxQty}`,position:"top",fontSize:8,fill:"#16a34a"}}/>}
+                    <Bar dataKey="count" barSize={hBarSize} fill="#7C3AED" radius={[2,2,0,0]}/>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -870,6 +870,7 @@ function applyNetworkFormula(statsList, cfg, boundary) {
       p95Raw: winsorized.length ? percentile(winsorized, pMin) : 0, pMin,
       orderBuf, pBuf, orderQtyCount: s.orderQtys.length,
       rawMax: minQty + orderBuf, capApplied: (minQty + orderBuf) > cap, cap,
+      lookbackDays: cfg.lookbackDays || 90,
     };
     return { ...s, mm, thicknessCat, minQty: minFinal, maxQty, dailyMedian: dtMedian, trace };
   }).filter(Boolean).filter(s => s.thicknessCat !== 'Laminate');
