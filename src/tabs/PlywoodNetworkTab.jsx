@@ -1203,26 +1203,27 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
 
       {/* ── Per-DS brand stocking status (Network Design mode, DS nodes only) ── */}
       {isNetworkDesignActive && ndDsInfo && dsFilter !== 'DC' && (
-        <div style={{...S.card,marginBottom:12,padding:"10px 14px",display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-start"}}>
-          <div>
-            <div style={{fontSize:11,fontWeight:700,color:"#166534",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Stocked at {dsFilter}</div>
-            {ndDsInfo.stocked.length === 0
-              ? <div style={{fontSize:12,color:HR.muted}}>No brands stocked here</div>
-              : ndDsInfo.stocked.map(({brand, covers}) => (
-                  <div key={brand} style={{fontSize:12,color:"#166534",marginBottom:2}}>
-                    ● {brand} <span style={{color:HR.muted,fontWeight:400}}>(demand from {covers.join(", ")})</span>
-                  </div>
-                ))}
-          </div>
-          {ndDsInfo.notStocked.length > 0 && (
-            <div>
-              <div style={{fontSize:11,fontWeight:700,color:"#92400E",marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Not stocked at {dsFilter}</div>
-              {ndDsInfo.notStocked.map(({brand, fulfilledFrom}) => (
-                <div key={brand} style={{fontSize:12,color:"#92400E",marginBottom:2}}>
-                  ○ {brand} <span style={{color:HR.muted,fontWeight:400}}>→ fulfilled from {fulfilledFrom}</span>
-                </div>
+        <div style={{...S.card,marginBottom:12,padding:"6px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11}}>
+          {ndDsInfo.stocked.length > 0 && (
+            <span>
+              <span style={{fontWeight:700,color:"#166534"}}>Stocked: </span>
+              {ndDsInfo.stocked.map(({brand}) => (
+                <span key={brand} style={{color:"#166534",marginRight:8}}>● {brand}</span>
               ))}
-            </div>
+            </span>
+          )}
+          {ndDsInfo.stocked.length > 0 && ndDsInfo.notStocked.length > 0 && (
+            <span style={{color:HR.border}}>|</span>
+          )}
+          {ndDsInfo.notStocked.length > 0 && (
+            <span>
+              <span style={{fontWeight:700,color:"#92400E"}}>Fulfilled elsewhere: </span>
+              {ndDsInfo.notStocked.map(({brand, fulfilledFrom}) => (
+                <span key={brand} style={{color:HR.muted,marginRight:10}}>
+                  {brand} <span style={{color:"#92400E"}}>→ {fulfilledFrom}</span>
+                </span>
+              ))}
+            </span>
           )}
         </div>
       )}
