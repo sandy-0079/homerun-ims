@@ -931,7 +931,7 @@ function applyNetworkFormula(statsList, cfg, boundary) {
       abq = s.orderQtys.length > 0 ? totalQty / s.orderQtys.length : 0;
       demandSignal = abq;
       minFinal = Math.ceil(abq);
-      maxQty   = Math.min(Math.max(Math.ceil(abq * abqMult), minFinal), cap);
+      maxQty   = Math.min(Math.max(Math.ceil(abq * abqMult), minFinal + 1), cap);
     } else {
       // Frequent zone — P95-based
       zone = 'frequent';
