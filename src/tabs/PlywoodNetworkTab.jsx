@@ -622,35 +622,27 @@ function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD, skuMas
   const notStockedTn = Math.max(0, allTn - stockTn);
 
   const pct = (n, d) => d > 0 ? ` (${Math.round(n / d * 100)}%)` : "";
-  const thintk = (tk, tn) => <span style={{color:HR.muted}}> Thick: {tk} · Thin: {tn}</span>;
-
-  const cardStyle = { ...S.card, padding:"8px 12px" };
-  const numStyle  = (color) => ({ fontSize:20, fontWeight:800, color, lineHeight:1 });
-  const lblStyle  = { fontSize:11, fontWeight:600, color:"#444", margin:"3px 0 2px" };
-  const subStyle  = { fontSize:10, color:HR.muted, lineHeight:1.5 };
+  const sep = <span style={{color:HR.border,margin:"0 10px"}}>|</span>;
 
   return (
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:12}}>
-      {/* Card 1: Total Active */}
-      <div style={cardStyle}>
-        <div style={numStyle("#0077A8")}>{total}</div>
-        <div style={lblStyle}>Total Active SKUs</div>
-        <div style={subStyle}>{stockedBrands.join(" · ")}</div>
-        <div style={subStyle}>{thintk(allTk, allTn)}</div>
-      </div>
-      {/* Card 2: Stocked */}
-      <div style={cardStyle}>
-        <div style={numStyle("#16a34a")}>{stocked}<span style={{fontSize:12,fontWeight:600,color:"#16a34a"}}>{pct(stocked, total)}</span></div>
-        <div style={lblStyle}>Stocked at this node</div>
-        <div style={subStyle}>NZD ≥ {minNZD} threshold{thintk(stockTk, stockTn)}</div>
-        {capCount > 0 && <div style={{...subStyle, color:"#D97706"}}>{capCount} at capacity cap (Max = {maxCap})</div>}
-      </div>
-      {/* Card 3: Not stocked */}
-      <div style={cardStyle}>
-        <div style={numStyle("#6B7280")}>{notStocked}<span style={{fontSize:12,fontWeight:600,color:"#6B7280"}}>{pct(notStocked, total)}</span></div>
-        <div style={lblStyle}>Not stocked</div>
-        <div style={subStyle}>1 NZD: {nzd1} · No sales: {noSales}{thintk(notStockedTk, notStockedTn)}</div>
-      </div>
+    <div style={{...S.card,padding:"7px 14px",marginBottom:12,display:"flex",alignItems:"center",flexWrap:"wrap",gap:4,fontSize:11}}>
+      <span>
+        <span style={{fontWeight:700,color:"#0077A8"}}>{total}</span>
+        <span style={{color:"#555",marginLeft:5}}>Total Active</span>
+      </span>
+      {sep}
+      <span>
+        <span style={{fontWeight:700,color:"#16a34a"}}>{stocked}{pct(stocked,total)}</span>
+        <span style={{color:"#555",marginLeft:5}}>Stocked</span>
+        <span style={{color:HR.muted,marginLeft:5}}>· NZD ≥ {minNZD} · Thick: {stockTk} · Thin: {stockTn}</span>
+        {capCount > 0 && <span style={{color:"#D97706",marginLeft:5}}>· {capCount} at cap</span>}
+      </span>
+      {sep}
+      <span>
+        <span style={{fontWeight:700,color:"#6B7280"}}>{notStocked}{pct(notStocked,total)}</span>
+        <span style={{color:"#555",marginLeft:5}}>Not stocked</span>
+        <span style={{color:HR.muted,marginLeft:5}}>· 1 NZD: {nzd1} · No sales: {noSales}</span>
+      </span>
     </div>
   );
 }
