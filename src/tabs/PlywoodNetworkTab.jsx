@@ -495,8 +495,13 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
           <div>
             <div style={{fontSize:13,fontWeight:700,color:"#1A1A1A",lineHeight:1.3}}>{sku.name}</div>
             <div style={{fontSize:10,color:"#888",marginTop:2}}>
-              {sku.sku} · {sku.mm != null ? `${sku.mm}mm` : "—"} · {t.isDC ? "DC stocking" : fmtCovers(t.covers)}
+              {sku.sku} · {sku.mm != null ? `${sku.mm}mm` : "—"}
               <span style={{marginLeft:12,color:"#333",fontWeight:600}}>{statLine}</span>
+              {!t.isDC && (t.covers||[]).length > 0 && (
+                <div style={{marginTop:1,color:"#7C3AED",fontWeight:600}}>
+                  Order Behaviour: {(t.covers||[]).join(" and ")} combined
+                </div>
+              )}
             </div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"1px solid #E0E0D0",borderRadius:5,padding:"3px 10px",cursor:"pointer",fontSize:11,color:"#888",flexShrink:0,marginLeft:12}}>Close ✕</button>
@@ -521,7 +526,7 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
         ) : (
           <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FAFAF8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
             <div>
-              <b>P{t.pMin}</b> of daily demand ({t.nzd} NZD days, median <b>{t.dtMedian?.toFixed(1)}</b> sheets, {fmtCovers(t.covers)})
+              <b>P{t.pMin}</b> of daily demand ({t.nzd} NZD days, median <b>{t.dtMedian?.toFixed(1)}</b> sheets)
               {winsorised && <span style={{color:"#888",marginLeft:6}}>— outliers winsorised at {t.dtMedian?.toFixed(1)} × {((t.spikeCap||0)/(t.dtMedian||1)).toFixed(0)}</span>}
               {" "}&nbsp;=&nbsp; {t.p95Raw?.toFixed(1)} &nbsp;→&nbsp; <b style={{color:"#B91C1C"}}>Min = {sku.minQty}</b>
             </div>
@@ -569,7 +574,7 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
                 <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={histData} margin={{left:0,right:8,top:4,bottom:16}}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false}/>
-                    <XAxis dataKey="qty" tick={{fontSize:8}}/>
+                    <XAxis dataKey="qty" type="number" domain={[0, 'auto']} tick={{fontSize:8}}/>
                     <YAxis tick={{fontSize:8}} width={24}/>
                     <RTooltip contentStyle={{fontSize:10}} formatter={v=>[v,"orders"]} labelFormatter={l=>`Qty: ${l}`}/>
                     {sku.minQty > 0 && <ReferenceLine x={sku.minQty} stroke="#B91C1C" strokeDasharray="4 3"
