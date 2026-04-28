@@ -121,7 +121,13 @@ Integrate Plywood Network recommendations into the Min/Max engine. Brainstorm st
 
 **Config location:** Plywood tab → ⚙ Network Design Config (admin only). Stores in Supabase `params/plywoodNetworkConfig` (separate from `params/global`). Saving auto-reruns engine.
 
-**Key config params:** lookbackDays (90), minPercentile (95), maxBufferPercentile (75), maxCap (20), spikeCapMultiplier (3), minNZD (2), dcCapacity {thick:400, thin:400}, per-brand dcMultMin/dcMultMax (tuned to 0.3/0.5 given Σ DS_Min base).
+**Key config params:** lookbackDays (90), minPercentile (95), maxBufferPercentile (75), maxCap (20), spikeCapMultiplier (3), minNZD/Rare threshold (2), sparseNZD/Sparse threshold (5), abqMultiplier (1.5), dcCapacity {thick:400, thin:400}, per-brand dcMultMin/dcMultMax (tuned to 0.3/0.5 given Σ DS_Min base).
+
+**3-zone stocking (Frequent/Sparse/Rare):**
+- Rare (NZD < minNZD): Min=Max=0, not stocked
+- Sparse (minNZD ≤ NZD < sparseNZD): Min=ceil(ABQ), Max=ceil(Min×abqMult) ≥ Min+1
+- Frequent (NZD ≥ sparseNZD): existing P95+winsorise formula
+ABQ = total qty ordered ÷ order count in lookback. Prevents P95 overstocking from sparse data (2 observations → P95 = max observation).
 
 **Brands:** Action Tesa, CenturyPly (stock at DS01+DS03; DC directly serves DS02+DS04). ArchidPly, GreenPly (stock at DS02+DS04+DS05; DC replenishment only). Brand-DS assignments fully editable in the config editor. Brand matching is case-insensitive.
 
