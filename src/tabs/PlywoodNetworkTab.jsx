@@ -1101,6 +1101,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                                     style={{fontSize:9,color:isDCCol?"#7C3AED":"#166534",background:"none",border:"none",cursor:"pointer",padding:0,fontWeight:600}}>
                                     {isThisExpanded ? "▲ close" : `${(nodes[loc]?.covers||[]).length} DSes ▾`}
                                   </button>
+                                ) : isDCCol ? (
+                                  <span style={{fontSize:9,color:"#7C3AED",lineHeight:1.3,textAlign:"center"}}>Replenishment only</span>
                                 ) : servedBy.length > 0 ? (
                                   <span style={{fontSize:9,color:HR.muted,lineHeight:1.3,textAlign:"center"}}>
                                     {servedBy.join(' · ')}
