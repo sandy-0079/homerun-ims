@@ -125,7 +125,15 @@ Integrate Plywood Network recommendations into the Min/Max engine. Brainstorm st
 
 **Brands:** Action Tesa, CenturyPly (stock at DS01+DS03; DC directly serves DS02+DS04). ArchidPly, GreenPly (stock at DS02+DS04+DS05; DC replenishment only). Brand-DS assignments fully editable in the config editor. Brand matching is case-insensitive.
 
-**Tab:** Existing Plywood tab evolved. DC button added (purple). In Network Design mode: per-DS stocked/not-stocked labels, aggregated SKU table, computation trace modal showing exact P95 derivation, capacity bars (PCT formula text removed). DC tab shows replenishment formula breakdown.
+**Tab:** Existing Plywood tab evolved (PlywoodNetworkTab.jsx). Full UI:
+- Brand transparency panel (single compact line: active brands vs Excluded/Merino)
+- DS picker + inline stocked/fulfilled-elsewhere labels
+- Summary line card: Total Active | Stocked (%) NZD≥N Thick/Thin | Not stocked (%) 1NZD/No sales
+- Physical Capacity card (compact, same height as summary)
+- Unified flat SKU table: search + Brand/Thick-Thin/mm dropdowns + sortable columns (SKU, Item Name, Thickness badge, Brand, NZD, Min, Max) — all active SKUs shown including NZD=0
+- DC button (purple): shows formula-driven Min/Max per SKU, two capacity bars, no collapsing
+- Modal: compact header with stat line + Order Behaviour subtitle, 2-line P95/P75 formula, side-by-side charts (timeline = lookback period only, histogram = numeric XAxis with Min/Max/Median reference lines)
+- ⚙ Network Design Configuration (admin, collapsible): Global Settings (purple tint, 2×3 grid with hints) + brand matrix table (brand×DS checkboxes, covers pills on expand, DC Mult Min/Max columns, fulfillment source labels below unchecked cells)
 
 ### 7. DC Calculation Fix for PCT + Fixed Unit Floor Categories
 Current engine uses `sumDailyAvg × (leadTime+1)` for ALL non-Standard categories at DC, which understocks for erratic demand. Aligned fix:
