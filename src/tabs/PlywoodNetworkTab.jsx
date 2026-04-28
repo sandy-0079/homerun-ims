@@ -1011,20 +1011,16 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
 
       {/* ── Brand Strategy Transparency ─────────────────────────────────────── */}
       {effectiveNetCfg?.brands && (
-        <div style={{background:"#1a2a1a",border:"1px solid #2d4a2d",borderRadius:8,padding:"10px 16px",marginBottom:16,display:"flex",gap:32,alignItems:"flex-start",flexWrap:"wrap"}}>
-          <div>
-            <div style={{fontSize:11,color:"#7aab7a",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>
-              Network Design Brands {isNetworkDesignActive ? "● Active" : "○ Inactive — enable in Logic Tweaker"}
-            </div>
-            {Object.keys(effectiveNetCfg.brands).map(b => (
-              <div key={b} style={{fontSize:12,color:isNetworkDesignActive?"#c8e6c9":"#778877",marginBottom:2}}>● {b}</div>
-            ))}
-          </div>
-          <div>
-            <div style={{fontSize:11,color:"#ffe082",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>PCT Strategy (this tab excluded)</div>
-            <div style={{fontSize:12,color:"#ffe082",marginBottom:2}}>● Merino</div>
-            <div style={{fontSize:12,color:"#888"}}>● All unrecognised plywood brands</div>
-          </div>
+        <div style={{background:"#edf7ed",border:"1px solid #b7ddb7",borderRadius:6,padding:"7px 14px",marginBottom:12,display:"flex",gap:24,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{fontSize:11,fontWeight:700,color:"#2d6a2d",whiteSpace:"nowrap"}}>
+            Network Design {isNetworkDesignActive ? "● Active" : "○ Inactive"}
+          </span>
+          <span style={{fontSize:11,color:"#3a803a"}}>
+            {Object.keys(effectiveNetCfg.brands).join(" · ")}
+          </span>
+          <span style={{color:"#b7ddb7",fontSize:12}}>|</span>
+          <span style={{fontSize:11,fontWeight:700,color:"#92400E",whiteSpace:"nowrap"}}>PCT (this tab excluded)</span>
+          <span style={{fontSize:11,color:"#92400E"}}>Merino</span>
         </div>
       )}
 
