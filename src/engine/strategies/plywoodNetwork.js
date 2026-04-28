@@ -147,7 +147,8 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
         abq = allOrders.length > 0 ? totalQty / allOrders.length : 0;
         demandSignal = abq;
         finalMin = Math.ceil(abq);
-        finalMax = Math.min(Math.max(Math.ceil(abq * abqMultiplier), finalMin + 1), maxCap);
+        // Use finalMin (not raw abq) so Max = ceil(Min × mult) — matches modal display
+        finalMax = Math.min(Math.max(Math.ceil(finalMin * abqMultiplier), finalMin + 1), maxCap);
       } else {
         // Frequent: P95-based stocking
         zone = 'frequent';
