@@ -107,7 +107,10 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 ### 6. Plywood Network Design ✅ Shipped (2026-04-28)
 Network Design strategy in engine (`src/engine/strategies/plywoodNetwork.js`). Full UI in PlywoodNetworkTab.jsx — unified SKU table with zone colouring, DC tab, brand assignment editor, compact modal with zone-aware formula display and lookback-period charts.
 
-### 7. DC Calculation Fix for PCT + Fixed Unit Floor Categories
+### 7. Read-only config visibility for non-admins — Logic Tweaker + Overrides tabs
+Non-admins currently cannot see Logic Tweaker or Overrides tabs at all (controlled by `ADMIN_TABS` vs `PUBLIC_TABS` in App.jsx). Plan: add both to `PUBLIC_TABS` and disable all inputs with `disabled={!isAdmin}`. Upload Data tab stays admin-only. Plywood Network Design Config already done (visible to all, inputs disabled for non-admins, Save button hidden).
+
+### 8. DC Calculation Fix for PCT + Fixed Unit Floor Categories
 `sumDailyAvg × (leadTime+1)` understocks for erratic demand at DC. Fix: switch to `Σ DS Mins × mult` approach (same as floored SKUs). Held pending any follow-up from Network Design learnings.
 
 ## Deferred

@@ -1277,10 +1277,10 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       )}
 
       {/* ── Network Design Config Editor (admin only) ────────────────────────── */}
-      {isAdmin && effectiveNetCfg?.brands && (
+      {effectiveNetCfg?.brands && (
         <details style={{marginBottom:16}} open={false}>
           <summary style={{cursor:"pointer",fontSize:12,fontWeight:700,color:"#7C3AED",padding:"6px 0",userSelect:"none"}}>
-            ⚙ Network Design Configuration {netCfgDirty ? " · unsaved changes" : ""}
+            ⚙ Network Design Configuration {netCfgDirty ? " · unsaved changes" : ""}{!isAdmin ? " · view only" : ""}
           </summary>
           <div style={{...S.card,marginTop:8,padding:0,overflow:"hidden"}}>
 
@@ -1421,10 +1421,12 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
               </table>
             </div>
 
-            <button onClick={saveNetCfg} disabled={!netCfgDirty}
-              style={{...S.btn(netCfgDirty),marginTop:12,background:netCfgDirty?"#7C3AED":HR.surfaceLight,color:netCfgDirty?HR.white:HR.muted,border:"none"}}>
-              Save Network Design Configuration
-            </button>
+            {isAdmin && (
+              <button onClick={saveNetCfg} disabled={!netCfgDirty}
+                style={{...S.btn(netCfgDirty),marginTop:12,background:netCfgDirty?"#7C3AED":HR.surfaceLight,color:netCfgDirty?HR.white:HR.muted,border:"none"}}>
+                Save Network Design Configuration
+              </button>
+            )}
             </div>{/* end brand section */}
           </div>
         </details>
@@ -1492,13 +1494,14 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       {isNetworkDesignActive && dsFilter !== 'DC' && thickCfg && thinCfg && (
         <div style={{...S.card,marginBottom:12,padding:"9px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11}}>
           <span style={{fontWeight:700,color:"#555"}}>Physical Capacity at {dsFilter}</span>
-          {isNetworkDesignActive && isAdmin && (
+          {isNetworkDesignActive && (
             <><span style={{color:HR.border}}>|</span>
             <label style={{fontSize:11,display:"flex",alignItems:"center",gap:4}}>
               Thick boundary
               <input type="number" value={thickBoundaryMm} min={1} max={30} step={1}
+                disabled={!isAdmin}
                 onChange={e => handleSaveBoundary(parseFloat(e.target.value)||6)}
-                style={{width:32,padding:"0 3px",fontSize:11,fontWeight:700,border:`1px solid #C05A00`,borderRadius:4,color:"#92400E",background:HR.white,textAlign:"center"}}/>
+                style={{width:32,padding:"0 3px",fontSize:11,fontWeight:700,border:`1px solid #C05A00`,borderRadius:4,color:"#92400E",background:isAdmin?HR.white:HR.surfaceLight,textAlign:"center",opacity:isAdmin?1:0.7}}/>
               mm
             </label></>
           )}
