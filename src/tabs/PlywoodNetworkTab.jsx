@@ -586,53 +586,71 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
   );
 }
 
-function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, lookbackDays, skuMaster, stockedBrands, thickBoundaryMm }) {
-  // Total active SKUs from stocked brands (to derive zero-demand count)
-  const allStocked = Object.values(skuMaster).filter(m =>
+function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD, skuMaster, stockedBrands, thickBoundaryMm }) {
+  // Total active from skuMaster — ground truth regardless of lookback
+  const classify = s => {
+    const mm = inferThickness(s.name);
+    if (mm !== null && mm <= 1) return null;
+    return thicknessCategory(mm, 1, thickBoundaryMm);
+  };
+  const allActive = Object.values(skuMaster).filter(m =>
     PLYWOOD_CATEGORIES.includes(m.category) &&
     stockedBrands.some(b => b.toLowerCase() === m.brand?.toLowerCase()) &&
     (m.status || "Active").toLowerCase() === "active"
   );
-  const allThick = allStocked.filter(s => {
-    const mm = inferThickness(s.name);
-    if (mm !== null && mm <= 1) return false;
-    return thicknessCategory(mm, 1, thickBoundaryMm) === "Thick";
-  }).length;
-  const allThin = allStocked.filter(s => {
-    const mm = inferThickness(s.name);
-    if (mm !== null && mm <= 1) return false;
-    const cat = thicknessCategory(mm, 1, thickBoundaryMm);
-    return cat === "Thin" || cat === "Unknown";
-  }).length;
+  const allTk = allActive.filter(s => classify(s) === "Thick").length;
+  const allTn = allActive.filter(s => { const c = classify(s); return c === "Thin" || c === "Unknown"; }).length;
+  const total = allTk + allTn;
 
-  const f = (list, fn) => list.filter(fn);
-  const hasDemand   = s => s.nzd > 0;
-  const isStocked   = s => s.minQty > 0;
-  const isCapped    = s => s.maxQty >= maxCap;
+  // Stocked: Min > 0
+  const stockTk = thickSkus.filter(s => s.minQty > 0).length;
+  const stockTn = thinSkus.filter(s => s.minQty > 0).length;
+  const stocked = stockTk + stockTn;
 
-  const demandTk = f(thickSkus, hasDemand).length, demandTn = f(thinSkus, hasDemand).length;
-  const stockTk  = f(thickSkus, isStocked).length,  stockTn  = f(thinSkus, isStocked).length;
-  const capTk    = f(thickSkus, isCapped).length,   capTn    = f(thinSkus, isCapped).length;
-  const zeroTk   = Math.max(0, allThick - thickSkus.length);
-  const zeroTn   = Math.max(0, allThin  - thinSkus.length);
+  // At cap (sub-line in stocked card)
+  const capCount = [...thickSkus, ...thinSkus].filter(s => s.minQty > 0 && s.maxQty >= maxCap).length;
 
-  const sub = (tk, tn) => `Thick: ${tk} · Thin: ${tn}`;
-  const cards = [
-    { num: demandTk + demandTn, lbl: `SKUs with demand`,          sub: sub(demandTk, demandTn) + ` · ${lookbackDays}d lookback`, color: "#0077A8" },
-    { num: stockTk  + stockTn,  lbl: "Stocked at this node",      sub: sub(stockTk, stockTn),                                    color: "#16a34a" },
-    { num: capTk    + capTn,    lbl: `At cap (Max = ${maxCap})`,   sub: sub(capTk, capTn) + " · demand exceeds capacity",         color: "#D97706" },
-    { num: zeroTk   + zeroTn,   lbl: "No demand in lookback",      sub: sub(zeroTk, zeroTn) + " · consider reviewing",           color: "#6B7280" },
-  ];
+  // Not stocked breakdown
+  const notStocked = total - stocked;
+  // NZD = 1: in ndSkuStats but trace.nzd === 1 (below minNZD threshold)
+  const nzd1 = [...thickSkus, ...thinSkus].filter(s => s.minQty === 0 && s.trace?.nzd === 1).length;
+  // No sales: active but absent from ndSkuStats entirely (NZD = 0 across covered DSes)
+  const noSales = notStocked - nzd1;
+
+  // Not-stocked Thick/Thin
+  const notStockedTk = Math.max(0, allTk - stockTk);
+  const notStockedTn = Math.max(0, allTn - stockTn);
+
+  const pct = (n, d) => d > 0 ? ` (${Math.round(n / d * 100)}%)` : "";
+  const thintk = (tk, tn) => <span style={{color:HR.muted}}> Thick: {tk} · Thin: {tn}</span>;
+
+  const cardStyle = { ...S.card, padding:"8px 12px" };
+  const numStyle  = (color) => ({ fontSize:20, fontWeight:800, color, lineHeight:1 });
+  const lblStyle  = { fontSize:11, fontWeight:600, color:"#444", margin:"3px 0 2px" };
+  const subStyle  = { fontSize:10, color:HR.muted, lineHeight:1.5 };
 
   return (
-    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:16}}>
-      {cards.map((c,i) => (
-        <div key={i} style={S.card}>
-          <div style={{fontSize:22,fontWeight:800,color:c.color}}>{c.num}</div>
-          <div style={{fontSize:11,fontWeight:600,color:"#555",margin:"2px 0"}}>{c.lbl}</div>
-          <div style={{fontSize:10,color:HR.muted,lineHeight:1.5}}>{c.sub}</div>
-        </div>
-      ))}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:12}}>
+      {/* Card 1: Total Active */}
+      <div style={cardStyle}>
+        <div style={numStyle("#0077A8")}>{total}</div>
+        <div style={lblStyle}>Total Active SKUs</div>
+        <div style={subStyle}>{stockedBrands.join(" · ")}</div>
+        <div style={subStyle}>{thintk(allTk, allTn)}</div>
+      </div>
+      {/* Card 2: Stocked */}
+      <div style={cardStyle}>
+        <div style={numStyle("#16a34a")}>{stocked}<span style={{fontSize:12,fontWeight:600,color:"#16a34a"}}>{pct(stocked, total)}</span></div>
+        <div style={lblStyle}>Stocked at this node</div>
+        <div style={subStyle}>NZD ≥ {minNZD} threshold{thintk(stockTk, stockTn)}</div>
+        {capCount > 0 && <div style={{...subStyle, color:"#D97706"}}>{capCount} at capacity cap (Max = {maxCap})</div>}
+      </div>
+      {/* Card 3: Not stocked */}
+      <div style={cardStyle}>
+        <div style={numStyle("#6B7280")}>{notStocked}<span style={{fontSize:12,fontWeight:600,color:"#6B7280"}}>{pct(notStocked, total)}</span></div>
+        <div style={lblStyle}>Not stocked</div>
+        <div style={subStyle}>1 NZD: {nzd1} · No sales: {noSales}{thintk(notStockedTk, notStockedTn)}</div>
+      </div>
     </div>
   );
 }
@@ -1222,9 +1240,24 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         {!isAdmin && <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>Configs are view-only · Admin login to edit</span>}
       </div>
 
-      {/* ── DS Capacity inputs (Network Design mode, DS nodes only) ────────── */}
+      {isNetworkDesignActive && ndDsInfo && dsFilter !== 'DC'
+        ? <NetworkDesignSummaryCards
+            thickSkus={ndSkuStats.thick}
+            thinSkus={ndSkuStats.thin}
+            maxCap={effectiveNetCfg.maxCap || 20}
+            minNZD={effectiveNetCfg.minNZD || 2}
+            skuMaster={skuMaster}
+            stockedBrands={ndDsInfo.stocked.map(s => s.brand)}
+            thickBoundaryMm={appliedBoundary}
+          />
+        : !isNetworkDesignActive
+          ? <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
+          : null
+      }
+
+      {/* ── DS Physical Capacity — between summary cards and Thick/Thin sections ── */}
       {isNetworkDesignActive && dsFilter !== 'DC' && thickCfg && thinCfg && (
-        <div style={{...S.card,marginBottom:12,padding:"8px 14px",display:"flex",gap:24,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{...S.card,marginBottom:12,padding:"7px 14px",display:"flex",gap:24,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:11,fontWeight:700,color:"#555"}}>Physical Capacity at {dsFilter}</span>
           {[{label:"Thick (sheets)",type:"thick",cfg:thickCfg,setCfg:setThickCfg},{label:"Thin (sheets)",type:"thin",cfg:thinCfg,setCfg:setThinCfg}].map(({label,type,cfg,setCfg}) => (
             <label key={type} style={{fontSize:11,display:"flex",alignItems:"center",gap:6}}>
@@ -1238,21 +1271,6 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           ))}
         </div>
       )}
-
-      {isNetworkDesignActive && ndDsInfo && dsFilter !== 'DC'
-        ? <NetworkDesignSummaryCards
-            thickSkus={ndSkuStats.thick}
-            thinSkus={ndSkuStats.thin}
-            maxCap={effectiveNetCfg.maxCap || 20}
-            lookbackDays={effectiveNetCfg.lookbackDays || 90}
-            skuMaster={skuMaster}
-            stockedBrands={ndDsInfo.stocked.map(s => s.brand)}
-            thickBoundaryMm={appliedBoundary}
-          />
-        : !isNetworkDesignActive
-          ? <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
-          : null
-      }
 
       {/* ── DC Tab ──────────────────────────────────────────────────────────── */}
       {isNetworkDesignActive && dsFilter === 'DC' && (() => {
