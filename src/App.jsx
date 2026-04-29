@@ -3245,7 +3245,7 @@ export default function App(){
   const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);};
 
   const hasChanges=JSON.stringify(params)!==JSON.stringify(savedParams);
-  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays)].filter(Boolean).length;
+  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays),params.plywoodNonNetworkStrategy!==savedParams.plywoodNonNetworkStrategy].filter(Boolean).length;
 
   // ── Load team data (invoice, SKU master etc.) ───────────────────────────────
   useEffect(()=>{
@@ -4127,6 +4127,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
   if(c.pctDocCap!==s.pctDocCap) logicChangelog.push(`PCT DOC cap (Premium/High): ${s.pctDocCap}D → ${c.pctDocCap}D`);
   if(c.pctDocCapLow!==s.pctDocCapLow) logicChangelog.push(`PCT DOC cap (Medium/Low): ${s.pctDocCapLow??60}D → ${c.pctDocCapLow}D`);
   if(c.pctMinNZD!==s.pctMinNZD) logicChangelog.push(`PCT min NZD: ${s.pctMinNZD} → ${c.pctMinNZD}`);
+  if(c.plywoodNonNetworkStrategy!==s.plywoodNonNetworkStrategy) logicChangelog.push(`Plywood non-network strategy: ${s.plywoodNonNetworkStrategy||"percentile_cover"} → ${c.plywoodNonNetworkStrategy||"percentile_cover"}`);
   if(c.spikeMultiplier!==s.spikeMultiplier) logicChangelog.push(`Spike multiplier: ${s.spikeMultiplier}× → ${c.spikeMultiplier}×`);
   if(c.spikePctFrequent!==s.spikePctFrequent) logicChangelog.push(`Spike frequent: ${s.spikePctFrequent}% → ${c.spikePctFrequent}%`);
   if(c.spikePctOnce!==s.spikePctOnce) logicChangelog.push(`Spike once: ${s.spikePctOnce}% → ${c.spikePctOnce}%`);
@@ -4249,33 +4250,53 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
       {/* ── STRATEGY ROUTING (full width) ── */}
       <Section title="Category → Strategy Map" icon="📋" accent="#7C3AED"
         summary={Object.values(csC).filter(v=>v&&v!=="standard").length>0?`${Object.values(csC).filter(v=>v&&v!=="standard").length} non-standard`:"All standard"}>
-        <div style={{...S.card,padding:0,overflow:"hidden",maxHeight:320,overflowY:"auto"}}>
-          <table style={S.table}>
-            <thead><tr style={{background:HR.surfaceLight}}>
-              <th style={{...S.th,position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Category</th>
-              <th style={{...S.th,textAlign:"center",position:"sticky",top:0,zIndex:2,background:HR.surfaceLight}}>Strategy</th>
-            </tr></thead>
-            <tbody>
-              {cats.map((cat,i)=>(
-                <tr key={cat} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                  <td style={{...S.td,fontWeight:600,fontSize:11}}>{cat}</td>
-                  <td style={{...S.td,textAlign:"center"}}>
-                    <select value={csC[cat]||"standard"}
-                      onChange={e=>{const v=e.target.value;const next={...csC};if(v==="standard")delete next[cat];else next[cat]=v;saveParams({...params,categoryStrategies:next});}}
-                      style={{...S.input,fontSize:11,padding:"3px 6px",fontWeight:600,color:csC[cat]&&csC[cat]!=="standard"?"#7C3AED":HR.muted}}>
-                      <option value="standard">Standard</option>
-                      <option value="percentile_cover">Percentile Cover</option>
-                      <option value="fixed_unit_floor">Fixed Unit Floor</option>
-                      <option value="manual">Manual</option>
-                      {cat === "Plywood, MDF & HDHMR" && (
-                        <option value="network_design">Network Design</option>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          {[cats.slice(0,Math.ceil(cats.length/2)),cats.slice(Math.ceil(cats.length/2))].map((half,col)=>(
+            <div key={col} style={{...S.card,padding:0,overflow:"hidden"}}>
+              <table style={S.table}>
+                <thead><tr style={{background:HR.surfaceLight}}>
+                  <th style={S.th}>Category</th>
+                  <th style={{...S.th,textAlign:"center"}}>Strategy</th>
+                </tr></thead>
+                <tbody>
+                  {half.map((cat,i)=>(
+                    <React.Fragment key={cat}>
+                      <tr style={{background:i%2===0?HR.white:HR.surfaceLight}}>
+                        <td style={{...S.td,fontWeight:600,fontSize:11}}>{cat}</td>
+                        <td style={{...S.td,textAlign:"center"}}>
+                          <select value={csC[cat]||"standard"}
+                            onChange={e=>{const v=e.target.value;const next={...csC};if(v==="standard")delete next[cat];else next[cat]=v;saveParams({...params,categoryStrategies:next});}}
+                            style={{...S.input,fontSize:11,padding:"3px 6px",fontWeight:600,color:csC[cat]&&csC[cat]!=="standard"?"#7C3AED":HR.muted}}>
+                            <option value="standard">Standard</option>
+                            <option value="percentile_cover">Percentile Cover</option>
+                            <option value="fixed_unit_floor">Fixed Unit Floor</option>
+                            <option value="manual">Manual</option>
+                            {cat === "Plywood, MDF & HDHMR" && (
+                              <option value="network_design">Network Design</option>
+                            )}
+                          </select>
+                        </td>
+                      </tr>
+                      {cat === "Plywood, MDF & HDHMR" && csC[cat] === "network_design" && (
+                        <tr style={{background:"#F5F0FF"}}>
+                          <td style={{...S.td,fontSize:10,color:HR.muted,paddingLeft:24}}>↳ Non-network brands (e.g. Merino)</td>
+                          <td style={{...S.td,textAlign:"center"}}>
+                            <select value={params.plywoodNonNetworkStrategy||"percentile_cover"}
+                              onChange={e=>saveParams({...params,plywoodNonNetworkStrategy:e.target.value})}
+                              style={{...S.input,fontSize:11,padding:"3px 6px",fontWeight:600,color:"#7C3AED"}}>
+                              <option value="standard">Standard</option>
+                              <option value="percentile_cover">Percentile Cover</option>
+                              <option value="fixed_unit_floor">Fixed Unit Floor</option>
+                            </select>
+                          </td>
+                        </tr>
                       )}
-                    </select>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
         </div>
       </Section>
 

@@ -87,4 +87,5 @@ export const DEFAULT_PARAMS = {
   pctMinNZD:2,
   skuFloorDCMultMin:0.2,
   skuFloorDCMultMax:0.3,
+  plywoodNonNetworkStrategy:"percentile_cover",
 };
