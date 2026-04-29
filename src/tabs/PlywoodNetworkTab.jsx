@@ -612,21 +612,30 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
   );
 }
 
-function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD }) {
+function effectiveMin(s, engineResults, dsFilter) {
+  const es = engineResults?.[s.sku]?.stores?.[dsFilter];
+  return es?.logicTag === 'SKU Floor' ? es.min : s.minQty;
+}
+function effectiveMax(s, engineResults, dsFilter) {
+  const es = engineResults?.[s.sku]?.stores?.[dsFilter];
+  return es?.logicTag === 'SKU Floor' ? es.max : s.maxQty;
+}
+
+function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD, engineResults, dsFilter }) {
   // All active SKUs now included (zero-demand ones have NZD=0, Min=Max=0)
   const allTk = thickSkus.length;
   const allTn = thinSkus.length;
   const total = allTk + allTn;
 
-  const stockTk = thickSkus.filter(s => s.minQty > 0).length;
-  const stockTn = thinSkus.filter(s => s.minQty > 0).length;
+  const stockTk = thickSkus.filter(s => effectiveMin(s, engineResults, dsFilter) > 0).length;
+  const stockTn = thinSkus.filter(s  => effectiveMin(s, engineResults, dsFilter) > 0).length;
   const stocked = stockTk + stockTn;
 
-  const capCount = [...thickSkus, ...thinSkus].filter(s => s.minQty > 0 && s.maxQty >= maxCap).length;
+  const capCount = [...thickSkus, ...thinSkus].filter(s => effectiveMin(s, engineResults, dsFilter) > 0 && effectiveMax(s, engineResults, dsFilter) >= maxCap).length;
 
   const notStocked = total - stocked;
-  const nzd1    = [...thickSkus, ...thinSkus].filter(s => s.minQty === 0 && s.trace?.nzd === 1).length;
-  const noSales = [...thickSkus, ...thinSkus].filter(s => s.minQty === 0 && (s.trace?.nzd || 0) === 0).length;
+  const nzd1    = [...thickSkus, ...thinSkus].filter(s => effectiveMin(s, engineResults, dsFilter) === 0 && s.trace?.nzd === 1).length;
+  const noSales = [...thickSkus, ...thinSkus].filter(s => effectiveMin(s, engineResults, dsFilter) === 0 && (s.trace?.nzd || 0) === 0).length;
 
   const pct = (n, d) => d > 0 ? ` (${Math.round(n / d * 100)}%)` : "";
   const sep = <span style={{color:HR.border,margin:"0 10px"}}>|</span>;
@@ -691,7 +700,7 @@ function NetworkDesignSKUTable({ skus, onSelectSku, showNZD = true, isDC = false
 }
 
 // Unified DS SKU table for Network Design — flat list, filterable, sortable
-function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onSelectSku }) {
+function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onSelectSku, engineResults, dsFilter }) {
   const [query,       setQuery]       = React.useState('');
   const [filterBrand, setFilterBrand] = React.useState('All');
   const [filterType,  setFilterType]  = React.useState('All');
@@ -701,14 +710,14 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
   const [sortDir,     setSortDir]     = React.useState(-1);
 
   const allSkus = [...thickSkus, ...thinSkus];
-  const thickUsed = thickSkus.reduce((s,x) => s + x.maxQty, 0);
-  const thinUsed  = thinSkus.reduce((s,x)  => s + x.maxQty, 0);
+  const thickUsed = thickSkus.reduce((s,x) => s + effectiveMax(x, engineResults, dsFilter), 0);
+  const thinUsed  = thinSkus.reduce((s,x)  => s + effectiveMax(x, engineResults, dsFilter), 0);
 
   // All active SKUs are now in thickSkus/thinSkus — no skuMaster lookup needed
   const activeThick  = thickSkus.length;
   const activeThin   = thinSkus.length;
-  const stockedThick = thickSkus.filter(s => s.minQty > 0).length;
-  const stockedThin  = thinSkus.filter(s  => s.minQty > 0).length;
+  const stockedThick = thickSkus.filter(s => effectiveMin(s, engineResults, dsFilter) > 0).length;
+  const stockedThin  = thinSkus.filter(s  => effectiveMin(s, engineResults, dsFilter) > 0).length;
 
   // Dropdown options
   const brands   = ['All', ...[...new Set(allSkus.map(s=>s.brand).filter(Boolean))].sort()];
@@ -856,11 +865,18 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
               const isThick = s.thicknessCat === 'Thick';
               const zs = ZONE_STYLES[s.zone] || ZONE_STYLES.rare;
               const signal = s.demandSignal != null ? s.demandSignal.toFixed(1) : "—";
+              const engineStore = engineResults?.[s.sku]?.stores?.[dsFilter];
+              const isFloored = engineStore?.logicTag === 'SKU Floor';
+              const displayMin = isFloored ? engineStore.min : s.minQty;
+              const displayMax = isFloored ? engineStore.max : s.maxQty;
               return (
                 <tr key={s.sku} onClick={() => onSelectSku(s)}
                   style={{background:zs.bg, cursor:"pointer"}}>
                   <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#555",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.sku}</td>
-                  <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</td>
+                  <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {s.name}
+                    {isFloored && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#EDE9FE",color:"#6D28D9",border:"1px solid #C4B5FD",whiteSpace:"nowrap"}}>Floor</span>}
+                  </td>
                   <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
                       <span style={{display:"inline-block",width:28,textAlign:"right",fontSize:10,color:"#555",flexShrink:0}}>{s.mm!=null?s.mm:"—"}</span>
@@ -877,8 +893,8 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
                   </td>
                   <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{s.nzd}</td>
                   <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555"}}>{signal}</td>
-                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:s.minQty>0?"#1e40af":"#bbb",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{s.minQty}</td>
-                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:s.maxQty>0?"#166534":"#bbb",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{s.maxQty}</td>
+                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:displayMin>0?"#1e40af":"#bbb",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{displayMin}</td>
+                  <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:displayMax>0?"#166534":"#bbb",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{displayMax}</td>
                 </tr>
               );
             })}
@@ -959,7 +975,7 @@ function applyNetworkFormula(statsList, cfg, boundary) {
   }).filter(Boolean).filter(s => s.thicknessCat !== 'Laminate');
 }
 
-export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateRange, isAdmin, networkConfigs, onSaveConfigs, plywoodNetworkConfig, onSavePlywoodNetworkConfig, isNetworkDesignActive }) {
+export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateRange, isAdmin, networkConfigs, onSaveConfigs, plywoodNetworkConfig, onSavePlywoodNetworkConfig, isNetworkDesignActive, engineResults }) {
   const [dsFilter, setDsFilter] = useState("DS01");
   const [period, setPeriod] = useState(45);
   const [thickCfg, setThickCfg] = useState(null);
@@ -1485,6 +1501,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             thinSkus={ndSkuStats.thin}
             maxCap={effectiveNetCfg.maxCap || 20}
             minNZD={effectiveNetCfg.minNZD || 2}
+            engineResults={engineResults}
+            dsFilter={dsFilter}
           />
         : !isNetworkDesignActive
           ? <SummaryCards skuList={baseSkus} skuMaster={skuMaster} thickCfg={committedThickCfg || thickCfg} thinCfg={committedThinCfg || thinCfg} thickBoundaryMm={thickBoundaryMm}/>
@@ -1643,6 +1661,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             thickCap={thickCfg?.capacity || 150}
             thinCap={thinCfg?.capacity || 60}
             onSelectSku={s => { setSelectedSku(s); setSelectedSkuType(s.thicknessCat === 'Thick' ? 'thick' : 'thin'); }}
+            engineResults={engineResults}
+            dsFilter={dsFilter}
           />
         </div>
       )}

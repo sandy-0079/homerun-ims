@@ -103,7 +103,8 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
   allSKUs.forEach(skuId => {
     // ── NETWORK DESIGN BYPASS ────────────────────────────────────────────────
     // For covered plywood brand SKUs: use pre-computed results directly.
-    // Bypasses strategy dispatch, New DS Floor, and SKU Floor Override.
+    // Bypasses strategy dispatch and New DS Floor.
+    // SKU Floor Override applied post-network (e.g. for new SKUs with no sales history).
     // Dead Stock cap still applied. All other categories unaffected.
     const networkResult = plywoodNetworkResults[skuId];
     if (networkResult) {
@@ -113,14 +114,27 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       const _t150Tag = t150[skuId] || 'No';
       const _stores = {};
       DS_LIST.forEach(dsId => {
-        const { min, max, nonZeroCount = 0 } = networkResult.storeResults[dsId] || { min: 0, max: 0, nonZeroCount: 0 };
-        const finalMax = _isDead ? min : max;
+        const { min, max, nonZeroCount = 0, covers = [] } = networkResult.storeResults[dsId] || { min: 0, max: 0, nonZeroCount: 0, covers: [] };
+        const networkMax = _isDead ? min : max;
+        let storeMin = min, storeMax = networkMax, logicTag = 'Network Design';
+        // Only apply SKU floor at stocking nodes (covers.length > 0).
+        // Non-stocking DSes are intentionally 0 — floors there would be a data-entry error.
+        if (covers.length > 0 && nsq && nsq[skuId] && nsq[skuId][dsId]) {
+          const fl = nsq[skuId][dsId];
+          const fMin = typeof fl === 'number' ? fl : (fl.min || 0);
+          const fMax = typeof fl === 'number' ? fl : (fl.max || fMin);
+          if (fMin > storeMin) {
+            storeMin = fMin;
+            storeMax = _isDead ? fMin : Math.max(storeMax, fMax);
+            logicTag = 'SKU Floor';
+          }
+        }
         _stores[dsId] = {
-          min, max: finalMax,
-          preFloorMin: min, preFloorMax: max,
+          min: storeMin, max: storeMax,
+          preFloorMin: min, preFloorMax: networkMax,
           dailyAvg: 0, abq: 0, nonZeroDays: nonZeroCount,
           mvTag: 'N/A', spTag: 'N/A',
-          logicTag: 'Network Design', strategyTag: 'network_design',
+          logicTag, strategyTag: 'network_design',
           strategyDetails: { brand: networkResult.brand },
           postBlendSteps: [],
         };
