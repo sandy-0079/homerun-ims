@@ -149,7 +149,10 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       isDead = deadStockSet.has(skuId);
     const dsMinArr = [], dsMaxArr = [], dsDailyAvgs = [], stores = {};
 
-    const strategy = resolveStrategy(meta.category, p.categoryStrategies);
+    let strategy = resolveStrategy(meta.category, p.categoryStrategies);
+    // network_design is handled via pre-computed results above; any SKU that reaches here
+    // is a non-network brand (e.g. Merino) — use the configured fallback, not Standard.
+    if (strategy === "network_design") strategy = p.plywoodNonNetworkStrategy || "percentile_cover";
 
     DS_LIST.forEach(dsId => {
       const k = `${skuId}||${dsId}`, qm = qMap[k] || {}, om = oMap[k] || {};
