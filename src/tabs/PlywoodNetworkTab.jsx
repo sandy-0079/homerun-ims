@@ -548,7 +548,7 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
             <span style={{...ZONE_STYLES.frequent.badge,padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,marginRight:8}}>Frequent</span>
             <div>
               <b>P{t.pMin}</b> of daily demand ({t.nzd} NZD days, median <b>{t.dtMedian?.toFixed(1)}</b> sheets)
-              {winsorised && <span style={{color:"#888",marginLeft:6}}>— outliers winsorised at {t.dtMedian?.toFixed(1)} × {((t.spikeCap||0)/(t.dtMedian||1)).toFixed(0)}</span>}
+              {winsorised && <span style={{color:"#888",marginLeft:6}}>— outliers winsorised at {t.dtMedian?.toFixed(1)} × {t.spikeCapMult}</span>}
               {" "}&nbsp;=&nbsp; {t.p95Raw?.toFixed(1)} &nbsp;→&nbsp; <b style={{color:"#B91C1C"}}>Min = {sku.minQty}</b>
             </div>
             <div>
@@ -707,7 +707,7 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
   const [filterMm,    setFilterMm]    = React.useState('All');
   const [filterZone,  setFilterZone]  = React.useState('All');
   const [sortBy,      setSortBy]      = React.useState('nzd');
-  const [sortDir,     setSortDir]     = React.useState(-1);
+  const [sortDir,     setSortDir]     = React.useState(1);
 
   const allSkus = [...thickSkus, ...thinSkus];
   const thickUsed = thickSkus.reduce((s,x) => s + effectiveMax(x, engineResults, dsFilter), 0);
@@ -963,7 +963,7 @@ function applyNetworkFormula(statsList, cfg, boundary) {
 
     const trace = {
       covers: s.covers || [], nzd: dt.length, belowMinNZD, minNZDThreshold: nzdTh,
-      rawNonZero: dt, dtMedian, spikeCap: dtMedian > 0 ? spikeCap : null, winsorized,
+      rawNonZero: dt, dtMedian, spikeCap: dtMedian > 0 ? spikeCap : null, spikeCapMult: spike, winsorized,
       p95Raw, pMin, orderBuf: orderBufForTrace, pBuf,
       orderQtyCount: s.orderQtys.length,
       rawMax: zone === 'frequent' ? Math.ceil(p95Raw) + orderBufForTrace : maxQty,
@@ -997,6 +997,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const editingNetCfg = localNetCfg || effectiveNetCfg;
   const [netCfgDirty, setNetCfgDirty] = useState(false);
   const [expandedCell, setExpandedCell] = useState(null); // {brand, loc} for matrix covers editor
+  const [showNetCfg, setShowNetCfg] = useState(true);
 
   // Reload configs when DS or saved configs change — skip for DC (no DS_DEFAULTS entry)
   useEffect(() => {
@@ -1292,13 +1293,27 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         </div>
       )}
 
-      {/* ── Network Design Config Editor (admin only) ────────────────────────── */}
+      {/* ── Network Design Config Editor ────────────────────────────────────── */}
       {effectiveNetCfg?.brands && (
-        <details style={{marginBottom:16}} open={false}>
-          <summary style={{cursor:"pointer",fontSize:12,fontWeight:700,color:"#7C3AED",padding:"6px 0",userSelect:"none"}}>
-            ⚙ Network Design Configuration {netCfgDirty ? " · unsaved changes" : ""}{!isAdmin ? " · view only" : ""}
-          </summary>
-          <div style={{...S.card,marginTop:8,padding:0,overflow:"hidden"}}>
+        <div style={{marginBottom:16}}>
+          <button onClick={() => setShowNetCfg(v => !v)}
+            style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",
+              padding:"10px 14px",borderRadius:showNetCfg?8:8,border:"1.5px solid #C4B5FD",
+              background:showNetCfg?"#7C3AED":"#F5F3FF",cursor:"pointer",
+              transition:"background 0.15s",outline:"none",marginBottom:showNetCfg?8:0}}>
+            <span style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:14}}>⚙</span>
+              <span style={{fontSize:12,fontWeight:700,color:showNetCfg?"#fff":"#7C3AED"}}>
+                Network Design Configuration
+              </span>
+              {netCfgDirty && <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:10,background:"#F59E0B",color:"#fff"}}>Unsaved</span>}
+              {!isAdmin && <span style={{fontSize:10,color:showNetCfg?"#DDD6FE":"#9B8EC4"}}>· View only</span>}
+            </span>
+            <span style={{fontSize:11,color:showNetCfg?"#DDD6FE":"#7C3AED",fontWeight:700}}>
+              {showNetCfg ? "▲ Collapse" : "▼ Configure"}
+            </span>
+          </button>
+          {showNetCfg && <div style={{...S.card,padding:0,overflow:"hidden"}}>
 
             {/* ── Global Settings — tinted background to distinguish from brand table ── */}
             <div style={{background:"#F5F3FF",padding:"12px 14px 14px",borderBottom:`1px solid #E5E0F8`}}>
@@ -1307,7 +1322,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                 {[
                   {label:"History Window",key:"lookbackDays",min:30,max:365,step:1,hint:"Days of sales history used to compute Min & Max"},
                   {label:"Min Qty Percentile",key:"minPercentile",min:50,max:99,step:1,hint:"P95 = stock enough for 95% of peak demand days"},
-                  {label:"Max Buffer Percentile",key:"maxBufferPercentile",min:50,max:99,step:1,hint:"P75 = buffer of ~one typical large order above Min"},
+                  {label:"Max Buffer Percentile",key:"maxBufferPercentile",min:50,max:99,step:1,hint:"Max = Min + PXX of historical order quantities at this node"},
                   {label:"Rare Zone Threshold (NZD)",key:"minNZD",min:1,max:20,step:1,hint:"Below this NZD → Rare zone (not stocked at all)"},
                   {label:"Sparse Zone Threshold (NZD)",key:"sparseNZD",min:2,max:20,step:1,hint:"Below this NZD → Sparse (ABQ-based). Above → Frequent (P95-based)"},
                   {label:"Sparse Zone Multiplier",key:"abqMultiplier",min:1,max:5,step:0.1,hint:"Sparse Max = ceil(ABQ × this). Default 1.5 = 50% above Min"},
@@ -1320,6 +1335,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                       value={editingNetCfg[key] ?? ""}
                       disabled={!isAdmin}
                       onChange={e => handleNetCfgChange(key, Number(e.target.value))}
+                      onFocus={e => e.target.select()}
                       style={{...S.input,width:"100%",background:isAdmin?"#fff":"#EDE9FE",opacity:isAdmin?1:0.75}}/>
                     <span style={{fontSize:9,color:"#9B8EC4",lineHeight:1.4}}>{hint}</span>
                   </label>
@@ -1397,6 +1413,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                               value={cfg[key] ?? ""}
                               disabled={!isAdmin}
                               onChange={e => handleNetBrandCfgChange(brand, key, Number(e.target.value))}
+                              onFocus={e => e.target.select()}
                               style={{...S.input,width:52,textAlign:"center",opacity:isAdmin?1:0.7}}/>
                           </td>
                         ))}
@@ -1445,8 +1462,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
               </button>
             )}
             </div>{/* end brand section */}
-          </div>
-        </details>
+          </div>}
+        </div>
       )}
 
       {/* DS + Period selectors + inline brand stocking info */}
@@ -1533,6 +1550,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                 value={cfg.capacity ?? ''}
                 disabled={!isAdmin}
                 onChange={e => { const v = parseFloat(e.target.value)||0; setCfg(c=>({...c,capacity:v})); handleSaveConfig(type,{...cfg,capacity:v}); }}
+                onFocus={e => e.target.select()}
                 style={{...S.input,width:60,fontSize:11,opacity:isAdmin?1:0.7}}/>
             </span>
           ))}
@@ -1573,6 +1591,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                       value={(localNetCfg||effectiveNetCfg).dcCapacity?.[key.split('.')[1]] ?? ""}
                       disabled={!isAdmin}
                       onChange={e => handleNetCfgChange(key, Number(e.target.value))}
+                      onFocus={e => e.target.select()}
                       style={{...S.input,width:70,opacity:isAdmin?1:0.7}}/>
                   </label>
                 ))}
