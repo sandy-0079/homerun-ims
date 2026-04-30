@@ -5,7 +5,8 @@ import {
 } from "recharts";
 import { saveToSupabase } from "../supabase";
 import { computeNetworkNodeStats } from "../engine/strategies/plywoodNetwork.js";
-import { PLYWOOD_NETWORK_CONFIG_DEFAULT } from "../engine/constants.js";
+import { PLYWOOD_NETWORK_CONFIG_DEFAULT, DS_LIST as DS_LIST_ENGINE } from "../engine/constants.js";
+import { inferThickness, thicknessCategory } from "../engine/utils.js";
 
 const HR = {
   yellow:"#F5C400",black:"#1A1A1A",white:"#FFFFFF",
@@ -50,19 +51,7 @@ const DS_DEFAULTS = {
   },
 };
 
-function inferThickness(name) {
-  const m = (name || "").match(/(\d+(?:\.\d+)?)\s*mm/i);
-  return m ? parseFloat(m[1]) : null;
-}
-
-const GLOBAL_DEFAULTS = { thickBoundaryMm: 6 };
-
-function thicknessCategory(mm, laminateThreshold = 1, thickBoundaryMm = 6) {
-  if (mm === null) return "Unknown";
-  if (mm <= laminateThreshold) return "Laminate";
-  if (mm <= thickBoundaryMm) return "Thin";
-  return "Thick";
-}
+// inferThickness and thicknessCategory imported from engine/utils.js
 
 function median(arr) {
   if (!arr.length) return 0;
@@ -508,7 +497,7 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
               <span style={{marginLeft:12,color:"#333",fontWeight:600}}>{statLine}</span>
               {!t.isDC && (t.covers||[]).length > 0 && (
                 <div style={{marginTop:1,color:"#7C3AED",fontWeight:600}}>
-                  Order Behaviour: {(t.covers||[]).join(" and ")} combined
+                  Order Behaviour: {((arr) => arr.length <= 1 ? arr[0] : arr.slice(0,-1).join(", ") + " and " + arr[arr.length-1])(t.covers||[])} combined
                 </div>
               )}
             </div>
@@ -649,6 +638,18 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
             )}
           </div>
         )}
+
+        {/* Trim note */}
+        {sku._trim && (
+          <div style={{fontSize:11,lineHeight:1.8,color:"#92400E",background:"#FFFBEB",borderRadius:6,padding:"8px 12px",marginTop:10,border:"1px solid #FDE68A"}}>
+            <span style={{fontWeight:700}}>⚠ Trimmed for capacity</span>
+            <span style={{marginLeft:8,color:"#555"}}>
+              Original: Min <b>{sku._trim.originalMin}</b> · Max <b>{sku._trim.originalMax}</b>
+              &nbsp;→&nbsp;
+              Trimmed to: Min <b style={{color:"#B91C1C"}}>{sku._trim.trimmedMin}</b> · Max <b style={{color:"#16a34a"}}>{sku._trim.trimmedMax}</b>
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -684,11 +685,11 @@ function DCNetworkSummaryCard({ thickSkus, thinSkus, totalActiveThick, totalActi
 
 function effectiveMin(s, engineResults, dsFilter) {
   const es = engineResults?.[s.sku]?.stores?.[dsFilter];
-  return es?.logicTag === 'SKU Floor' ? es.min : s.minQty;
+  return es != null ? es.min : s.minQty;
 }
 function effectiveMax(s, engineResults, dsFilter) {
   const es = engineResults?.[s.sku]?.stores?.[dsFilter];
-  return es?.logicTag === 'SKU Floor' ? es.max : s.maxQty;
+  return es != null ? es.max : s.maxQty;
 }
 
 function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD, engineResults, dsFilter }) {
@@ -701,7 +702,7 @@ function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD, engine
   const stockTn = thinSkus.filter(s  => effectiveMin(s, engineResults, dsFilter) > 0).length;
   const stocked = stockTk + stockTn;
 
-  const capCount = [...thickSkus, ...thinSkus].filter(s => effectiveMin(s, engineResults, dsFilter) > 0 && effectiveMax(s, engineResults, dsFilter) >= maxCap).length;
+  // capCount removed — now shown at SKU Level Stocking heading in the unified table
 
   const notStocked = total - stocked;
   const nzd1    = [...thickSkus, ...thinSkus].filter(s => effectiveMin(s, engineResults, dsFilter) === 0 && s.trace?.nzd === 1).length;
@@ -721,7 +722,6 @@ function NetworkDesignSummaryCards({ thickSkus, thinSkus, maxCap, minNZD, engine
         <span style={{fontWeight:700,color:"#16a34a"}}>{stocked}{pct(stocked,total)}</span>
         <span style={{color:"#555",marginLeft:5}}>Stocked</span>
         <span style={{color:HR.muted,marginLeft:5}}>· NZD ≥ {minNZD} · Thick: {stockTk} · Thin: {stockTn}</span>
-        {capCount > 0 && <span style={{color:"#D97706",marginLeft:5}}>· {capCount} at cap</span>}
       </span>
       {sep}
       <span>
@@ -770,18 +770,14 @@ function NetworkDesignSKUTable({ skus, onSelectSku, showNZD = true, isDC = false
 }
 
 // Unified DS SKU table for Network Design — flat list, filterable, sortable
-function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onSelectSku, engineResults, dsFilter, isDC = false }) {
-  const [query,       setQuery]       = React.useState('');
-  const [filterBrand, setFilterBrand] = React.useState('All');
-  const [filterType,  setFilterType]  = React.useState('All');
-  const [filterMm,    setFilterMm]    = React.useState('All');
-  const [filterZone,  setFilterZone]  = React.useState('All');
-  const [sortBy,      setSortBy]      = React.useState(isDC ? 'min' : 'nzd');
-  const [sortDir,     setSortDir]     = React.useState(1);
+function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onSelectSku, engineResults, dsFilter, isDC = false,
+  query, setQuery, filterBrand, setFilterBrand, filterType, setFilterType, filterMm, setFilterMm, filterZone, setFilterZone }) {
+  const [sortBy,  setSortBy]  = React.useState(isDC ? 'min' : 'nzd');
+  const [sortDir, setSortDir] = React.useState(1);
 
   const allSkus = [...thickSkus, ...thinSkus];
-  const thickUsed = thickSkus.reduce((s,x) => s + effectiveMax(x, engineResults, dsFilter), 0);
-  const thinUsed  = thinSkus.reduce((s,x)  => s + effectiveMax(x, engineResults, dsFilter), 0);
+  const thickUsed = thickSkus.reduce((s,x) => s + (isDC && engineResults?.[x.sku]?.dc ? engineResults[x.sku].dc.max : effectiveMax(x, engineResults, dsFilter)), 0);
+  const thinUsed  = thinSkus.reduce((s,x)  => s + (isDC && engineResults?.[x.sku]?.dc ? engineResults[x.sku].dc.max : effectiveMax(x, engineResults, dsFilter)), 0);
 
   // All active SKUs are now in thickSkus/thinSkus — no skuMaster lookup needed
   const activeThick  = thickSkus.length;
@@ -857,7 +853,7 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
     );
   };
 
-  const hasFilter = query || filterBrand!=='All' || filterType!=='All' || filterMm!=='All' || filterZone!=='All';
+  const hasFilter = query || filterBrand!=='All' || filterType!=='All' || filterMm!=='All' || (!isDC && filterZone!=='All');
 
   return (
     <div>
@@ -868,11 +864,17 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
           ? <span style={{fontSize:10,color:"#888"}}>
               Thick: <b style={{color:"#92400E"}}>{activeThick}</b> &nbsp;·&nbsp; Thin: <b style={{color:"#1e40af"}}>{activeThin}</b>
             </span>
-          : <span style={{fontSize:10,color:"#888"}}>
-              Thick: <b style={{color:"#92400E"}}>{stockedThick} stocked</b> / {activeThick} active
-              &nbsp;·&nbsp;
-              Thin: <b style={{color:"#1e40af"}}>{stockedThin} stocked</b> / {activeThin} active
-            </span>
+          : (() => {
+              const trimmedCount = allSkus.filter(s => engineResults?.[s.sku]?.stores?.[dsFilter]?.trimTag === 'Cap Trim').length;
+              return (
+                <span style={{fontSize:10,color:"#888"}}>
+                  Thick: <b style={{color:"#92400E"}}>{stockedThick} stocked</b> / {activeThick} active
+                  &nbsp;·&nbsp;
+                  Thin: <b style={{color:"#1e40af"}}>{stockedThin} stocked</b> / {activeThin} active
+                  {trimmedCount > 0 && <span style={{color:"#B45309",marginLeft:6}}>· <b>{trimmedCount}</b> trimmed for capacity</span>}
+                </span>
+              );
+            })()
         }
         <span style={{marginLeft:"auto",fontSize:11,color:"#555",whiteSpace:"nowrap"}}>
           Max Ply Stock: <b style={{color:"#1A1A1A"}}>{thickUsed + thinUsed}</b>
@@ -942,17 +944,21 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
               const isThick = s.thicknessCat === 'Thick';
               const zs = ZONE_STYLES[s.zone] || ZONE_STYLES.rare;
               const signal = s.demandSignal != null ? s.demandSignal.toFixed(1) : "—";
-              const engineStore = engineResults?.[s.sku]?.stores?.[dsFilter];
+              const engineDC = isDC ? engineResults?.[s.sku]?.dc : null;
+              const engineStore = !isDC ? engineResults?.[s.sku]?.stores?.[dsFilter] : null;
               const isFloored = engineStore?.logicTag === 'SKU Floor';
-              const displayMin = isFloored ? engineStore.min : s.minQty;
-              const displayMax = isFloored ? engineStore.max : s.maxQty;
+              const isTrimmed = engineStore?.trimTag === 'Cap Trim';
+              const displayMin = engineDC ? engineDC.min : engineStore != null ? engineStore.min : s.minQty;
+              const displayMax = engineDC ? engineDC.max : engineStore != null ? engineStore.max : s.maxQty;
+              const skuForModal = isTrimmed ? { ...s, _trim: { originalMin: engineStore.originalMin, originalMax: engineStore.originalMax, trimmedMin: engineStore.min, trimmedMax: engineStore.max } } : s;
               return (
-                <tr key={s.sku} onClick={() => onSelectSku(s)}
+                <tr key={s.sku} onClick={() => onSelectSku(skuForModal)}
                   style={{background:zs.bg, cursor:"pointer"}}>
                   <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#555",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.sku}</td>
                   <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                     {s.name}
                     {isFloored && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#EDE9FE",color:"#6D28D9",border:"1px solid #C4B5FD",whiteSpace:"nowrap"}}>Floor</span>}
+                    {isTrimmed && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#FEF3C7",color:"#B45309",border:"1px solid #FDE68A",whiteSpace:"nowrap"}}>Trimmed</span>}
                   </td>
                   <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
@@ -1066,12 +1072,14 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
   const [resultsCache, setResultsCache] = useState({}); // keyed by "DS-period" e.g. "DS01-45"
   const [selectedSku, setSelectedSku] = useState(null);
   const [selectedSkuType, setSelectedSkuType] = useState(null);
-  const [thickBoundaryMm, setThickBoundaryMm] = useState(GLOBAL_DEFAULTS.thickBoundaryMm);
   const [committedBoundaryMm, setCommittedBoundaryMm] = useState(null); // locked at last Run; null = use live value
+  const [pendingThickCap, setPendingThickCap] = useState(null);
+  const [pendingThinCap, setPendingThinCap] = useState(null);
   const autoRanRef = useRef(new Set()); // tracks which "DS-period" combos have been auto-computed
 
   // Network Design config — use saved config or fall back to defaults
   const effectiveNetCfg = plywoodNetworkConfig || PLYWOOD_NETWORK_CONFIG_DEFAULT;
+  const thickBoundaryMm = effectiveNetCfg.thickBoundaryMm || 9; // global — from Network Design config
   const [localNetCfg, setLocalNetCfg] = useState(null); // null = not editing
   const editingNetCfg = localNetCfg || effectiveNetCfg;
   const [netCfgDirty, setNetCfgDirty] = useState(false);
@@ -1086,10 +1094,15 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     setThinCfg({ ...DS_DEFAULTS[dsFilter].thin, ...saved.thin });
   }, [dsFilter, networkConfigs]);
 
-  // Load global boundary from networkConfigs
-  useEffect(() => {
-    setThickBoundaryMm(networkConfigs?.global?.thickBoundaryMm ?? GLOBAL_DEFAULTS.thickBoundaryMm);
-  }, [networkConfigs]);
+  // Reset pending capacity state on DS change
+  useEffect(() => { setPendingThickCap(null); setPendingThinCap(null); }, [dsFilter]);
+
+  // Shared filter state — persists across DS and DC tab switches
+  const [tableQuery,       setTableQuery]       = useState('');
+  const [tableFilterBrand, setTableFilterBrand] = useState('All');
+  const [tableFilterType,  setTableFilterType]  = useState('All');
+  const [tableFilterMm,    setTableFilterMm]    = useState('All');
+  const [tableFilterZone,  setTableFilterZone]  = useState('All');
 
   // On DS or period change: restore cached results for that combo, else clear
   useEffect(() => {
@@ -1100,11 +1113,15 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     setCommittedThinCfg(cached?.thinCfg || null);
   }, [dsFilter, period]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSaveBoundary = useCallback((val) => {
-    if (!isAdmin) return;
-    setThickBoundaryMm(val);
-    onSaveConfigs({ ...(networkConfigs || {}), global: { ...(networkConfigs?.global || {}), thickBoundaryMm: val } });
-  }, [networkConfigs, onSaveConfigs, isAdmin]);
+  const handleSaveCapacity = useCallback(() => {
+    if (!isAdmin || !DS_LIST.includes(dsFilter)) return;
+    const newThick = { ...thickCfg, capacity: pendingThickCap ?? thickCfg?.capacity };
+    const newThin  = { ...thinCfg,  capacity: pendingThinCap  ?? thinCfg?.capacity  };
+    setThickCfg(newThick); setThinCfg(newThin);
+    const newConfigs = { ...(networkConfigs || {}), [dsFilter]: { ...(networkConfigs?.[dsFilter] || {}), thick: newThick, thin: newThin } };
+    onSaveConfigs(newConfigs, { triggerRerun: true });
+    setPendingThickCap(null); setPendingThinCap(null);
+  }, [isAdmin, dsFilter, thickCfg, thinCfg, pendingThickCap, pendingThinCap, networkConfigs, onSaveConfigs]);
 
   const handleSaveConfig = useCallback((type, newCfg) => {
     if (!isAdmin || !DS_LIST.includes(dsFilter)) return;
@@ -1383,6 +1400,30 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     setNetCfgDirty(false);
   };
 
+  const downloadPlywoodCSV = () => {
+    if (!engineResults) return;
+    const ndSkus = Object.entries(engineResults)
+      .filter(([, r]) => DS_LIST_ENGINE.some(ds => r.stores[ds]?.strategyTag === 'network_design'))
+      .filter(([, r]) => { const mm = inferThickness(r.meta?.name); return mm === null || mm > 1; })
+      .map(([skuId, r]) => {
+        const row = { 'Item Name': r.meta?.name || skuId, 'SKU': skuId, 'Brand': r.meta?.brand || '' };
+        DS_LIST_ENGINE.forEach(ds => { row[`${ds} Min`] = r.stores[ds]?.min ?? 0; row[`${ds} Max`] = r.stores[ds]?.max ?? 0; });
+        row['DC Min'] = r.dc?.min ?? 0;
+        row['DC Max'] = r.dc?.max ?? 0;
+        return row;
+      });
+    ndSkus.sort((a, b) => (a.Brand + a['Item Name']).localeCompare(b.Brand + b['Item Name']));
+    const cols = ['Item Name', 'SKU', 'Brand', ...DS_LIST_ENGINE.flatMap(ds => [`${ds} Min`, `${ds} Max`]), 'DC Min', 'DC Max'];
+    const csv = [cols.join(','), ...ndSkus.map(r => cols.map(c => `"${String(r[c]??'').replace(/"/g,'""')}"`).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Plywood_Network_Output_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div style={{fontFamily:"Inter,sans-serif",color:HR.text}}>
 
@@ -1398,6 +1439,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
           <span style={{color:"#b7ddb7",fontSize:12}}>|</span>
           <span style={{fontSize:11,fontWeight:700,color:"#92400E",whiteSpace:"nowrap"}}>Excluded</span>
           <span style={{fontSize:11,color:"#92400E"}}>Merino</span>
+          <button onClick={downloadPlywoodCSV} disabled={!engineResults} style={{marginLeft:"auto",fontSize:11,fontWeight:600,padding:"4px 12px",borderRadius:5,border:"1px solid #b7ddb7",background:engineResults?"#fff":"#f0f7f0",color:engineResults?"#2d6a2d":"#aaa",cursor:engineResults?"pointer":"not-allowed"}}>
+            ↓ Plywood Network Output (.csv)
+          </button>
         </div>
       )}
 
@@ -1436,6 +1480,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                   {label:"Sparse Zone Multiplier",key:"abqMultiplier",min:1,max:5,step:0.1,hint:"Sparse Max = ceil(ABQ × this). Default 1.5 = 50% above Min"},
                   {label:"Outlier Cap (× median)",key:"spikeCapMultiplier",min:1,max:20,step:0.5,hint:"Winsorise spike days at N × median before P95"},
                   {label:"Max Sheets per Location",key:"maxCap",min:1,max:100,step:1,hint:"Hard ceiling on Max per SKU per location"},
+                  {label:"Thick Boundary (mm)",key:"thickBoundaryMm",min:1,max:30,step:1,hint:"SKUs above this mm are Thick, below are Thin — affects capacity trim and display"},
+                  {label:"Capacity Tolerance (%)",key:"capacityTolerancePct",min:0,max:20,step:0.5,hint:"% over capacity before trim kicks in (e.g. 2 = trim when >102% full)"},
+                  {label:"Erratic Order Threshold",key:"sparseErraticThreshold",min:1,max:5,step:0.1,hint:"max/P25 of orders — above this = erratic demand, trimmed first"},
                 ].map(({label,key,min,max,step,hint}) => (
                   <label key={key} style={{display:"flex",flexDirection:"column",gap:2}}>
                     <span style={{fontSize:11,fontWeight:600,color:"#444"}}>{label}</span>
@@ -1667,36 +1714,43 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             : null
       }
 
-      {/* ── DS Physical Capacity — between summary cards and Thick/Thin sections ── */}
-      {isNetworkDesignActive && dsFilter !== 'DC' && thickCfg && thinCfg && (
-        <div style={{...S.card,marginBottom:12,padding:"9px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11}}>
-          <span style={{fontWeight:700,color:"#555"}}>Physical Capacity at {dsFilter}</span>
-          {isNetworkDesignActive && (
-            <><span style={{color:HR.border}}>|</span>
-            <label style={{fontSize:11,display:"flex",alignItems:"center",gap:4}}>
-              Thick boundary
-              <input type="number" value={thickBoundaryMm} min={1} max={30} step={1}
-                disabled={!isAdmin}
-                onChange={e => handleSaveBoundary(parseFloat(e.target.value)||6)}
-                style={{width:32,padding:"0 3px",fontSize:11,fontWeight:700,border:`1px solid #C05A00`,borderRadius:4,color:"#92400E",background:isAdmin?HR.white:HR.surfaceLight,textAlign:"center",opacity:isAdmin?1:0.7}}/>
-              mm
-            </label></>
-          )}
-          <span style={{color:HR.border}}>|</span>
-          {[{label:"Thick (sheets)",type:"thick",cfg:thickCfg,setCfg:setThickCfg},{label:"Thin (sheets)",type:"thin",cfg:thinCfg,setCfg:setThinCfg}].map(({label,type,cfg,setCfg},i) => (
-            <span key={type} style={{display:"flex",alignItems:"center",gap:6}}>
-              {i > 0 && <span style={{color:HR.border,marginRight:6}}>·</span>}
-              <span style={{color:"#555"}}>{label}</span>
-              <input type="number" min={1} max={2000} step={10}
-                value={cfg.capacity ?? ''}
-                disabled={!isAdmin}
-                onChange={e => { const v = parseFloat(e.target.value)||0; setCfg(c=>({...c,capacity:v})); handleSaveConfig(type,{...cfg,capacity:v}); }}
-                onFocus={e => e.target.select()}
-                style={{...S.input,width:60,fontSize:11,opacity:isAdmin?1:0.7}}/>
-            </span>
-          ))}
-        </div>
-      )}
+      {/* ── DS Physical Capacity ── */}
+      {isNetworkDesignActive && dsFilter !== 'DC' && thickCfg && thinCfg && (() => {
+        const capDirty = (pendingThickCap !== null && pendingThickCap !== thickCfg?.capacity) ||
+                         (pendingThinCap  !== null && pendingThinCap  !== thinCfg?.capacity);
+        return (
+          <div style={{...S.card,marginBottom:12,padding:"9px 14px",display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",fontSize:11}}>
+            <span style={{fontWeight:700,color:"#555"}}>Physical Capacity at {dsFilter}</span>
+            <span style={{color:HR.border}}>|</span>
+            {[{label:"Thick (sheets)",pending:pendingThickCap,setPending:setPendingThickCap,saved:thickCfg?.capacity},
+              {label:"Thin (sheets)", pending:pendingThinCap, setPending:setPendingThinCap,  saved:thinCfg?.capacity}].map(({label,pending,setPending,saved},i) => (
+              <span key={label} style={{display:"flex",alignItems:"center",gap:6}}>
+                {i > 0 && <span style={{color:HR.border,marginRight:6}}>·</span>}
+                <span style={{color:"#555"}}>{label}</span>
+                <input type="number" min={1} max={2000} step={10}
+                  value={pending ?? saved ?? ''}
+                  disabled={!isAdmin}
+                  onChange={e => setPending(parseFloat(e.target.value)||0)}
+                  onFocus={e => e.target.select()}
+                  style={{...S.input,width:60,fontSize:11,opacity:isAdmin?1:0.7,outline:"none",
+                    border: pending !== null && pending !== saved ? '1.5px solid #F59E0B' : `1px solid ${HR.border}`}}/>
+              </span>
+            ))}
+            {capDirty && isAdmin && (
+              <button onClick={handleSaveCapacity}
+                style={{fontSize:10,fontWeight:700,color:"#fff",background:"#F59E0B",border:"none",borderRadius:4,padding:"3px 10px",cursor:"pointer",marginLeft:4}}>
+                Save &amp; Re-run
+              </button>
+            )}
+            {capDirty && isAdmin && (
+              <button onClick={() => { setPendingThickCap(null); setPendingThinCap(null); }}
+                style={{fontSize:10,color:"#888",background:"none",border:"1px solid #E0E0D0",borderRadius:4,padding:"3px 8px",cursor:"pointer"}}>
+                Cancel
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── DC Physical Capacity row — mirrors DS style ── */}
       {isNetworkDesignActive && dsFilter === 'DC' && (
@@ -1734,9 +1788,14 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                 thickCap={dcCap.thick}
                 thinCap={dcCap.thin}
                 onSelectSku={s => { setSelectedSku(s); setSelectedSkuType(s.thicknessCat === 'Thick' ? 'thick' : 'thin'); }}
-                engineResults={null}
+                engineResults={engineResults}
                 dsFilter="DC"
                 isDC={true}
+                query={tableQuery} setQuery={setTableQuery}
+                filterBrand={tableFilterBrand} setFilterBrand={setTableFilterBrand}
+                filterType={tableFilterType}   setFilterType={setTableFilterType}
+                filterMm={tableFilterMm}       setFilterMm={setTableFilterMm}
+                filterZone={tableFilterZone}   setFilterZone={setTableFilterZone}
               />
             </div>
           </div>
@@ -1749,7 +1808,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         <div style={{...S.sectionTitle,display:"flex",alignItems:"center",gap:6}}>
           Thick SKUs — Vertical Storage: Greater than
           <input type="number" value={thickBoundaryMm} disabled={!isAdmin} min={1} max={30} step={1}
-            onChange={e => handleSaveBoundary(parseFloat(e.target.value) || 6)}
+            onChange={e => handleNetCfgChange('thickBoundaryMm', parseFloat(e.target.value) || 9)}
             onFocus={e => e.target.select()}
             onKeyDown={e => { if (e.key === 'Enter' && boundaryDirty) { const freshBase = computePlywoodSKUs(invoiceData, skuMaster, dsFilter, period, invoiceDateRange, thickBoundaryMm); runBothSections(freshBase); } }}
             style={{width:40,padding:"0 4px",fontSize:12,fontWeight:700,border:`1px solid #C05A00`,borderRadius:4,color:"#92400E",background:isAdmin?HR.white:HR.surfaceLight,textAlign:"center"}}
@@ -1803,6 +1862,11 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             onSelectSku={s => { setSelectedSku(s); setSelectedSkuType(s.thicknessCat === 'Thick' ? 'thick' : 'thin'); }}
             engineResults={engineResults}
             dsFilter={dsFilter}
+            query={tableQuery} setQuery={setTableQuery}
+            filterBrand={tableFilterBrand} setFilterBrand={setTableFilterBrand}
+            filterType={tableFilterType}   setFilterType={setTableFilterType}
+            filterMm={tableFilterMm}       setFilterMm={setTableFilterMm}
+            filterZone={tableFilterZone}   setFilterZone={setTableFilterZone}
           />
         </div>
       )}

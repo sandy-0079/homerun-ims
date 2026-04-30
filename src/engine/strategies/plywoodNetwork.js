@@ -3,7 +3,7 @@
 // Only runs when categoryStrategies["Plywood, MDF & HDHMR"] === "network_design".
 // Brands not in config (e.g. Merino) fall through to existing PCT strategy in runEngine.
 
-import { percentile } from '../utils.js';
+import { percentile, inferThickness, thicknessCategory } from '../utils.js';
 import { DS_LIST } from '../constants.js';
 
 const PLYWOOD_CATEGORY = 'Plywood, MDF & HDHMR';
@@ -83,6 +83,141 @@ function computeOrderBuffer(sku, coveredDSes, orderQtys, maxBufPct) {
   return Math.ceil(percentile(all, maxBufPct));
 }
 
+// Spread ratio = max(orders) / P25(orders) — measures order quantity erraticity.
+// High ratio (e.g. [6,13] → 1.93) means demand is lumpy; low (e.g. [6,7] → 1.12) means consistent.
+function spreadRatio(orderQtys) {
+  if (!orderQtys || orderQtys.length < 2) return 1;
+  const sorted = [...orderQtys].sort((a, b) => a - b);
+  const p25 = percentile(sorted, 25);
+  return p25 > 0 ? sorted[sorted.length - 1] / p25 : Infinity;
+}
+
+/**
+ * Capacity-aware trim — runs after all node Min/Max computed, before DC.
+ * Per stocking node, per thickness (thick/thin independently).
+ * 4 passes, one SKU at a time sorted by spread ratio desc, stops when within tolerance.
+ * Pass 1: Sparse Erratic   — Min=P25(orders), Max=Min+1
+ * Pass 2: Frequent Erratic — Max=Min+ceil(P25(orders)), Min unchanged
+ * Pass 3: Sparse Conservative — same as Pass 1 for remaining Sparse
+ * Pass 4: Min of Frequent Erratic — reduce Min to P85 then P75 of daily demand
+ */
+function applyCapacityTrim(rawResults, skuM, cfg, dsCapacities, dailyDemand, orderQtys) {
+  if (!dsCapacities) return;
+  const thickBoundary  = cfg.thickBoundaryMm        || 9;
+  const tolerancePct   = (cfg.capacityTolerancePct  || 2) / 100;
+  const erraticTh      = cfg.sparseErraticThreshold  || 1.5;
+  const spikeCapMult   = cfg.spikeCapMultiplier      || 3;
+  const minNZD         = cfg.minNZD                  || 2;
+
+  // Collect per-node data: { nodeId → { skuIds, capacity:{thick,thin} } }
+  const nodes = {};
+  for (const [skuId, data] of Object.entries(rawResults)) {
+    for (const [nodeId, sr] of Object.entries(data.storeResults)) {
+      if (!sr.covers || sr.covers.length === 0) continue; // non-stocking node
+      if (!nodes[nodeId]) nodes[nodeId] = { skuIds: [], cap: dsCapacities[nodeId] };
+      nodes[nodeId].skuIds.push(skuId);
+    }
+  }
+
+  for (const [nodeId, { skuIds, cap }] of Object.entries(nodes)) {
+    if (!cap) continue;
+
+    for (const [thicknessKey, capacity] of [['thick', cap.thick], ['thin', cap.thin]]) {
+      if (!capacity || capacity <= 0) continue;
+
+      const inGroup = skuIds.filter(id => {
+        const mm = inferThickness(skuM[id]?.name);
+        if (mm === null || mm <= 1) return false;
+        return thicknessKey === 'thick' ? mm > thickBoundary : mm <= thickBoundary;
+      });
+
+      const sumMax = inGroup.reduce((s, id) => s + (rawResults[id].storeResults[nodeId]?.max || 0), 0);
+      const target = Math.ceil(capacity * (1 + tolerancePct));
+      if (sumMax <= target) continue;
+
+      let deficit = sumMax - target;
+
+      // Precompute per-SKU data for this node
+      const skuData = {};
+      for (const skuId of inGroup) {
+        const sr = rawResults[skuId].storeResults[nodeId];
+        const allOrders = [];
+        for (const ds of sr.covers) allOrders.push(...(orderQtys[skuId]?.[ds] || []));
+        const sorted = [...allOrders].sort((a, b) => a - b);
+        skuData[skuId] = {
+          zone: sr.zone,
+          sortedOrders: sorted,
+          ratio: spreadRatio(allOrders),
+          isErratic: spreadRatio(allOrders) > erraticTh,
+        };
+      }
+
+      const byRatioDesc = (a, b) => skuData[b].ratio - skuData[a].ratio;
+      const untrimmed = id => !rawResults[id].storeResults[nodeId].trimTag;
+
+      const trim = (skuId, newMin, newMax) => {
+        const sr = rawResults[skuId].storeResults[nodeId];
+        deficit -= (sr.max - newMax);
+        rawResults[skuId].storeResults[nodeId] = {
+          ...sr, min: newMin, max: newMax,
+          originalMin: sr.originalMin ?? sr.min,
+          originalMax: sr.originalMax ?? sr.max,
+          trimTag: 'Cap Trim',
+        };
+        rawResults[skuId].nodeMinMax[nodeId] = { min: newMin, max: newMax };
+      };
+
+      // Pass 1: Sparse Erratic
+      for (const id of inGroup.filter(id => skuData[id].zone === 'sparse' && skuData[id].isErratic && untrimmed(id)).sort(byRatioDesc)) {
+        if (deficit <= 0) break;
+        const newMin = Math.max(1, Math.ceil(percentile(skuData[id].sortedOrders, 25)));
+        const newMax = newMin + 1;
+        if (newMax >= rawResults[id].storeResults[nodeId].max) continue;
+        trim(id, newMin, newMax);
+      }
+      if (deficit <= 0) continue;
+
+      // Pass 2: Frequent Erratic — trim Max buffer only
+      for (const id of inGroup.filter(id => skuData[id].zone === 'frequent' && skuData[id].isErratic && untrimmed(id)).sort(byRatioDesc)) {
+        if (deficit <= 0) break;
+        const sr = rawResults[id].storeResults[nodeId];
+        const p25buf = Math.ceil(percentile(skuData[id].sortedOrders, 25));
+        const newMax = Math.max(sr.min + 1, sr.min + p25buf);
+        if (newMax >= sr.max) continue;
+        trim(id, sr.min, newMax);
+      }
+      if (deficit <= 0) continue;
+
+      // Pass 3: Sparse Conservative — all remaining Sparse
+      for (const id of inGroup.filter(id => skuData[id].zone === 'sparse' && untrimmed(id)).sort(byRatioDesc)) {
+        if (deficit <= 0) break;
+        const newMin = Math.max(1, Math.ceil(percentile(skuData[id].sortedOrders, 25)));
+        const newMax = newMin + 1;
+        if (newMax >= rawResults[id].storeResults[nodeId].max) continue;
+        trim(id, newMin, newMax);
+      }
+      if (deficit <= 0) continue;
+
+      // Pass 4: Min of Frequent Erratic — reduce Min at P85 then P75
+      const freqErratic = inGroup.filter(id => skuData[id].zone === 'frequent' && skuData[id].isErratic).sort(byRatioDesc);
+      for (const pct of [85, 75]) {
+        for (const id of freqErratic) {
+          if (deficit <= 0) break;
+          const sr = rawResults[id].storeResults[nodeId];
+          const covers = sr.covers;
+          const { min: newMinRaw, belowMinNZD } = computeNodeMin(id, covers, dailyDemand, pct, spikeCapMult, minNZD);
+          if (belowMinNZD || newMinRaw >= sr.min) continue;
+          const newMin = Math.max(1, newMinRaw);
+          const p25buf = Math.ceil(percentile(skuData[id].sortedOrders, 25));
+          const newMax = Math.max(newMin + 1, newMin + p25buf);
+          trim(id, newMin, newMax);
+        }
+        if (deficit <= 0) break;
+      }
+    }
+  }
+}
+
 /**
  * Pre-compute Network Design stocking results for all covered brand SKUs.
  * Called once before the main allSKUs.forEach loop in runEngine, only when
@@ -117,17 +252,19 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
   const cutoffStr = latest.toISOString().slice(0, 10);
 
   const { dailyDemand, orderQtys } = buildMaps(inv, cutoffStr);
-  const results = {};
+
+  // ── Phase 1: compute raw node Min/Max for every SKU ──────────────────────
+  const rawResults = {}; // { [skuId]: { brand, storeResults, nodeMinMax, nodes, dcMultMin, dcMultMax } }
 
   for (const [skuId, meta] of Object.entries(skuM)) {
     if (!isNetworkDesignSKU(meta, brands)) continue;
+    if ((meta.status || 'Active').toLowerCase() !== 'active') continue;
     const brandCfg = findBrandConfig(meta.brand, brands);
     const { nodes, dcMultMin, dcMultMax } = brandCfg;
 
     const storeResults = {};
     const nodeMinMax = {};
 
-    // Compute Min/Max for each DS stocking node
     for (const [nodeId, nodeCfg] of Object.entries(nodes)) {
       if (nodeId === 'DC') continue;
       const { min: p95Min, nonZeroCount, belowMinNZD, p95Raw } =
@@ -136,10 +273,8 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
       let finalMin, finalMax, zone, abq = null, demandSignal = null;
 
       if (belowMinNZD) {
-        // Rare: too few observations — do not stock
         zone = 'rare'; finalMin = 0; finalMax = 0;
       } else if (nonZeroCount < sparseNZD) {
-        // Sparse: ABQ-based stocking — P95 unreliable with few data points
         zone = 'sparse';
         const allOrders = [];
         for (const ds of nodeCfg.covers) allOrders.push(...(orderQtys[skuId]?.[ds] || []));
@@ -147,10 +282,8 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
         abq = allOrders.length > 0 ? totalQty / allOrders.length : 0;
         demandSignal = abq;
         finalMin = Math.ceil(abq);
-        // Use finalMin (not raw abq) so Max = ceil(Min × mult) — matches modal display
         finalMax = Math.min(Math.max(Math.ceil(finalMin * abqMultiplier), finalMin + 1), maxCap);
       } else {
-        // Frequent: P95-based stocking
         zone = 'frequent';
         demandSignal = p95Raw;
         const orderBuf = computeOrderBuffer(skuId, nodeCfg.covers, orderQtys, maxBufferPercentile);
@@ -159,7 +292,6 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
       }
 
       nodeMinMax[nodeId] = { min: finalMin, max: finalMax };
-      // Store covers so the tab can display "Covered DSes: DS01, DS05"
       storeResults[nodeId] = { min: finalMin, max: finalMax, nonZeroCount, covers: nodeCfg.covers, zone, abq, demandSignal };
     }
 
@@ -168,22 +300,32 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
       if (!storeResults[ds]) storeResults[ds] = { min: 0, max: 0, nonZeroCount: 0, covers: [] };
     }
 
-    // DC: P95 direct-serving component (if DC node defined) + multiplier component
+    rawResults[skuId] = { brand: meta.brand, storeResults, nodeMinMax, nodes, dcMultMin, dcMultMax };
+  }
+
+  // ── Phase 2: capacity trim (before DC so trimmed DS_Min feeds DC formula) ─
+  if (params.dsCapacities) {
+    applyCapacityTrim(rawResults, skuM, cfg, params.dsCapacities, dailyDemand, orderQtys);
+  }
+
+  // ── Phase 3: compute DC for each SKU using (trimmed) nodeMinMax ──────────
+  const results = {};
+
+  for (const [skuId, data] of Object.entries(rawResults)) {
+    const { brand, storeResults, nodeMinMax, nodes, dcMultMin, dcMultMax } = data;
+
     let dcP95 = 0;
     if (nodes.DC) {
       const { min, belowMinNZD: dcBelow } = computeNodeMin(skuId, nodes.DC.covers, dailyDemand, minPercentile, spikeCapMultiplier, minNZD);
       dcP95 = dcBelow ? 0 : min;
     }
 
-    // Σ DS_Min × mult: scales with demand velocity (Min ≈ P95 of daily demand).
-    // Faster SKUs have higher Min → DC holds more, which is correct.
-    // Σ(Max-Min) would collapse to near-zero for capped fast-movers, understocking DC.
     const sumMin = Object.values(nodeMinMax).reduce((acc, { min }) => acc + min, 0);
     const dcMin = dcP95 + Math.ceil(sumMin * dcMultMin);
     const dcMax = Math.max(dcP95 + Math.ceil(sumMin * dcMultMax), dcMin);
 
     results[skuId] = {
-      brand: meta.brand,
+      brand,
       storeResults,
       dcResult: { min: dcMin, max: dcMax },
     };
