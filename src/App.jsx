@@ -3203,14 +3203,14 @@ export default function App(){
   // ── handleSavePlywoodNetworkConfig: saves plywood network design config ──────
   // Not wrapped in useCallback so it always captures latest state — called only on
   // explicit user action so recreating on every render is negligible.
-  const handleSavePlywoodNetworkConfig = async (cfg) => {
+  const handleSavePlywoodNetworkConfig = async (cfg, { noRerun = false } = {}) => {
     const newParams = { ...params, plywoodNetworkConfig: cfg };
     setParams(newParams);
     setSaved(newParams);
     addChange("Plywood Network Design config updated");
     await saveToSupabase("params", "plywoodNetworkConfig", cfg);
-    // Re-run engine immediately so Overview updates without needing Apply & Re-run
-    if (invoiceData?.length > 0 && Object.keys(skuMaster || {}).length > 0) {
+    // Re-run engine immediately so Overview updates — skipped for display-only changes (e.g. capacity)
+    if (!noRerun && invoiceData?.length > 0 && Object.keys(skuMaster || {}).length > 0) {
       setLoading(true);
       setTimeout(() => {
         try {
