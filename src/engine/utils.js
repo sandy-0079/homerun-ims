@@ -49,6 +49,21 @@ export function aggStats(rows){
   return{skuCount:skus.size,totalOrders,totalQty,avgOrderQty};
 }
 
+/** Parse thickness in mm from a SKU name string (e.g. "12mm" → 12) */
+export function inferThickness(name) {
+  if (!name) return null;
+  const m = name.match(/(\d+(?:\.\d+)?)\s*mm/i);
+  return m ? parseFloat(m[1]) : null;
+}
+
+/** Classify a SKU as Thick, Thin, or Laminate based on mm and boundary */
+export function thicknessCategory(mm, laminateThreshold = 1, thickBoundaryMm = 9) {
+  if (mm === null || mm === undefined) return 'Unknown';
+  if (mm <= laminateThreshold) return 'Laminate';
+  if (mm > thickBoundaryMm) return 'Thick';
+  return 'Thin';
+}
+
 /** Compute the Xth percentile from a sorted array of numbers using linear interpolation */
 export function percentile(sortedArr, pct) {
   if (sortedArr.length === 0) return 0;

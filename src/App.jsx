@@ -3195,10 +3195,36 @@ export default function App(){
   },[]);
 
   // ── handleSaveNetworkConfigs: saves networkConfigs to Supabase ───────────────
-  const handleSaveNetworkConfigs = useCallback(async (configs) => {
+  const handleSaveNetworkConfigs = useCallback(async (configs, { triggerRerun = false } = {}) => {
     setNetworkConfigs(configs);
     await saveToSupabase("params", "networkConfigs", configs);
-  }, []);
+    // Capacity changes affect engine output when Network Design active — re-run so Min/Max reflect trim
+    if (triggerRerun && params.categoryStrategies?.["Plywood, MDF & HDHMR"] === "network_design"
+        && invoiceData?.length > 0 && Object.keys(skuMaster || {}).length > 0) {
+      setLoading(true);
+      setTimeout(() => {
+        try {
+          const dsCapacities = Object.fromEntries(
+            DS_LIST.map(ds => [ds, { thick: configs[ds]?.thick?.capacity || 0, thin: configs[ds]?.thin?.capacity || 0 }])
+          );
+          const activeParams = { ...params, dsCapacities };
+          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, activeParams);
+          const merged = { ...raw };
+          Object.entries(coreOverrides || {}).forEach(([skuId, dsList]) => {
+            if (!merged[skuId]) return;
+            const ns = { ...merged[skuId].stores };
+            Object.entries(dsList).forEach(([dsId, ov]) => {
+              if (!ns[dsId]) return;
+              ns[dsId] = { ...ns[dsId], min: Math.max(ns[dsId].min, ov.min), max: Math.max(ns[dsId].max, ov.max) };
+            });
+            merged[skuId] = { ...merged[skuId], stores: ns };
+          });
+          setResults(merged);
+        } catch(err) { console.error("Capacity re-run error:", err); }
+        setLoading(false);
+      }, 100);
+    }
+  }, [params, invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, coreOverrides]);
 
   // ── handleSavePlywoodNetworkConfig: saves plywood network design config ──────
   // Not wrapped in useCallback so it always captures latest state — called only on
@@ -3214,7 +3240,9 @@ export default function App(){
       setLoading(true);
       setTimeout(() => {
         try {
-          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, newParams);
+          const dsCapacities = buildDSCapacities(networkConfigs);
+          const runParams = dsCapacities ? { ...newParams, dsCapacities } : newParams;
+          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, runParams);
           const merged = { ...raw };
           Object.entries(coreOverrides || {}).forEach(([skuId, dsList]) => {
             if (!merged[skuId]) return;
@@ -3267,6 +3295,9 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
   const sbPncAuto = await loadFromSupabase("params", "plywoodNetworkConfig");
   if (sbPncAuto) activeParams.plywoodNetworkConfig = sbPncAuto;
+  const sbNetCfgAuto = await loadFromSupabase("params", "networkConfigs");
+  if (sbNetCfgAuto) { setNetworkConfigs(sbNetCfgAuto); activeParams.dsCapacities = Object.fromEntries(DS_LIST.map(ds=>[ds,{thick:sbNetCfgAuto[ds]?.thick?.capacity||0,thin:sbNetCfgAuto[ds]?.thin?.capacity||0}])); }
+  else setNetworkConfigs({});
   setParams(activeParams);setSaved(activeParams);
 
   setTimeout(()=>{
@@ -3295,6 +3326,9 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
       const sbPncBundle = await loadFromSupabase("params", "plywoodNetworkConfig");
       if (sbPncBundle) activeParams.plywoodNetworkConfig = sbPncBundle;
+      const sbNetCfgBundle = await loadFromSupabase("params", "networkConfigs");
+      if (sbNetCfgBundle) { setNetworkConfigs(sbNetCfgBundle); activeParams.dsCapacities = Object.fromEntries(DS_LIST.map(ds=>[ds,{thick:sbNetCfgBundle[ds]?.thick?.capacity||0,thin:sbNetCfgBundle[ds]?.thin?.capacity||0}])); }
+      else setNetworkConfigs({});
       setParams(activeParams);setSaved(activeParams);
 
       setTimeout(()=>{
@@ -3324,11 +3358,17 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   },[]);
 
 
+  const buildDSCapacities = (cfgs) => cfgs
+    ? Object.fromEntries(DS_LIST.map(ds => [ds, { thick: cfgs[ds]?.thick?.capacity || 0, thin: cfgs[ds]?.thin?.capacity || 0 }]))
+    : undefined;
+
   const triggerModel=(inv,sku,mrq,nsq,ds,pd,p)=>{
     setLoading(true);
     setTimeout(()=>{
       try{
-        const raw=runEngine(inv,sku,mrq,pd,ds,nsq,p);
+        const dsCapacities = buildDSCapacities(networkConfigs);
+        const runParams = dsCapacities ? { ...p, dsCapacities } : p;
+        const raw=runEngine(inv,sku,mrq,pd,ds,nsq,runParams);
         const merged={...raw};
         Object.entries(coreOverrides).forEach(([skuId,dsList])=>{
           if(!merged[skuId])return;
@@ -3452,7 +3492,8 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       setLoading(true);
       setTimeout(() => {
         try {
-          const raw = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, np);
+          const dsCapacities = buildDSCapacities(networkConfigs);
+          const raw = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, dsCapacities ? { ...np, dsCapacities } : np);
           const merged = { ...raw };
           Object.entries(coreOverrides).forEach(([sku, dsList]) => {
             if (!merged[sku]) return;
