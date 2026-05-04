@@ -32,6 +32,9 @@ export const PLYWOOD_NETWORK_CONFIG_DEFAULT = {
   thickBoundaryMm: 9,
   capacityTolerancePct: 2,
   sparseErraticThreshold: 1.5,
+  bulkThresholdMultiplier: 2.0,
+  minOrdersForBulkFilter: 5,
+  bulkMaxThreshold: 10,
   brands: {
     "Action Tesa": {
       nodes: {

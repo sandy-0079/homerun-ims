@@ -114,7 +114,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       const _t150Tag = t150[skuId] || 'No';
       const _stores = {};
       DS_LIST.forEach(dsId => {
-        const { min, max, nonZeroCount = 0, covers = [], trimTag } = networkResult.storeResults[dsId] || { min: 0, max: 0, nonZeroCount: 0, covers: [] };
+        const { min, max, nonZeroCount = 0, covers = [], trimTag, originalMin, originalMax } = networkResult.storeResults[dsId] || { min: 0, max: 0, nonZeroCount: 0, covers: [] };
         const networkMax = _isDead ? min : max;
         let storeMin = min, storeMax = networkMax, logicTag = 'Network Design';
         // Only apply SKU floor at stocking nodes (covers.length > 0).
@@ -134,7 +134,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
           preFloorMin: min, preFloorMax: networkMax,
           dailyAvg: 0, abq: 0, nonZeroDays: nonZeroCount,
           mvTag: 'N/A', spTag: 'N/A',
-          logicTag, trimTag, strategyTag: 'network_design',
+          logicTag, trimTag, originalMin, originalMax, strategyTag: 'network_design',
           strategyDetails: { brand: networkResult.brand },
           postBlendSteps: [],
         };

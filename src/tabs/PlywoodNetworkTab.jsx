@@ -456,19 +456,25 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     return allDates.filter(d => d >= cutoffStr);
   })();
-  const timelineData = lookbackDates.map(d => ({ date: d.slice(5), qty: sku.dailyMap[d] || 0 }));
+  // Timeline: regular (blue) + bulk (amber) stacked per day
+  const hasBulkSplit = !!(sku.regularDailyMap || sku.bulkDailyMap);
+  const timelineData = lookbackDates.map(d => ({
+    date: d.slice(5),
+    regular: (sku.regularDailyMap || sku.dailyMap)?.[d] || 0,
+    bulk:    (sku.bulkDailyMap)?.[d] || 0,
+    qty:     sku.dailyMap?.[d] || 0,
+  }));
   const tBarSize = Math.max(3, Math.min(20, Math.floor(340 / Math.max(timelineData.length, 1))));
-  // Ensure Y-axis includes Max so reference line is never clipped
   const timelineYMax = Math.ceil(Math.max(...timelineData.map(d=>d.qty||0), sku.maxQty||0, 1) * 1.15);
 
-  // Order qty histogram
-  // Ensure histogram X-axis includes Max so reference line is visible
-  const histXMax = Math.ceil(Math.max(...(sku.orderQtys||[]), sku.maxQty||0, 1) * 1.15);
-
+  // Order qty histogram: regular (purple) + bulk (amber) side by side by qty bucket
+  const allOrders = [...(sku.orderQtys||[]), ...(sku.bulkOrderQtys||[])];
+  const histXMax = Math.ceil(Math.max(...allOrders, sku.maxQty||0, 1) * 1.15);
   const histData = (() => {
     const b = {};
-    (sku.orderQtys||[]).forEach(q => { const k = Math.ceil(q); b[k] = (b[k]||0)+1; });
-    return Object.entries(b).sort((a,c)=>+a[0]-+c[0]).map(([qty,count])=>({qty:+qty,count}));
+    (sku.orderQtys||[]).forEach(q => { const k = Math.ceil(q); if (!b[k]) b[k]={qty:+k,regular:0,bulk:0}; b[k].regular++; });
+    (sku.bulkOrderQtys||[]).forEach(q => { const k = Math.ceil(q); if (!b[k]) b[k]={qty:+k,regular:0,bulk:0}; b[k].bulk++; });
+    return Object.values(b).sort((a,c)=>a.qty-c.qty);
   })();
   const hBarSize = Math.max(3, Math.min(20, Math.floor(340 / Math.max(histData.length, 1))));
 
@@ -566,28 +572,33 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
           <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FFFBEB",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
             <span style={{...ZONE_STYLES.sparse.badge,padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,marginRight:8}}>Sparse</span>
             <span style={{color:"#888",fontSize:10}}>{t.nzd} NZD days — using ABQ instead of P{t.pMin} (too few observations for reliable P95)</span>
+            {t.bulkThreshold != null && <div style={{color:"#B45309",fontSize:10,marginTop:2}}>Bulk threshold: {t.bulkThreshold?.toFixed(1)} sheets (cross-DS ABQ {t.crossDSAbq?.toFixed(1)} × {t.bulkMult||2}) — bulk orders excluded from stocking</div>}
             <div style={{marginTop:4}}>
               ABQ &nbsp;=&nbsp; {totalOrderQty} total qty ÷ {t.orderQtyCount} orders &nbsp;=&nbsp; <b>{abqVal.toFixed(1)}</b> &nbsp;→&nbsp; <b style={{color:"#B91C1C"}}>Min = {sku.minQty}</b>
             </div>
             <div>
-              Min ({sku.minQty}) × {t.abqMultiplier||1.5} &nbsp;=&nbsp; {(sku.minQty*(t.abqMultiplier||1.5)).toFixed(1)} &nbsp;→&nbsp; <b style={{color:"#16a34a"}}>Max = {sku.maxQty}</b>
+              Max regular day = <b>{t.maxDayRaw ?? sku.maxQty}</b> sheets
+              {t.maxDayWinsorised != null && t.maxDayWinsorised < t.maxDayRaw && <span style={{color:"#888",marginLeft:4}}>(winsorised to {t.maxDayWinsorised})</span>}
+              {" "}→&nbsp; <b style={{color:"#16a34a"}}>Max = {sku.maxQty}</b>
               {sku.maxQty >= (t.cap||20) && <span style={{color:"#888"}}> (cap {t.cap})</span>}
+              {t.maxDayWinsorised != null && sku.maxQty > (t.maxDayWinsorised||0) && sku.maxQty <= ((t.maxDayRaw||0)+1) && <span style={{color:"#888"}}> (Min+1 floor applied)</span>}
             </div>
           </div>
         ) : (
           <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FAFAF8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
             <span style={{...ZONE_STYLES.frequent.badge,padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,marginRight:8}}>Frequent</span>
+            {t.bulkThreshold != null && <span style={{color:"#B45309",fontSize:10,marginLeft:6}}>Bulk ≥ {t.bulkThreshold?.toFixed(1)} sheets excluded · only regular orders used below</span>}
             <div>
               <b>P{t.pMin}</b> of daily demand ({t.nzd} NZD days, median <b>{t.dtMedian?.toFixed(1)}</b> sheets)
               {winsorised && <span style={{color:"#888",marginLeft:6}}>— outliers winsorised at {t.dtMedian?.toFixed(1)} × {t.spikeCapMult}</span>}
               {" "}&nbsp;=&nbsp; {t.p95Raw?.toFixed(1)} &nbsp;→&nbsp; <b style={{color:"#B91C1C"}}>Min = {sku.minQty}</b>
             </div>
             <div>
-              <b>P{t.pBuf}</b> of {t.orderQtyCount} orders &nbsp;=&nbsp; {t.orderBuf} sheets (Max buffer) &nbsp;→&nbsp;
-              {" "}{sku.minQty} + {t.orderBuf} = {t.rawMax}
+              Max regular day = <b>{t.maxDayRaw ?? t.maxDayWinsorised}</b> sheets
+              {t.maxDayWinsorised != null && t.maxDayWinsorised < (t.maxDayRaw ?? t.maxDayWinsorised) && <span style={{color:"#888",marginLeft:4}}>(winsorised to {t.maxDayWinsorised})</span>}
               {t.capApplied
                 ? <span> → capped to {t.cap} &nbsp;<b style={{color:"#16a34a"}}>Max = {sku.maxQty}</b></span>
-                : <span> ≤ cap {t.cap} ✓ &nbsp;<b style={{color:"#16a34a"}}>Max = {sku.maxQty}</b></span>
+                : <span> &nbsp;→&nbsp; <b style={{color:"#16a34a"}}>Max = {sku.maxQty}</b>{(t.maxDayWinsorised||0) <= sku.minQty && <span style={{color:"#888"}}> (Min+1 floor)</span>}</span>
               }
             </div>
           </div>
@@ -596,10 +607,11 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
         {/* Charts side by side — DS nodes + DC direct-serving */}
         {(!t.isDC || t.dcZone) && (timelineData.length > 0 || histData.length > 0) && (
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            {/* Timeline */}
+            {/* Timeline: regular (blue) + bulk (amber) stacked */}
             <div>
-              <div style={{fontSize:10,fontWeight:600,color:"#555",marginBottom:4}}>
+              <div style={{fontSize:10,fontWeight:600,color:"#555",marginBottom:4,display:"flex",alignItems:"center",gap:8}}>
                 Daily Demand — {t.isDC ? fmtCovers(t.dcCovers) : fmtCovers(t.covers)} ({(t.isDC ? t.dcNodeTrace?.lookbackDays : t.lookbackDays)||90}d lookback)
+                {hasBulkSplit && <><span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:9}}><span style={{width:8,height:8,borderRadius:2,background:"#0077A8",display:"inline-block"}}/> Regular</span><span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:9}}><span style={{width:8,height:8,borderRadius:2,background:"#F59E0B",display:"inline-block"}}/> Bulk</span></>}
               </div>
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={timelineData} margin={{left:0,right:52,top:4,bottom:16}}>
@@ -611,27 +623,35 @@ function NetworkDesignSKUModal({ sku, onClose, invoiceDateRange }) {
                     label={{value:`Min=${sku.minQty}`,position:"right",fontSize:8,fill:"#B91C1C"}}/>}
                   {sku.maxQty > 0 && <ReferenceLine y={sku.maxQty} stroke="#16a34a" strokeDasharray="4 3"
                     label={{value:`Max=${sku.maxQty}`,position:"right",fontSize:8,fill:"#16a34a"}}/>}
-                  <Bar dataKey="qty" barSize={tBarSize} fill="#0077A8" radius={[2,2,0,0]}/>
+                  {hasBulkSplit
+                    ? <><Bar dataKey="regular" stackId="d" barSize={tBarSize} fill="#0077A8" radius={[0,0,0,0]}/><Bar dataKey="bulk" stackId="d" barSize={tBarSize} fill="#F59E0B" radius={[2,2,0,0]}/></>
+                    : <Bar dataKey="qty" barSize={tBarSize} fill="#0077A8" radius={[2,2,0,0]}/>
+                  }
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            {/* Histogram */}
+            {/* Histogram: regular (purple) + bulk (amber) */}
             {histData.length > 0 && (
               <div>
-                <div style={{fontSize:10,fontWeight:600,color:"#555",marginBottom:4}}>
-                  Order Qty Distribution ({t.isDC ? (t.dcNodeTrace?.orderQtyCount||0) : t.orderQtyCount} orders)
+                <div style={{fontSize:10,fontWeight:600,color:"#555",marginBottom:4,display:"flex",alignItems:"center",gap:8}}>
+                  Order Qty Distribution ({(sku.orderQtys?.length||0) + (sku.bulkOrderQtys?.length||0)} orders)
+                  {hasBulkSplit && <><span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:9}}><span style={{width:8,height:8,borderRadius:2,background:"#7C3AED",display:"inline-block"}}/> Regular</span><span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:9}}><span style={{width:8,height:8,borderRadius:2,background:"#F59E0B",display:"inline-block"}}/> Bulk</span></>}
                 </div>
                 <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={histData} margin={{left:0,right:8,top:4,bottom:16}}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false}/>
                     <XAxis dataKey="qty" type="number" domain={[0, histXMax]} tick={{fontSize:8}}/>
                     <YAxis tick={{fontSize:8}} width={24}/>
-                    <RTooltip contentStyle={{fontSize:10}} formatter={v=>[v,"orders"]} labelFormatter={l=>`Qty: ${l}`}/>
+                    <RTooltip contentStyle={{fontSize:10}} formatter={(v,n)=>[v,n==="regular"?"Regular orders":"Bulk orders"]} labelFormatter={l=>`Qty: ${l}`}/>
+                    {t.bulkThreshold != null && <ReferenceLine x={t.bulkThreshold} stroke="#F59E0B" strokeDasharray="3 2" label={{value:`Bulk≥${t.bulkThreshold?.toFixed(0)}`,position:"top",fontSize:8,fill:"#B45309"}}/>}
                     {sku.minQty > 0 && <ReferenceLine x={sku.minQty} stroke="#B91C1C" strokeDasharray="4 3"
                       label={{value:`Min=${sku.minQty}`,position:"top",fontSize:8,fill:"#B91C1C"}}/>}
                     {sku.maxQty > 0 && <ReferenceLine x={sku.maxQty} stroke="#16a34a" strokeDasharray="4 3"
                       label={{value:`Max=${sku.maxQty}`,position:"top",fontSize:8,fill:"#16a34a"}}/>}
-                    <Bar dataKey="count" barSize={hBarSize} fill="#7C3AED" radius={[2,2,0,0]}/>
+                    {hasBulkSplit
+                      ? <><Bar dataKey="regular" barSize={hBarSize} fill="#7C3AED" radius={[2,2,0,0]}/><Bar dataKey="bulk" barSize={hBarSize} fill="#F59E0B" radius={[2,2,0,0]}/></>
+                      : <Bar dataKey="regular" barSize={hBarSize} fill="#7C3AED" radius={[2,2,0,0]}/>
+                    }
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -950,7 +970,10 @@ function NetworkDesignUnifiedTable({ thickSkus, thinSkus, thickCap, thinCap, onS
               const isTrimmed = engineStore?.trimTag === 'Cap Trim';
               const displayMin = engineDC ? engineDC.min : engineStore != null ? engineStore.min : s.minQty;
               const displayMax = engineDC ? engineDC.max : engineStore != null ? engineStore.max : s.maxQty;
-              const skuForModal = isTrimmed ? { ...s, _trim: { originalMin: engineStore.originalMin, originalMax: engineStore.originalMax, trimmedMin: engineStore.min, trimmedMax: engineStore.max } } : s;
+              const skuForModal = { ...s,
+                minQty: displayMin, maxQty: displayMax,
+                ...(isTrimmed ? { _trim: { originalMin: engineStore.originalMin, originalMax: engineStore.originalMax, trimmedMin: engineStore.min, trimmedMax: engineStore.max } } : {}),
+              };
               return (
                 <tr key={s.sku} onClick={() => onSelectSku(skuForModal)}
                   style={{background:zs.bg, cursor:"pointer"}}>
@@ -1012,10 +1035,12 @@ function applyNetworkFormula(statsList, cfg, boundary) {
     const mm = inferThickness(s.name);
     if (mm !== null && mm <= 1) return null;
     const thicknessCat = thicknessCategory(mm, 1, boundary);
-    const dt = s.dailyTotals;
+    const dt = s.dailyTotals; // regular-only demand for Min/Max computation
+    // Zone from total NZD (s.nzd includes bulk days); fall back to dt.length if nzd not set
+    const totalNZD = s.nzd !== undefined ? s.nzd : dt.length;
     const mid = Math.floor(dt.length / 2);
     const dtMedian = dt.length === 0 ? 0 : dt.length % 2 === 0 ? (dt[mid-1]+dt[mid])/2 : dt[mid];
-    const belowMinNZD = dt.length < nzdTh;
+    const belowMinNZD = totalNZD < nzdTh;
     const spikeCap = dtMedian * spike;
     const winsorized = dt.map(v => Math.min(v, spikeCap));
     const p95Raw = winsorized.length ? percentile(winsorized, pMin) : 0;
@@ -1025,38 +1050,46 @@ function applyNetworkFormula(statsList, cfg, boundary) {
     if (belowMinNZD) {
       // Rare zone — not stocked
       zone = 'rare'; minFinal = 0; maxQty = 0;
-    } else if (dt.length < sparseNZD) {
+    } else if (totalNZD < sparseNZD) {
       // Sparse zone — ABQ-based: P95 unreliable with few observations
       zone = 'sparse';
       const totalQty = s.orderQtys.reduce((a, b) => a + b, 0);
       abq = s.orderQtys.length > 0 ? totalQty / s.orderQtys.length : 0;
       demandSignal = abq;
       minFinal = Math.ceil(abq);
-      maxQty   = Math.min(Math.max(Math.ceil(minFinal * abqMult), minFinal + 1), cap);
+      // Max = max of winsorised regular daily demand, at least Min+1 (consistent with Frequent)
+      const sparseMaxDay = winsorized.length > 0 ? winsorized[winsorized.length - 1] : 0;
+      maxQty = Math.min(Math.max(sparseMaxDay, minFinal + 1), cap);
     } else {
-      // Frequent zone — P95-based
+      // Frequent zone — Min=P95, Max=max(winsorised regular daily) ≥ Min+1
       zone = 'frequent';
       demandSignal = p95Raw;
       const minQty  = Math.ceil(p95Raw);
-      const orderBuf = s.orderQtys.length ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0;
-      maxQty  = Math.min(minQty + orderBuf, cap);
+      const maxDayWinsorised = winsorized.length > 0 ? winsorized[winsorized.length - 1] : 0;
+      maxQty   = Math.min(Math.max(maxDayWinsorised, minQty + 1), cap);
       minFinal = Math.min(minQty, Math.max(0, maxQty - 1));
     }
 
-    const orderBufForTrace = zone === 'frequent'
-      ? (s.orderQtys.length ? Math.ceil(percentile(s.orderQtys, pBuf)) : 0) : 0;
+    const maxDayRaw        = dt.length > 0 ? dt[dt.length - 1] : 0; // raw max (matches chart)
+    const maxDayWinsorisedForTrace = (zone === 'frequent' || zone === 'sparse') && winsorized.length > 0 ? winsorized[winsorized.length - 1] : 0;
 
     const trace = {
-      covers: s.covers || [], nzd: dt.length, belowMinNZD, minNZDThreshold: nzdTh,
+      covers: s.covers || [], nzd: totalNZD, belowMinNZD, minNZDThreshold: nzdTh,
       rawNonZero: dt, dtMedian, spikeCap: dtMedian > 0 ? spikeCap : null, spikeCapMult: spike, winsorized,
-      p95Raw, pMin, orderBuf: orderBufForTrace, pBuf,
+      p95Raw, pMin,
       orderQtyCount: s.orderQtys.length,
-      rawMax: zone === 'frequent' ? Math.ceil(p95Raw) + orderBufForTrace : maxQty,
-      capApplied: zone === 'frequent' && (Math.ceil(p95Raw) + orderBufForTrace) > cap,
+      capApplied: zone === 'frequent' && maxDayWinsorisedForTrace > cap,
       cap, lookbackDays: cfg.lookbackDays || 90,
       zone, abq, abqMultiplier: abqMult, demandSignal,
+      // Bulk/regular split info for modal display
+      bulkThreshold: s.bulkThreshold ?? null,
+      crossDSAbq: s.bulkThreshold != null ? s.bulkThreshold / (cfg.bulkThresholdMultiplier || 2.0) : null,
+      bulkMult: cfg.bulkThresholdMultiplier || 2.0,
+      maxDayRaw,
+      maxDayWinsorised: maxDayWinsorisedForTrace,
     };
-    return { ...s, mm, thicknessCat, minQty: minFinal, maxQty, dailyMedian: dtMedian, zone, abq, demandSignal, trace };
+    return { ...s, mm, thicknessCat, minQty: minFinal, maxQty, dailyMedian: dtMedian, zone, abq, demandSignal, trace,
+      regularDailyMap: s.regularDailyMap, bulkDailyMap: s.bulkDailyMap, bulkOrderQtys: s.bulkOrderQtys };
   }).filter(Boolean).filter(s => s.thicknessCat !== 'Laminate');
 }
 
@@ -1168,19 +1201,70 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
     return { stocked, notStocked, coveredDSes };
   }, [isNetworkDesignActive, effectiveNetCfg, dsFilter]);
 
-  // Network Design: aggregated SKU stats for the selected DS stocking node
+  // Cross-DS bulk thresholds per SKU — computed directly from invoiceData for all Network Design brands.
+  // Avoids double-calling computeNetworkNodeStats; provides consistent thresholds to all display useMemos.
+  const bulkThresholdsBySku = useMemo(() => {
+    if (!isNetworkDesignActive || !effectiveNetCfg?.brands) return {};
+    const N = effectiveNetCfg.bulkThresholdMultiplier ?? 2.0;
+    const minOrders = effectiveNetCfg.minOrdersForBulkFilter ?? 5;
+    const bulkMax = effectiveNetCfg.bulkMaxThreshold ?? 10;
+    const lookbackDays = effectiveNetCfg.lookbackDays || 90;
+
+    // Compute cutoff date
+    const allDates = [...new Set(invoiceData.map(r => r.date))].sort();
+    if (!allDates.length) return {};
+    const latest = new Date(allDates[allDates.length - 1]);
+    latest.setDate(latest.getDate() - lookbackDays);
+    const cutoffStr = latest.toISOString().slice(0, 10);
+
+    // Brand names (lower) for fast lookup
+    const brandNames = new Set(Object.keys(effectiveNetCfg.brands).map(b => b.toLowerCase()));
+
+    // Per-DS orders per SKU: group by SKU and DS
+    const ordersBySkuDs = {};
+    for (const r of invoiceData) {
+      if (r.date < cutoffStr) continue;
+      const meta = skuMaster[r.sku];
+      if (!meta || meta.category !== PLYWOOD_CATEGORIES[0]) continue;
+      if (!brandNames.has(meta.brand?.toLowerCase())) continue;
+      const qty = Number(r.qty) || 0;
+      if (qty <= 0) continue;
+      if (!ordersBySkuDs[r.sku]) ordersBySkuDs[r.sku] = {};
+      if (!ordersBySkuDs[r.sku][r.ds]) ordersBySkuDs[r.sku][r.ds] = [];
+      ordersBySkuDs[r.sku][r.ds].push(qty);
+    }
+
+    // Per-DS ABQ → per-DS threshold → take max across DSes
+    const thresholds = {};
+    Object.entries(ordersBySkuDs).forEach(([skuId, dsBySkuId]) => {
+      const perDSThresholds = [];
+      Object.values(dsBySkuId).forEach(dsOrders => {
+        if (dsOrders.length >= minOrders) {
+          const abq = dsOrders.reduce((a, b) => a + b, 0) / dsOrders.length;
+          perDSThresholds.push(Math.ceil(N * abq));
+        }
+      });
+      const abqThreshold = perDSThresholds.length > 0 ? Math.max(...perDSThresholds) : null;
+      thresholds[skuId] = abqThreshold !== null
+        ? Math.min(abqThreshold, bulkMax - 1)
+        : (bulkMax - 1);
+    });
+    return thresholds;
+  }, [isNetworkDesignActive, effectiveNetCfg, invoiceData, skuMaster]);
+
+  // Network Design: aggregated SKU stats for the selected DS stocking node (with bulk split)
   const ndSkuStats = useMemo(() => {
     if (!ndDsInfo || !ndDsInfo.stocked.length) return { thick: [], thin: [] };
     const allStats = [];
     ndDsInfo.stocked.forEach(({ brand, covers }) => {
-      const stats = computeNetworkNodeStats(invoiceData, skuMaster, brand, covers, effectiveNetCfg.lookbackDays || 90);
+      const stats = computeNetworkNodeStats(invoiceData, skuMaster, brand, covers, effectiveNetCfg.lookbackDays || 90, bulkThresholdsBySku);
       allStats.push(...stats.map(s => ({ ...s, covers, brand })));
     });
     const withMM = applyNetworkFormula(allStats, effectiveNetCfg, appliedBoundary);
     return { thick: withMM.filter(s => s.thicknessCat === 'Thick'), thin: withMM.filter(s => s.thicknessCat !== 'Thick') };
-  }, [ndDsInfo, invoiceData, skuMaster, effectiveNetCfg, appliedBoundary]);
+  }, [ndDsInfo, invoiceData, skuMaster, effectiveNetCfg, appliedBoundary, bulkThresholdsBySku]);
 
-  // All DS stocking node results — needed by DC replenishment formula
+  // All DS stocking node results — needed by DC replenishment formula (with bulk split)
   const allNodeStats = useMemo(() => {
     if (!isNetworkDesignActive || !effectiveNetCfg?.brands) return {};
     const result = {};
@@ -1188,12 +1272,12 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       result[brand] = {};
       Object.entries(brandCfg.nodes).forEach(([nodeId, nodeCfg]) => {
         if (nodeId === 'DC') return;
-        const stats = computeNetworkNodeStats(invoiceData, skuMaster, brand, nodeCfg.covers, effectiveNetCfg.lookbackDays || 90);
+        const stats = computeNetworkNodeStats(invoiceData, skuMaster, brand, nodeCfg.covers, effectiveNetCfg.lookbackDays || 90, bulkThresholdsBySku);
         result[brand][nodeId] = applyNetworkFormula(stats.map(s => ({ ...s, covers: nodeCfg.covers })), effectiveNetCfg, appliedBoundary);
       });
     });
     return result;
-  }, [isNetworkDesignActive, effectiveNetCfg, invoiceData, skuMaster, appliedBoundary]);
+  }, [isNetworkDesignActive, effectiveNetCfg, invoiceData, skuMaster, appliedBoundary, bulkThresholdsBySku]);
 
   // DC tab: per-SKU DC Min/Max = P95 direct-serving + Σ(Max−Min) × mult across DS stocking nodes
   const dcSkuStats = useMemo(() => {
@@ -1210,7 +1294,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
         let dcNodeTrace = null, dcDailyMap = {}, dcOrderQtys = [];
         if (nodes.DC) {
           dcCovers = nodes.DC.covers;
-          const dcRaw = computeNetworkNodeStats(invoiceData, skuMaster, brand, dcCovers, effectiveNetCfg.lookbackDays || 90);
+          const dcRaw = computeNetworkNodeStats(invoiceData, skuMaster, brand, dcCovers, effectiveNetCfg.lookbackDays || 90, bulkThresholdsBySku);
           const skuStat = dcRaw.find(s => s.sku === meta.sku);
           if (skuStat) {
             const dcCfg = { ...effectiveNetCfg, maxCap: 9999 };
@@ -1226,11 +1310,18 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
             }
           }
         }
-        // Replenishment component: Σ DS_Min × mult (scales with demand velocity)
+        // Replenishment component: Σ DS_Min × mult.
+        // Use engineResults (trimmed) when available — capacity trim reduces DS Mins which must propagate to DC.
+        // Fall back to allNodeStats if engine hasn't been run yet.
         let sumMin = 0;
         Object.keys(nodes).filter(n => n !== 'DC').forEach(nodeId => {
-          const match = (allNodeStats[brand]?.[nodeId] || []).find(s => s.sku === meta.sku);
-          if (match) sumMin += match.minQty;
+          const engineMin = engineResults?.[meta.sku]?.stores?.[nodeId]?.min;
+          if (engineMin !== undefined) {
+            sumMin += engineMin;
+          } else {
+            const match = (allNodeStats[brand]?.[nodeId] || []).find(s => s.sku === meta.sku);
+            if (match) sumMin += match.minQty;
+          }
         });
         const dcMin = dcP95 + Math.ceil(sumMin * dcMultMin);
         const dcMax = Math.max(dcP95 + Math.ceil(sumMin * dcMultMax), dcMin);
@@ -1249,7 +1340,7 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       });
     });
     return { thick: allSkus.filter(s => s.thicknessCat === 'Thick'), thin: allSkus.filter(s => s.thicknessCat !== 'Thick') };
-  }, [isNetworkDesignActive, effectiveNetCfg, invoiceData, skuMaster, allNodeStats, appliedBoundary]);
+  }, [isNetworkDesignActive, effectiveNetCfg, invoiceData, skuMaster, allNodeStats, appliedBoundary, bulkThresholdsBySku, engineResults]);
 
   // Total active SKUs across all network design brands — denominator for DC summary card
   const dcTotalActive = useMemo(() => {
@@ -1483,6 +1574,9 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                   {label:"Thick Boundary (mm)",key:"thickBoundaryMm",min:1,max:30,step:1,hint:"SKUs above this mm are Thick, below are Thin — affects capacity trim and display"},
                   {label:"Capacity Tolerance (%)",key:"capacityTolerancePct",min:0,max:20,step:0.5,hint:"% over capacity before trim kicks in (e.g. 2 = trim when >102% full)"},
                   {label:"Erratic Order Threshold",key:"sparseErraticThreshold",min:1,max:5,step:0.1,hint:"max/P25 of orders — above this = erratic demand, trimmed first"},
+                  {label:"Bulk Multiplier (N×ABQ)",key:"bulkThresholdMultiplier",min:1,max:10,step:0.1,hint:"Orders above N × cross-DS ABQ are bulk — excluded from DS stocking, fulfilled from DC"},
+                  {label:"Min Orders for Bulk Filter",key:"minOrdersForBulkFilter",min:1,max:20,step:1,hint:"Min total orders across all DSes to reliably identify bulk — below this only the hard floor applies"},
+                  {label:"Bulk Hard Floor (sheets)",key:"bulkMaxThreshold",min:2,max:50,step:1,hint:"Orders ≥ this are always bulk regardless of ABQ — universal ceiling on the bulk threshold"},
                 ].map(({label,key,min,max,step,hint}) => (
                   <label key={key} style={{display:"flex",flexDirection:"column",gap:2}}>
                     <span style={{fontSize:11,fontWeight:600,color:"#444"}}>{label}</span>
@@ -1835,14 +1929,15 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
       {/* Thin section — PCT mode only; ND mode uses unified table below */}
       {dsFilter !== 'DC' && !isNetworkDesignActive && <div style={{marginBottom:24}}>
         <div style={S.sectionTitle}>Thin SKUs — Tub Storage: Up to {thickBoundaryMm}mm</div>
-        <>
-          <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin} dirty={thinDirty} boundary={thickBoundaryMm}/>
-          {thinResults ? (
-            <>
-              <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Tub Storage Capacity" cfg={thinCfg}/>
-              <div style={S.card}>
-                <SKUTable skus={thinResults.skus} cfg={committedThinCfg || thinCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
-              </div>
+        {(
+          <>
+            <ConfigPanel type="thin" cfg={thinCfg} onChange={setThinCfg} isAdmin={isAdmin} onRun={runThin} dirty={thinDirty} boundary={thickBoundaryMm}/>
+            {thinResults ? (
+              <>
+                <CapacityBar used={thinResults.capUsed} total={thinCfg.capacity} label="Tub Storage Capacity" cfg={thinCfg}/>
+                <div style={S.card}>
+                  <SKUTable skus={thinResults.skus} cfg={committedThinCfg || thinCfg} fallbackLabel={dsFallbackLabel} onSelectSku={s => { setSelectedSku(s); setSelectedSkuType("thin"); }}/>
+                </div>
               </>
             ) : (
               <div style={{padding:24,textAlign:"center",color:HR.muted,fontSize:12}}>Configure thresholds above and click ▶ Run</div>
