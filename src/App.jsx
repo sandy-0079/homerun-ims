@@ -12,6 +12,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
 import BasketAnalysisTab from "./tabs/BasketAnalysisTab";
 import PlywoodNetworkTab from "./tabs/PlywoodNetworkTab";
+import StockHealthTab from "./tabs/StockHealthTab";
 
 const HR = {
   yellow:"#F5C400",yellowDark:"#D4A800",black:"#1A1A1A",white:"#FFFFFF",
@@ -2840,254 +2841,7 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
   );
 }
 
-// ─── Stock Health Monitor ────────────────────────────────────────────────────
-const HEALTH_ORDER = { red: 0, amber: 1, green: 2, blue: 3 };
-const HEALTH_COLOR = {
-  red:   { bg: "#FEE2E2", text: "#B91C1C", label: "🔴 Below Min" },
-  amber: { bg: "#FEF3C7", text: "#92400E", label: "🟡 Approaching Min" },
-  green: { bg: "#D1FAE5", text: "#065F46", label: "🟢 Healthy" },
-  blue:  { bg: "#DBEAFE", text: "#1E40AF", label: "🔵 Overstocked" },
-};
-
-function getHealth(effective, min, max) {
-  if (effective <= min) return "red";
-  if (max > min && effective <= min + (max - min) * 0.3) return "amber";
-  if (effective > max) return "blue";
-  return "green";
-}
-
-function StockHealthTab({ results, params, stockData, setStockData, uploadedAt, setUploadedAt, saveTeamData }) {
-  const [selectedDS, setSelectedDS] = useState("DS01");
-  const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState("All");
-  const [filterCat, setFilterCat] = useState("All");
-  const [filterBrand, setFilterBrand] = useState("All");
-  const [sortField, setSortField] = useState("health");
-  const [sortAsc, setSortAsc] = useState(true);
-
-  const DS_AND_DC = [...DS_LIST, "DC"];
-
-  // Location name → DS mapping (for CSV parsing)
-  const LOCATION_CSV_MAP = {
-    "DS01 Sarjapur": "DS01", "DS02 Bileshivale": "DS02", "DS03 Kengeri": "DS03",
-    "DS04 Chikkabanavara": "DS04", "DS05 Basavanapura": "DS05", "DC01 Rampura": "DC",
-    "DS01": "DS01", "DS02": "DS02", "DS03": "DS03", "DS04": "DS04", "DS05": "DS05", "DC": "DC",
-  };
-
-  // Handle CSV upload — supports Zoho Inventory Summary format
-  const handleStockCSV = useCallback(async (e, dsOverride) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const text = await file.text();
-    const rows = parseCSV(text);
-    const newData = { ...stockData };
-    let count = 0;
-    for (const row of rows) {
-      const sku = (row['sku'] || row['SKU'] || '').trim();
-      if (!sku) continue;
-      // Determine location from row or from dsOverride
-      const locName = row['location_name'] || row['Location'] || dsOverride || '';
-      const ds = LOCATION_CSV_MAP[locName] || (dsOverride ? LOCATION_CSV_MAP[dsOverride] || dsOverride : null);
-      if (!ds) continue;
-      const stockOnHand = Math.max(0, parseFloat(row['quantity_available'] || row['stock_on_hand'] || 0));
-      const inTransit = Math.max(0, parseFloat(row['quantity_in_transit'] || 0));
-      if (!newData[sku]) newData[sku] = {};
-      newData[sku][ds] = { stock_on_hand: stockOnHand, quantity_in_transit: inTransit };
-      count++;
-    }
-    const ts = new Date();
-    setStockData(newData);
-    setUploadedAt(ts);
-    saveTeamData({ stockData: newData, stockUploadedAt: ts.toISOString() });
-    e.target.value = '';
-    return count;
-  }, [stockData, saveTeamData]);
-
-  // Build per-DS summary counts
-  const summary = useMemo(() => {
-    const s = {};
-    for (const ds of DS_AND_DC) s[ds] = { red: 0, amber: 0, green: 0, blue: 0 };
-    if (!results) return s;
-    for (const [sku, res] of Object.entries(results)) {
-      for (const ds of DS_LIST) {
-        const storeRes = res.stores?.[ds];
-        if (!storeRes || (!storeRes.min && !storeRes.max)) continue;
-        const liveData = stockData[sku]?.[ds] || { stock_on_hand: 0, quantity_in_transit: 0 };
-        const effective = liveData.stock_on_hand + liveData.quantity_in_transit;
-        s[ds][getHealth(effective, storeRes.min, storeRes.max)]++;
-      }
-      const dcRes = res.dc;
-      if (dcRes?.min || dcRes?.max) {
-        const liveData = stockData[sku]?.["DC"] || { stock_on_hand: 0, quantity_in_transit: 0 };
-        const effective = liveData.stock_on_hand + liveData.quantity_in_transit;
-        s["DC"][getHealth(effective, dcRes.min || 0, dcRes.max || 0)]++;
-      }
-    }
-    return s;
-  }, [stockData, results]);
-
-  // Build SKU rows for selected DS
-  const skuRows = useMemo(() => {
-    if (!results) return [];
-    const isDC = selectedDS === "DC";
-    return Object.entries(results).flatMap(([sku, res]) => {
-      const minMax = isDC ? res.dc : res.stores?.[selectedDS];
-      if (!minMax || (!minMax.min && !minMax.max)) return [];
-      const liveData = stockData[sku]?.[selectedDS] || { stock_on_hand: 0, quantity_in_transit: 0 };
-      const physical = liveData.stock_on_hand;
-      const inTransit = liveData.quantity_in_transit;
-      const effective = physical + inTransit;
-      const dailyAvg = isDC ? 0 : (res.stores?.[selectedDS]?.dailyAvg || 0);
-      const doc = dailyAvg > 0 ? effective / dailyAvg : null;
-      const health = getHealth(effective, minMax.min || 0, minMax.max || 0);
-      return [{ sku, health, physical, inTransit, effective, min: minMax.min || 0, max: minMax.max || 0, dailyAvg, doc, name: res.meta?.name || sku, category: res.meta?.category || "—", brand: res.meta?.brand || "—" }];
-    });
-  }, [results, selectedDS, stockData]);
-
-  const categories = useMemo(() => ["All", ...new Set(skuRows.map(r => r.category).filter(Boolean).sort())], [skuRows]);
-  const brands = useMemo(() => ["All", ...new Set(skuRows.map(r => r.brand).filter(Boolean).sort())], [skuRows]);
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase();
-    return skuRows.filter(r => {
-      if (filterStatus !== "All" && r.health !== filterStatus.toLowerCase()) return false;
-      if (filterCat !== "All" && r.category !== filterCat) return false;
-      if (filterBrand !== "All" && r.brand !== filterBrand) return false;
-      if (q && !r.sku.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q)) return false;
-      return true;
-    }).sort((a, b) => {
-      if (sortField === "health") {
-        const hDiff = HEALTH_ORDER[a.health] - HEALTH_ORDER[b.health];
-        if (hDiff !== 0) return hDiff;
-        return (a.doc ?? Infinity) - (b.doc ?? Infinity);
-      }
-      const av = a[sortField] ?? 0, bv = b[sortField] ?? 0;
-      return sortAsc ? av - bv : bv - av;
-    });
-  }, [skuRows, search, filterStatus, filterCat, filterBrand, sortField, sortAsc]);
-
-  const toggleSort = (field) => { if (sortField === field) setSortAsc(!sortAsc); else { setSortField(field); setSortAsc(true); } };
-  const sortArrow = (field) => sortField === field ? (sortAsc ? " ▲" : " ▼") : "";
-  const th = (label, field, right) => (
-    <th onClick={() => field && toggleSort(field)} style={{ padding: "6px 8px", fontSize: 10, fontWeight: 600, color: HR.muted, background: "#F5E6C8", textAlign: right ? "right" : "left", cursor: field ? "pointer" : "default", borderBottom: "2px solid " + HR.yellow, whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 }}>
-      {label}{sortArrow(field)}
-    </th>
-  );
-
-  const hasStock = Object.keys(stockData).length > 0;
-  const uploadLabel = uploadedAt ? uploadedAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" }) : null;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
-
-      {/* ── Sticky top: DS cards + upload ── */}
-      <div style={{ position: "sticky", top: 0, zIndex: 10, background: HR.bg, paddingBottom: 8 }}>
-        {/* Upload row */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <div style={{ fontSize: 11, color: HR.muted }}>
-            {uploadLabel ? <>Stock snapshot: <span style={{ fontWeight: 600, color: HR.text }}>{uploadLabel}</span></> : <span style={{ color: "#B91C1C" }}>No stock data — upload Inventory Summary CSVs below</span>}
-          </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ fontSize: 10, color: HR.muted }}>Upload Zoho Inventory Summary per location:</span>
-            {DS_AND_DC.map((ds) => {
-              const di = DS_LIST.indexOf(ds);
-              const accent = di >= 0 ? DS_COLORS[di].header : DC_COLOR.header;
-              return (
-                <label key={ds} title={`Upload ${ds} Inventory Summary CSV`}
-                  style={{ background: accent, color: "#fff", padding: "4px 8px", borderRadius: 5, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>
-                  ⬆ {ds}<input type="file" accept=".csv" style={{ display: "none" }} onChange={e => handleStockCSV(e, ds)} />
-                </label>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* DS summary cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 6 }}>
-          {DS_AND_DC.map(ds => {
-            const s = summary[ds] || { red: 0, amber: 0, green: 0, blue: 0 };
-            const isSelected = selectedDS === ds;
-            const di = DS_LIST.indexOf(ds);
-            const accent = di >= 0 ? DS_COLORS[di].header : DC_COLOR.header;
-            return (
-              <div key={ds} onClick={() => setSelectedDS(ds)}
-                style={{ background: isSelected ? accent + "18" : HR.surface, border: `2px solid ${isSelected ? accent : HR.border}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer" }}>
-                <div style={{ fontWeight: 800, fontSize: 12, color: accent, marginBottom: 4 }}>{ds}</div>
-                {[["red","🔴"],["amber","🟡"],["green","🟢"],["blue","🔵"]].map(([h, icon]) => (
-                  <div key={h} style={{ fontSize: 10, display: "flex", justifyContent: "space-between", lineHeight: 1.6 }}>
-                    <span>{icon}</span>
-                    <span style={{ fontWeight: s[h] > 0 && h === "red" ? 700 : 400, color: s[h] > 0 && h === "red" ? "#B91C1C" : HR.muted }}>{s[h]}</span>
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── Filters ── */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search SKU ID or name…" style={{ ...S.input, flex: 1, minWidth: 200, fontSize: 11 }} />
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...S.input, fontSize: 11 }}>
-          <option>All</option>
-          <option value="red">🔴 Below Min</option>
-          <option value="amber">🟡 Approaching</option>
-          <option value="green">🟢 Healthy</option>
-          <option value="blue">🔵 Overstocked</option>
-        </select>
-        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={{ ...S.input, fontSize: 11 }}>
-          {categories.map(c => <option key={c}>{c}</option>)}
-        </select>
-        <select value={filterBrand} onChange={e => setFilterBrand(e.target.value)} style={{ ...S.input, fontSize: 11 }}>
-          {brands.map(b => <option key={b}>{b}</option>)}
-        </select>
-        <span style={{ fontSize: 11, color: HR.muted, whiteSpace: "nowrap" }}>{filtered.length} SKUs</span>
-      </div>
-
-      {/* ── SKU table ── */}
-      <div style={{ flex: 1, overflowY: "auto", overflowX: "auto", borderRadius: 8, border: `1px solid ${HR.border}` }}>
-        <table style={{ ...S.table, minWidth: 720 }}>
-          <thead>
-            <tr>
-              {th("SKU / Name", null, false)}
-              {th("Physical", "physical", true)}
-              {th("In Transit", "inTransit", true)}
-              {th("Effective", "effective", true)}
-              {th("Min", "min", true)}
-              {th("Max", "max", true)}
-              {th("DOC", "doc", true)}
-              {th("Status", "health", false)}
-            </tr>
-          </thead>
-          <tbody>
-            {!results && <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: HR.muted }}>Run the model first to see stock health.</td></tr>}
-            {results && !hasStock && <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: HR.muted }}>Upload Inventory Summary CSVs (one per location) to see stock health.</td></tr>}
-            {filtered.map(row => {
-              const hc = HEALTH_COLOR[row.health];
-              return (
-                <tr key={row.sku} onMouseEnter={e => e.currentTarget.style.background = HR.surfaceLight} onMouseLeave={e => e.currentTarget.style.background = ""}>
-                  <td style={{ padding: "5px 8px", borderTop: `1px solid ${HR.border}`, maxWidth: 260 }}>
-                    <div style={{ fontWeight: 600, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</div>
-                    <div style={{ fontSize: 9, color: HR.muted }}>{row.sku}</div>
-                  </td>
-                  {[row.physical, row.inTransit, row.effective, row.min, row.max].map((v, i) => (
-                    <td key={i} style={{ padding: "5px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", fontSize: 11, borderTop: `1px solid ${HR.border}`, fontWeight: i === 2 ? 700 : 400 }}>{v}</td>
-                  ))}
-                  <td style={{ padding: "5px 8px", textAlign: "right", fontSize: 11, borderTop: `1px solid ${HR.border}`, fontWeight: 600, color: row.doc !== null && row.doc < 1 ? "#B91C1C" : HR.text }}>
-                    {row.doc !== null ? row.doc.toFixed(1) + "D" : "—"}
-                  </td>
-                  <td style={{ padding: "5px 8px", borderTop: `1px solid ${HR.border}` }}>
-                    <span style={{ background: hc.bg, color: hc.text, padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 600, whiteSpace: "nowrap" }}>{hc.label}</span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
+// ─── Stock Health tab is now in src/tabs/StockHealthTab.jsx ──────────────────
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 // Lightweight copy-to-clipboard with toast feedback
@@ -3127,6 +2881,7 @@ export default function App(){
   const [stockData, setStockData] = useState({});       // persists across tab switches
   const [stockUploadedAt, setStockUploadedAt] = useState(null);
   const stockUploadedAtRef = useRef(null); // always current — avoids stale closure in saveTeamData
+  const [stockUploadedAtPerDS, setStockUploadedAtPerDS] = useState({});  // per-DS upload timestamps
   const [modelDirty, setModelDirty] = useState(false); // true when data or params changed since last run
   const [changeLog, setChangeLog] = useState([]); // list of changes since last run
   const [showRunConfirm, setShowRunConfirm] = useState(false); // show pre-run summary modal
@@ -3288,6 +3043,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   if(sbData.priceData)setPrice(sbData.priceData);
   if(sbData.stockData)setStockData(sbData.stockData);
   if(sbData.stockUploadedAt){const d=new Date(sbData.stockUploadedAt);setStockUploadedAt(d);stockUploadedAtRef.current=d;}
+  if(sbData.stockUploadedAtPerDS)setStockUploadedAtPerDS(sbData.stockUploadedAtPerDS);
   setLoaded(true);
 
   // Load params first, then run engine with correct params
@@ -3401,6 +3157,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
       priceData:   overrides.priceData   ?? priceData,
       stockData:   overrides.stockData   ?? stockData,
       stockUploadedAt: overrides.stockUploadedAt ?? stockUploadedAtRef.current?.toISOString() ?? null,
+      stockUploadedAtPerDS: overrides.stockUploadedAtPerDS ?? stockUploadedAtPerDS,
       publishedAt: new Date().toISOString(),
     };
     await saveToSupabase("team_data", "global", bundle);
@@ -4144,8 +3901,9 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
           )
         )}
         {tab==="stockHealth"&&(
-          <StockHealthTab results={results} params={params} stockData={stockData} setStockData={setStockData} uploadedAt={stockUploadedAt}
-            setUploadedAt={(d)=>{setStockUploadedAt(d);stockUploadedAtRef.current=d;}}
+          <StockHealthTab results={results} skuMaster={skuMaster} stockData={stockData} setStockData={setStockData}
+            uploadedAtPerDS={stockUploadedAtPerDS}
+            setUploadedAtPerDS={(ds, d) => setStockUploadedAtPerDS(prev => ({ ...prev, [ds]: d.toISOString() }))}
             saveTeamData={saveTeamData} />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
