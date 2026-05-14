@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { loadFromSupabase, saveToSupabase } from "./supabase";
+import { supabase, loadFromSupabase, saveToSupabase } from "./supabase";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
@@ -3113,6 +3113,20 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
     })();
   },[]);
 
+  // ── Supabase Realtime: auto-refresh stock data when hourly sync writes ─────
+  useEffect(() => {
+    const channel = supabase
+      .channel('stock-sync')
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'team_data', filter: 'id=eq.global',
+      }, async () => {
+        const sbData = await loadFromSupabase('team_data', 'global');
+        if (sbData?.stockData)            setStockData(sbData.stockData);
+        if (sbData?.stockUploadedAtPerDS) setStockUploadedAtPerDS(sbData.stockUploadedAtPerDS);
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
 
   const buildDSCapacities = (cfgs) => cfgs
     ? Object.fromEntries(DS_LIST.map(ds => [ds, { thick: cfgs[ds]?.thick?.capacity || 0, thin: cfgs[ds]?.thin?.capacity || 0 }]))
