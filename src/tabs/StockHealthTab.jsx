@@ -435,6 +435,39 @@ export default function StockHealthTab({
           <span style={{ fontSize: 11, color: HR.muted, marginLeft: "auto", whiteSpace: "nowrap" }}>
             {filteredRows.length} SKU{filteredRows.length !== 1 ? "s" : ""}
           </span>
+          {filteredRows.length > 0 && (
+            <button
+              onClick={() => {
+                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "Curr. Stock", "Min", "Max", "ROS"];
+                const rows = filteredRows.map(r => [
+                  r.sku,
+                  `"${r.name.replace(/"/g, '""')}"`,
+                  r.brand !== "—" ? `"${r.brand.replace(/"/g, '""')}"` : "",
+                  TC[r.tag].label,
+                  r.ecs,
+                  r.min,
+                  r.max,
+                  r.ros > 0 ? Math.round(r.ros) : 0,
+                ]);
+                const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `stock-health-${selectedDS}${selectedCat ? `-${selectedCat}` : ""}${filterTag ? `-${TC[filterTag].label}` : ""}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              style={{
+                display: "flex", alignItems: "center", gap: 4, cursor: "pointer",
+                border: `1px solid ${HR.border}`, borderRadius: 5, padding: "3px 8px",
+                background: HR.surface, color: HR.textSoft, fontSize: 10,
+                fontWeight: 600, whiteSpace: "nowrap", fontFamily: "inherit",
+              }}
+            >
+              ⬇ Download
+            </button>
+          )}
         </div>
 
         {/* ── Empty states ────────────────────────────────────────────────── */}
