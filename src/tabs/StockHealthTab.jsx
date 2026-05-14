@@ -346,13 +346,18 @@ export default function StockHealthTab({
             );
           })}
           <div style={{ flex: 1 }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 14px", borderLeft: `1px solid ${HR.border}` }}>
-            {uploadLabel
-              ? <span style={{ fontSize: 10, color: HR.muted }}>Last Uploaded: <span style={{ fontWeight: 600, color: HR.textSoft }}>{uploadLabel}</span></span>
-              : <span style={{ fontSize: 10, color: "#B45309" }}>No data uploaded</span>
-            }
-            <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", background: HR.yellow, color: HR.black, padding: "5px 11px", borderRadius: 6, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap", fontFamily: "inherit" }}>
-              ↑ Upload {selectedDS}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderLeft: `1px solid ${HR.border}` }}>
+            <span style={{ fontSize: 10, color: HR.muted, whiteSpace: "nowrap" }}>
+              ↻ Syncs hourly
+              {uploadLabel && (
+                <> · Last synced: <span style={{ fontWeight: 600, color: HR.textSoft }}>{uploadLabel}</span></>
+              )}
+            </span>
+            <label
+              title={`Upload CSV for ${selectedDS} — use for immediate refresh between syncs`}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", border: `1px solid #E8D48A`, borderRadius: 5, padding: "3px 7px", background: "#FFFBEA", color: "#92740A", fontSize: 12, lineHeight: 1, flexShrink: 0 }}
+            >
+              ↑
               <input type="file" accept=".csv" style={{ display: "none" }} onChange={e => handleUpload(e, selectedDS)} />
             </label>
           </div>
