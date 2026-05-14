@@ -3915,10 +3915,13 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
           )
         )}
         {tab==="stockHealth"&&(
-          <StockHealthTab results={results} skuMaster={skuMaster} stockData={stockData} setStockData={setStockData}
+          <StockHealthTab results={results} skuMaster={skuMaster} stockData={stockData}
             uploadedAtPerDS={stockUploadedAtPerDS}
-            setUploadedAtPerDS={(ds, d) => setStockUploadedAtPerDS(prev => ({ ...prev, [ds]: d.toISOString() }))}
-            saveTeamData={saveTeamData} />
+            onSyncComplete={async () => {
+              const sbData = await loadFromSupabase('team_data', 'global');
+              if (sbData?.stockData)            setStockData(sbData.stockData);
+              if (sbData?.stockUploadedAtPerDS) setStockUploadedAtPerDS(sbData.stockUploadedAtPerDS);
+            }} />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
   <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}

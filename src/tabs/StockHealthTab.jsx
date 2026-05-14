@@ -53,7 +53,7 @@ function dsAccent(ds) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function StockHealthTab({
-  results, skuMaster, stockData, setStockData, uploadedAtPerDS, setUploadedAtPerDS, saveTeamData,
+  results, skuMaster, stockData, uploadedAtPerDS, onSyncComplete,
 }) {
   const [selectedDS,  setSelectedDS]  = useState("DS01");
   const [selectedCat, setSelectedCat] = useState(null);
@@ -78,13 +78,14 @@ export default function StockHealthTab({
     setSyncing(true);
     try {
       await supabase.functions.invoke('sync-stock');
-      // Realtime listener in App.jsx picks up the write and updates stockData + uploadedAtPerDS automatically
+      // Reload fresh data directly — don't rely on Realtime being configured
+      await onSyncComplete?.();
     } catch (err) {
       console.error('Sync Now failed:', err);
     } finally {
       setSyncing(false);
     }
-  }, [syncing]);
+  }, [syncing, onSyncComplete]);
 
   // ── DS-level summary (tab EC badges) ───────────────────────────────────────
   const dsSummary = useMemo(() => {
