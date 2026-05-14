@@ -2882,6 +2882,7 @@ export default function App(){
   const [stockUploadedAt, setStockUploadedAt] = useState(null);
   const stockUploadedAtRef = useRef(null); // always current — avoids stale closure in saveTeamData
   const [stockUploadedAtPerDS, setStockUploadedAtPerDS] = useState({});  // per-DS upload timestamps
+  const [poData, setPoData] = useState({});  // PO data per DS per SKU (synced from Zoho Books)
   const [modelDirty, setModelDirty] = useState(false); // true when data or params changed since last run
   const [changeLog, setChangeLog] = useState([]); // list of changes since last run
   const [showRunConfirm, setShowRunConfirm] = useState(false); // show pre-run summary modal
@@ -3044,6 +3045,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   if(sbData.stockData)setStockData(sbData.stockData);
   if(sbData.stockUploadedAt){const d=new Date(sbData.stockUploadedAt);setStockUploadedAt(d);stockUploadedAtRef.current=d;}
   if(sbData.stockUploadedAtPerDS)setStockUploadedAtPerDS(sbData.stockUploadedAtPerDS);
+  if(sbData.poData)setPoData(sbData.poData);
   setLoaded(true);
 
   // Load params first, then run engine with correct params
@@ -3123,6 +3125,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
         const sbData = await loadFromSupabase('team_data', 'global');
         if (sbData?.stockData)            setStockData(sbData.stockData);
         if (sbData?.stockUploadedAtPerDS) setStockUploadedAtPerDS(sbData.stockUploadedAtPerDS);
+        if (sbData?.poData)               setPoData(sbData.poData);
       })
       .subscribe();
     return () => supabase.removeChannel(channel);
@@ -3916,11 +3919,12 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
         )}
         {tab==="stockHealth"&&(
           <StockHealthTab results={results} skuMaster={skuMaster} stockData={stockData}
-            uploadedAtPerDS={stockUploadedAtPerDS}
+            uploadedAtPerDS={stockUploadedAtPerDS} poData={poData}
             onSyncComplete={async () => {
               const sbData = await loadFromSupabase('team_data', 'global');
               if (sbData?.stockData)            setStockData(sbData.stockData);
               if (sbData?.stockUploadedAtPerDS) setStockUploadedAtPerDS(sbData.stockUploadedAtPerDS);
+              if (sbData?.poData)               setPoData(sbData.poData);
             }} />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
