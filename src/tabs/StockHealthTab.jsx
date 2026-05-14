@@ -113,7 +113,8 @@ export default function StockHealthTab({
           const live = stockData[sku]?.["DC"];
           if (!live) continue;
           const { ecs } = getLive(live);
-          s["DC"][getHealthTag(ecs, dc.min || 0, dc.max || 0, 0)]++;
+          const dcRos = DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0);
+          s["DC"][getHealthTag(ecs, dc.min || 0, dc.max || 0, dcRos)]++;
         }
       }
     }
@@ -141,7 +142,9 @@ export default function StockHealthTab({
       const { afs, inTransit, ecs } = getLive(live);
       const min = minMax.min || 0;
       const max = minMax.max || 0;
-      const ros = isDC ? 0 : (res.stores?.[selectedDS]?.dailyAvg || 0);
+      const ros = isDC
+        ? DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0)
+        : (res.stores?.[selectedDS]?.dailyAvg || 0);
       const tag = getHealthTag(ecs, min, max, ros);
       const doc = ros > 0 ? ecs / ros : null;
       const reorderQty = (tag === "ec" || tag === "critical") ? Math.max(0, max - ecs) : 0;
