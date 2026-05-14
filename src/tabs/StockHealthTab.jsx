@@ -1,5 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { DS_LIST, parseCSV } from "../engine/index.js";
+import { DS_LIST } from "../engine/index.js";
+import { supabase } from "../supabase.js";
+
+const SYNC_COOLDOWN_MINS = 15;
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const HR = {
@@ -58,6 +61,7 @@ export default function StockHealthTab({
   const [filterBrand, setFilterBrand] = useState("All");
   const [search,      setSearch]      = useState("");
   const [copiedSku,   setCopiedSku]   = useState(null);
+  const [syncing,     setSyncing]     = useState(false);
 
   const allSkuRowsRef = useRef([]);
 
@@ -69,37 +73,18 @@ export default function StockHealthTab({
   }, []);
 
   // ── CSV Upload ──────────────────────────────────────────────────────────────
-  const handleUpload = useCallback(async (e, ds) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const text = await file.text();
-    const rows = parseCSV(text);
-
-    const newData = {};
-    for (const [sku, dsMap] of Object.entries(stockData)) {
-      const without = { ...dsMap };
-      delete without[ds];
-      newData[sku] = without;
+  const handleSyncNow = useCallback(async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      await supabase.functions.invoke('sync-stock');
+      // Realtime listener in App.jsx picks up the write and updates stockData + uploadedAtPerDS automatically
+    } catch (err) {
+      console.error('Sync Now failed:', err);
+    } finally {
+      setSyncing(false);
     }
-
-    for (const row of rows) {
-      const sku = (row["SKU"] || row["sku"] || "").trim();
-      if (!sku) continue;
-      // DS stock CSV only carries stock numbers — Active/Supplier filtering is
-      // done at display time via res.meta (from the already-uploaded SKU Master)
-      const rawAfs    = parseFloat(row["Available for Sale"] || row["available_for_sale"] || 0) || 0;
-      const inTransit = Math.max(0, parseFloat(row["In-Transit"] || row["In Transit"] || row["in_transit"] || 0) || 0);
-
-      if (!newData[sku]) newData[sku] = {};
-      newData[sku][ds] = { available_for_sale: rawAfs, in_transit: inTransit };
-    }
-
-    const ts = new Date();
-    setStockData(newData);
-    setUploadedAtPerDS(ds, ts);
-    saveTeamData({ stockData: newData, stockUploadedAtPerDS: { ...uploadedAtPerDS, [ds]: ts.toISOString() } });
-    e.target.value = "";
-  }, [stockData, saveTeamData, setStockData, setUploadedAtPerDS, uploadedAtPerDS]);
+  }, [syncing]);
 
   // ── DS-level summary (tab EC badges) ───────────────────────────────────────
   const dsSummary = useMemo(() => {
@@ -260,13 +245,22 @@ export default function StockHealthTab({
 
   // ── Reset filters on DS switch ─────────────────────────────────────────────
   const hasStock = Object.keys(stockData).length > 0;
-  // Per-DS upload label — shows timestamp for the currently viewed DS
-  const uploadLabel = (() => {
+
+  // Last synced timestamp for the current DS
+  const lastSyncedLabel = (() => {
     const raw = uploadedAtPerDS?.[selectedDS];
     if (!raw) return null;
     const d = raw instanceof Date ? raw : new Date(raw);
     return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   })();
+
+  // Cooldown — disabled if any DS was synced within SYNC_COOLDOWN_MINS
+  const { inCooldown, minsAgo } = useMemo(() => {
+    const timestamps = Object.values(uploadedAtPerDS || {}).map(t => new Date(t).getTime()).filter(Boolean);
+    if (!timestamps.length) return { inCooldown: false, minsAgo: null };
+    const mins = (Date.now() - Math.max(...timestamps)) / 60_000;
+    return { inCooldown: mins < SYNC_COOLDOWN_MINS, minsAgo: Math.floor(mins) };
+  }, [uploadedAtPerDS]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render
@@ -349,17 +343,26 @@ export default function StockHealthTab({
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderLeft: `1px solid ${HR.border}` }}>
             <span style={{ fontSize: 10, color: HR.muted, whiteSpace: "nowrap" }}>
               ↻ Syncs hourly
-              {uploadLabel && (
-                <> · Last synced: <span style={{ fontWeight: 600, color: HR.textSoft }}>{uploadLabel}</span></>
+              {lastSyncedLabel && (
+                <> · Last synced: <span style={{ fontWeight: 600, color: HR.textSoft }}>{lastSyncedLabel}</span></>
               )}
             </span>
-            <label
-              title={`Upload CSV for ${selectedDS} — use for immediate refresh between syncs`}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", border: `1px solid #E8D48A`, borderRadius: 5, padding: "3px 7px", background: "#FFFBEA", color: "#92740A", fontSize: 12, lineHeight: 1, flexShrink: 0 }}
+            <button
+              onClick={handleSyncNow}
+              disabled={syncing || inCooldown}
+              title={inCooldown ? `Synced ${minsAgo}m ago — available again in ${SYNC_COOLDOWN_MINS - minsAgo}m` : "Sync all locations from Zoho now"}
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                border: `1px solid #E8D48A`, borderRadius: 5, padding: "3px 9px",
+                background: (syncing || inCooldown) ? HR.surfaceLight : "#FFFBEA",
+                color: (syncing || inCooldown) ? HR.muted : "#92740A",
+                fontSize: 10, fontWeight: 600, cursor: (syncing || inCooldown) ? "not-allowed" : "pointer",
+                whiteSpace: "nowrap", fontFamily: "inherit", flexShrink: 0,
+                opacity: (syncing || inCooldown) ? 0.65 : 1,
+              }}
             >
-              ↑
-              <input type="file" accept=".csv" style={{ display: "none" }} onChange={e => handleUpload(e, selectedDS)} />
-            </label>
+              {syncing ? "Syncing…" : inCooldown ? `Synced ${minsAgo}m ago` : "↻ Sync Now"}
+            </button>
           </div>
         </div>
 
@@ -438,7 +441,7 @@ export default function StockHealthTab({
         )}
         {results && !hasStock && (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: HR.muted, fontSize: 13 }}>
-            Upload an Inventory Summary CSV for {selectedDS} to get started.
+            Waiting for first sync — runs automatically every hour at :05 IST.
           </div>
         )}
 

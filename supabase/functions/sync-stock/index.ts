@@ -10,6 +10,8 @@ const BRANCHES: Record<string, string> = {
   DS05: '2753232000017634267',
 }
 
+const COOLDOWN_MINS = 15
+
 // ─── Zoho OAuth ───────────────────────────────────────────────────────────────
 async function getZohoToken(): Promise<string> {
   const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
@@ -79,12 +81,35 @@ Deno.serve(async () => {
   )
 
   try {
-    const now = new Date().toISOString()
+    const now = new Date()
+    const nowIso = now.toISOString()
 
-    // 1. Get Zoho access token (valid 1 hour — refreshed each run)
+    // 1. Read current payload — needed for cooldown check AND safe merge
+    const { data: row, error: readErr } = await supabase
+      .from('team_data')
+      .select('payload')
+      .eq('id', 'global')
+      .single()
+
+    if (readErr) throw new Error(`Supabase read: ${readErr.message}`)
+
+    // 2. Cooldown — skip if synced within the last 15 min (cron or manual)
+    const perDS: Record<string, string> = row?.payload?.stockUploadedAtPerDS ?? {}
+    const timestamps = Object.values(perDS).map(t => new Date(t).getTime())
+    if (timestamps.length > 0) {
+      const minsAgo = (now.getTime() - Math.max(...timestamps)) / 60_000
+      if (minsAgo < COOLDOWN_MINS) {
+        return new Response(JSON.stringify({
+          ok: true, skipped: true,
+          reason: `Last synced ${Math.floor(minsAgo)}m ago — ${COOLDOWN_MINS}-min cooldown active`,
+        }), { headers: { 'Content-Type': 'application/json' } })
+      }
+    }
+
+    // 3. Get Zoho access token
     const token = await getZohoToken()
 
-    // 2. Fetch stock for all 6 branches sequentially (avoids Zoho rate limits)
+    // 4. Fetch stock for all 6 branches sequentially (avoids Zoho rate limits)
     const stockData: Record<string, Record<string, any>> = {}
     const stockUploadedAtPerDS: Record<string, string> = {}
 
@@ -95,42 +120,27 @@ Deno.serve(async () => {
         if (!stockData[sku]) stockData[sku] = {}
         stockData[sku][ds] = vals
       }
-      stockUploadedAtPerDS[ds] = now
+      stockUploadedAtPerDS[ds] = nowIso
     }
 
-    // 3. Read current payload — safe merge, never wipe invoiceData/skuMaster/params
-    const { data: row, error: readErr } = await supabase
-      .from('team_data')
-      .select('payload')
-      .eq('id', 'global')
-      .single()
-
-    if (readErr) throw new Error(`Supabase read: ${readErr.message}`)
-
+    // 5. Safe merge — only update stock fields, leave invoiceData/skuMaster/params untouched
     const merged = {
       ...(row?.payload ?? {}),
       stockData,
       stockUploadedAtPerDS,
-      stockUploadedAt: now,  // keep legacy field in sync
+      stockUploadedAt: nowIso,
     }
 
-    // 4. Write back merged payload
+    // 6. Write back
     const { error: writeErr } = await supabase
       .from('team_data')
-      .upsert({ id: 'global', payload: merged, updated_at: now })
+      .upsert({ id: 'global', payload: merged, updated_at: nowIso })
 
     if (writeErr) throw new Error(`Supabase write: ${writeErr.message}`)
 
-    const summary = {
-      ok: true,
-      synced_at: now,
-      locations: Object.keys(BRANCHES),
-      sku_count: Object.keys(stockData).length,
-    }
+    const summary = { ok: true, synced_at: nowIso, sku_count: Object.keys(stockData).length, locations: Object.keys(BRANCHES) }
     console.log('sync-stock complete:', JSON.stringify(summary))
-    return new Response(JSON.stringify(summary), {
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return new Response(JSON.stringify(summary), { headers: { 'Content-Type': 'application/json' } })
 
   } catch (err) {
     console.error('sync-stock error:', err)
