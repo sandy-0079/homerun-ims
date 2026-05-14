@@ -22,7 +22,7 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 - Invoice CSV (Zoho export) replaces entirely on upload — no merge. Engine uses whatever period admin sets.
 - All uploads auto-save to Supabase `team_data` immediately.
 - Model refresh: upload → Apply & Re-run Model → results pushed to Supabase → all users see new Min/Max.
-- Stock Health: admin exports Inventory Summary CSV per DS, uploads via per-DS buttons. Saved to Supabase.
+- Stock Health: auto-synced hourly from Zoho Books API (Edge Function `sync-stock`). Stored in `team_data.stockData` (stock) + `team_data.poData` (PO data) + `team_data._poCache` (change-detection index).
 
 ---
 
@@ -82,6 +82,41 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 
 ---
 
+## Stock Health Tab
+
+**Component:** `src/tabs/StockHealthTab.jsx`
+
+**Data sources (both synced hourly, `sync-stock` Edge Function, pg_cron at :35 UTC = :05 IST):**
+- **Stock:** Zoho Books Inventory Summary report per branch (6 branches × ~10 pages). Stored as `stockData[sku][ds] = { available_for_sale, in_transit }`.
+- **PO:** Replenishment POs (open + pending_approval, last 12 days) only. Incremental via `_poCache` — only new/modified POs need a detail call. Stored as `poData[ds][sku] = { qty, po_date, status, vendor, delivery, po_number }`.
+
+**Zoho Books branch IDs (confirmed):**
+`DC=2753232000017648109`, `DS01=2753232000000037051`, `DS02=2753232000000037081`, `DS03=2753232000000037109`, `DS04=2753232000007867440`, `DS05=2753232000017634267`
+
+**SKU filtering rules:**
+- Only `status = Active` SKUs (from SKU Master)
+- `Inventorised At = Supplier` → excluded entirely from all counts and table
+- DC tab: only `Inventorised At = DC` SKUs. DS tabs: both DS + DC inventorised SKUs.
+
+**Health tags (applied in order):**
+| Tag | Condition | Color |
+|---|---|---|
+| Critical | ecs ≤ min AND (ros − ecs ≥ 1) | Red |
+| Low Stock | ecs ≤ min (but ros − ecs < 1) | Amber |
+| Okay | min < ecs ≤ max | Green |
+| Excess | ecs > max | Blue |
+| Exception | ecs = min = max (dead stock at target) | Green |
+
+`ECS = max(0, Available for Sale) + In-Transit`. ROS = `dailyAvg` from engine. For DC: ROS = sum of dailyAvg across all 5 DSes.
+
+**PO data notes:**
+- `cf_purchase_type` must be "Replenishment" to be included. Ops mandate started 2026-05-13 — older POs may lack this field.
+- `delivery` = `cf_confirmed_delivery_time` from `custom_fields[]` array (NOT top-level field). Format: `YYYY-MM-DD`.
+- DS tabs show DC PO as fallback for DC-inventorised SKUs (no tab switching needed).
+- 15-min cooldown enforced server-side (both cron and manual Sync Now).
+
+---
+
 ## What's Parked (don't revisit without new data)
 
 - **CV-based demand shaping:** 96.3% combos have CV>2.0 (sparsity-driven). No segmentation power.
@@ -98,7 +133,7 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 
 ### 2. OOS Simulation Redesign ❌ Dropped (2026-04-21)
 
-### 3. Polish Stock Health Tab — specifics TBD
+### 3. Stock Health Tab ✅ Shipped (2026-05-14)
 
 ### 4. Rethink Tool Output Tab — fold buttons into Upload Data tab or keep separate?
 
@@ -115,7 +150,6 @@ Non-admins currently cannot see Logic Tweaker or Overrides tabs at all (controll
 
 ## Deferred
 - Cluster fulfillment — build into tool or ops process?
-- Stock Health actionables design
 
 ---
 
