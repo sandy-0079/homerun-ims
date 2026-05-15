@@ -229,7 +229,7 @@ Deno.serve(async () => {
     // Rebuild poData from cache — sort by date DESC so latest PO wins per SKU
     const poData: Record<string, Record<string, any>> = {}
     const sortedEntries = Object.values(updatedPoCache)
-      .sort((a, b) => b.date.localeCompare(a.date))
+      .sort((a, b) => b.date.localeCompare(a.date) || b.last_modified.localeCompare(a.last_modified))
 
     for (const entry of sortedEntries) {
       const ds = entry.ds

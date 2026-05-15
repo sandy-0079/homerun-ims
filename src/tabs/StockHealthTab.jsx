@@ -56,17 +56,31 @@ const PO_STATUS_LABEL = {
   open:              'Issued',
   pending_approval:  'Pending Approval',
   partially_billed:  'Issued',
+  delayed:           'Delayed',
 };
 const PO_STATUS_BADGE = {
   open:              'Issued',
   pending_approval:  'Pend. Appr.',
   partially_billed:  'Issued',
+  delayed:           'Delayed',
 };
 const PO_STATUS_STYLE = {
   open:              { bg: '#D1FAE5', color: '#065F46' },
   pending_approval:  { bg: '#FEF3C7', color: '#92400E' },
   partially_billed:  { bg: '#D1FAE5', color: '#065F46' },
+  delayed:           { bg: '#FEE2E2', color: '#B91C1C' },
 };
+
+// Derives display status — adds Delayed for overdue issued POs with partial/no receipt
+function getPoDisplayStatus(po) {
+  if (!po) return null;
+  if ((po.status === 'open' || po.status === 'partially_billed') && po.delivery) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const due   = new Date(po.delivery); due.setHours(0, 0, 0, 0);
+    if (today > due && (po.received ?? 0) === 0) return 'delayed';
+  }
+  return po.status;
+}
 
 function fmtDate(d) {
   if (!d) return '—';
@@ -264,6 +278,24 @@ export default function StockHealthTab({
     return { ...(poData?.DC || {}), ...(poData?.[selectedDS] || {}) };
   }, [poData, selectedDS]);
 
+  // PO status breakdown per stock health tag — must be after dsPoData
+  const poCountsByTag = useMemo(() => {
+    const counts = {};
+    for (const tag of TAG_ORDER) counts[tag] = { noPO: 0, delayed: 0, issued: 0, pending: 0 };
+    const rows = selectedCat ? allSkuRows.filter(r => r.category === selectedCat) : allSkuRows;
+    for (const row of rows) {
+      const po = dsPoData[row.sku];
+      const bucket = counts[row.tag];
+      if (!bucket) continue;
+      if (!po) { bucket.noPO++; continue; }
+      const ds = getPoDisplayStatus(po);
+      if (ds === 'delayed') bucket.delayed++;
+      else if (ds === 'pending_approval') bucket.pending++;
+      else bucket.issued++;
+    }
+    return counts;
+  }, [allSkuRows, selectedCat, dsPoData]);
+
 
   // ── Filtered flat rows ─────────────────────────────────────────────────────
   const filteredRows = useMemo(() => {
@@ -277,10 +309,11 @@ export default function StockHealthTab({
         if (q && !r.sku.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q) && !r.brand.toLowerCase().includes(q)) return false;
         const po = dsPoData[r.sku];
         if (filterPoStatus !== "All") {
-          if (filterPoStatus === "No PO" && po) return false;
-          if (filterPoStatus === "No PO" && !po) return true;
-          if (filterPoStatus === "Issued" && (!po || po.status !== "open")) return false;
-          if (filterPoStatus === "Pending Approval" && (!po || po.status !== "pending_approval")) return false;
+          if (filterPoStatus === "No PO") return !po;
+          const displayStatus = getPoDisplayStatus(po);
+          if (filterPoStatus === "Issued" && displayStatus !== "open" && displayStatus !== "partially_billed") return false;
+          if (filterPoStatus === "Pending Approval" && displayStatus !== "pending_approval") return false;
+          if (filterPoStatus === "Delayed" && displayStatus !== "delayed") return false;
         }
         return true;
       })
@@ -458,6 +491,31 @@ export default function StockHealthTab({
                 <div style={{ fontSize: 10, color: cfg.cardText, opacity: 0.65 }}>
                   {selectedCat ? `${p}% of ${selectedCat}` : `${p}% of ${selectedDS}`}
                 </div>
+
+                {/* PO status pills — extension of card, clickable */}
+                <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${cfg.cardBorder}`, display: "flex", gap: 3 }}>
+                  {[
+                    { k: "noPO",    label: "No PO",   pf: "No PO",            bg: "#F3F4F6", color: "#6B7280", border: "#D1D5DB" },
+                    { k: "delayed", label: "Delayed",  pf: "Delayed",          bg: "#FEE2E2", color: "#B91C1C", border: "#FECACA" },
+                    { k: "issued",  label: "Issued",   pf: "Issued",           bg: "#D1FAE5", color: "#065F46", border: "#A7F3D0" },
+                    { k: "pending", label: "Pend.",    pf: "Pending Approval", bg: "#FEF3C7", color: "#92400E", border: "#FDE68A" },
+                  ].map(({ k, label, pf, bg, color, border }) => (
+                    <span key={k}
+                      onClick={e => { e.stopPropagation(); setFilterTag(tag); setFilterPoStatus(pf); }}
+                      title={`${cfg.label} · ${label === "Pend." ? "Pending Approval" : label}`}
+                      style={{
+                        flex: 1, textAlign: "center", fontSize: 9, fontWeight: 600,
+                        padding: "2px 2px", borderRadius: 5, cursor: "pointer",
+                        border: `1px solid ${border}`, background: bg, color,
+                        whiteSpace: "nowrap", userSelect: "none", lineHeight: 1.4,
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.filter = "brightness(0.93)"}
+                      onMouseLeave={e => e.currentTarget.style.filter = ""}
+                    >
+                      {label} {poCountsByTag[tag]?.[k] ?? 0}
+                    </span>
+                  ))}
+                </div>
               </div>
             );
           })}
@@ -485,6 +543,7 @@ export default function StockHealthTab({
             <option value="All">All PO Status</option>
             <option value="Issued">Issued</option>
             <option value="Pending Approval">Pending Approval</option>
+            <option value="Delayed">Delayed</option>
             <option value="No PO">No PO</option>
           </select>
           {(search || filterTag || filterBrand !== "All" || selectedCat || filterPoStatus !== "All") && (
@@ -522,7 +581,7 @@ export default function StockHealthTab({
                     po?.po_date ?? "",
                     po?.delivery ?? "",
                     po?.po_number ?? "",
-                    po ? (PO_STATUS_LABEL[po.status] ?? po.status) : "",
+                    po ? (PO_STATUS_LABEL[getPoDisplayStatus(po)] ?? po.status) : "",
                   ];
                 });
                 const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
@@ -735,13 +794,17 @@ export default function StockHealthTab({
                               ) : "—"}
                             </td>
 
-                            {/* PO Status badge */}
+                            {/* PO Status badge — uses derived status (includes Delayed) */}
                             <td style={{ padding: NP, borderTop: topBorder, textAlign: "center" }}>
-                              {po && poStyle ? (
-                                <span style={{ display: "inline-block", padding: "1px 5px", borderRadius: 7, fontSize: 8.5, fontWeight: 700, whiteSpace: "nowrap", background: poStyle.bg, color: poStyle.color }}>
-                                  {PO_STATUS_BADGE[po.status] ?? po.status}
-                                </span>
-                              ) : <span style={{ color: HR.muted, fontSize: FS }}>—</span>}
+                              {po ? (() => {
+                                const ds = getPoDisplayStatus(po);
+                                const st = PO_STATUS_STYLE[ds] ?? PO_STATUS_STYLE[po.status];
+                                return st ? (
+                                  <span style={{ display: "inline-block", padding: "1px 5px", borderRadius: 7, fontSize: 8.5, fontWeight: 700, whiteSpace: "nowrap", background: st.bg, color: st.color }}>
+                                    {PO_STATUS_BADGE[ds] ?? ds}
+                                  </span>
+                                ) : <span style={{ color: HR.muted, fontSize: FS }}>—</span>;
+                              })() : <span style={{ color: HR.muted, fontSize: FS }}>—</span>}
                             </td>
                           </>
                         );
