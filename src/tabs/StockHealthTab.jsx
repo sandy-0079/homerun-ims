@@ -69,7 +69,7 @@ function fmtDate(d) {
 }
 
 export default function StockHealthTab({
-  results, skuMaster, stockData, uploadedAtPerDS, onSyncComplete, poData,
+  results, skuMaster, stockData, stockDataAccounting, uploadedAtPerDS, onSyncComplete, poData,
 }) {
   const [selectedDS,  setSelectedDS]  = useState("DS01");
   const [selectedCat, setSelectedCat] = useState(null);
@@ -80,8 +80,14 @@ export default function StockHealthTab({
   const [search,         setSearch]         = useState("");
   const [copiedSku,   setCopiedSku]   = useState(null);
   const [syncing,     setSyncing]     = useState(false);
+  const [stockMode,   setStockMode]   = useState("accounting"); // "physical" | "accounting"
 
   const allSkuRowsRef = useRef([]);
+
+  // Active stock dataset — switches based on selected mode
+  const activeStockData = (stockMode === "accounting" && Object.keys(stockDataAccounting || {}).length > 0)
+    ? stockDataAccounting
+    : stockData;
 
   const copySku = useCallback((sku, e) => {
     e.stopPropagation();
@@ -119,7 +125,7 @@ export default function StockHealthTab({
       for (const ds of DS_LIST) {
         const sr = res.stores?.[ds];
         if (!sr || (!sr.min && !sr.max)) continue;
-        const live = stockData[sku]?.[ds];
+        const live = activeStockData[sku]?.[ds];
         if (!live) continue;
         const { ecs } = getLive(live);
         s[ds][getHealthTag(ecs, sr.min || 0, sr.max || 0, sr.dailyAvg || 0)]++;
@@ -128,7 +134,7 @@ export default function StockHealthTab({
       if (invAt === "dc") {
         const dc = res.dc;
         if (dc?.min || dc?.max) {
-          const live = stockData[sku]?.["DC"];
+          const live = activeStockData[sku]?.["DC"];
           if (!live) continue;
           const { ecs } = getLive(live);
           const dcRos = DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0);
@@ -137,7 +143,7 @@ export default function StockHealthTab({
       }
     }
     return s;
-  }, [results, stockData]);
+  }, [results, activeStockData]);
 
   // ── All SKU rows for selected DS ───────────────────────────────────────────
   // Supplier-inventorised and inactive SKUs are excluded here using res.meta,
@@ -155,7 +161,7 @@ export default function StockHealthTab({
 
       const minMax = isDC ? res.dc : res.stores?.[selectedDS];
       if (!minMax || (!minMax.min && !minMax.max)) return [];
-      const live = stockData[sku]?.[selectedDS];
+      const live = activeStockData[sku]?.[selectedDS];
       if (!live) return [];
       const { afs, inTransit, ecs } = getLive(live);
       const min = minMax.min || 0;
@@ -175,7 +181,7 @@ export default function StockHealthTab({
         afs, inTransit, ecs, min, max, ros, doc, tag, reorderQty,
       }];
     });
-  }, [results, selectedDS, stockData]);
+  }, [results, selectedDS, activeStockData]);
 
   allSkuRowsRef.current = allSkuRows;
 
@@ -287,7 +293,7 @@ export default function StockHealthTab({
   }, [allSkuRows, selectedCat, filterTag, filterBrand, filterPoStatus, filterVendor, search, dsPoData]);
 
   // ── Reset filters on DS switch ─────────────────────────────────────────────
-  const hasStock = Object.keys(stockData).length > 0;
+  const hasStock = Object.keys(activeStockData).length > 0;
 
   // Last synced timestamp for the current DS
   const lastSyncedLabel = (() => {
@@ -383,6 +389,24 @@ export default function StockHealthTab({
             );
           })}
           <div style={{ flex: 1 }} />
+
+          {/* Stock mode toggle */}
+          <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 12px", borderLeft: `1px solid ${HR.border}` }}>
+            {[["accounting", "Accounting"], ["physical", "Physical"]].map(([mode, label]) => (
+              <button key={mode} onClick={() => setStockMode(mode)}
+                style={{
+                  border: `1px solid ${stockMode === mode ? "#B8860B" : HR.border}`,
+                  borderRadius: 4, padding: "3px 8px", fontSize: 10,
+                  fontWeight: stockMode === mode ? 700 : 500,
+                  background: stockMode === mode ? "#FFFBEA" : HR.surface,
+                  color: stockMode === mode ? "#7A5800" : HR.muted,
+                  cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderLeft: `1px solid ${HR.border}` }}>
             <span style={{ fontSize: 10, color: HR.muted, whiteSpace: "nowrap" }}>
               ↻ Syncs hourly

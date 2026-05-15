@@ -40,7 +40,9 @@ async function getZohoToken(): Promise<string> {
 }
 
 // ─── Stock: fetch all pages for one branch ────────────────────────────────────
-async function fetchBranchStock(token: string, branchId: string): Promise<Record<string, any>> {
+// showActualStock=false → Bills & Invoices (Physical)
+// showActualStock=true  → Shipments & Receives (Accounting)
+async function fetchBranchStock(token: string, branchId: string, showActualStock: boolean): Promise<Record<string, any>> {
   const rule = JSON.stringify({
     columns: [{ index: 1, field: 'location_name', value: [branchId], comparator: 'in', group: 'branch' }],
     criteria_string: '1',
@@ -51,6 +53,7 @@ async function fetchBranchStock(token: string, branchId: string): Promise<Record
     `&filter_by=TransactionDate.Today` +
     `&per_page=200` +
     `&exclude_transfer_order=false` +
+    `&show_actual_stock=${showActualStock}` +
     `&rule=${encodeURIComponent(rule)}`
 
   const allItems: any[] = []
@@ -146,16 +149,24 @@ Deno.serve(async () => {
     // 3. Get Zoho access token
     const token = await getZohoToken()
 
-    // ── Phase A: Stock sync ───────────────────────────────────────────────────
-    const stockData: Record<string, Record<string, any>> = {}
-    const stockUploadedAtPerDS: Record<string, string>   = {}
+    // ── Phase A: Stock sync (both modes per branch) ───────────────────────────
+    const stockData: Record<string, Record<string, any>> = {}           // Physical (Bills & Invoices)
+    const stockDataAccounting: Record<string, Record<string, any>> = {} // Accounting (Shipments & Receives)
+    const stockUploadedAtPerDS: Record<string, string> = {}
 
     for (const [ds, branchId] of Object.entries(BRANCHES)) {
-      console.log(`Fetching stock: ${ds}...`)
-      const branchStock = await fetchBranchStock(token, branchId)
-      for (const [sku, vals] of Object.entries(branchStock)) {
+      console.log(`Fetching stock: ${ds} (both modes)...`)
+      const [physicalStock, accountingStock] = await Promise.all([
+        fetchBranchStock(token, branchId, true),   // Physical (Bills & Invoices) = show_actual_stock=true
+        fetchBranchStock(token, branchId, false),  // Accounting (Shipments & Receives) = show_actual_stock=false
+      ])
+      for (const [sku, vals] of Object.entries(physicalStock)) {
         if (!stockData[sku]) stockData[sku] = {}
         stockData[sku][ds] = vals
+      }
+      for (const [sku, vals] of Object.entries(accountingStock)) {
+        if (!stockDataAccounting[sku]) stockDataAccounting[sku] = {}
+        stockDataAccounting[sku][ds] = vals
       }
       stockUploadedAtPerDS[ds] = nowIso
     }
@@ -240,6 +251,7 @@ Deno.serve(async () => {
     const merged = {
       ...(row?.payload ?? {}),
       stockData,
+      stockDataAccounting,
       stockUploadedAtPerDS,
       stockUploadedAt: nowIso,
       poData,
@@ -252,10 +264,11 @@ Deno.serve(async () => {
 
     const summary = {
       ok: true, synced_at: nowIso,
-      sku_count:    Object.keys(stockData).length,
-      po_count:     Object.keys(activePOs).length,
+      sku_count:       Object.keys(stockData).length,
+      stock_modes:     2,
+      po_count:        Object.keys(activePOs).length,
       po_detail_calls: detailCalls,
-      locations:    Object.keys(BRANCHES),
+      locations:       Object.keys(BRANCHES),
     }
     console.log('sync-stock complete:', JSON.stringify(summary))
     return new Response(JSON.stringify(summary), { headers: { 'Content-Type': 'application/json' } })
