@@ -53,16 +53,19 @@ function dsAccent(ds) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 const PO_STATUS_LABEL = {
-  open:             'Issued',
-  pending_approval: 'Pending Approval',
+  open:              'Issued',
+  pending_approval:  'Pending Approval',
+  partially_billed:  'Issued',
 };
 const PO_STATUS_BADGE = {
-  open:             'Issued',
-  pending_approval: 'Pend. Appr.',
+  open:              'Issued',
+  pending_approval:  'Pend. Appr.',
+  partially_billed:  'Issued',
 };
 const PO_STATUS_STYLE = {
-  open:             { bg: '#D1FAE5', color: '#065F46' },
-  pending_approval: { bg: '#FEF3C7', color: '#92400E' },
+  open:              { bg: '#D1FAE5', color: '#065F46' },
+  pending_approval:  { bg: '#FEF3C7', color: '#92400E' },
+  partially_billed:  { bg: '#D1FAE5', color: '#065F46' },
 };
 
 function fmtDate(d) {
@@ -275,9 +278,9 @@ export default function StockHealthTab({
         const po = dsPoData[r.sku];
         if (filterPoStatus !== "All") {
           if (filterPoStatus === "No PO" && po) return false;
+          if (filterPoStatus === "No PO" && !po) return true;
           if (filterPoStatus === "Issued" && (!po || po.status !== "open")) return false;
           if (filterPoStatus === "Pending Approval" && (!po || po.status !== "pending_approval")) return false;
-          if (filterPoStatus === "No PO" && !po) return true;
         }
         return true;
       })
@@ -725,7 +728,7 @@ export default function StockHealthTab({
                                 po.po_id ? (
                                   <a href={`https://books.zoho.in/app/60044091518#/purchaseorders/${po.po_id}`}
                                      target="_blank" rel="noopener noreferrer"
-                                     style={{ color: "#1D6B30", textDecoration: "none", fontWeight: 500 }}>
+                                     style={{ color: "#1D4ED8", textDecoration: "underline", fontWeight: 500 }}>
                                     {po.po_number}
                                   </a>
                                 ) : <span style={{ color: HR.textSoft }}>{po.po_number}</span>

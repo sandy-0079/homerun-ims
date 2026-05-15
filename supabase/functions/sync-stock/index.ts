@@ -84,7 +84,7 @@ async function fetchActivePOList(token: string, cutoff: string): Promise<Record<
   const org   = Deno.env.get('ZOHO_ORG_ID')
   const active: Record<string, any> = {}  // po_id → list-level data
 
-  for (const status of ['open', 'pending_approval']) {
+  for (const status of ['open', 'pending_approval', 'partially_billed']) {
     let page = 1
     while (true) {
       const res = await fetch(
