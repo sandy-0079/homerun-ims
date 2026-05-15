@@ -56,6 +56,10 @@ const PO_STATUS_LABEL = {
   open:             'Issued',
   pending_approval: 'Pending Approval',
 };
+const PO_STATUS_BADGE = {
+  open:             'Issued',
+  pending_approval: 'Pend. Appr.',
+};
 const PO_STATUS_STYLE = {
   open:             { bg: '#D1FAE5', color: '#065F46' },
   pending_approval: { bg: '#FEF3C7', color: '#92400E' },
@@ -76,7 +80,6 @@ export default function StockHealthTab({
   const [filterTag,   setFilterTag]   = useState(null);
   const [filterBrand,    setFilterBrand]    = useState("All");
   const [filterPoStatus, setFilterPoStatus] = useState("All");
-  const [filterVendor,   setFilterVendor]   = useState("All");
   const [search,         setSearch]         = useState("");
   const [copiedSku,   setCopiedSku]   = useState(null);
   const [syncing,     setSyncing]     = useState(false);
@@ -258,11 +261,6 @@ export default function StockHealthTab({
     return { ...(poData?.DC || {}), ...(poData?.[selectedDS] || {}) };
   }, [poData, selectedDS]);
 
-  const poVendors = useMemo(() => {
-    const set = new Set();
-    Object.values(dsPoData).forEach(po => { if (po?.vendor) set.add(po.vendor); });
-    return [...set].sort();
-  }, [dsPoData]);
 
   // ── Filtered flat rows ─────────────────────────────────────────────────────
   const filteredRows = useMemo(() => {
@@ -281,7 +279,6 @@ export default function StockHealthTab({
           if (filterPoStatus === "Pending Approval" && (!po || po.status !== "pending_approval")) return false;
           if (filterPoStatus === "No PO" && !po) return true;
         }
-        if (filterVendor !== "All" && po?.vendor !== filterVendor) return false;
         return true;
       })
       .sort((a, b) => {
@@ -290,7 +287,7 @@ export default function StockHealthTab({
         if (a.tag === "ec" || a.tag === "critical") return b.reorderQty - a.reorderQty;
         return a.ecs - b.ecs;
       });
-  }, [allSkuRows, selectedCat, filterTag, filterBrand, filterPoStatus, filterVendor, search, dsPoData]);
+  }, [allSkuRows, selectedCat, filterTag, filterBrand, filterPoStatus, search, dsPoData]);
 
   // ── Reset filters on DS switch ─────────────────────────────────────────────
   const hasStock = Object.keys(activeStockData).length > 0;
@@ -487,13 +484,9 @@ export default function StockHealthTab({
             <option value="Pending Approval">Pending Approval</option>
             <option value="No PO">No PO</option>
           </select>
-          <select value={filterVendor} onChange={e => setFilterVendor(e.target.value)} style={SEL}>
-            <option value="All">All Vendors</option>
-            {poVendors.map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
-          {(search || filterTag || filterBrand !== "All" || selectedCat || filterPoStatus !== "All" || filterVendor !== "All") && (
+          {(search || filterTag || filterBrand !== "All" || selectedCat || filterPoStatus !== "All") && (
             <button
-              onClick={() => { setSearch(""); setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); setFilterVendor("All"); }}
+              onClick={() => { setSearch(""); setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); }}
               style={{
                 border: "none", borderRadius: 6, padding: "5px 12px",
                 fontSize: 11, fontWeight: 700, cursor: "pointer",
@@ -511,7 +504,7 @@ export default function StockHealthTab({
           {filteredRows.length > 0 && (
             <button
               onClick={() => {
-                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "Curr. Stock", "Min", "Max", "ROS", "Ordered Qty", "PO Raised", "PO Status", "Vendor", "Delivery"];
+                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "Curr. Stock", "Min", "Max", "ROS", "Ordered Qty", "Received Qty", "PO Date", "Est. Delivery", "PO Number", "PO Status"];
                 const rows = filteredRows.map(r => {
                   const po = dsPoData[r.sku];
                   return [
@@ -522,10 +515,11 @@ export default function StockHealthTab({
                     r.ecs, r.min, r.max,
                     r.ros > 0 ? Math.round(r.ros) : 0,
                     po?.qty ?? "",
+                    po?.received ?? "",
                     po?.po_date ?? "",
-                    po ? (PO_STATUS_LABEL[po.status] ?? po.status) : "",
-                    po?.vendor ? `"${po.vendor.replace(/"/g, '""')}"` : "",
                     po?.delivery ?? "",
+                    po?.po_number ?? "",
+                    po ? (PO_STATUS_LABEL[po.status] ?? po.status) : "",
                   ];
                 });
                 const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
@@ -576,11 +570,12 @@ export default function StockHealthTab({
                 <col style={{ width: 34 }} />   {/* ROS */}
                 <col style={{ width: 34 }} />   {/* DOC */}
                 <col style={{ width: 52 }} />   {/* Req Qty */}
-                <col style={{ width: 58 }} />   {/* Ordered Qty */}
-                <col style={{ width: 66 }} />   {/* PO Raised */}
-                <col style={{ width: 80 }} />   {/* PO Status */}
-                <col style={{ width: 70 }} />   {/* Vendor */}
-                <col style={{ width: 66 }} />   {/* Delivery */}
+                <col style={{ width: 54 }} />   {/* Ordered Qty */}
+                <col style={{ width: 58 }} />   {/* Received Qty */}
+                <col style={{ width: 60 }} />   {/* PO Date */}
+                <col style={{ width: 64 }} />   {/* Est. Delivery */}
+                <col style={{ width: 86 }} />   {/* PO Number */}
+                <col style={{ width: 78 }} />   {/* PO Status */}
               </colgroup>
               <thead>
                 <tr>
@@ -595,11 +590,12 @@ export default function StockHealthTab({
                     ["ROS",          "center", "4px 4px", false],
                     ["DOC",          "center", "4px 4px", false],
                     ["Req Qty",      "center", "4px 4px", false],
-                    ["Ordered Qty",  "center", "4px 4px", false],
-                    ["PO Raised",    "center", "4px 4px", false],
-                    ["PO Status",    "center", "4px 4px", false],
-                    ["Vendor",       "left",   "4px 6px", false],
-                    ["Delivery",     "center", "4px 4px", false],
+                    ["Ord Qty",        "center", "4px 4px", false],
+                    ["Rec Qty",        "center", "4px 4px", false],
+                    ["PO Date",       "center", "4px 4px", false],
+                    ["Est. Delivery", "center", "4px 4px", false],
+                    ["PO Number",     "left",   "4px 6px", false],
+                    ["PO Status",     "center", "4px 4px", false],
                   ].map(([label, align, pad, isSkuCol], i) => (
                     <th key={i} style={{
                       padding: pad, textAlign: align, fontSize: 9, fontWeight: 700,
@@ -618,7 +614,7 @@ export default function StockHealthTab({
               <tbody>
                 {filteredRows.length === 0 && (
                   <tr>
-                    <td colSpan={15} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
+                    <td colSpan={16} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
                       No SKUs match the current filter.
                     </td>
                   </tr>
@@ -708,28 +704,41 @@ export default function StockHealthTab({
                               {po ? po.qty : "—"}
                             </td>
 
-                            {/* PO Raised */}
+                            {/* Received Qty */}
+                            <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontVariantNumeric: "tabular-nums", color: po ? (po.received > 0 ? "#065F46" : HR.muted) : HR.muted }}>
+                              {po ? (po.received ?? 0) : "—"}
+                            </td>
+
+                            {/* PO Date */}
                             <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted }}>
                               {po ? fmtDate(po.po_date) : "—"}
+                            </td>
+
+                            {/* Est. Delivery */}
+                            <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: po?.delivery ? HR.textSoft : HR.muted }}>
+                              {po?.delivery ? fmtDate(po.delivery) : "—"}
+                            </td>
+
+                            {/* PO Number — clickable link to Zoho Books */}
+                            <td style={{ padding: "2px 6px", borderTop: topBorder, fontSize: FS, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {po?.po_number ? (
+                                po.po_id ? (
+                                  <a href={`https://books.zoho.in/app/60044091518#/purchaseorders/${po.po_id}`}
+                                     target="_blank" rel="noopener noreferrer"
+                                     style={{ color: "#1D6B30", textDecoration: "none", fontWeight: 500 }}>
+                                    {po.po_number}
+                                  </a>
+                                ) : <span style={{ color: HR.textSoft }}>{po.po_number}</span>
+                              ) : "—"}
                             </td>
 
                             {/* PO Status badge */}
                             <td style={{ padding: NP, borderTop: topBorder, textAlign: "center" }}>
                               {po && poStyle ? (
                                 <span style={{ display: "inline-block", padding: "1px 5px", borderRadius: 7, fontSize: 8.5, fontWeight: 700, whiteSpace: "nowrap", background: poStyle.bg, color: poStyle.color }}>
-                                  {PO_STATUS_LABEL[po.status] ?? po.status}
+                                  {PO_STATUS_BADGE[po.status] ?? po.status}
                                 </span>
                               ) : <span style={{ color: HR.muted, fontSize: FS }}>—</span>}
-                            </td>
-
-                            {/* Vendor */}
-                            <td style={{ padding: "2px 6px", borderTop: topBorder, fontSize: FS, color: HR.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {po?.vendor ?? "—"}
-                            </td>
-
-                            {/* Delivery (confirmed delivery date) */}
-                            <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: po?.delivery ? HR.textSoft : HR.muted }}>
-                              {po?.delivery ? fmtDate(po.delivery) : "—"}
                             </td>
                           </>
                         );

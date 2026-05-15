@@ -197,10 +197,10 @@ Deno.serve(async () => {
         const ds = LOCATION_TO_DS[detail.location_name ?? '']
         if (!ds) continue
 
-        const skus: Record<string, number> = {}
+        const skus: Record<string, { qty: number; received: number }> = {}
         for (const li of detail.line_items ?? []) {
           const sku = (li.sku ?? '').trim()
-          if (sku) skus[sku] = li.quantity ?? 0
+          if (sku) skus[sku] = { qty: li.quantity ?? 0, received: li.quantity_received ?? 0 }
         }
 
         // cf_confirmed_delivery_time lives inside custom_fields[] array, not at top level
@@ -215,6 +215,7 @@ Deno.serve(async () => {
           status:        po.status,
           vendor:        po.vendor_name,
           po_number:     po.purchaseorder_number,
+          po_id:         poId,
           delivery,
           ds,
           skus,
@@ -233,15 +234,16 @@ Deno.serve(async () => {
     for (const entry of sortedEntries) {
       const ds = entry.ds
       if (!poData[ds]) poData[ds] = {}
-      for (const [sku, qty] of Object.entries(entry.skus as Record<string, number>)) {
+      for (const [sku, skuData] of Object.entries(entry.skus as Record<string, { qty: number; received: number }>)) {
         if (!poData[ds][sku]) {  // first assignment = latest PO
           poData[ds][sku] = {
-            qty,
+            qty:       skuData.qty,
+            received:  skuData.received,
             po_date:   entry.date,
             status:    entry.status,
-            vendor:    entry.vendor,
             delivery:  entry.delivery,
             po_number: entry.po_number,
+            po_id:     entry.po_id,
           }
         }
       }
