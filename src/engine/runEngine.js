@@ -141,8 +141,19 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       });
       const _dc = networkResult.dcResult;
       const _dcDeadMult = p.dcDeadMult || DC_DEAD_MULT_DEFAULT;
-      const _dcMin = _isDead ? Math.round(_dc.min * _dcDeadMult.min) : _dc.min;
-      const _dcMax = _isDead ? Math.round(_dc.max * _dcDeadMult.max) : Math.max(_dc.max, _dc.min);
+      let _dcMin = _isDead ? Math.round(_dc.min * _dcDeadMult.min) : _dc.min;
+      let _dcMax = _isDead ? Math.round(_dc.max * _dcDeadMult.max) : Math.max(_dc.max, _dc.min);
+      const _isFlooredSKU = !!(nsq && nsq[skuId]);
+      let _floorDcDetails = null;
+      if (!_isDead && _isFlooredSKU) {
+        const _flooredSumMin = DS_LIST.reduce((s, ds) => s + (_stores[ds]?.min ?? 0), 0);
+        const _flooredSumMax = DS_LIST.reduce((s, ds) => s + (_stores[ds]?.max ?? 0), 0);
+        const multMin = p.skuFloorDCMultMin ?? 0.2;
+        const multMax = p.skuFloorDCMultMax ?? 0.3;
+        _dcMin = Math.max(_dcMin, Math.round(_flooredSumMin * multMin));
+        _dcMax = Math.max(_dcMax, Math.round(_flooredSumMax * multMax), _dcMin);
+        _floorDcDetails = { multMin, multMax, sumMin: _flooredSumMin, sumMax: _flooredSumMax };
+      }
       res[skuId] = {
         meta: { ..._meta, priceTag: _prTag, t150Tag: _t150Tag },
         stores: _stores,
@@ -150,7 +161,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
           min: _dcMin, max: _dcMax,
           preFloorMin: _dc.min, preFloorMax: _dc.max,
           mvTag: 'N/A', nonZeroDays: 0,
-          dcDetails: { strategy: 'network_design', brand: networkResult.brand, isDead: _isDead },
+          dcDetails: { strategy: 'network_design', brand: networkResult.brand, isDead: _isDead, isFlooredSKU: _isFlooredSKU, ..._floorDcDetails },
         },
       };
       return;
