@@ -22,7 +22,8 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 - Invoice CSV (Zoho export) replaces entirely on upload — no merge. Engine uses whatever period admin sets.
 - All uploads auto-save to Supabase `team_data` immediately.
 - Model refresh: upload → Apply & Re-run Model → results pushed to Supabase → all users see new Min/Max.
-- Stock Health: auto-synced hourly from Zoho Books API (Edge Function `sync-stock`). Stored in `team_data.stockData` (stock) + `team_data.poData` (PO data) + `team_data._poCache` (change-detection index).
+- Stock Health: auto-synced hourly from Zoho Books API (Edge Function `sync-stock`). Stored in `team_data.stockData` (stock) + `team_data.poData` (PO data) + `team_data.toData` (TO data) + `team_data._poCache` / `_toCache` (change-detection indexes).
+- **Edge Function deploy:** Always use `supabase functions deploy sync-stock --no-verify-jwt`. The cron job calls via `pg_net` with no Authorization header — omitting `--no-verify-jwt` resets JWT verification to required (default) and all cron runs silently return 401.
 
 ---
 
