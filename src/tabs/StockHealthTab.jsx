@@ -28,6 +28,24 @@ const TAG_ORDER = ["ec", "critical", "okay", "excess"];
 const N = { padding: "6px 10px", textAlign: "right", fontSize: 12, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", borderTop: `1px solid ${HR.border}` };
 const SEL = { border: `1px solid ${HR.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, background: HR.white, color: HR.text, outline: "none", cursor: "pointer", fontFamily: "inherit" };
 
+// ─── Tooltip ──────────────────────────────────────────────────────────────────
+function Tooltip({ text, children }) {
+  const [show, setShow] = React.useState(false);
+  return (
+    <span style={{ position: "relative" }} onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      {children}
+      {show && (
+        <div style={{
+          position: "absolute", bottom: "calc(100% + 8px)", left: 0,
+          background: "#1A1A1A", color: "#fff", borderRadius: 6, padding: "8px 12px",
+          fontSize: 11, lineHeight: 1.7, whiteSpace: "nowrap", zIndex: 100,
+          pointerEvents: "none", boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+        }}>{text}</div>
+      )}
+    </span>
+  );
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -39,9 +57,10 @@ function getHealthTag(ecs, min, max, ros) {
 }
 
 function getLive(live) {
-  const afs       = live.available_for_sale ?? live.stock_on_hand ?? 0;
-  const inTransit = live.in_transit ?? live.quantity_in_transit ?? 0;
-  return { afs, inTransit, ecs: Math.max(0, afs) + Math.max(0, inTransit) };
+  const stockOnHand = live.stock_on_hand ?? 0;
+  const afs         = live.available_for_sale ?? 0;
+  const inTransit   = live.in_transit ?? live.quantity_in_transit ?? 0;
+  return { stockOnHand, afs, inTransit, ecs: Math.max(0, afs) + Math.max(0, inTransit) };
 }
 
 function pct(n, total) { return total > 0 ? Math.round((n / total) * 100) : 0; }
@@ -183,22 +202,20 @@ export default function StockHealthTab({
       if (!minMax || (!minMax.min && !minMax.max)) return [];
       const live = activeStockData[sku]?.[selectedDS];
       if (!live) return [];
-      const { afs, inTransit, ecs } = getLive(live);
+      const { stockOnHand, afs, inTransit, ecs } = getLive(live);
       const min = minMax.min || 0;
       const max = minMax.max || 0;
       const ros = isDC
         ? DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0)
         : (res.stores?.[selectedDS]?.dailyAvg || 0);
       const tag = getHealthTag(ecs, min, max, ros);
-      const doc = ros > 0 ? ecs / ros : null;
       const reorderQty = (tag === "ec" || tag === "critical") ? Math.max(0, max - ecs) : 0;
       return [{
         sku,
-        // res.meta (from SKU Master) is authoritative for all metadata
         name:     meta.name     || sku,
         category: meta.category || "Uncategorized",
         brand:    meta.brand    || "—",
-        afs, inTransit, ecs, min, max, ros, doc, tag, reorderQty,
+        stockOnHand, afs, inTransit, ecs, min, max, ros, tag, reorderQty,
       }];
     });
   }, [results, selectedDS, activeStockData]);
@@ -546,6 +563,21 @@ export default function StockHealthTab({
             <option value="Delayed">Delayed</option>
             <option value="No PO">No PO</option>
           </select>
+          <Tooltip text={
+            <><div style={{ fontWeight: 700, marginBottom: 4 }}>ECS (Effective Current Stock) = AFS + In Transit</div>
+            <div>Critical — ECS ≤ Min and daily sales ≥ 1 unit</div>
+            <div>Low Stock — ECS ≤ Min (slow mover, not urgent)</div>
+            <div>Okay — Min &lt; ECS ≤ Max</div>
+            <div>Excess — ECS &gt; Max</div></>
+          }>
+            <span style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 18, height: 18, borderRadius: "50%",
+              background: "#D1D5DB", flexShrink: 0,
+              fontFamily: "Georgia, serif", fontSize: 13, fontWeight: 400,
+              color: "#111827", lineHeight: 1, userSelect: "none",
+            }}>i</span>
+          </Tooltip>
           {(search || filterTag || filterBrand !== "All" || selectedCat || filterPoStatus !== "All") && (
             <button
               onClick={() => { setSearch(""); setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); }}
@@ -566,7 +598,7 @@ export default function StockHealthTab({
           {filteredRows.length > 0 && (
             <button
               onClick={() => {
-                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "Curr. Stock", "Min", "Max", "ROS", "Ordered Qty", "Received Qty", "PO Date", "Est. Delivery", "PO Number", "PO Status"];
+                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "SoH", "In Transit", "AFS", "Min", "Max", "ROS", "Ordered Qty", "Received Qty", "PO Date", "Est. Delivery", "PO Number", "PO Status"];
                 const rows = filteredRows.map(r => {
                   const po = dsPoData[r.sku];
                   return [
@@ -574,7 +606,8 @@ export default function StockHealthTab({
                     `"${r.name.replace(/"/g, '""')}"`,
                     r.brand !== "—" ? `"${r.brand.replace(/"/g, '""')}"` : "",
                     TC[r.tag].label,
-                    r.ecs, r.min, r.max,
+                    Math.max(0, r.stockOnHand), Math.max(0, r.inTransit), Math.max(0, r.afs),
+                    r.min, r.max,
                     r.ros > 0 ? Math.round(r.ros) : 0,
                     po?.qty ?? "",
                     po?.received ?? "",
@@ -626,11 +659,12 @@ export default function StockHealthTab({
                 <col />                          {/* Item Name — flex */}
                 <col style={{ width: 58 }} />   {/* Brand */}
                 <col style={{ width: 64 }} />   {/* Stock Health */}
-                <col style={{ width: 58 }} />   {/* Curr. Stock */}
+                <col style={{ width: 54 }} />   {/* Stock on Hand */}
+                <col style={{ width: 54 }} />   {/* In Transit */}
+                <col style={{ width: 54 }} />   {/* Avail. for Sale */}
                 <col style={{ width: 32 }} />   {/* Min */}
                 <col style={{ width: 32 }} />   {/* Max */}
                 <col style={{ width: 34 }} />   {/* ROS */}
-                <col style={{ width: 34 }} />   {/* DOC */}
                 <col style={{ width: 52 }} />   {/* Req Qty */}
                 <col style={{ width: 54 }} />   {/* Ordered Qty */}
                 <col style={{ width: 58 }} />   {/* Received Qty */}
@@ -642,22 +676,23 @@ export default function StockHealthTab({
               <thead>
                 <tr>
                   {[
-                    ["SKU",          "left",   "4px 6px", true ],
-                    ["Item Name",    "left",   "4px 6px", false],
-                    ["Brand",        "left",   "4px 6px", false],
-                    ["Stock Health", "center", "4px 4px", false],
-                    ["Curr. Stock",  "center", "4px 4px", false],
-                    ["Min",          "center", "4px 4px", false],
-                    ["Max",          "center", "4px 4px", false],
-                    ["ROS",          "center", "4px 4px", false],
-                    ["DOC",          "center", "4px 4px", false],
-                    ["Req Qty",      "center", "4px 4px", false],
+                    ["SKU",            "left",   "4px 6px", true ],
+                    ["Item Name",      "left",   "4px 6px", false],
+                    ["Brand",          "left",   "4px 6px", false],
+                    ["Stock Health",   "center", "4px 4px", false],
+                    ["SoH",            "center", "4px 4px", false],
+                    ["In Transit",     "center", "4px 4px", false],
+                    ["AFS",            "center", "4px 4px", false],
+                    ["Min",            "center", "4px 4px", false],
+                    ["Max",            "center", "4px 4px", false],
+                    ["ROS",            "center", "4px 4px", false],
+                    ["Req Qty",        "center", "4px 4px", false],
                     ["Ord Qty",        "center", "4px 4px", false],
                     ["Rec Qty",        "center", "4px 4px", false],
-                    ["PO Date",       "center", "4px 4px", false],
-                    ["Est. Delivery", "center", "4px 4px", false],
-                    ["PO Number",     "left",   "4px 6px", false],
-                    ["PO Status",     "center", "4px 4px", false],
+                    ["PO Date",        "center", "4px 4px", false],
+                    ["Est. Delivery",  "center", "4px 4px", false],
+                    ["PO Number",      "left",   "4px 6px", false],
+                    ["PO Status",      "center", "4px 4px", false],
                   ].map(([label, align, pad, isSkuCol], i) => (
                     <th key={i} style={{
                       padding: pad, textAlign: align, fontSize: 9, fontWeight: 700,
@@ -676,7 +711,7 @@ export default function StockHealthTab({
               <tbody>
                 {filteredRows.length === 0 && (
                   <tr>
-                    <td colSpan={16} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
+                    <td colSpan={17} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
                       No SKUs match the current filter.
                     </td>
                   </tr>
@@ -715,7 +750,7 @@ export default function StockHealthTab({
                       </td>
 
                       {/* Item Name — truncates when very long */}
-                      <td style={{ padding: TP, borderTop: topBorder, fontSize: FS, fontWeight: 400, color: HR.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <td title={row.name} style={{ padding: TP, borderTop: topBorder, fontSize: FS, fontWeight: 400, color: HR.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {row.name}
                       </td>
 
@@ -731,8 +766,20 @@ export default function StockHealthTab({
                         </span>
                       </td>
 
-                      {/* Current Stock */}
-                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontWeight: 600, color: cfg.textColor, background: cfg.ecsBg, fontVariantNumeric: "tabular-nums" }}>{row.ecs}</td>
+                      {/* Stock on Hand */}
+                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.textSoft, fontVariantNumeric: "tabular-nums" }}>
+                        {Math.max(0, row.stockOnHand)}
+                      </td>
+
+                      {/* In Transit — highlight green when > 0 */}
+                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontWeight: row.inTransit > 0 ? 600 : 400, color: row.inTransit > 0 ? "#065F46" : HR.muted, background: row.inTransit > 0 ? "#A7F3D0" : "transparent", fontVariantNumeric: "tabular-nums" }}>
+                        {Math.max(0, row.inTransit)}
+                      </td>
+
+                      {/* Available for Sale — health tag highlight */}
+                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontWeight: 600, color: cfg.textColor, background: cfg.ecsBg, fontVariantNumeric: "tabular-nums" }}>
+                        {Math.max(0, row.afs)}
+                      </td>
 
                       {/* Min */}
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted, fontVariantNumeric: "tabular-nums" }}>{row.min}</td>
@@ -743,11 +790,6 @@ export default function StockHealthTab({
                       {/* ROS — rounded */}
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted, fontVariantNumeric: "tabular-nums" }}>
                         {row.ros > 0 ? Math.round(row.ros) : "—"}
-                      </td>
-
-                      {/* DOC — rounded, red if 0 */}
-                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontVariantNumeric: "tabular-nums", color: row.doc !== null && row.doc < 1 ? "#DC2626" : HR.muted, fontWeight: row.doc !== null && row.doc < 1 ? 600 : 400 }}>
-                        {row.doc !== null ? Math.round(row.doc) : "—"}
                       </td>
 
                       {/* Req Qty */}

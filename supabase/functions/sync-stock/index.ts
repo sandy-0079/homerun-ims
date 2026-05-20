@@ -40,8 +40,8 @@ async function getZohoToken(): Promise<string> {
 }
 
 // ─── Stock: fetch all pages for one branch ────────────────────────────────────
-// showActualStock=false → Bills & Invoices (Physical)
-// showActualStock=true  → Shipments & Receives (Accounting)
+// showActualStock=true  → Bills & Invoices (Physical)
+// showActualStock=false → Shipments & Receives (Accounting)
 async function fetchBranchStock(token: string, branchId: string, showActualStock: boolean): Promise<Record<string, any>> {
   const rule = JSON.stringify({
     columns: [{ index: 1, field: 'location_name', value: [branchId], comparator: 'in', group: 'branch' }],
@@ -72,6 +72,7 @@ async function fetchBranchStock(token: string, branchId: string, showActualStock
     const sku = (item.sku ?? '').trim()
     if (!sku) continue
     result[sku] = {
+      stock_on_hand:      item.quantity_available ?? 0,
       available_for_sale: item.quantity_available_for_sale ?? 0,
       in_transit:         Math.max(0, item.quantity_in_transit ?? 0),
     }

@@ -73,7 +73,7 @@ const MovTag=React.memo(({value})=>{
 });
 
 const S={
-  app:{fontFamily:"Inter,sans-serif",background:HR.bg,height:"100vh",color:HR.text,width:"100%",boxSizing:"border-box",overflowX:"hidden",display:"flex",flexDirection:"column"},
+  app:{fontFamily:"Inter,sans-serif",background:HR.bg,height:"calc(100vh / 0.85)",color:HR.text,width:"100%",boxSizing:"border-box",overflowX:"hidden",display:"flex",flexDirection:"column"},
   header:{background:HR.white,borderBottom:`2px solid ${HR.yellow}`,padding:"0 16px",display:"flex",alignItems:"center",gap:6,height:44,boxShadow:"0 1px 4px rgba(0,0,0,0.08)",flexShrink:0,flexWrap:"nowrap",overflowX:"auto"},
   card:{background:HR.surface,borderRadius:8,padding:12,border:`1px solid ${HR.border}`,boxShadow:"0 1px 3px rgba(0,0,0,0.05)"},
   table:{width:"100%",borderCollapse:"collapse",fontSize:11},

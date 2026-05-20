@@ -10,9 +10,11 @@ body {
   margin: 0;
   padding: 0;
   width: 100%;
+  min-height: calc(100vh / 0.85);
   overflow-x: hidden;
   background-color: #F5F5F0;
   font-family: Inter, sans-serif;
+  zoom: 0.85;
 }
 
 #root {
