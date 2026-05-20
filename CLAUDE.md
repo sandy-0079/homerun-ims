@@ -86,9 +86,10 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 
 **Component:** `src/tabs/StockHealthTab.jsx`
 
-**Data sources (both synced hourly, `sync-stock` Edge Function, pg_cron at :35 UTC = :05 IST):**
+**Data sources (all synced hourly, `sync-stock` Edge Function, pg_cron at :35 UTC = :05 IST):**
 - **Stock:** Zoho Books Inventory Summary report per branch (6 branches × ~10 pages). Stored as `stockData[sku][ds] = { stock_on_hand, available_for_sale, in_transit }`. Zoho field mapping: `stock_on_hand` ← `quantity_available`, `available_for_sale` ← `quantity_available_for_sale`, `in_transit` ← `quantity_in_transit`.
-- **PO:** Replenishment POs (open + pending_approval, last 12 days) only. Incremental via `_poCache` — only new/modified POs need a detail call. Stored as `poData[ds][sku] = { qty, po_date, status, vendor, delivery, po_number }`.
+- **PO:** Replenishment POs (open + pending_approval + partially_billed, last 12 days). Incremental via `_poCache`. Stored as `poData[ds][sku] = { qty, received, po_date, status, delivery, po_number, po_id }`.
+- **TO:** Transfer Orders from DC (draft + in_transit, last 12 days). Incremental via `_toCache`. Stored as `toData[ds][sku] = { qty, to_date, status, to_number, to_id }` keyed by destination DS. Priority: in_transit beats draft per SKU×DS; latest date wins within same status.
 
 **Zoho Books branch IDs (confirmed):**
 `DC=2753232000017648109`, `DS01=2753232000000037051`, `DS02=2753232000000037081`, `DS03=2753232000000037109`, `DS04=2753232000007867440`, `DS05=2753232000017634267`
@@ -97,6 +98,11 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - Only `status = Active` SKUs (from SKU Master)
 - `Inventorised At = Supplier` → excluded entirely from all counts and table
 - DC tab: only `Inventorised At = DC` SKUs. DS tabs: both DS + DC inventorised SKUs.
+
+**Order data shown per SKU type (DS tabs):**
+- `Inventorised At = DC` → TO columns (Ref #, Date, Rep. Qty, Status: Picking/In Transit). No PO shown.
+- `Inventorised At = DS` → PO columns (Ref #, Date, Rep. Qty, Rec Qty, Est. Delivery, Status).
+- DC tab → PO only (TOs are outgoing from DC, not tracked here).
 
 **Health tags (applied in order):**
 | Tag | Condition | Color |
@@ -107,13 +113,19 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 | Excess | ecs > max | Blue |
 | Exception | ecs = min = max (dead stock at target) | Green |
 
-`ECS = max(0, Available for Sale) + In-Transit`. ROS = `dailyAvg` from engine. For DC: ROS = sum of dailyAvg across all 5 DSes.
+`ECS = max(0, AFS)` — Available for Sale only. In-transit not included (stock not yet physically at DS). ROS = `dailyAvg` from engine. For DC: ROS = sum of dailyAvg across all 5 DSes.
+
+**KPI card pills:** Each card has two pill rows on DS tabs — TO pills (No TO / Picking / In Transit, DC-inv SKUs) above PO pills (No PO / Delayed / Issued / Pending, DS-inv SKUs). PO/TO filters are mutually exclusive — activating one excludes the other's SKU type.
 
 **PO data notes:**
 - `cf_purchase_type` must be "Replenishment" to be included. Ops mandate started 2026-05-13 — older POs may lack this field.
 - `delivery` = `cf_confirmed_delivery_time` from `custom_fields[]` array (NOT top-level field). Format: `YYYY-MM-DD`.
-- DS tabs show DC PO as fallback for DC-inventorised SKUs (no tab switching needed).
 - 15-min cooldown enforced server-side (both cron and manual Sync Now).
+
+**TO data notes:**
+- TO statuses: `draft` (picking in progress) → `in_transit` (dispatched) → `transferred` (received, not tracked).
+- Only TOs where `from_location_id = DC branch ID` are fetched.
+- `to_date` used for both Date and Est. Delivery columns (TOs arrive same day).
 
 ---
 
@@ -134,7 +146,10 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 ### 2. OOS Simulation Redesign ❌ Dropped (2026-04-21)
 
 ### 3. Stock Health Tab ✅ Shipped (2026-05-14), updated (2026-05-20)
-Columns: SoH (Stock on Hand), In Transit, AFS (Available for Sale), Min, Max, ROS, Req Qty, PO cols. DOC column removed. In Transit highlighted green when > 0; AFS gets health-tag colour. ⓘ tooltip explains ECS logic. Item name native hover for truncated names. Global 85% zoom applied.
+Columns: SoH, AFS, Min, Max, ROS, Req Qty, Rep. Qty, Rec Qty, Date, Est. Delivery, Ref #, Status. ECS = AFS only. DC-inv SKUs show TO data on DS tabs; DS-inv SKUs show PO data. KPI cards have dual pill rows (TO above PO). TO/PO filters mutually exclusive. ⓘ tooltip, 85% zoom, item name hover.
+
+### 9. DC Stock indicator in DS tabs ❓ Needs thinking
+Show DC stock level for DC-inventorised SKUs directly in the DS tab view — as context for why a TO hasn't been raised (e.g. DC itself is out of stock). Needs design thought: column, hover, or inline indicator?
 
 ### 4. Rethink Tool Output Tab — fold buttons into Upload Data tab or keep separate?
 
