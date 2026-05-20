@@ -59,8 +59,7 @@ function getHealthTag(ecs, min, max, ros) {
 function getLive(live) {
   const stockOnHand = live.stock_on_hand ?? 0;
   const afs         = live.available_for_sale ?? 0;
-  const inTransit   = live.in_transit ?? live.quantity_in_transit ?? 0;
-  return { stockOnHand, afs, inTransit, ecs: Math.max(0, afs) + Math.max(0, inTransit) };
+  return { stockOnHand, afs, ecs: Math.max(0, afs) };
 }
 
 function pct(n, total) { return total > 0 ? Math.round((n / total) * 100) : 0; }
@@ -71,6 +70,15 @@ function dsAccent(ds) {
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+const TO_STATUS_BADGE = {
+  draft:      'Picking',
+  in_transit: 'In Transit',
+}
+const TO_STATUS_STYLE = {
+  draft:      { bg: '#F3F4F6', color: '#374151' },
+  in_transit: { bg: '#DBEAFE', color: '#1E40AF' },
+}
+
 const PO_STATUS_LABEL = {
   open:              'Issued',
   pending_approval:  'Pending Approval',
@@ -109,13 +117,14 @@ function fmtDate(d) {
 }
 
 export default function StockHealthTab({
-  results, skuMaster, stockData, stockDataAccounting, uploadedAtPerDS, onSyncComplete, poData,
+  results, skuMaster, stockData, stockDataAccounting, uploadedAtPerDS, onSyncComplete, poData, toData,
 }) {
   const [selectedDS,  setSelectedDS]  = useState("DS01");
   const [selectedCat, setSelectedCat] = useState(null);
   const [filterTag,   setFilterTag]   = useState(null);
   const [filterBrand,    setFilterBrand]    = useState("All");
   const [filterPoStatus, setFilterPoStatus] = useState("All");
+  const [filterToStatus, setFilterToStatus] = useState("All");
   const [search,         setSearch]         = useState("");
   const [copiedSku,   setCopiedSku]   = useState(null);
   const [syncing,     setSyncing]     = useState(false);
@@ -202,7 +211,7 @@ export default function StockHealthTab({
       if (!minMax || (!minMax.min && !minMax.max)) return [];
       const live = activeStockData[sku]?.[selectedDS];
       if (!live) return [];
-      const { stockOnHand, afs, inTransit, ecs } = getLive(live);
+      const { stockOnHand, afs, ecs } = getLive(live);
       const min = minMax.min || 0;
       const max = minMax.max || 0;
       const ros = isDC
@@ -215,7 +224,8 @@ export default function StockHealthTab({
         name:     meta.name     || sku,
         category: meta.category || "Uncategorized",
         brand:    meta.brand    || "—",
-        stockOnHand, afs, inTransit, ecs, min, max, ros, tag, reorderQty,
+        invAt,
+        stockOnHand, afs, ecs, min, max, ros, tag, reorderQty,
       }];
     });
   }, [results, selectedDS, activeStockData]);
@@ -291,16 +301,25 @@ export default function StockHealthTab({
   // ── PO data for selected DS ────────────────────────────────────────────────
   const dsPoData = useMemo(() => {
     if (selectedDS === "DC") return poData?.DC || {};
-    // DS tabs: DS-specific PO takes priority; fall back to DC PO for DC-inventorised SKUs
-    return { ...(poData?.DC || {}), ...(poData?.[selectedDS] || {}) };
+    // DS tabs: DS-specific POs only — DC-inv SKUs use TOs (dsToData) instead
+    return poData?.[selectedDS] || {};
   }, [poData, selectedDS]);
+
+  // ── TO data for selected DS (DC-originated TOs destined for this DS) ───────
+  const dsToData = useMemo(() => {
+    if (selectedDS === "DC") return {};
+    return toData?.[selectedDS] || {};
+  }, [toData, selectedDS]);
 
   // PO status breakdown per stock health tag — must be after dsPoData
   const poCountsByTag = useMemo(() => {
     const counts = {};
     for (const tag of TAG_ORDER) counts[tag] = { noPO: 0, delayed: 0, issued: 0, pending: 0 };
     const rows = selectedCat ? allSkuRows.filter(r => r.category === selectedCat) : allSkuRows;
+    const isDC = selectedDS === "DC";
     for (const row of rows) {
+      // On DS tabs, DC-inv SKUs use TOs — skip from PO pill counts
+      if (!isDC && row.invAt === "dc") continue;
       const po = dsPoData[row.sku];
       const bucket = counts[row.tag];
       if (!bucket) continue;
@@ -313,6 +332,24 @@ export default function StockHealthTab({
     return counts;
   }, [allSkuRows, selectedCat, dsPoData]);
 
+  // ── TO pill counts per health tag (DC-inv SKUs on DS tabs only) ───────────
+  const toCountsByTag = useMemo(() => {
+    const counts = {};
+    for (const tag of TAG_ORDER) counts[tag] = { noTO: 0, draft: 0, inTransit: 0 };
+    if (selectedDS === "DC") return counts;
+    const rows = selectedCat ? allSkuRows.filter(r => r.category === selectedCat) : allSkuRows;
+    for (const row of rows) {
+      if (row.invAt !== "dc") continue;
+      const to = dsToData[row.sku];
+      const bucket = counts[row.tag];
+      if (!bucket) continue;
+      if (!to) { bucket.noTO++; continue; }
+      if (to.status === "in_transit") bucket.inTransit++;
+      else bucket.draft++;
+    }
+    return counts;
+  }, [allSkuRows, selectedCat, dsToData, selectedDS]);
+
 
   // ── Filtered flat rows ─────────────────────────────────────────────────────
   const filteredRows = useMemo(() => {
@@ -324,14 +361,31 @@ export default function StockHealthTab({
         if (filterTag && r.tag !== filterTag) return false;
         if (filterBrand !== "All" && r.brand !== filterBrand) return false;
         if (q && !r.sku.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q) && !r.brand.toLowerCase().includes(q)) return false;
-        const po = dsPoData[r.sku];
+        const isDC = selectedDS === "DC";
+        const isDCInv = !isDC && r.invAt === "dc";
+
+        // PO filter — DC tab always, DS-inv SKUs on DS tabs only; exclude DC-inv SKUs on DS tabs when active
         if (filterPoStatus !== "All") {
-          if (filterPoStatus === "No PO") return !po;
-          const displayStatus = getPoDisplayStatus(po);
-          if (filterPoStatus === "Issued" && displayStatus !== "open" && displayStatus !== "partially_billed") return false;
-          if (filterPoStatus === "Pending Approval" && displayStatus !== "pending_approval") return false;
-          if (filterPoStatus === "Delayed" && displayStatus !== "delayed") return false;
+          if (!isDC && isDCInv) return false;
+          const po = dsPoData[r.sku];
+          if (filterPoStatus === "No PO") { if (po) return false; }
+          else {
+            const displayStatus = getPoDisplayStatus(po);
+            if (filterPoStatus === "Issued" && displayStatus !== "open" && displayStatus !== "partially_billed") return false;
+            if (filterPoStatus === "Pending Approval" && displayStatus !== "pending_approval") return false;
+            if (filterPoStatus === "Delayed" && displayStatus !== "delayed") return false;
+          }
         }
+
+        // TO filter — DC-inv SKUs on DS tabs only; exclude DS-inv SKUs entirely when active
+        if (filterToStatus !== "All") {
+          if (!isDCInv) return false;
+          const to = dsToData[r.sku];
+          if (filterToStatus === "No TO" && to) return false;
+          if (filterToStatus === "Draft" && (!to || to.status !== "draft")) return false;
+          if (filterToStatus === "In Transit" && (!to || to.status !== "in_transit")) return false;
+        }
+
         return true;
       })
       .sort((a, b) => {
@@ -340,7 +394,7 @@ export default function StockHealthTab({
         if (a.tag === "ec" || a.tag === "critical") return b.reorderQty - a.reorderQty;
         return a.ecs - b.ecs;
       });
-  }, [allSkuRows, selectedCat, filterTag, filterBrand, filterPoStatus, search, dsPoData]);
+  }, [allSkuRows, selectedCat, filterTag, filterBrand, filterPoStatus, filterToStatus, search, dsPoData, dsToData, selectedDS]);
 
   // ── Reset filters on DS switch ─────────────────────────────────────────────
   const hasStock = Object.keys(activeStockData).length > 0;
@@ -509,8 +563,34 @@ export default function StockHealthTab({
                   {selectedCat ? `${p}% of ${selectedCat}` : `${p}% of ${selectedDS}`}
                 </div>
 
-                {/* PO status pills — extension of card, clickable */}
-                <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${cfg.cardBorder}`, display: "flex", gap: 3 }}>
+                {/* TO pills (DS tabs only) */}
+                {selectedDS !== "DC" && (
+                  <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${cfg.cardBorder}`, display: "flex", gap: 3 }}>
+                    {[
+                      { k: "noTO",      label: "No TO",      tf: "No TO",      bg: "#F3F4F6", color: "#6B7280", border: "#D1D5DB" },
+                      { k: "draft",     label: "Picking",    tf: "Draft",      bg: "#F3F4F6", color: "#374151", border: "#D1D5DB" },
+                      { k: "inTransit", label: "In Transit", tf: "In Transit", bg: "#DBEAFE", color: "#1E40AF", border: "#BFDBFE" },
+                    ].map(({ k, label, tf, bg, color, border }) => (
+                      <span key={k}
+                        onClick={e => { e.stopPropagation(); setFilterTag(tag); setFilterToStatus(tf); }}
+                        title={`${cfg.label} · TO: ${label}`}
+                        style={{
+                          flex: 1, textAlign: "center", fontSize: 9, fontWeight: 600,
+                          padding: "2px 2px", borderRadius: 5, cursor: "pointer",
+                          border: `1px solid ${border}`, background: bg, color,
+                          whiteSpace: "nowrap", userSelect: "none", lineHeight: 1.4,
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.filter = "brightness(0.93)"}
+                        onMouseLeave={e => e.currentTarget.style.filter = ""}
+                      >
+                        {label} {toCountsByTag[tag]?.[k] ?? 0}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* PO pills */}
+                <div style={{ marginTop: selectedDS !== "DC" ? 4 : 8, paddingTop: 6, borderTop: `1px solid ${cfg.cardBorder}`, display: "flex", gap: 3 }}>
                   {[
                     { k: "noPO",    label: "No PO",   pf: "No PO",            bg: "#F3F4F6", color: "#6B7280", border: "#D1D5DB" },
                     { k: "delayed", label: "Delayed",  pf: "Delayed",          bg: "#FEE2E2", color: "#B91C1C", border: "#FECACA" },
@@ -519,7 +599,7 @@ export default function StockHealthTab({
                   ].map(({ k, label, pf, bg, color, border }) => (
                     <span key={k}
                       onClick={e => { e.stopPropagation(); setFilterTag(tag); setFilterPoStatus(pf); }}
-                      title={`${cfg.label} · ${label === "Pend." ? "Pending Approval" : label}`}
+                      title={`${cfg.label} · PO: ${label === "Pend." ? "Pending Approval" : label}`}
                       style={{
                         flex: 1, textAlign: "center", fontSize: 9, fontWeight: 600,
                         padding: "2px 2px", borderRadius: 5, cursor: "pointer",
@@ -563,8 +643,16 @@ export default function StockHealthTab({
             <option value="Delayed">Delayed</option>
             <option value="No PO">No PO</option>
           </select>
+          {selectedDS !== "DC" && (
+            <select value={filterToStatus} onChange={e => setFilterToStatus(e.target.value)} style={SEL}>
+              <option value="All">All TO Status</option>
+              <option value="Draft">Picking</option>
+              <option value="In Transit">In Transit</option>
+              <option value="No TO">No TO</option>
+            </select>
+          )}
           <Tooltip text={
-            <><div style={{ fontWeight: 700, marginBottom: 4 }}>ECS (Effective Current Stock) = AFS + In Transit</div>
+            <><div style={{ fontWeight: 700, marginBottom: 4 }}>ECS (Effective Current Stock) = AFS</div>
             <div>Critical — ECS ≤ Min and daily sales ≥ 1 unit</div>
             <div>Low Stock — ECS ≤ Min (slow mover, not urgent)</div>
             <div>Okay — Min &lt; ECS ≤ Max</div>
@@ -578,9 +666,9 @@ export default function StockHealthTab({
               color: "#111827", lineHeight: 1, userSelect: "none",
             }}>i</span>
           </Tooltip>
-          {(search || filterTag || filterBrand !== "All" || selectedCat || filterPoStatus !== "All") && (
+          {(search || filterTag || filterBrand !== "All" || selectedCat || filterPoStatus !== "All" || filterToStatus !== "All") && (
             <button
-              onClick={() => { setSearch(""); setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); }}
+              onClick={() => { setSearch(""); setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); setFilterToStatus("All"); }}
               style={{
                 border: "none", borderRadius: 6, padding: "5px 12px",
                 fontSize: 11, fontWeight: 700, cursor: "pointer",
@@ -598,23 +686,29 @@ export default function StockHealthTab({
           {filteredRows.length > 0 && (
             <button
               onClick={() => {
-                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "SoH", "In Transit", "AFS", "Min", "Max", "ROS", "Ordered Qty", "Received Qty", "PO Date", "Est. Delivery", "PO Number", "PO Status"];
+                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "SoH", "AFS", "Min", "Max", "ROS", "Rep. Qty", "Rec Qty", "Date", "Est. Delivery", "Ref #", "Status"];
+                const isDCTab = selectedDS === "DC";
                 const rows = filteredRows.map(r => {
-                  const po = dsPoData[r.sku];
+                  const isDCInv = !isDCTab && r.invAt === "dc";
+                  const po = isDCInv ? null : dsPoData[r.sku];
+                  const to = isDCInv ? dsToData[r.sku] : null;
+                  const repQty    = isDCInv ? (to?.qty ?? "") : (po?.qty ?? "");
+                  const recQty    = isDCInv ? "" : (po?.received ?? "");
+                  const date      = isDCInv ? (to?.to_date ?? "") : (po?.po_date ?? "");
+                  const delivery  = isDCInv ? (to?.to_date ?? "") : (po?.delivery ?? "");
+                  const refNum    = isDCInv ? (to?.to_number ?? "") : (po?.po_number ?? "");
+                  const status    = isDCInv
+                    ? (to ? (TO_STATUS_BADGE[to.status] ?? to.status) : "")
+                    : (po ? (PO_STATUS_LABEL[getPoDisplayStatus(po)] ?? po.status) : "");
                   return [
                     r.sku,
                     `"${r.name.replace(/"/g, '""')}"`,
                     r.brand !== "—" ? `"${r.brand.replace(/"/g, '""')}"` : "",
                     TC[r.tag].label,
-                    Math.max(0, r.stockOnHand), Math.max(0, r.inTransit), Math.max(0, r.afs),
+                    Math.max(0, r.stockOnHand), Math.max(0, r.afs),
                     r.min, r.max,
                     r.ros > 0 ? Math.round(r.ros) : 0,
-                    po?.qty ?? "",
-                    po?.received ?? "",
-                    po?.po_date ?? "",
-                    po?.delivery ?? "",
-                    po?.po_number ?? "",
-                    po ? (PO_STATUS_LABEL[getPoDisplayStatus(po)] ?? po.status) : "",
+                    repQty, recQty, date, delivery, refNum, status,
                   ];
                 });
                 const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
@@ -660,7 +754,6 @@ export default function StockHealthTab({
                 <col style={{ width: 58 }} />   {/* Brand */}
                 <col style={{ width: 64 }} />   {/* Stock Health */}
                 <col style={{ width: 54 }} />   {/* Stock on Hand */}
-                <col style={{ width: 54 }} />   {/* In Transit */}
                 <col style={{ width: 54 }} />   {/* Avail. for Sale */}
                 <col style={{ width: 32 }} />   {/* Min */}
                 <col style={{ width: 32 }} />   {/* Max */}
@@ -681,18 +774,17 @@ export default function StockHealthTab({
                     ["Brand",          "left",   "4px 6px", false],
                     ["Stock Health",   "center", "4px 4px", false],
                     ["SoH",            "center", "4px 4px", false],
-                    ["In Transit",     "center", "4px 4px", false],
                     ["AFS",            "center", "4px 4px", false],
                     ["Min",            "center", "4px 4px", false],
                     ["Max",            "center", "4px 4px", false],
                     ["ROS",            "center", "4px 4px", false],
                     ["Req Qty",        "center", "4px 4px", false],
-                    ["Ord Qty",        "center", "4px 4px", false],
+                    ["Rep. Qty",       "center", "4px 4px", false],
                     ["Rec Qty",        "center", "4px 4px", false],
-                    ["PO Date",        "center", "4px 4px", false],
+                    ["Date",           "center", "4px 4px", false],
                     ["Est. Delivery",  "center", "4px 4px", false],
-                    ["PO Number",      "left",   "4px 6px", false],
-                    ["PO Status",      "center", "4px 4px", false],
+                    ["Ref #",          "left",   "4px 6px", false],
+                    ["Status",         "center", "4px 4px", false],
                   ].map(([label, align, pad, isSkuCol], i) => (
                     <th key={i} style={{
                       padding: pad, textAlign: align, fontSize: 9, fontWeight: 700,
@@ -711,7 +803,7 @@ export default function StockHealthTab({
               <tbody>
                 {filteredRows.length === 0 && (
                   <tr>
-                    <td colSpan={17} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
+                    <td colSpan={16} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
                       No SKUs match the current filter.
                     </td>
                   </tr>
@@ -771,11 +863,6 @@ export default function StockHealthTab({
                         {Math.max(0, row.stockOnHand)}
                       </td>
 
-                      {/* In Transit — highlight green when > 0 */}
-                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontWeight: row.inTransit > 0 ? 600 : 400, color: row.inTransit > 0 ? "#065F46" : HR.muted, background: row.inTransit > 0 ? "#A7F3D0" : "transparent", fontVariantNumeric: "tabular-nums" }}>
-                        {Math.max(0, row.inTransit)}
-                      </td>
-
                       {/* Available for Sale — health tag highlight */}
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontWeight: 600, color: cfg.textColor, background: cfg.ecsBg, fontVariantNumeric: "tabular-nums" }}>
                         {Math.max(0, row.afs)}
@@ -797,33 +884,73 @@ export default function StockHealthTab({
                         {row.reorderQty > 0 ? row.reorderQty : "—"}
                       </td>
 
-                      {/* ── PO columns ── */}
+                      {/* ── Order columns (PO for DS-inv, TO for DC-inv on DS tabs) ── */}
                       {(() => {
+                        const isDC    = selectedDS === "DC";
+                        const isDCInv = !isDC && row.invAt === "dc";
+                        if (isDCInv) {
+                          // Transfer Order columns
+                          const to = dsToData[row.sku];
+                          const toSt = to ? TO_STATUS_STYLE[to.status] : null;
+                          return (
+                            <>
+                              {/* Rep. Qty — green when > 0 */}
+                              <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontVariantNumeric: "tabular-nums", fontWeight: to?.qty > 0 ? 600 : 400, color: to?.qty > 0 ? "#16A34A" : HR.muted }}>
+                                {to ? to.qty : "—"}
+                              </td>
+                              {/* Rec Qty — blank for TOs */}
+                              <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted }}>—</td>
+                              {/* Date */}
+                              <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted }}>
+                                {to ? fmtDate(to.to_date) : "—"}
+                              </td>
+                              {/* Est. Delivery = same as TO Date */}
+                              <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: to ? HR.textSoft : HR.muted }}>
+                                {to ? fmtDate(to.to_date) : "—"}
+                              </td>
+                              {/* Ref # — TO number, links to Zoho Books */}
+                              <td style={{ padding: "2px 6px", borderTop: topBorder, fontSize: FS, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {to?.to_number ? (
+                                  <a href={`https://books.zoho.in/app/60044091518#/inventory/transferorders/${to.to_id}`}
+                                     target="_blank" rel="noopener noreferrer"
+                                     style={{ color: "#1D4ED8", textDecoration: "underline", fontWeight: 500 }}>
+                                    {to.to_number}
+                                  </a>
+                                ) : "—"}
+                              </td>
+                              {/* Status badge */}
+                              <td style={{ padding: NP, borderTop: topBorder, textAlign: "center" }}>
+                                {to && toSt ? (
+                                  <span style={{ display: "inline-block", padding: "1px 5px", borderRadius: 7, fontSize: 8.5, fontWeight: 700, whiteSpace: "nowrap", background: toSt.bg, color: toSt.color }}>
+                                    {TO_STATUS_BADGE[to.status] ?? to.status}
+                                  </span>
+                                ) : <span style={{ color: HR.muted, fontSize: FS }}>—</span>}
+                              </td>
+                            </>
+                          );
+                        }
+
+                        // Purchase Order columns
                         const po = dsPoData[row.sku];
-                        const poStyle = po ? PO_STATUS_STYLE[po.status] : null;
                         return (
                           <>
-                            {/* Ordered Qty */}
-                            <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontVariantNumeric: "tabular-nums", color: po ? HR.textSoft : HR.muted }}>
+                            {/* Rep. Qty — green when > 0 */}
+                            <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontVariantNumeric: "tabular-nums", fontWeight: po?.qty > 0 ? 600 : 400, color: po?.qty > 0 ? "#16A34A" : HR.muted }}>
                               {po ? po.qty : "—"}
                             </td>
-
-                            {/* Received Qty */}
+                            {/* Rec Qty */}
                             <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontVariantNumeric: "tabular-nums", color: po ? (po.received > 0 ? "#065F46" : HR.muted) : HR.muted }}>
                               {po ? (po.received ?? 0) : "—"}
                             </td>
-
-                            {/* PO Date */}
+                            {/* Date */}
                             <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted }}>
                               {po ? fmtDate(po.po_date) : "—"}
                             </td>
-
                             {/* Est. Delivery */}
                             <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: po?.delivery ? HR.textSoft : HR.muted }}>
                               {po?.delivery ? fmtDate(po.delivery) : "—"}
                             </td>
-
-                            {/* PO Number — clickable link to Zoho Books */}
+                            {/* Ref # — PO number, links to Zoho Books */}
                             <td style={{ padding: "2px 6px", borderTop: topBorder, fontSize: FS, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {po?.po_number ? (
                                 po.po_id ? (
@@ -835,8 +962,7 @@ export default function StockHealthTab({
                                 ) : <span style={{ color: HR.textSoft }}>{po.po_number}</span>
                               ) : "—"}
                             </td>
-
-                            {/* PO Status badge — uses derived status (includes Delayed) */}
+                            {/* Status badge */}
                             <td style={{ padding: NP, borderTop: topBorder, textAlign: "center" }}>
                               {po ? (() => {
                                 const ds = getPoDisplayStatus(po);

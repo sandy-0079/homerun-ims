@@ -66,7 +66,7 @@ Post-blend order (strict): New DS Floor → SKU Floor Override → Dead Stock ca
 
 Winsorising: daily demand capped at median×spikeCapMult before P95 to handle outlier days.
 
-**DC formula:** `DC = P95(direct-serving DSes) + ceil(Σ DS_Min × dcMult)`. Uses Σ DS_Min (not Σ(Max-Min)) so fast-movers get proportional DC buffer.
+**DC formula:** `DC = P95(direct-serving DSes) + ceil(Σ DS_Min × dcMult)`. Uses Σ DS_Min (not Σ(Max-Min)) so fast-movers get proportional DC buffer. **Floored SKUs:** DC result is floored to `max(network_dc, Σ DS_Min × skuFloorDCMultMin / Σ DS_Max × skuFloorDCMultMax)` — same global multipliers as non-network floored SKUs (defaults: 0.2/0.3).
 
 **Config:** Plywood tab → ⚙ Network Design Configuration (admin). Stored in `params/plywoodNetworkConfig` (separate from `params/global`). Saving auto-reruns engine. Key params: lookbackDays=90, minPercentile=95, maxBufferPercentile=75, maxCap=20, spikeCapMult=3, minNZD=2, sparseNZD=5, abqMult=1.5, dcCapacity={thick:400,thin:400}, per-brand dcMultMin/dcMultMax (tuned to 0.3/0.5).
 
@@ -87,7 +87,7 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 **Component:** `src/tabs/StockHealthTab.jsx`
 
 **Data sources (both synced hourly, `sync-stock` Edge Function, pg_cron at :35 UTC = :05 IST):**
-- **Stock:** Zoho Books Inventory Summary report per branch (6 branches × ~10 pages). Stored as `stockData[sku][ds] = { available_for_sale, in_transit }`.
+- **Stock:** Zoho Books Inventory Summary report per branch (6 branches × ~10 pages). Stored as `stockData[sku][ds] = { stock_on_hand, available_for_sale, in_transit }`. Zoho field mapping: `stock_on_hand` ← `quantity_available`, `available_for_sale` ← `quantity_available_for_sale`, `in_transit` ← `quantity_in_transit`.
 - **PO:** Replenishment POs (open + pending_approval, last 12 days) only. Incremental via `_poCache` — only new/modified POs need a detail call. Stored as `poData[ds][sku] = { qty, po_date, status, vendor, delivery, po_number }`.
 
 **Zoho Books branch IDs (confirmed):**
@@ -133,7 +133,8 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 
 ### 2. OOS Simulation Redesign ❌ Dropped (2026-04-21)
 
-### 3. Stock Health Tab ✅ Shipped (2026-05-14)
+### 3. Stock Health Tab ✅ Shipped (2026-05-14), updated (2026-05-20)
+Columns: SoH (Stock on Hand), In Transit, AFS (Available for Sale), Min, Max, ROS, Req Qty, PO cols. DOC column removed. In Transit highlighted green when > 0; AFS gets health-tag colour. ⓘ tooltip explains ECS logic. Item name native hover for truncated names. Global 85% zoom applied.
 
 ### 4. Rethink Tool Output Tab — fold buttons into Upload Data tab or keep separate?
 

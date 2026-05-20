@@ -20,8 +20,10 @@ const LOCATION_TO_DS: Record<string, string> = {
   'DC01 Rampura':        'DC',
 }
 
-const COOLDOWN_MINS  = 15
+const COOLDOWN_MINS    = 15
 const PO_LOOKBACK_DAYS = 12
+const TO_LOOKBACK_DAYS = 12
+const DC_BRANCH_ID     = '2753232000017648109'
 
 // ─── Zoho OAuth ───────────────────────────────────────────────────────────────
 async function getZohoToken(): Promise<string> {
@@ -78,6 +80,44 @@ async function fetchBranchStock(token: string, branchId: string, showActualStock
     }
   }
   return result
+}
+
+// ─── TO: fetch active Transfer Orders from DC (last N days) ──────────────────
+async function fetchActiveTOList(token: string, cutoff: string): Promise<Record<string, any>> {
+  const org    = Deno.env.get('ZOHO_ORG_ID')
+  const active: Record<string, any> = {}
+
+  for (const status of ['draft', 'in_transit']) {
+    let page = 1
+    while (true) {
+      const res = await fetch(
+        `https://www.zohoapis.in/books/v3/transferorders?organization_id=${org}&status=${status}&per_page=200&sort_column=date&sort_order=D&page=${page}`,
+        { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
+      )
+      const data = await res.json()
+      const tos: any[] = data.transfer_orders ?? []
+
+      let reachedCutoff = false
+      for (const to of tos) {
+        if (to.date < cutoff) { reachedCutoff = true; break }
+        if (to.from_location_id !== DC_BRANCH_ID) continue  // only DC-originated TOs
+        active[to.transfer_order_id] = to
+      }
+      if (reachedCutoff || !data.page_context?.has_more_page) break
+      page++
+    }
+  }
+  return active
+}
+
+// ─── TO: fetch detail for one TO ─────────────────────────────────────────────
+async function fetchTODetail(token: string, toId: string): Promise<any> {
+  const res = await fetch(
+    `https://www.zohoapis.in/books/v3/transferorders/${toId}?organization_id=${Deno.env.get('ZOHO_ORG_ID')}`,
+    { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
+  )
+  const data = await res.json()
+  return data.transfer_order ?? null
 }
 
 // ─── PO: fetch active Replenishment PO list (last N days) ────────────────────
@@ -250,6 +290,75 @@ Deno.serve(async () => {
       }
     }
 
+    // ── Phase C: TO sync (Draft + In Transit, last 12 days, from DC) ──────────
+    const toCutoff = new Date(now.getTime() - TO_LOOKBACK_DAYS * 24 * 60 * 60 * 1000)
+      .toISOString().split('T')[0]
+
+    console.log(`Fetching TO list (last ${TO_LOOKBACK_DAYS} days, draft+in_transit from DC)...`)
+    const activeTOs = await fetchActiveTOList(token, toCutoff)
+
+    const currentToCache: Record<string, any> = row?.payload?._toCache ?? {}
+    const updatedToCache: Record<string, any> = {}
+
+    let toDetailCalls = 0
+    for (const [toId, to] of Object.entries(activeTOs)) {
+      const cached = currentToCache[toId]
+      if (cached && cached.last_modified === to.last_modified_time) {
+        updatedToCache[toId] = cached
+      } else {
+        console.log(`Fetching TO detail: ${to.transfer_order_number}`)
+        const detail = await fetchTODetail(token, toId)
+        if (!detail) continue
+        const ds = LOCATION_TO_DS[detail.to_location_name ?? '']
+        if (!ds) continue
+
+        const skus: Record<string, { qty: number }> = {}
+        for (const li of detail.line_items ?? []) {
+          const sku = (li.sku ?? '').trim()
+          if (sku) skus[sku] = { qty: li.quantity_transfer ?? 0 }
+        }
+
+        updatedToCache[toId] = {
+          last_modified: to.last_modified_time,
+          date:          to.date,
+          status:        to.status,
+          to_number:     to.transfer_order_number,
+          to_id:         toId,
+          ds,
+          skus,
+        }
+        toDetailCalls++
+      }
+    }
+    console.log(`TO sync: ${Object.keys(activeTOs).length} active, ${toDetailCalls} detail calls`)
+
+    // Rebuild toData — sort by date DESC so latest TO wins per SKU×DS
+    const toData: Record<string, Record<string, any>> = {}
+    const sortedTOEntries = Object.values(updatedToCache)
+      .sort((a, b) => {
+        // in_transit beats draft — then latest date within same status
+        const statusRank = (s: string) => s === 'in_transit' ? 0 : 1
+        return statusRank(a.status) - statusRank(b.status)
+          || b.date.localeCompare(a.date)
+          || b.last_modified.localeCompare(a.last_modified)
+      })
+
+    for (const entry of sortedTOEntries) {
+      const ds = entry.ds
+      if (!toData[ds]) toData[ds] = {}
+      for (const [sku, skuData] of Object.entries(entry.skus as Record<string, { qty: number }>)) {
+        if (!toData[ds][sku]) {
+          toData[ds][sku] = {
+            qty:       skuData.qty,
+            to_date:   entry.date,
+            status:    entry.status,
+            to_number: entry.to_number,
+            to_id:     entry.to_id,
+          }
+        }
+      }
+    }
+
     // ── Write merged payload ──────────────────────────────────────────────────
     const merged = {
       ...(row?.payload ?? {}),
@@ -259,6 +368,8 @@ Deno.serve(async () => {
       stockUploadedAt: nowIso,
       poData,
       _poCache: updatedPoCache,
+      toData,
+      _toCache: updatedToCache,
     }
 
     const { error: writeErr } = await supabase
@@ -271,6 +382,8 @@ Deno.serve(async () => {
       stock_modes:     2,
       po_count:        Object.keys(activePOs).length,
       po_detail_calls: detailCalls,
+      to_count:        Object.keys(activeTOs).length,
+      to_detail_calls: toDetailCalls,
       locations:       Object.keys(BRANCHES),
     }
     console.log('sync-stock complete:', JSON.stringify(summary))
