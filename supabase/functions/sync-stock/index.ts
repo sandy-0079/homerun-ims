@@ -110,6 +110,65 @@ async function fetchActiveTOList(token: string, cutoff: string): Promise<Record<
   return active
 }
 
+// ─── TO: fetch TOs transferred today IST (by last_modified_time) from DC ─────
+// Uses a 2-day date window so TOs raised yesterday but transferred today are caught.
+// Filters in-memory to last_modified_time >= midnight IST (the actual transfer time).
+async function fetchTransferredToday(
+  token: string,
+  transferredCutoff: string,
+  midnightISTasUTC: string,
+): Promise<Record<string, any>> {
+  const org = Deno.env.get('ZOHO_ORG_ID')
+  const candidates: Array<{ id: string; to: any }> = []
+
+  let page = 1
+  while (true) {
+    const res = await fetch(
+      `https://www.zohoapis.in/books/v3/transferorders?organization_id=${org}&status=transferred&per_page=200&sort_column=date&sort_order=D&page=${page}`,
+      { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
+    )
+    const data = await res.json()
+    const tos: any[] = data.transfer_orders ?? []
+
+    let pastCutoff = false
+    for (const to of tos) {
+      if (to.date < transferredCutoff) { pastCutoff = true; break }
+      if (to.from_location_id !== DC_BRANCH_ID) continue
+      const modifiedMs = to.last_modified_time ? new Date(to.last_modified_time).getTime() : 0
+      if (modifiedMs >= new Date(midnightISTasUTC).getTime()) {
+        candidates.push({ id: to.transfer_order_id, to })
+      }
+    }
+    if (pastCutoff || !data.page_context?.has_more_page) break
+    page++
+  }
+
+  // Fetch line items — most recently transferred TO wins per SKU×DS
+  const result: Record<string, any> = {}
+  for (const { id: toId, to } of candidates) {
+    const detail = await fetchTODetail(token, toId)
+    if (!detail) continue
+    const ds = LOCATION_TO_DS[detail.to_location_name ?? '']
+    if (!ds) continue
+    for (const li of detail.line_items ?? []) {
+      const sku = (li.sku ?? '').trim()
+      if (!sku) continue
+      const key = `${ds}:${sku}`
+      const existing = result[key]
+      if (!existing || to.last_modified_time > existing._lastModified) {
+        result[key] = {
+          qty:           li.quantity_transfer ?? 0,
+          to_date:       to.date,
+          to_number:     to.transfer_order_number,
+          to_id:         toId,
+          _lastModified: to.last_modified_time,
+        }
+      }
+    }
+  }
+  return result
+}
+
 // ─── TO: fetch detail for one TO ─────────────────────────────────────────────
 async function fetchTODetail(token: string, toId: string): Promise<any> {
   const res = await fetch(
@@ -332,11 +391,43 @@ Deno.serve(async () => {
     }
     console.log(`TO sync: ${Object.keys(activeTOs).length} active, ${toDetailCalls} detail calls`)
 
-    // Rebuild toData — sort by date DESC so latest TO wins per SKU×DS
+    // Compute midnight IST as UTC — transferred after this timestamp = "transferred today"
+    const nowIST           = new Date(now.getTime() + 5.5 * 3600 * 1000)
+    const todayIST         = nowIST.toISOString().split('T')[0]
+    const midnightISTasUTC = new Date(todayIST + 'T00:00:00+05:30').toISOString()
+    // 2-day date window to catch TOs raised yesterday but transferred today
+    const transferredCutoff = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000)
+      .toISOString().split('T')[0]
+
+    console.log(`Fetching transferred TOs since midnight IST (${midnightISTasUTC})...`)
+    let transferredToday: Record<string, any> = {}
+    try {
+      transferredToday = await fetchTransferredToday(token, transferredCutoff, midnightISTasUTC)
+    } catch (err) {
+      console.warn('fetchTransferredToday failed (non-critical, skipping):', err)
+    }
+    console.log(`Transferred today: ${Object.keys(transferredToday).length} SKU×DS combos`)
+
+    // Build toData — pass 1: transferred today (highest priority, shows "Received")
     const toData: Record<string, Record<string, any>> = {}
+    for (const [key, entry] of Object.entries(transferredToday)) {
+      const colonIdx = key.indexOf(':')
+      const ds  = key.slice(0, colonIdx)
+      const sku = key.slice(colonIdx + 1)
+      if (!toData[ds]) toData[ds] = {}
+      toData[ds][sku] = {
+        qty:       entry.qty,
+        rec_qty:   entry.qty,   // transferred qty = received qty
+        to_date:   entry.to_date,
+        status:    'transferred',
+        to_number: entry.to_number,
+        to_id:     entry.to_id,
+      }
+    }
+
+    // Pass 2: active (draft/in_transit) — in_transit beats draft; skip if already transferred
     const sortedTOEntries = Object.values(updatedToCache)
       .sort((a, b) => {
-        // in_transit beats draft — then latest date within same status
         const statusRank = (s: string) => s === 'in_transit' ? 0 : 1
         return statusRank(a.status) - statusRank(b.status)
           || b.date.localeCompare(a.date)
@@ -347,14 +438,14 @@ Deno.serve(async () => {
       const ds = entry.ds
       if (!toData[ds]) toData[ds] = {}
       for (const [sku, skuData] of Object.entries(entry.skus as Record<string, { qty: number }>)) {
-        if (!toData[ds][sku]) {
-          toData[ds][sku] = {
-            qty:       skuData.qty,
-            to_date:   entry.date,
-            status:    entry.status,
-            to_number: entry.to_number,
-            to_id:     entry.to_id,
-          }
+        if (toData[ds][sku]) continue  // already has transferred entry
+        toData[ds][sku] = {
+          qty:       skuData.qty,
+          rec_qty:   null,
+          to_date:   entry.date,
+          status:    entry.status,
+          to_number: entry.to_number,
+          to_id:     entry.to_id,
         }
       }
     }
