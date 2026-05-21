@@ -160,14 +160,17 @@ async function fetchTransferredToday(
     page++
   }
 
-  // Fetch detail only for new/modified candidates; reuse cache for unchanged ones
+  // Fetch detail only for new/modified candidates; reuse cache for unchanged ones.
+  // Cap new detail calls per run — prevents cold-cache timeout when many TOs need fetching.
+  // Remaining uncached TOs are picked up on the next run as the cache warms up.
+  const MAX_NEW_DETAIL_CALLS = 15
   const updatedCache: Record<string, any> = {}
   let detailCalls = 0
   for (const { id: toId, to } of candidates) {
     const cached = existingCache[toId]
     if (cached && cached.last_modified === to.last_modified_time) {
       updatedCache[toId] = cached
-    } else {
+    } else if (detailCalls < MAX_NEW_DETAIL_CALLS) {
       const detail = await fetchTODetail(token, toId)
       if (!detail) continue
       const ds = LOCATION_TO_DS[detail.to_location_name ?? '']
@@ -188,7 +191,7 @@ async function fetchTransferredToday(
       detailCalls++
     }
   }
-  console.log(`Transferred today candidates: ${candidates.length}, detail calls: ${detailCalls}`)
+  console.log(`Transferred today candidates: ${candidates.length}, detail calls: ${detailCalls}, capped: ${detailCalls === MAX_NEW_DETAIL_CALLS}`)
 
   // Build result — most recently transferred TO wins per SKU×DS
   const entries: Record<string, any> = {}
