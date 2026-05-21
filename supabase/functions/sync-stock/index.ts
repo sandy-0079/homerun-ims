@@ -163,7 +163,7 @@ async function fetchTransferredToday(
   // Fetch detail only for new/modified candidates; reuse cache for unchanged ones.
   // Cap new detail calls per run — prevents cold-cache timeout when many TOs need fetching.
   // Remaining uncached TOs are picked up on the next run as the cache warms up.
-  const MAX_NEW_DETAIL_CALLS = 15
+  const MAX_NEW_DETAIL_CALLS = 50
   const updatedCache: Record<string, any> = {}
   let detailCalls = 0
   for (const { id: toId, to } of candidates) {
