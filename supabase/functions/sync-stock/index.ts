@@ -22,7 +22,7 @@ const LOCATION_TO_DS: Record<string, string> = {
 
 const COOLDOWN_MINS    = 15
 const PO_LOOKBACK_DAYS = 12
-const TO_LOOKBACK_DAYS = 12
+const TO_LOOKBACK_DAYS = 3
 const DC_BRANCH_ID     = '2753232000017648109'
 
 // ─── Zoho OAuth ───────────────────────────────────────────────────────────────
