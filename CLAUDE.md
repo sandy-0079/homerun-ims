@@ -22,7 +22,7 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 - Invoice CSV (Zoho export) replaces entirely on upload — no merge. Engine uses whatever period admin sets.
 - All uploads auto-save to Supabase `team_data` immediately.
 - Model refresh: upload → Apply & Re-run Model → results pushed to Supabase → all users see new Min/Max.
-- Stock Health: auto-synced hourly from Zoho Books API (Edge Function `sync-stock`). Stored in `team_data.stockData` (stock) + `team_data.poData` (PO data) + `team_data.toData` (TO data) + `team_data._poCache` / `_toCache` (change-detection indexes).
+- Stock Health: auto-synced hourly from Zoho Books API (Edge Function `sync-stock`). Stored in `team_data.stockData` (stock) + `team_data.poData` (PO data) + `team_data.toData` (TO data) + `team_data._poCache` / `_toCache` / `_transferredTodayCache` (change-detection indexes).
 - **Edge Function deploy:** Always use `supabase functions deploy sync-stock --no-verify-jwt`. The cron job calls via `pg_net` with no Authorization header — omitting `--no-verify-jwt` resets JWT verification to required (default) and all cron runs silently return 401.
 
 ---
@@ -92,7 +92,7 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - **PO:** Replenishment POs (open + pending_approval + partially_billed, last 12 days). Incremental via `_poCache`. Stored as `poData[ds][sku] = { qty, received, po_date, status, delivery, po_number, po_id }`.
 - **TO:** Transfer Orders from DC. Two fetches per sync:
   - Active (draft + in_transit, last 12 days): incremental via `_toCache`. Priority: in_transit > draft; latest date/last_modified wins within same status.
-  - Transferred today IST: fetched fresh each sync (2-day date window, filtered to `last_modified_time >= midnight IST` using Date comparison). No caching — small bounded set.
+  - Transferred today IST: incremental via `_transferredTodayCache` (same pattern as `_poCache`/`_toCache`). 2-day date window fetches list; detail calls only for new/modified TOs. Filtered to `last_modified_time >= midnight IST` using Date comparison (not string compare — timezone formats differ).
   - Stored as `toData[ds][sku] = { qty, rec_qty, to_date, status, to_number, to_id }` keyed by destination DS. `rec_qty` = qty for transferred, null for draft/in_transit. Priority: transferred (today) > in_transit > draft.
   - `fetchTransferredToday` is wrapped in try-catch — if Zoho call fails, sync continues with draft/in_transit data only.
 
@@ -134,6 +134,14 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - "Transferred today" uses `last_modified_time` (the actual transfer timestamp), not `date` (creation date). TOs raised yesterday but transferred today are correctly captured via the 2-day date window + midnight IST filter.
 - At midnight IST rollover: transferred TOs fall out of "today" window; new draft TOs raised that night take over at the 00:05 IST sync.
 - Rec Qty shown for transferred TOs (= qty sent); "—" for draft/in_transit.
+
+**Sync performance constraints (150s Supabase Edge Function wall time):**
+- `inventorysummary` report takes ~18s/call per branch — the dominant cost.
+- Stock fetch uses **2 concurrent per branch** (physical + accounting in parallel, sequential across 6 branches): 6 × 18s ≈ 108s. Running all 12 calls sequentially = 216s → timeout. Running 3 branches in parallel (6 concurrent) → Zoho 429.
+- PO + TO + transferred today (all cache-incremental after first sync) ≈ 20s.
+- Total per sync ≈ 128s — ~22s margin before the 150s wall.
+- `zohoFetch` retry wrapper: on 429, waits 10s then 20s (3 attempts). Handles transient quota spikes from rapid manual syncs without crashing. The 429s seen on 2026-05-21 were from hammering the API during debugging (4 deploys + manual syncs in 30 min), not from normal hourly operation.
+- OPTIONS preflight: handler checks `req.method === 'OPTIONS'` and returns immediately — prevents browser CORS preflight from running the full 150s sync.
 
 ---
 

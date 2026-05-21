@@ -41,6 +41,21 @@ async function getZohoToken(): Promise<string> {
   return data.access_token
 }
 
+// ─── Retry helper — waits and retries on Zoho 429 ────────────────────────────
+async function zohoFetch(url: string, token: string): Promise<Response> {
+  const opts = { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const res = await fetch(url, opts)
+    if (res.status !== 429) return res
+    if (attempt < 3) {
+      const wait = attempt * 10_000  // 10s, 20s
+      console.warn(`Zoho 429 (attempt ${attempt}/3), retrying in ${wait / 1000}s...`)
+      await new Promise(r => setTimeout(r, wait))
+    }
+  }
+  throw new Error('Zoho API 429 after 3 attempts')
+}
+
 // ─── Stock: fetch all pages for one branch ────────────────────────────────────
 // showActualStock=true  → Bills & Invoices (Physical)
 // showActualStock=false → Shipments & Receives (Accounting)
@@ -61,7 +76,7 @@ async function fetchBranchStock(token: string, branchId: string, showActualStock
   const allItems: any[] = []
   let page = 1
   while (true) {
-    const res = await fetch(`${base}&page=${page}`, { headers: { Authorization: `Zoho-oauthtoken ${token}` } })
+    const res = await zohoFetch(`${base}&page=${page}`, token)
     if (!res.ok) throw new Error(`Zoho API ${res.status} on page ${page}`)
     const data = await res.json()
     allItems.push(...(data.inventory?.[0]?.item_details ?? []))
@@ -113,11 +128,13 @@ async function fetchActiveTOList(token: string, cutoff: string): Promise<Record<
 // ─── TO: fetch TOs transferred today IST (by last_modified_time) from DC ─────
 // Uses a 2-day date window so TOs raised yesterday but transferred today are caught.
 // Filters in-memory to last_modified_time >= midnight IST (the actual transfer time).
+// Caches detail calls — same pattern as _poCache/_toCache.
 async function fetchTransferredToday(
   token: string,
   transferredCutoff: string,
   midnightISTasUTC: string,
-): Promise<Record<string, any>> {
+  existingCache: Record<string, any>,
+): Promise<{ entries: Record<string, any>; updatedCache: Record<string, any> }> {
   const org = Deno.env.get('ZOHO_ORG_ID')
   const candidates: Array<{ id: string; to: any }> = []
 
@@ -143,30 +160,54 @@ async function fetchTransferredToday(
     page++
   }
 
-  // Fetch line items — most recently transferred TO wins per SKU×DS
-  const result: Record<string, any> = {}
+  // Fetch detail only for new/modified candidates; reuse cache for unchanged ones
+  const updatedCache: Record<string, any> = {}
+  let detailCalls = 0
   for (const { id: toId, to } of candidates) {
-    const detail = await fetchTODetail(token, toId)
-    if (!detail) continue
-    const ds = LOCATION_TO_DS[detail.to_location_name ?? '']
-    if (!ds) continue
-    for (const li of detail.line_items ?? []) {
-      const sku = (li.sku ?? '').trim()
-      if (!sku) continue
-      const key = `${ds}:${sku}`
-      const existing = result[key]
-      if (!existing || to.last_modified_time > existing._lastModified) {
-        result[key] = {
-          qty:           li.quantity_transfer ?? 0,
-          to_date:       to.date,
-          to_number:     to.transfer_order_number,
+    const cached = existingCache[toId]
+    if (cached && cached.last_modified === to.last_modified_time) {
+      updatedCache[toId] = cached
+    } else {
+      const detail = await fetchTODetail(token, toId)
+      if (!detail) continue
+      const ds = LOCATION_TO_DS[detail.to_location_name ?? '']
+      if (!ds) continue
+      const skus: Record<string, number> = {}
+      for (const li of detail.line_items ?? []) {
+        const sku = (li.sku ?? '').trim()
+        if (sku) skus[sku] = li.quantity_transfer ?? 0
+      }
+      updatedCache[toId] = {
+        last_modified: to.last_modified_time,
+        date:          to.date,
+        to_number:     to.transfer_order_number,
+        to_id:         toId,
+        ds,
+        skus,
+      }
+      detailCalls++
+    }
+  }
+  console.log(`Transferred today candidates: ${candidates.length}, detail calls: ${detailCalls}`)
+
+  // Build result — most recently transferred TO wins per SKU×DS
+  const entries: Record<string, any> = {}
+  for (const [toId, cached] of Object.entries(updatedCache)) {
+    for (const [sku, qty] of Object.entries(cached.skus as Record<string, number>)) {
+      const key = `${cached.ds}:${sku}`
+      const existing = entries[key]
+      if (!existing || cached.last_modified > existing._lastModified) {
+        entries[key] = {
+          qty:           qty,
+          to_date:       cached.date,
+          to_number:     cached.to_number,
           to_id:         toId,
-          _lastModified: to.last_modified_time,
+          _lastModified: cached.last_modified,
         }
       }
     }
   }
-  return result
+  return { entries, updatedCache }
 }
 
 // ─── TO: fetch detail for one TO ─────────────────────────────────────────────
@@ -261,26 +302,23 @@ Deno.serve(async (req) => {
     const stockDataAccounting: Record<string, Record<string, any>> = {} // Accounting (Shipments & Receives)
     const stockUploadedAtPerDS: Record<string, string> = {}
 
-    // Fetch 3 branches in parallel per batch (2 batches of 3) — cuts stock time ~4×
-    // vs fully sequential without overwhelming Zoho's rate limit
-    const branchEntries = Object.entries(BRANCHES)
-    for (let i = 0; i < branchEntries.length; i += 3) {
-      await Promise.all(branchEntries.slice(i, i + 3).map(async ([ds, branchId]) => {
-        console.log(`Fetching stock: ${ds} (both modes)...`)
-        const [physicalStock, accountingStock] = await Promise.all([
-          fetchBranchStock(token, branchId, true),
-          fetchBranchStock(token, branchId, false),
-        ])
-        for (const [sku, vals] of Object.entries(physicalStock)) {
-          if (!stockData[sku]) stockData[sku] = {}
-          stockData[sku][ds] = vals
-        }
-        for (const [sku, vals] of Object.entries(accountingStock)) {
-          if (!stockDataAccounting[sku]) stockDataAccounting[sku] = {}
-          stockDataAccounting[sku][ds] = vals
-        }
-        stockUploadedAtPerDS[ds] = nowIso
-      }))
+    // 2 concurrent per branch (physical + accounting in parallel), sequential across branches
+    // inventorysummary takes ~18s/call — 6×18s=108s fits in 150s; 12×18s does not
+    for (const [ds, branchId] of Object.entries(BRANCHES)) {
+      console.log(`Fetching stock: ${ds}...`)
+      const [physicalStock, accountingStock] = await Promise.all([
+        fetchBranchStock(token, branchId, true),
+        fetchBranchStock(token, branchId, false),
+      ])
+      for (const [sku, vals] of Object.entries(physicalStock)) {
+        if (!stockData[sku]) stockData[sku] = {}
+        stockData[sku][ds] = vals
+      }
+      for (const [sku, vals] of Object.entries(accountingStock)) {
+        if (!stockDataAccounting[sku]) stockDataAccounting[sku] = {}
+        stockDataAccounting[sku][ds] = vals
+      }
+      stockUploadedAtPerDS[ds] = nowIso
     }
 
     // ── Phase B: PO sync (Replenishment, last 12 days, incremental) ──────────
@@ -411,10 +449,14 @@ Deno.serve(async (req) => {
     const transferredCutoff = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000)
       .toISOString().split('T')[0]
 
+    const currentTransferredCache: Record<string, any> = row?.payload?._transferredTodayCache ?? {}
     console.log(`Fetching transferred TOs since midnight IST (${midnightISTasUTC})...`)
     let transferredToday: Record<string, any> = {}
+    let updatedTransferredCache: Record<string, any> = {}
     try {
-      transferredToday = await fetchTransferredToday(token, transferredCutoff, midnightISTasUTC)
+      const result = await fetchTransferredToday(token, transferredCutoff, midnightISTasUTC, currentTransferredCache)
+      transferredToday = result.entries
+      updatedTransferredCache = result.updatedCache
     } catch (err) {
       console.warn('fetchTransferredToday failed (non-critical, skipping):', err)
     }
@@ -473,6 +515,7 @@ Deno.serve(async (req) => {
       _poCache: updatedPoCache,
       toData,
       _toCache: updatedToCache,
+      _transferredTodayCache: updatedTransferredCache,
     }
 
     const { error: writeErr } = await supabase
