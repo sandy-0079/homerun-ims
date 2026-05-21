@@ -73,10 +73,10 @@ function dsAccent(ds) {
 const TO_STATUS_BADGE = {
   draft:       'Picking',
   in_transit:  'In Transit',
-  transferred: 'Received',
+  transferred: 'Transferred',
 }
 const TO_STATUS_STYLE = {
-  draft:       { bg: '#F3F4F6', color: '#374151' },
+  draft:       { bg: '#FEF3C7', color: '#92400E' },
   in_transit:  { bg: '#DBEAFE', color: '#1E40AF' },
   transferred: { bg: '#D1FAE5', color: '#065F46' },
 }
@@ -572,9 +572,9 @@ export default function StockHealthTab({
                   <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${cfg.cardBorder}`, display: "flex", gap: 3 }}>
                     {[
                       { k: "noTO",      label: "No TO",      tf: "No TO",      bg: "#F3F4F6", color: "#6B7280", border: "#D1D5DB" },
-                      { k: "draft",     label: "Picking",    tf: "Draft",      bg: "#F3F4F6", color: "#374151", border: "#D1D5DB" },
+                      { k: "draft",     label: "Picking",    tf: "Draft",      bg: "#FEF3C7", color: "#92400E", border: "#FDE68A" },
                       { k: "inTransit", label: "In Transit", tf: "In Transit", bg: "#DBEAFE", color: "#1E40AF", border: "#BFDBFE" },
-                      { k: "received",  label: "Received",   tf: "Received",   bg: "#D1FAE5", color: "#065F46", border: "#A7F3D0" },
+                      { k: "received",  label: "Transferred", tf: "Received",   bg: "#D1FAE5", color: "#065F46", border: "#A7F3D0" },
                     ].map(({ k, label, tf, bg, color, border }) => (
                       <span key={k}
                         onClick={e => { e.stopPropagation(); setFilterTag(tag); setFilterToStatus(tf); }}
@@ -653,7 +653,7 @@ export default function StockHealthTab({
               <option value="All">All TO Status</option>
               <option value="Draft">Picking</option>
               <option value="In Transit">In Transit</option>
-              <option value="Received">Received</option>
+              <option value="Received">Transferred</option>
               <option value="No TO">No TO</option>
             </select>
           )}
@@ -692,8 +692,10 @@ export default function StockHealthTab({
           {filteredRows.length > 0 && (
             <button
               onClick={() => {
-                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "SoH", "AFS", "Min", "Max", "ROS", "Rep. Qty", "Rec Qty", "Date", "Est. Delivery", "Ref #", "Status"];
                 const isDCTab = selectedDS === "DC";
+                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "SoH", "AFS", "Min", "Max", "ROS", "Req Qty",
+                  ...(!isDCTab ? ["DC Stock"] : []),
+                  "Rep. Qty", "Rec Qty", "Date", "Est. Delivery", "Ref #", "Status"];
                 const rows = filteredRows.map(r => {
                   const isDCInv = !isDCTab && r.invAt === "dc";
                   const po = isDCInv ? null : dsPoData[r.sku];
@@ -706,6 +708,9 @@ export default function StockHealthTab({
                   const status    = isDCInv
                     ? (to ? (TO_STATUS_BADGE[to.status] ?? to.status) : "")
                     : (po ? (PO_STATUS_LABEL[getPoDisplayStatus(po)] ?? po.status) : "");
+                  const dcStockVal = !isDCTab && isDCInv
+                    ? (() => { const dcLive = activeStockData[r.sku]?.["DC"]; return dcLive != null ? Math.max(0, getLive(dcLive).afs) : ""; })()
+                    : "";
                   return [
                     r.sku,
                     `"${r.name.replace(/"/g, '""')}"`,
@@ -714,6 +719,8 @@ export default function StockHealthTab({
                     Math.max(0, r.stockOnHand), Math.max(0, r.afs),
                     r.min, r.max,
                     r.ros > 0 ? Math.round(r.ros) : 0,
+                    r.reorderQty > 0 ? r.reorderQty : "",
+                    ...(!isDCTab ? [dcStockVal] : []),
                     repQty, recQty, date, delivery, refNum, status,
                   ];
                 });
@@ -765,6 +772,7 @@ export default function StockHealthTab({
                 <col style={{ width: 32 }} />   {/* Max */}
                 <col style={{ width: 34 }} />   {/* ROS */}
                 <col style={{ width: 52 }} />   {/* Req Qty */}
+                {selectedDS !== "DC" && <col style={{ width: 44 }} />}  {/* DC Stock */}
                 <col style={{ width: 54 }} />   {/* Ordered Qty */}
                 <col style={{ width: 58 }} />   {/* Received Qty */}
                 <col style={{ width: 60 }} />   {/* PO Date */}
@@ -785,6 +793,7 @@ export default function StockHealthTab({
                     ["Max",            "center", "4px 4px", false],
                     ["ROS",            "center", "4px 4px", false],
                     ["Req Qty",        "center", "4px 4px", false],
+                    ...(selectedDS !== "DC" ? [["DC Stock", "center", "4px 4px", false]] : []),
                     ["Rep. Qty",       "center", "4px 4px", false],
                     ["Rec Qty",        "center", "4px 4px", false],
                     ["Date",           "center", "4px 4px", false],
@@ -809,7 +818,7 @@ export default function StockHealthTab({
               <tbody>
                 {filteredRows.length === 0 && (
                   <tr>
-                    <td colSpan={16} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
+                    <td colSpan={selectedDS !== "DC" ? 17 : 16} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
                       No SKUs match the current filter.
                     </td>
                   </tr>
@@ -889,6 +898,21 @@ export default function StockHealthTab({
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontWeight: row.reorderQty > 0 ? 600 : 400, color: row.reorderQty > 0 ? cfg.textColor : HR.muted, fontVariantNumeric: "tabular-nums" }}>
                         {row.reorderQty > 0 ? row.reorderQty : "—"}
                       </td>
+
+                      {/* DC Stock — DS tabs only, meaningful for DC-inv SKUs */}
+                      {selectedDS !== "DC" && (() => {
+                        const dcLive = activeStockData[row.sku]?.["DC"];
+                        const dcAfs  = dcLive != null ? Math.max(0, getLive(dcLive).afs) : null;
+                        const show   = row.invAt === "dc";
+                        return (
+                          <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontVariantNumeric: "tabular-nums",
+                            fontWeight: show && dcAfs > 0 ? 600 : 400,
+                            color: !show ? HR.muted : dcAfs == null ? HR.muted : dcAfs > 0 ? "#16A34A" : "#DC2626",
+                          }}>
+                            {show ? (dcAfs != null ? dcAfs : "—") : "—"}
+                          </td>
+                        );
+                      })()}
 
                       {/* ── Order columns (PO for DS-inv, TO for DC-inv on DS tabs) ── */}
                       {(() => {
