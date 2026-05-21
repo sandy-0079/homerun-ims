@@ -254,21 +254,26 @@ Deno.serve(async () => {
     const stockDataAccounting: Record<string, Record<string, any>> = {} // Accounting (Shipments & Receives)
     const stockUploadedAtPerDS: Record<string, string> = {}
 
-    for (const [ds, branchId] of Object.entries(BRANCHES)) {
-      console.log(`Fetching stock: ${ds} (both modes)...`)
-      const [physicalStock, accountingStock] = await Promise.all([
-        fetchBranchStock(token, branchId, true),   // Physical (Bills & Invoices) = show_actual_stock=true
-        fetchBranchStock(token, branchId, false),  // Accounting (Shipments & Receives) = show_actual_stock=false
-      ])
-      for (const [sku, vals] of Object.entries(physicalStock)) {
-        if (!stockData[sku]) stockData[sku] = {}
-        stockData[sku][ds] = vals
-      }
-      for (const [sku, vals] of Object.entries(accountingStock)) {
-        if (!stockDataAccounting[sku]) stockDataAccounting[sku] = {}
-        stockDataAccounting[sku][ds] = vals
-      }
-      stockUploadedAtPerDS[ds] = nowIso
+    // Fetch 3 branches in parallel per batch (2 batches of 3) — cuts stock time ~4×
+    // vs fully sequential without overwhelming Zoho's rate limit
+    const branchEntries = Object.entries(BRANCHES)
+    for (let i = 0; i < branchEntries.length; i += 3) {
+      await Promise.all(branchEntries.slice(i, i + 3).map(async ([ds, branchId]) => {
+        console.log(`Fetching stock: ${ds} (both modes)...`)
+        const [physicalStock, accountingStock] = await Promise.all([
+          fetchBranchStock(token, branchId, true),
+          fetchBranchStock(token, branchId, false),
+        ])
+        for (const [sku, vals] of Object.entries(physicalStock)) {
+          if (!stockData[sku]) stockData[sku] = {}
+          stockData[sku][ds] = vals
+        }
+        for (const [sku, vals] of Object.entries(accountingStock)) {
+          if (!stockDataAccounting[sku]) stockDataAccounting[sku] = {}
+          stockDataAccounting[sku][ds] = vals
+        }
+        stockUploadedAtPerDS[ds] = nowIso
+      }))
     }
 
     // ── Phase B: PO sync (Replenishment, last 12 days, incremental) ──────────
