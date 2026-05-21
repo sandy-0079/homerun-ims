@@ -218,7 +218,14 @@ async function fetchPODetail(token: string, poId: string): Promise<any> {
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    }})
+  }
+
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
