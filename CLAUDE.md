@@ -91,8 +91,8 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - **Stock:** Zoho Books Inventory Summary report per branch (6 branches × ~10 pages). Stored as `stockData[sku][ds] = { stock_on_hand, available_for_sale, in_transit }`. Zoho field mapping: `stock_on_hand` ← `quantity_available`, `available_for_sale` ← `quantity_available_for_sale`, `in_transit` ← `quantity_in_transit`.
 - **PO:** Replenishment POs (open + pending_approval + partially_billed, last 12 days). Incremental via `_poCache`. Stored as `poData[ds][sku] = { qty, received, po_date, status, delivery, po_number, po_id }`.
 - **TO:** Transfer Orders from DC. Two fetches per sync:
-  - Active (draft + in_transit, last 12 days): incremental via `_toCache`. Priority: in_transit > draft; latest date/last_modified wins within same status.
-  - Transferred today IST: incremental via `_transferredTodayCache` (same pattern as `_poCache`/`_toCache`). 2-day date window fetches list; detail calls only for new/modified TOs. Filtered to `last_modified_time >= midnight IST` using Date comparison (not string compare — timezone formats differ).
+  - Active (draft + in_transit, last 3 days): incremental via `_toCache`. Priority: in_transit > draft; latest date/last_modified wins within same status. 3 days = 3× buffer over the 24h TO lifecycle (draft ~midnight, transferred ~noon next day).
+  - Transferred today IST: incremental via `_transferredTodayCache` (same pattern as `_poCache`/`_toCache`). 2-day date window fetches list; detail calls only for new/modified TOs. Filtered to `last_modified_time >= midnight IST` using Date comparison (not string compare — timezone formats differ). Capped at 50 new detail calls per run — prevents cold-cache timeout deadlock (cache warms over 1-2 runs).
   - Stored as `toData[ds][sku] = { qty, rec_qty, to_date, status, to_number, to_id }` keyed by destination DS. `rec_qty` = qty for transferred, null for draft/in_transit. Priority: transferred (today) > in_transit > draft.
   - `fetchTransferredToday` is wrapped in try-catch — if Zoho call fails, sync continues with draft/in_transit data only.
 
@@ -128,7 +128,7 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - 15-min cooldown enforced server-side (both cron and manual Sync Now).
 
 **TO data notes:**
-- TO statuses: `draft` (picking in progress) → `in_transit` (dispatched) → `transferred` (received at DS, shown as "Received").
+- TO statuses: `draft` (picking in progress) → `in_transit` (dispatched) → `transferred` (received at DS, shown as "Transferred").
 - Only TOs where `from_location_id = DC branch ID` are fetched.
 - `to_date` (creation date) used for both Date and Est. Delivery columns.
 - "Transferred today" uses `last_modified_time` (the actual transfer timestamp), not `date` (creation date). TOs raised yesterday but transferred today are correctly captured via the 2-day date window + midnight IST filter.
@@ -141,6 +141,8 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - PO + TO + transferred today (all cache-incremental after first sync) ≈ 20s.
 - Total per sync ≈ 128s — ~22s margin before the 150s wall.
 - `zohoFetch` retry wrapper: on 429, waits 10s then 20s (3 attempts). Handles transient quota spikes from rapid manual syncs without crashing. The 429s seen on 2026-05-21 were from hammering the API during debugging (4 deploys + manual syncs in 30 min), not from normal hourly operation.
+- **Cold-cache deadlock:** if all three caches are empty AND the sync times out before the write, caches stay empty and every subsequent sync repeats the timeout. Fix: 50-call cap on transferred-today detail calls ensures the sync completes and writes the cache. Caches go cold when model run wipes team_data payload — prevented by read-merge-write in `saveTeamData` (App.jsx).
+- **Never rapid-deploy sync-stock** (multiple deploys + manual syncs in quick succession exhausts Zoho per-minute rate limits; recovery takes 60+ min).
 - OPTIONS preflight: handler checks `req.method === 'OPTIONS'` and returns immediately — prevents browser CORS preflight from running the full 150s sync.
 
 ---
@@ -162,10 +164,12 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 ### 2. OOS Simulation Redesign ❌ Dropped (2026-04-21)
 
 ### 3. Stock Health Tab ✅ Shipped (2026-05-14), updated (2026-05-21)
-Columns: SoH, AFS, Min, Max, ROS, Req Qty, Rep. Qty, Rec Qty, Date, Est. Delivery, Ref #, Status. ECS = AFS only. DC-inv SKUs show TO data on DS tabs (Picking/In Transit/Received); DS-inv SKUs show PO data. KPI cards have dual pill rows (TO above PO, TO pills include Received). TO/PO filters mutually exclusive. Transferred TOs show "Received" status with Rec Qty populated. ⓘ tooltip, 85% zoom, item name hover.
+Columns: SoH, AFS, DC Stock, Min, Max, ROS, Req Qty, Rep. Qty, Rec Qty, Date, Est. Delivery, Ref #, Status. ECS = AFS only. DC-inv SKUs show TO data on DS tabs (Picking/In Transit/Transferred); DS-inv SKUs show PO data. KPI cards have dual pill rows (TO above PO, TO pills include Transferred). TO/PO filters mutually exclusive. Transferred TOs show "Transferred" status with Rec Qty populated. ⓘ tooltip, 85% zoom, item name hover.
+- DC Stock column: DS tabs only, between Req Qty and Rep. Qty. Shows DC AFS for DC-inv SKUs (green = stock available, red = zero). Follows Accounting/Physical toggle. DS-inv SKUs show —.
+- Picking pill: yellow (matching Pending Approval colour).
 
-### 9. DC Stock indicator in DS tabs ❓ Needs thinking
-Show DC stock level for DC-inventorised SKUs directly in the DS tab view — as context for why a TO hasn't been raised (e.g. DC itself is out of stock). Needs design thought: column, hover, or inline indicator?
+### 9. DC Stock indicator in DS tabs ✅ Shipped (2026-05-21)
+DC Stock column added between Req Qty and Rep. Qty on DS tabs. Shows DC AFS for DC-inv SKUs, follows mode toggle, hidden on DC tab.
 
 ### 4. Rethink Tool Output Tab — fold buttons into Upload Data tab or keep separate?
 
