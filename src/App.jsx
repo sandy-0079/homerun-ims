@@ -3171,7 +3171,9 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   // ── Auto-save: saves team data to Supabase immediately on any data change ────
   // Pass overrides for whichever field just changed (state hasn't updated yet)
   const saveTeamData = useCallback(async (overrides = {}) => {
+    const existing = await loadFromSupabase("team_data", "global") ?? {};
     const bundle = {
+      ...existing,
       invoiceData: overrides.invoiceData ?? invoiceData,
       skuMaster:   overrides.skuMaster   ?? skuMaster,
       minReqQty:   overrides.minReqQty   ?? minReqQty,
