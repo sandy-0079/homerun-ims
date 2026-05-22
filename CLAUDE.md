@@ -22,8 +22,13 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 - Invoice CSV (Zoho export) replaces entirely on upload — no merge. Engine uses whatever period admin sets.
 - All uploads auto-save to Supabase `team_data` immediately.
 - Model refresh: upload → Apply & Re-run Model → results pushed to Supabase → all users see new Min/Max.
-- Stock Health: auto-synced hourly from Zoho Books API (Edge Function `sync-stock`). Stored in `team_data.stockData` (stock) + `team_data.poData` (PO data) + `team_data.toData` (TO data) + `team_data._poCache` / `_toCache` / `_transferredTodayCache` (change-detection indexes).
-- **Edge Function deploy:** Always use `supabase functions deploy sync-stock --no-verify-jwt`. The cron job calls via `pg_net` with no Authorization header — omitting `--no-verify-jwt` resets JWT verification to required (default) and all cron runs silently return 401.
+- Stock Health: synced hourly via two separate Edge Functions:
+  - `sync-stock`: stock only (inventorysummary). Parameterised by branch pair — called by 3 staggered cron jobs. Writes `stockData` + `stockDataAccounting` via branch-level deep merge (not full replace — other functions' branch data must be preserved). Uses `stockUploadedAtPerDS` for cooldown.
+  - `sync-orders`: PO + TO only. Single cron at :35 UTC. Writes `poData`, `toData`, `_poCache`, `_toCache`, `_transferredTodayCache`, `ordersUploadedAt` (its own cooldown key).
+  - Both functions do a **fresh read immediately before writing** to prevent race condition from parallel runs.
+- **Edge Function deploy:** Always use `--no-verify-jwt` for both sync functions — cron calls via `pg_net` with no auth header; omitting the flag causes silent 401s:
+  `supabase functions deploy sync-stock --no-verify-jwt`
+  `supabase functions deploy sync-orders --no-verify-jwt`
 
 ---
 
@@ -87,7 +92,7 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 
 **Component:** `src/tabs/StockHealthTab.jsx`
 
-**Data sources (all synced hourly, `sync-stock` Edge Function, pg_cron at :35 UTC = :05 IST):**
+**Data sources (synced hourly via `sync-stock` + `sync-orders` Edge Functions — see sync architecture in Data Model section):**
 - **Stock:** Zoho Books Inventory Summary report per branch (6 branches × ~10 pages). Stored as `stockData[sku][ds] = { stock_on_hand, available_for_sale, in_transit }`. Zoho field mapping: `stock_on_hand` ← `quantity_available`, `available_for_sale` ← `quantity_available_for_sale`, `in_transit` ← `quantity_in_transit`.
 - **PO:** Replenishment POs (open + pending_approval + partially_billed, last 12 days). Incremental via `_poCache`. Stored as `poData[ds][sku] = { qty, received, po_date, status, delivery, po_number, po_id }`.
 - **TO:** Transfer Orders from DC. Two fetches per sync:
@@ -118,6 +123,14 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 | Excess | ecs > max | Blue |
 | Exception | ecs = min = max (dead stock at target) | Green |
 
+**DC tab additional tag (checked before Critical/Low Stock):**
+| Tag | Condition | Color |
+|---|---|---|
+| DS Req Covered | DC ecs ≤ min AND Σ DS_excess > 0 AND either: (A) Σ DS_excess + DC_ecs ≥ DC_max, OR (B) DC_ecs ≥ Σ (DS_max − DS_ecs) for short DSes | Purple |
+
+DS_excess per DS = max(0, DS_ECS − DS_Max). Gate: at least one DS must have excess for either condition to fire. No PO needed at DC when this tag fires.
+`dsTotals` must derive from `allSkuRows` (not `dsSummary`) to capture this override — `dsSummary` calls `getHealthTag()` directly and misses it.
+
 `ECS = max(0, AFS)` — Available for Sale only. In-transit not included (stock not yet physically at DS). ROS = `dailyAvg` from engine. For DC: ROS = sum of dailyAvg across all 5 DSes.
 
 **KPI card pills:** Each card has two pill rows on DS tabs — TO pills (No TO / Picking / In Transit / Received, DC-inv SKUs) above PO pills (No PO / Delayed / Issued / Pending, DS-inv SKUs). PO/TO filters are mutually exclusive — activating one excludes the other's SKU type.
@@ -136,14 +149,20 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - Rec Qty shown for transferred TOs (= qty sent); "—" for draft/in_transit.
 
 **Sync performance constraints (150s Supabase Edge Function wall time):**
-- `inventorysummary` report takes ~18s/call per branch — the dominant cost.
-- Stock fetch uses **2 concurrent per branch** (physical + accounting in parallel, sequential across 6 branches): 6 × 18s ≈ 108s. Running all 12 calls sequentially = 216s → timeout. Running 3 branches in parallel (6 concurrent) → Zoho 429.
-- PO + TO + transferred today (all cache-incremental after first sync) ≈ 20s.
-- Total per sync ≈ 128s — ~22s margin before the 150s wall.
-- `zohoFetch` retry wrapper: on 429, waits 10s then 20s (3 attempts). Handles transient quota spikes from rapid manual syncs without crashing. The 429s seen on 2026-05-21 were from hammering the API during debugging (4 deploys + manual syncs in 30 min), not from normal hourly operation.
-- **Cold-cache deadlock:** if all three caches are empty AND the sync times out before the write, caches stay empty and every subsequent sync repeats the timeout. Fix: 50-call cap on transferred-today detail calls ensures the sync completes and writes the cache. Caches go cold when model run wipes team_data payload — prevented by read-merge-write in `saveTeamData` (App.jsx).
-- **Never rapid-deploy sync-stock** (multiple deploys + manual syncs in quick succession exhausts Zoho per-minute rate limits; recovery takes 60+ min).
-- OPTIONS preflight: handler checks `req.method === 'OPTIONS'` and returns immediately — prevents browser CORS preflight from running the full 150s sync.
+- `inventorysummary` report: ~18–56s/call depending on Zoho health — dominant cost.
+- **Zoho inventorysummary rate limit: ~8 calls/minute** (confirmed 2026-05-22). 4 concurrent (2 branches × 2 modes) → 429 after 2 groups; 6 concurrent (3 branches) → 429 after 1 group. Safe: max 4 calls per invocation.
+- **Architecture:** 3 staggered cron jobs each handle 1 branch pair (4 concurrent calls, never overlaps):
+  - `stock-sync-1` at `:35 UTC` (:05 IST) → DC + DS01
+  - `stock-sync-2` at `:36 UTC` (:06 IST) → DS02 + DS03
+  - `stock-sync-3` at `:37 UTC` (:07 IST) → DS04 + DS05
+  - `orders-sync-hourly` at `:35 UTC` (:05 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket)
+- Each stock cron passes `{"branches":["DC","DS01"]}` in pg_net body; sync-stock reads this and fetches only those branches.
+- **Branch-level merge:** sync-stock merges `stockData[sku][ds]` at branch level on write — never replaces the full stockData object (would wipe sibling functions' branch data).
+- **Status codes:** 546 = Supabase killed the function (wall clock timeout); 500 = function caught an error and returned cleanly.
+- **Rate limit recovery:** after 429 abuse, recovery takes 60+ min. Never rapid-deploy or trigger repeated manual syncs.
+- **Manual Sync Now:** calls DC+DS01 + sync-orders in parallel, then DS02+DS03, then DS04+DS05 sequentially — stays under rate limit.
+- **Cold-cache deadlock:** prevented by 50-call cap on transferred-today detail calls + read-merge-write in `saveTeamData` (App.jsx).
+- OPTIONS preflight: handler checks `req.method === 'OPTIONS'` and returns immediately — prevents browser CORS preflight from running the full sync.
 
 ---
 
@@ -180,6 +199,15 @@ Network Design strategy in engine (`src/engine/strategies/plywoodNetwork.js`). F
 
 ### 7. Read-only config visibility for non-admins — Logic Tweaker + Overrides tabs
 Non-admins currently cannot see Logic Tweaker or Overrides tabs at all (controlled by `ADMIN_TABS` vs `PUBLIC_TABS` in App.jsx). Plan: add both to `PUBLIC_TABS` and disable all inputs with `disabled={!isAdmin}`. Upload Data tab stays admin-only. Plywood Network Design Config already done (visible to all, inputs disabled for non-admins, Save button hidden).
+
+### 10. Sync resilience — staggered cron jobs ✅ Shipped (2026-05-22)
+Split sync into `sync-stock` (stock only, 3 staggered cron jobs) + `sync-orders` (PO+TO, :35 UTC). Solves Zoho inventorysummary ~8 calls/min rate limit and 150s timeout on slow Zoho days. See sync performance constraints section for full architecture.
+
+### 11. DC tab — DS Req Covered tag ✅ Shipped (2026-05-22)
+Purple KPI card on DC tab only (5-column grid). Tags Critical/Low Stock DC-inv SKUs where no supplier PO is needed — DS excess covers the network gap or DC stock covers all short DS replenishment needs. See health tags section for formula.
+
+### 12. Stock Health UX improvements ✅ Shipped (2026-05-22)
+Clickable column header sorting (Item Name, Brand, AFS, Req Qty, Date, Est. Delivery, Status) with ↑/↓ indicator; third click resets to default tag-priority sort. Filters + sort reset on DS tab switch. Typing/pasting in search clears all active filters.
 
 ### 8. DC Calculation Fix for PCT + Fixed Unit Floor Categories
 `sumDailyAvg × (leadTime+1)` understocks for erratic demand at DC. Fix: switch to `Σ DS Mins × mult` approach (same as floored SKUs). Held pending any follow-up from Network Design learnings.
