@@ -139,6 +139,7 @@ DS_excess per DS = max(0, DS_ECS − DS_Max). Gate: at least one DS must have ex
 - `cf_purchase_type` must be "Replenishment" to be included. Ops mandate started 2026-05-13 — older POs may lack this field.
 - `delivery` = `cf_confirmed_delivery_time` from `custom_fields[]` array (NOT top-level field). Format: `YYYY-MM-DD`.
 - 15-min cooldown enforced server-side (both cron and manual Sync Now).
+- **PO display rule:** `dsPoData` filters out any entry where `received > 0` before the frontend sees it. Latest PO per SKU already wins (sort by date DESC, first-assignment wins in sync-orders). If the latest PO has received > 0, stock already arrived — no PO shown regardless of older stale POs. Frontend-only change, no edge function impact.
 
 **TO data notes:**
 - TO statuses: `draft` (picking in progress) → `in_transit` (dispatched) → `transferred` (received at DS, shown as "Transferred").
@@ -153,9 +154,10 @@ DS_excess per DS = max(0, DS_ECS − DS_Max). Gate: at least one DS must have ex
 - **Zoho inventorysummary rate limit: ~8 calls/minute** (confirmed 2026-05-22). 4 concurrent (2 branches × 2 modes) → 429 after 2 groups; 6 concurrent (3 branches) → 429 after 1 group. Safe: max 4 calls per invocation.
 - **Architecture:** 3 staggered cron jobs each handle 1 branch pair (4 concurrent calls, never overlaps):
   - `stock-sync-1` at `:35 UTC` (:05 IST) → DC + DS01
-  - `stock-sync-2` at `:36 UTC` (:06 IST) → DS02 + DS03
-  - `stock-sync-3` at `:37 UTC` (:07 IST) → DS04 + DS05
+  - `stock-sync-2` at `:37 UTC` (:07 IST) → DS02 + DS03
+  - `stock-sync-3` at `:39 UTC` (:09 IST) → DS04 + DS05
   - `orders-sync-hourly` at `:35 UTC` (:05 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket)
+- **Supabase statement timeout:** team_data JSONB payload is large (invoiceData + stockData + all caches). Concurrent reads/writes from multiple functions on the same row cause Postgres to cancel statements. Fix: 2-min stagger (not 1-min) ensures each function's write completes before the next function's read starts. 1-min stagger caused collisions when Zoho was fast (~80s/function).
 - Each stock cron passes `{"branches":["DC","DS01"]}` in pg_net body; sync-stock reads this and fetches only those branches.
 - **Branch-level merge:** sync-stock merges `stockData[sku][ds]` at branch level on write — never replaces the full stockData object (would wipe sibling functions' branch data).
 - **Status codes:** 546 = Supabase killed the function (wall clock timeout); 500 = function caught an error and returned cleanly.
@@ -200,11 +202,11 @@ Network Design strategy in engine (`src/engine/strategies/plywoodNetwork.js`). F
 ### 7. Read-only config visibility for non-admins — Logic Tweaker + Overrides tabs
 Non-admins currently cannot see Logic Tweaker or Overrides tabs at all (controlled by `ADMIN_TABS` vs `PUBLIC_TABS` in App.jsx). Plan: add both to `PUBLIC_TABS` and disable all inputs with `disabled={!isAdmin}`. Upload Data tab stays admin-only. Plywood Network Design Config already done (visible to all, inputs disabled for non-admins, Save button hidden).
 
-### 10. Sync resilience — staggered cron jobs ✅ Shipped (2026-05-22)
-Split sync into `sync-stock` (stock only, 3 staggered cron jobs) + `sync-orders` (PO+TO, :35 UTC). Solves Zoho inventorysummary ~8 calls/min rate limit and 150s timeout on slow Zoho days. See sync performance constraints section for full architecture.
+### 10. Sync resilience — staggered cron jobs ✅ Shipped (2026-05-22), updated same day
+Split sync into `sync-stock` (stock only, 3 staggered cron jobs) + `sync-orders` (PO+TO, :35 UTC). Solves Zoho inventorysummary ~8 calls/min rate limit and 150s timeout on slow Zoho days. Stagger increased from 1→2 min after Supabase statement timeouts from concurrent reads/writes on the large team_data row. See sync performance constraints section for full architecture.
 
-### 11. DC tab — DS Req Covered tag ✅ Shipped (2026-05-22)
-Purple KPI card on DC tab only (5-column grid). Tags Critical/Low Stock DC-inv SKUs where no supplier PO is needed — DS excess covers the network gap or DC stock covers all short DS replenishment needs. See health tags section for formula.
+### 11. DC tab — DS Req Covered tag ✅ Shipped (2026-05-22), refined same day
+Purple KPI card on DC tab only (5-column grid). Tags Critical/Low Stock DC-inv SKUs where no supplier PO is needed — DS excess covers the network gap or DC stock covers all short DS replenishment needs. Condition A threshold refined to DC_Min (not DC_Max) — covering DC's floor is sufficient to suppress a PO. See health tags section for formula.
 
 ### 12. Stock Health UX improvements ✅ Shipped (2026-05-22)
 Clickable column header sorting (Item Name, Brand, AFS, Req Qty, Date, Est. Delivery, Status) with ↑/↓ indicator; third click resets to default tag-priority sort. Filters + sort reset on DS tab switch. Typing/pasting in search clears all active filters.
