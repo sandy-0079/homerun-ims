@@ -247,7 +247,7 @@ export default function StockHealthTab({
           if (dsEcs <= dsMin) { hasShortDS = true; dsReorderSum += Math.max(0, dsMax - dsEcs); }
         }
         if (dsExcessSum > 0) {
-          const condA = dsExcessSum + ecs >= max;
+          const condA = dsExcessSum + ecs >= min;
           const condB = hasShortDS && ecs >= dsReorderSum;
           if (condA || condB) tag = "dsReqCovered";
         }
@@ -338,9 +338,15 @@ export default function StockHealthTab({
 
   // ── PO data for selected DS ────────────────────────────────────────────────
   const dsPoData = useMemo(() => {
-    if (selectedDS === "DC") return poData?.DC || {};
-    // DS tabs: DS-specific POs only — DC-inv SKUs use TOs (dsToData) instead
-    return poData?.[selectedDS] || {};
+    const raw = selectedDS === "DC" ? (poData?.DC || {}) : (poData?.[selectedDS] || {});
+    // Hide POs where any qty was received — stock already arrived, latest PO wins
+    // so if the most recent PO has received > 0, that's the end of the story
+    const out = {};
+    for (const [sku, po] of Object.entries(raw)) {
+      if (po && po.received > 0) continue;
+      out[sku] = po;
+    }
+    return out;
   }, [poData, selectedDS]);
 
   // ── TO data for selected DS (DC-originated TOs destined for this DS) ───────
