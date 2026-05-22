@@ -18,12 +18,13 @@ const DC_COLOR = { header: "#0077A8" };
 const DS_AND_DC = [...DS_LIST, "DC"];
 
 const TC = {
-  ec:       { label: "Critical",   short: "Critical",  cardBg: "#FEE2E2", cardText: "#B91C1C", cardBorder: "#FECACA", rowBg: "rgba(254,226,226,0.45)", ecsBg: "#FECACA", borderColor: "#EF4444", textColor: "#B91C1C" },
-  critical: { label: "Low Stock",  short: "Low Stock", cardBg: "#FEF3C7", cardText: "#92400E", cardBorder: "#FDE68A", rowBg: "rgba(254,243,199,0.45)", ecsBg: "#FDE68A", borderColor: "#F59E0B", textColor: "#92400E" },
-  okay:     { label: "Okay",               short: "Okay",     cardBg: "#D1FAE5", cardText: "#065F46", cardBorder: "#A7F3D0", rowBg: "rgba(209,250,229,0.35)", ecsBg: "#A7F3D0", borderColor: "#10B981", textColor: "#065F46" },
-  excess:   { label: "Excess",             short: "Excess",   cardBg: "#DBEAFE", cardText: "#1E40AF", cardBorder: "#BFDBFE", rowBg: "rgba(219,234,254,0.35)", ecsBg: "#BFDBFE", borderColor: "#3B82F6", textColor: "#1E40AF" },
+  ec:          { label: "Critical",     short: "Critical",     cardBg: "#FEE2E2", cardText: "#B91C1C", cardBorder: "#FECACA", rowBg: "rgba(254,226,226,0.45)", ecsBg: "#FECACA", borderColor: "#EF4444", textColor: "#B91C1C" },
+  critical:    { label: "Low Stock",    short: "Low Stock",    cardBg: "#FEF3C7", cardText: "#92400E", cardBorder: "#FDE68A", rowBg: "rgba(254,243,199,0.45)", ecsBg: "#FDE68A", borderColor: "#F59E0B", textColor: "#92400E" },
+  dsReqCovered: { label: "DS Req Covered", short: "DS Req Covered", cardBg: "#EDE9FE", cardText: "#5B21B6", cardBorder: "#DDD6FE", rowBg: "rgba(237,233,254,0.45)", ecsBg: "#DDD6FE", borderColor: "#7C3AED", textColor: "#5B21B6" },
+  okay:        { label: "Okay",         short: "Okay",         cardBg: "#D1FAE5", cardText: "#065F46", cardBorder: "#A7F3D0", rowBg: "rgba(209,250,229,0.35)", ecsBg: "#A7F3D0", borderColor: "#10B981", textColor: "#065F46" },
+  excess:      { label: "Excess",       short: "Excess",       cardBg: "#DBEAFE", cardText: "#1E40AF", cardBorder: "#BFDBFE", rowBg: "rgba(219,234,254,0.35)", ecsBg: "#BFDBFE", borderColor: "#3B82F6", textColor: "#1E40AF" },
 };
-const TAG_ORDER = ["ec", "critical", "okay", "excess"];
+const TAG_ORDER = ["ec", "critical", "dsReqCovered", "okay", "excess"];
 
 const N = { padding: "6px 10px", textAlign: "right", fontSize: 12, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", borderTop: `1px solid ${HR.border}` };
 const SEL = { border: `1px solid ${HR.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 11, background: HR.white, color: HR.text, outline: "none", cursor: "pointer", fontFamily: "inherit" };
@@ -127,6 +128,8 @@ export default function StockHealthTab({
   const [filterBrand,    setFilterBrand]    = useState("All");
   const [filterPoStatus, setFilterPoStatus] = useState("All");
   const [filterToStatus, setFilterToStatus] = useState("All");
+  const [sortCol,        setSortCol]        = useState(null);
+  const [sortDir,        setSortDir]        = useState("asc");
   const [search,         setSearch]         = useState("");
   const [copiedSku,   setCopiedSku]   = useState(null);
   const [syncing,     setSyncing]     = useState(false);
@@ -151,7 +154,14 @@ export default function StockHealthTab({
     if (syncing) return;
     setSyncing(true);
     try {
-      await supabase.functions.invoke('sync-stock');
+      // Stock: sequential branch pairs to stay under Zoho's inventorysummary rate limit.
+      // Orders runs in parallel with the first batch (different endpoints, no conflict).
+      await Promise.all([
+        supabase.functions.invoke('sync-stock', { body: { branches: ['DC', 'DS01'] } }),
+        supabase.functions.invoke('sync-orders'),
+      ]);
+      await supabase.functions.invoke('sync-stock', { body: { branches: ['DS02', 'DS03'] } });
+      await supabase.functions.invoke('sync-stock', { body: { branches: ['DS04', 'DS05'] } });
       // Reload fresh data directly — don't rely on Realtime being configured
       await onSyncComplete?.();
     } catch (err) {
@@ -164,7 +174,7 @@ export default function StockHealthTab({
   // ── DS-level summary (tab EC badges) ───────────────────────────────────────
   const dsSummary = useMemo(() => {
     const s = {};
-    for (const ds of DS_AND_DC) s[ds] = { ec: 0, critical: 0, okay: 0, excess: 0 };
+    for (const ds of DS_AND_DC) s[ds] = { ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0 };
     if (!results) return s;
     for (const [sku, res] of Object.entries(results)) {
       const meta = res.meta || {};
@@ -219,7 +229,29 @@ export default function StockHealthTab({
       const ros = isDC
         ? DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0)
         : (res.stores?.[selectedDS]?.dailyAvg || 0);
-      const tag = getHealthTag(ecs, min, max, ros);
+      let tag = getHealthTag(ecs, min, max, ros);
+      // DC tab only: no PO needed if DS excess exists and either:
+      // A) DS excess + DC stock >= DC Max (network long), or
+      // B) DC stock alone covers all short DS replenishment needs
+      if (isDC && (tag === "ec" || tag === "critical")) {
+        let dsExcessSum = 0;
+        let dsReorderSum = 0;
+        let hasShortDS = false;
+        for (const ds of DS_LIST) {
+          const dsLive = activeStockData[sku]?.[ds];
+          const dsMax  = res.stores?.[ds]?.max || 0;
+          const dsMin  = res.stores?.[ds]?.min || 0;
+          if (!dsLive) continue;
+          const dsEcs = Math.max(0, dsLive.available_for_sale ?? 0);
+          if (dsEcs > dsMax) dsExcessSum += dsEcs - dsMax;
+          if (dsEcs <= dsMin) { hasShortDS = true; dsReorderSum += Math.max(0, dsMax - dsEcs); }
+        }
+        if (dsExcessSum > 0) {
+          const condA = dsExcessSum + ecs >= max;
+          const condB = hasShortDS && ecs >= dsReorderSum;
+          if (condA || condB) tag = "dsReqCovered";
+        }
+      }
       const reorderQty = (tag === "ec" || tag === "critical") ? Math.max(0, max - ecs) : 0;
       return [{
         sku,
@@ -238,7 +270,7 @@ export default function StockHealthTab({
   const catTotals = useMemo(() => {
     const map = {};
     for (const row of allSkuRows) {
-      if (!map[row.category]) map[row.category] = { total: 0, stocked: 0, ec: 0, critical: 0, okay: 0, excess: 0 };
+      if (!map[row.category]) map[row.category] = { total: 0, stocked: 0, ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0 };
       map[row.category].total++;
       if (row.ecs > 0) map[row.category].stocked++;
       map[row.category][row.tag]++;
@@ -277,15 +309,19 @@ export default function StockHealthTab({
 
   // ── DS-level totals ────────────────────────────────────────────────────────
   const dsTotals = useMemo(() => {
-    const s = dsSummary[selectedDS] || { ec: 0, critical: 0, okay: 0, excess: 0 };
-    return { ...s, total: s.ec + s.critical + s.okay + s.excess };
-  }, [dsSummary, selectedDS]);
+    const counts = { ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0, total: 0 };
+    for (const row of allSkuRows) {
+      counts[row.tag] = (counts[row.tag] || 0) + 1;
+      counts.total++;
+    }
+    return counts;
+  }, [allSkuRows]);
 
   // KPI cards show category totals when a category is selected
   const kpiTotals = useMemo(() => {
     if (selectedCat) {
-      const t = catTotals[selectedCat] || { ec: 0, critical: 0, okay: 0, excess: 0 };
-      const total = t.ec + t.critical + t.okay + t.excess;
+      const t = catTotals[selectedCat] || { ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0 };
+      const total = t.ec + t.critical + (t.dsReqCovered || 0) + t.okay + t.excess;
       return { ...t, total };
     }
     return dsTotals;
@@ -354,10 +390,27 @@ export default function StockHealthTab({
   }, [allSkuRows, selectedCat, dsToData, selectedDS]);
 
 
+  // Reset sort and filters when switching DS tabs — filters are location-specific
+  useEffect(() => {
+    setSortCol(null); setSortDir("asc");
+    setFilterTag(null); setFilterBrand("All"); setSelectedCat(null);
+    setFilterPoStatus("All"); setFilterToStatus("All");
+  }, [selectedDS]);
+
+  const handleSort = useCallback((key) => {
+    if (sortCol === key) {
+      if (sortDir === "asc") { setSortDir("desc"); }
+      else { setSortCol(null); setSortDir("asc"); }
+    } else {
+      setSortCol(key);
+      setSortDir("asc");
+    }
+  }, [sortCol, sortDir]);
+
   // ── Filtered flat rows ─────────────────────────────────────────────────────
   const filteredRows = useMemo(() => {
     const q = search.toLowerCase();
-    const TAG_RANK = { ec: 0, critical: 1, okay: 2, excess: 3 };
+    const TAG_RANK = { ec: 0, critical: 1, dsReqCovered: 2, okay: 3, excess: 4 };
     return allSkuRows
       .filter(r => {
         if (selectedCat && r.category !== selectedCat) return false;
@@ -393,12 +446,60 @@ export default function StockHealthTab({
         return true;
       })
       .sort((a, b) => {
-        const tagDiff = TAG_RANK[a.tag] - TAG_RANK[b.tag];
-        if (tagDiff !== 0) return tagDiff;
-        if (a.tag === "ec" || a.tag === "critical") return b.reorderQty - a.reorderQty;
-        return a.ecs - b.ecs;
+        if (!sortCol) {
+          const tagDiff = TAG_RANK[a.tag] - TAG_RANK[b.tag];
+          if (tagDiff !== 0) return tagDiff;
+          if (a.tag === "ec" || a.tag === "critical") return b.reorderQty - a.reorderQty;
+          return a.ecs - b.ecs;
+        }
+        const isDC = selectedDS === "DC";
+        const isDCInvA = !isDC && a.invAt === "dc";
+        const isDCInvB = !isDC && b.invAt === "dc";
+        let aVal, bVal;
+        switch (sortCol) {
+          case "name":       aVal = a.name.toLowerCase();  bVal = b.name.toLowerCase();  break;
+          case "brand":      aVal = a.brand === "—" ? "" : a.brand.toLowerCase();
+                             bVal = b.brand === "—" ? "" : b.brand.toLowerCase();        break;
+          case "ecs":        aVal = a.ecs;                 bVal = b.ecs;                 break;
+          case "reorderQty": aVal = a.reorderQty;          bVal = b.reorderQty;          break;
+          case "date": {
+            const aOrd = isDCInvA ? dsToData[a.sku] : dsPoData[a.sku];
+            const bOrd = isDCInvB ? dsToData[b.sku] : dsPoData[b.sku];
+            aVal = (isDCInvA ? aOrd?.to_date   : aOrd?.po_date)  ?? "";
+            bVal = (isDCInvB ? bOrd?.to_date   : bOrd?.po_date)  ?? "";
+            break;
+          }
+          case "delivery": {
+            const aOrd = isDCInvA ? dsToData[a.sku] : dsPoData[a.sku];
+            const bOrd = isDCInvB ? dsToData[b.sku] : dsPoData[b.sku];
+            aVal = (isDCInvA ? aOrd?.to_date   : aOrd?.delivery) ?? "";
+            bVal = (isDCInvB ? bOrd?.to_date   : bOrd?.delivery) ?? "";
+            break;
+          }
+          case "status": {
+            const PO_RANK = { delayed: 0, open: 1, partially_billed: 2, pending_approval: 3 };
+            const TO_RANK = { transferred: 0, in_transit: 1, draft: 2 };
+            const aOrd = isDCInvA ? dsToData[a.sku] : dsPoData[a.sku];
+            const bOrd = isDCInvB ? dsToData[b.sku] : dsPoData[b.sku];
+            const aSt  = isDCInvA ? aOrd?.status : (aOrd ? getPoDisplayStatus(aOrd) : null);
+            const bSt  = isDCInvB ? bOrd?.status : (bOrd ? getPoDisplayStatus(bOrd) : null);
+            aVal = aSt != null ? ((isDCInvA ? TO_RANK : PO_RANK)[aSt] ?? 9) : 10;
+            bVal = bSt != null ? ((isDCInvB ? TO_RANK : PO_RANK)[bSt] ?? 9) : 10;
+            break;
+          }
+          default: return 0;
+        }
+        // Nulls / empty strings always sort last regardless of direction
+        if (typeof aVal === "string" && typeof bVal === "string") {
+          if (!aVal && bVal)  return 1;
+          if (aVal  && !bVal) return -1;
+          const cmp = aVal.localeCompare(bVal);
+          return sortDir === "asc" ? cmp : -cmp;
+        }
+        const cmp = (aVal ?? Infinity) - (bVal ?? Infinity);
+        return sortDir === "asc" ? cmp : -cmp;
       });
-  }, [allSkuRows, selectedCat, filterTag, filterBrand, filterPoStatus, filterToStatus, search, dsPoData, dsToData, selectedDS]);
+  }, [allSkuRows, selectedCat, filterTag, filterBrand, filterPoStatus, filterToStatus, search, dsPoData, dsToData, selectedDS, sortCol, sortDir]);
 
   // ── Reset filters on DS switch ─────────────────────────────────────────────
   const hasStock = Object.keys(activeStockData).length > 0;
@@ -542,8 +643,9 @@ export default function StockHealthTab({
         </div>
 
         {/* ── KPI Cards ───────────────────────────────────────────────────── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, padding: "12px 14px 10px", flexShrink: 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${selectedDS === "DC" ? 5 : 4},1fr)`, gap: 10, padding: "12px 14px 10px", flexShrink: 0 }}>
           {TAG_ORDER.map(tag => {
+            if (tag === "dsReqCovered" && selectedDS !== "DC") return null;
             const cfg   = TC[tag];
             const count = kpiTotals[tag] || 0;
             const p     = pct(count, kpiTotals.total || 0);
@@ -626,7 +728,11 @@ export default function StockHealthTab({
         {/* ── Filters ─────────────────────────────────────────────────────── */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 14px 10px", flexShrink: 0, flexWrap: "wrap" }}>
           <input
-            value={search} onChange={e => setSearch(e.target.value)}
+            value={search} onChange={e => {
+              const val = e.target.value;
+              setSearch(val);
+              if (val) { setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); setFilterToStatus("All"); }
+            }}
             placeholder="Search name, SKU or brand…"
             style={{ ...SEL, flex: 1, minWidth: 180, maxWidth: 260, padding: "6px 10px", fontSize: 12 }}
           />
@@ -634,6 +740,7 @@ export default function StockHealthTab({
             <option value="all">All Tags</option>
             <option value="ec">Critical</option>
             <option value="critical">Low Stock</option>
+            {selectedDS === "DC" && <option value="dsReqCovered">DS Req Covered</option>}
             <option value="okay">Okay</option>
             <option value="excess">Excess</option>
           </select>
@@ -661,6 +768,7 @@ export default function StockHealthTab({
             <><div style={{ fontWeight: 700, marginBottom: 4 }}>ECS (Effective Current Stock) = AFS</div>
             <div>Critical — ECS ≤ Min and daily sales ≥ 1 unit</div>
             <div>Low Stock — ECS ≤ Min (slow mover, not urgent)</div>
+            {selectedDS === "DC" && <div>DS Req Covered — DC below Min but DS excess covers network gap or DC stock covers all short DS needs (no PO needed)</div>}
             <div>Okay — Min &lt; ECS ≤ Max</div>
             <div>Excess — ECS &gt; Max</div></>
           }>
@@ -783,36 +891,51 @@ export default function StockHealthTab({
               <thead>
                 <tr>
                   {[
-                    ["SKU",            "left",   "4px 6px", true ],
-                    ["Item Name",      "left",   "4px 6px", false],
-                    ["Brand",          "left",   "4px 6px", false],
-                    ["Stock Health",   "center", "4px 4px", false],
-                    ["SoH",            "center", "4px 4px", false],
-                    ["AFS",            "center", "4px 4px", false],
-                    ["Min",            "center", "4px 4px", false],
-                    ["Max",            "center", "4px 4px", false],
-                    ["ROS",            "center", "4px 4px", false],
-                    ["Req Qty",        "center", "4px 4px", false],
-                    ...(selectedDS !== "DC" ? [["DC Stock", "center", "4px 4px", false]] : []),
-                    ["Rep. Qty",       "center", "4px 4px", false],
-                    ["Rec Qty",        "center", "4px 4px", false],
-                    ["Date",           "center", "4px 4px", false],
-                    ["Est. Delivery",  "center", "4px 4px", false],
-                    ["Ref #",          "left",   "4px 6px", false],
-                    ["Status",         "center", "4px 4px", false],
-                  ].map(([label, align, pad, isSkuCol], i) => (
-                    <th key={i} style={{
-                      padding: pad, textAlign: align, fontSize: 9, fontWeight: 700,
-                      color: HR.textSoft, background: HR.surfaceLight,
-                      borderBottom: `3px solid ${HR.yellow}`,
-                      // Mirror the 3px left border that data rows carry on the SKU column
-                      ...(isSkuCol ? { borderLeft: "3px solid transparent" } : {}),
-                      position: "sticky", top: 0, zIndex: 2,
-                      whiteSpace: "nowrap", overflow: "hidden",
-                    }}>
-                      {label}
-                    </th>
-                  ))}
+                    ["SKU",            "left",   "4px 6px", true,  null        ],
+                    ["Item Name",      "left",   "4px 6px", false, "name"      ],
+                    ["Brand",          "left",   "4px 6px", false, "brand"     ],
+                    ["Stock Health",   "center", "4px 4px", false, null        ],
+                    ["SoH",            "center", "4px 4px", false, null        ],
+                    ["AFS",            "center", "4px 4px", false, "ecs"       ],
+                    ["Min",            "center", "4px 4px", false, null        ],
+                    ["Max",            "center", "4px 4px", false, null        ],
+                    ["ROS",            "center", "4px 4px", false, null        ],
+                    ["Req Qty",        "center", "4px 4px", false, "reorderQty"],
+                    ...(selectedDS !== "DC" ? [["DC Stock", "center", "4px 4px", false, null]] : []),
+                    ["Rep. Qty",       "center", "4px 4px", false, null        ],
+                    ["Rec Qty",        "center", "4px 4px", false, null        ],
+                    ["Date",           "center", "4px 4px", false, "date"      ],
+                    ["Est. Delivery",  "center", "4px 4px", false, "delivery"  ],
+                    ["Ref #",          "left",   "4px 6px", false, null        ],
+                    ["Status",         "center", "4px 4px", false, "status"    ],
+                  ].map(([label, align, pad, isSkuCol, sortKey], i) => {
+                    const isSortable   = !!sortKey;
+                    const isActiveSort = sortCol === sortKey;
+                    return (
+                      <th key={i}
+                        onClick={isSortable ? () => handleSort(sortKey) : undefined}
+                        style={{
+                          padding: pad, textAlign: align, fontSize: 9, fontWeight: 700,
+                          color: isActiveSort ? HR.text : HR.textSoft,
+                          background: HR.surfaceLight,
+                          borderBottom: `3px solid ${HR.yellow}`,
+                          ...(isSkuCol ? { borderLeft: "3px solid transparent" } : {}),
+                          position: "sticky", top: 0, zIndex: 2,
+                          whiteSpace: "nowrap", overflow: "hidden",
+                          cursor: isSortable ? "pointer" : "default",
+                          userSelect: "none",
+                        }}>
+                        {isSortable ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                            {label}
+                            <span style={{ fontSize: 8, color: isActiveSort ? HR.text : HR.border, lineHeight: 1 }}>
+                              {isActiveSort ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
+                            </span>
+                          </span>
+                        ) : label}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>

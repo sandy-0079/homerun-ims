@@ -3309,7 +3309,6 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   const handleTabClick=t=>{
   if(tab==="logic"&&hasChanges&&isAdmin){setPending(t);return;}
   setTab(t);
-  setScrollTop(0);
   setOutputScrollTop(0);
 };
 
