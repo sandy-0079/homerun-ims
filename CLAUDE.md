@@ -126,7 +126,7 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 **DC tab additional tag (checked before Critical/Low Stock):**
 | Tag | Condition | Color |
 |---|---|---|
-| DS Req Covered | DC ecs ≤ min AND Σ DS_excess > 0 AND either: (A) Σ DS_excess + DC_ecs ≥ DC_max, OR (B) DC_ecs ≥ Σ (DS_max − DS_ecs) for short DSes | Purple |
+| DS Req Covered | DC ecs ≤ min AND Σ DS_excess > 0 AND either: (A) Σ DS_excess + DC_ecs ≥ DC_min, OR (B) DC_ecs ≥ Σ (DS_max − DS_ecs) for short DSes | Purple |
 
 DS_excess per DS = max(0, DS_ECS − DS_Max). Gate: at least one DS must have excess for either condition to fire. No PO needed at DC when this tag fires.
 `dsTotals` must derive from `allSkuRows` (not `dsSummary`) to capture this override — `dsSummary` calls `getHealthTag()` directly and misses it.
