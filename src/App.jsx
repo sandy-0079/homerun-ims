@@ -3037,9 +3037,14 @@ export default function App(){
   useEffect(()=>{
     (async()=>{
       // Try Supabase team_data first
-      const sbData = await loadFromSupabase("team_data","global");
-if(sbData?.invoiceData?.length&&sbData?.skuMaster){
-  setInv(sbData.invoiceData);setSKU(sbData.skuMaster);
+      // invoiceData lives in its own row to keep the global payload small for sync functions
+      const [sbData, sbInvoice] = await Promise.all([
+        loadFromSupabase("team_data","global"),
+        loadFromSupabase("team_data","invoice_data"),
+      ]);
+      const sbInvoiceData = sbInvoice?.invoiceData ?? sbData?.invoiceData ?? [];
+if(sbInvoiceData?.length&&sbData?.skuMaster){
+  setInv(sbInvoiceData);setSKU(sbData.skuMaster);
   if(sbData.minReqQty)setMRQ(sbData.minReqQty);
   if(sbData.newSKUQty)setNSQ(sbData.newSKUQty);
   if(sbData.deadStock)setDead(new Set(sbData.deadStock));
@@ -3064,7 +3069,7 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
 
   setTimeout(()=>{
     try{
-      const raw=runEngine(sbData.invoiceData,sbData.skuMaster,sbData.minReqQty||{},sbData.priceData||{},new Set(sbData.deadStock||[]),sbData.newSKUQty||{},activeParams);
+      const raw=runEngine(sbInvoiceData,sbData.skuMaster,sbData.minReqQty||{},sbData.priceData||{},new Set(sbData.deadStock||[]),sbData.newSKUQty||{},activeParams);
       setResults(raw);
     }catch(err){console.error("Auto-run error:",err);}
   },100);
@@ -3171,10 +3176,13 @@ if(sbData?.invoiceData?.length&&sbData?.skuMaster){
   // ── Auto-save: saves team data to Supabase immediately on any data change ────
   // Pass overrides for whichever field just changed (state hasn't updated yet)
   const saveTeamData = useCallback(async (overrides = {}) => {
+    // invoiceData is stored in its own row — keeps global payload small for sync functions
+    if (overrides.invoiceData !== undefined) {
+      await saveToSupabase("team_data", "invoice_data", { invoiceData: overrides.invoiceData });
+    }
     const existing = await loadFromSupabase("team_data", "global") ?? {};
     const bundle = {
       ...existing,
-      invoiceData: overrides.invoiceData ?? invoiceData,
       skuMaster:   overrides.skuMaster   ?? skuMaster,
       minReqQty:   overrides.minReqQty   ?? minReqQty,
       newSKUQty:   overrides.newSKUQty   ?? newSKUQty,
