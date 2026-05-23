@@ -115,8 +115,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       const _stores = {};
       DS_LIST.forEach(dsId => {
         const { min, max, nonZeroCount = 0, covers = [], trimTag, originalMin, originalMax } = networkResult.storeResults[dsId] || { min: 0, max: 0, nonZeroCount: 0, covers: [] };
-        const networkMax = _isDead ? min : max;
-        let storeMin = min, storeMax = networkMax, logicTag = 'Network Design';
+        let storeMin = min, storeMax = max, logicTag = 'Network Design';
         // Only apply SKU floor at stocking nodes (covers.length > 0).
         // Non-stocking DSes are intentionally 0 — floors there would be a data-entry error.
         if (covers.length > 0 && nsq && nsq[skuId] && nsq[skuId][dsId]) {
@@ -125,13 +124,15 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
           const fMax = typeof fl === 'number' ? fl : (fl.max || fMin);
           if (fMin > storeMin) {
             storeMin = fMin;
-            storeMax = _isDead ? fMin : Math.max(storeMax, fMax);
+            storeMax = Math.max(storeMax, fMax);
             logicTag = 'SKU Floor';
           }
         }
+        // Dead stock overrides everything — Min=Max=0, no replenishment
+        if (_isDead) { storeMin = 0; storeMax = 0; logicTag = 'Dead Stock'; }
         _stores[dsId] = {
           min: storeMin, max: storeMax,
-          preFloorMin: min, preFloorMax: networkMax,
+          preFloorMin: min, preFloorMax: max,
           dailyAvg: 0, abq: 0, nonZeroDays: nonZeroCount,
           mvTag: 'N/A', spTag: 'N/A',
           logicTag, trimTag, originalMin, originalMax, strategyTag: 'network_design',
@@ -140,9 +141,8 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
         };
       });
       const _dc = networkResult.dcResult;
-      const _dcDeadMult = p.dcDeadMult || DC_DEAD_MULT_DEFAULT;
-      let _dcMin = _isDead ? Math.round(_dc.min * _dcDeadMult.min) : _dc.min;
-      let _dcMax = _isDead ? Math.round(_dc.max * _dcDeadMult.max) : Math.max(_dc.max, _dc.min);
+      let _dcMin = _isDead ? 0 : _dc.min;
+      let _dcMax = _isDead ? 0 : Math.max(_dc.max, _dc.min);
       const _isFlooredSKU = !!(nsq && nsq[skuId]);
       let _floorDcDetails = null;
       if (!_isDead && _isFlooredSKU) {
@@ -200,7 +200,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
             const fMax = typeof fl === "number" ? fl : (fl.max || fMin);
             if (fMin > 0) { nm = Math.max(nm, fMin); nx = Math.max(nx, fMax); logicTag = "SKU Floor"; }
           }
-          if (isDead) nx = nm;
+          if (isDead) { nm = 0; nx = 0; logicTag = "Dead Stock"; }
           stores[dsId] = { min: nm, max: nx, preFloorMin, preFloorMax, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag, strategyTag: "standard" };
           dsMinArr.push(nm); dsMaxArr.push(nx); dsDailyAvgs.push(0);
         } else if (nsq && nsq[skuId]) {
@@ -295,7 +295,6 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
 
 
       minQty = Math.ceil(minQty); maxQty = Math.ceil(Math.max(maxQty, minQty));
-      if (isDead) maxQty = minQty; maxQty = Math.max(maxQty, minQty); if (isDead) maxQty = minQty;
 
       // Capture pre-floor values for Overrides tab delta calculation
       const preFloorMin = Math.round(minQty), preFloorMax = Math.round(maxQty);
@@ -316,6 +315,9 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
         }
       }
 
+      // Dead stock overrides everything — Min=Max=0, no replenishment at any DS
+      if (isDead) { minQty = 0; maxQty = 0; logicTag = "Dead Stock"; }
+
       stores[dsId] = {
         min: Math.round(minQty), max: Math.round(maxQty),
         preFloorMin, preFloorMax,
@@ -335,8 +337,6 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     const sumPreFloorMin = DS_LIST.reduce((s, ds) => s + (stores[ds]?.preFloorMin ?? stores[ds]?.min ?? 0), 0);
     const sumPreFloorMax = DS_LIST.reduce((s, ds) => s + (stores[ds]?.preFloorMax ?? stores[ds]?.max ?? 0), 0);
     const dcStats = getDCStats(invSliced, skuId, activeDSCount, intervals, op);
-    const dcDeadMult = p.dcDeadMult || DC_DEAD_MULT_DEFAULT;
-
     // Lead-time-aware DC calculation
     const sumDailyAvg = dsDailyAvgs.reduce((a, b) => a + b, 0);
     const leadTime = (p.brandLeadTimeDays || {})[meta.brand] ?? (p.brandLeadTimeDays || {})._default ?? 2;
@@ -346,12 +346,9 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     const isFlooredSKU = !!(nsq && nsq[skuId]);
 
     if (isDead) {
-      const multMin = dcDeadMult.min, multMax = dcDeadMult.max;
-      dcMin = Math.round(sumMin * multMin);
-      dcMax = Math.round(sumMax * multMax);
-      preFloorDcMin = Math.round(sumPreFloorMin * multMin);
-      preFloorDcMax = Math.round(sumPreFloorMax * multMax);
-      dcDetails = { isDead: true, multMin, multMax, sumMin, sumMax, sumDailyAvg, leadTime };
+      dcMin = 0; dcMax = 0;
+      preFloorDcMin = 0; preFloorDcMax = 0;
+      dcDetails = { isDead: true, sumDailyAvg, leadTime };
     } else if (isFlooredSKU) {
       // SKU has manual DS floors — use configurable multipliers instead of movement-based DC calc
       const multMin = p.skuFloorDCMultMin ?? 0.2;
