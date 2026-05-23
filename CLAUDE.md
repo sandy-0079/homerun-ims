@@ -51,7 +51,7 @@ PCT key decisions: percentile by price (Premium=75, High=80, Medium=85, Low/Supe
 ### DC Calculation (non-Network-Design)
 - **Standard:** `DC Min = ceil(sumDailyAvg × (leadTime+1))` · `DC Max = DC Min + ceil(sumDailyAvg × 2)`
 - **Floored SKUs:** `Σ DS Mins × 0.2` / `Σ DS Maxes × 0.3`
-- **Dead Stock:** `Σ DS Mins × 0.25` / `Σ DS Maxes × 0.25`
+- **Dead Stock:** Min=Max=0 at all DS and DC locations (overrides all floors)
 
 Post-blend order (strict): New DS Floor → SKU Floor Override → Dead Stock cap → Rounding
 
@@ -219,6 +219,9 @@ Purple KPI card on DC tab only (5-column grid). Tags Critical/Low Stock DC-inv S
 ### 12. Stock Health UX improvements ✅ Shipped (2026-05-22)
 Clickable column header sorting (Item Name, Brand, AFS, Req Qty, Date, Est. Delivery, Status) with ↑/↓ indicator; third click resets to default tag-priority sort. Filters + sort reset on DS tab switch. Typing/pasting in search clears all active filters.
 
+### 14. Dead stock logic — Min=Max=0 everywhere ✅ Shipped (2026-05-23)
+Dead stock SKUs now get Min=Max=0 at all DS and DC locations, overriding all floors (New DS Floor, SKU Floor) as the absolute last post-blend step. Previously DS had Max=Min (non-zero) and DC used dcDeadMult×0.25. New behaviour: no PO or TO raised, Stock Health filters them out (0/0 excluded from table). `dcDeadMult` param in Logic Tweaker is now a no-op. Applies to Standard, Fixed Unit Floor, and Network Design paths.
+
 ### 8. DC Calculation Fix for PCT + Fixed Unit Floor Categories
 `sumDailyAvg × (leadTime+1)` understocks for erratic demand at DC. Fix: switch to `Σ DS Mins × mult` approach (same as floored SKUs). Held pending any follow-up from Network Design learnings.
 
@@ -235,7 +238,7 @@ Clickable column header sorting (Item Name, Brand, AFS, Req Qty, Date, Est. Deli
 | ABQ | Average Buying Quantity = total qty ÷ orders in lookback |
 | DOC | Days of Cover — stock ÷ daily average |
 | TO | Transfer Order — stock movement DC→DS |
-| Dead Stock | SKU with Max forced = Min |
+| Dead Stock | SKU with Min=Max=0 at all locations — no replenishment, filtered out of Stock Health |
 
 ---
 
