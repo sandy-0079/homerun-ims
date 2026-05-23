@@ -9,7 +9,7 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 | Layer | Detail |
 |---|---|
 | Frontend | React + Vite + Recharts, deployed on Vercel |
-| Database | Supabase (tables: `params`, `overrides`, `team_data`) |
+| Database | Supabase Pro + Micro compute (tables: `params`, `overrides`, `team_data`) |
 | Engine | `src/engine/` — modular strategy dispatcher + Web Worker |
 | Supabase URL | https://rgyupnrogkbugsadwlye.supabase.co |
 | Supabase Anon Key | eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJneXVwbnJvZ2tidWdzYWR3bHllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3NzgzMzgsImV4cCI6MjA4ODM1NDMzOH0.sbZh8CbmW7hhpiUCg5OoS7hQzHaNqExkaAlACEqJ9sc |
@@ -26,6 +26,9 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
   - `sync-stock`: stock only (inventorysummary). Parameterised by branch pair — called by 3 staggered cron jobs. Writes `stockData` + `stockDataAccounting` via branch-level deep merge (not full replace — other functions' branch data must be preserved). Uses `stockUploadedAtPerDS` for cooldown.
   - `sync-orders`: PO + TO only. Single cron at :35 UTC. Writes `poData`, `toData`, `_poCache`, `_toCache`, `_transferredTodayCache`, `ordersUploadedAt` (its own cooldown key).
   - Both functions do a **fresh read immediately before writing** to prevent race condition from parallel runs.
+  - Sync functions only read/write `team_data/global`. They never touch `team_data/invoice_data`.
+- **team_data row separation:** `invoiceData` lives in `team_data/invoice_data` (written once on CSV upload). All other app data + sync data lives in `team_data/global`. This keeps the global payload ~1-2MB vs ~7MB, preventing Supabase Disk IO budget exhaustion from hourly syncs.
+- **CSV upload → model re-run is safe:** `saveTeamData` only writes `invoiceData` to the `invoice_data` row when it changes; global row always uses read-merge-write (`...existing` spread) so PO/TO caches and stock data are never wiped by an upload.
 - **Edge Function deploy:** Always use `--no-verify-jwt` for both sync functions — cron calls via `pg_net` with no auth header; omitting the flag causes silent 401s:
   `supabase functions deploy sync-stock --no-verify-jwt`
   `supabase functions deploy sync-orders --no-verify-jwt`
@@ -154,10 +157,12 @@ DS_excess per DS = max(0, DS_ECS − DS_Max). Gate: at least one DS must have ex
 - **Zoho inventorysummary rate limit: ~8 calls/minute** (confirmed 2026-05-22). 4 concurrent (2 branches × 2 modes) → 429 after 2 groups; 6 concurrent (3 branches) → 429 after 1 group. Safe: max 4 calls per invocation.
 - **Architecture:** 3 staggered cron jobs each handle 1 branch pair (4 concurrent calls, never overlaps):
   - `stock-sync-1` at `:35 UTC` (:05 IST) → DC + DS01
-  - `stock-sync-2` at `:37 UTC` (:07 IST) → DS02 + DS03
-  - `stock-sync-3` at `:39 UTC` (:09 IST) → DS04 + DS05
+  - `stock-sync-2` at `:38 UTC` (:08 IST) → DS02 + DS03
+  - `stock-sync-3` at `:41 UTC` (:11 IST) → DS04 + DS05
   - `orders-sync-hourly` at `:35 UTC` (:05 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket)
-- **Supabase statement timeout:** team_data JSONB payload is large (invoiceData + stockData + all caches). Concurrent reads/writes from multiple functions on the same row cause Postgres to cancel statements. Fix: 2-min stagger (not 1-min) ensures each function's write completes before the next function's read starts. 1-min stagger caused collisions when Zoho was fast (~80s/function).
+- **Supabase statement timeout:** Concurrent reads/writes from multiple functions on the same large global row cause Postgres to cancel statements. Fix: 3-min stagger ensures each function's write completes before the next function's read starts (2-min stagger still collided when Zoho took ~100s/function).
+- **Supabase Disk IO budget:** Nano instance has 30-min daily burst (43 Mbps baseline). The 3-function architecture makes 12 Supabase ops/hour — with a 7MB payload (including invoiceData) this exhausted the Nano burst within hours. Fix: (1) upgrade to Pro + Micro compute (87 Mbps baseline, 60-min burst), (2) separate invoiceData into its own row reducing global payload to ~1-2MB. Together these make daily IO sustainable on Micro.
+- **Migration safety:** Never run `supabase db push` after manually executing a migration SQL in the SQL editor. The CLI doesn't know it already ran and will execute it again. Use `supabase migration repair --status applied <version>` to mark it as done without re-running.
 - Each stock cron passes `{"branches":["DC","DS01"]}` in pg_net body; sync-stock reads this and fetches only those branches.
 - **Branch-level merge:** sync-stock merges `stockData[sku][ds]` at branch level on write — never replaces the full stockData object (would wipe sibling functions' branch data).
 - **Status codes:** 546 = Supabase killed the function (wall clock timeout); 500 = function caught an error and returned cleanly.
@@ -202,8 +207,11 @@ Network Design strategy in engine (`src/engine/strategies/plywoodNetwork.js`). F
 ### 7. Read-only config visibility for non-admins — Logic Tweaker + Overrides tabs
 Non-admins currently cannot see Logic Tweaker or Overrides tabs at all (controlled by `ADMIN_TABS` vs `PUBLIC_TABS` in App.jsx). Plan: add both to `PUBLIC_TABS` and disable all inputs with `disabled={!isAdmin}`. Upload Data tab stays admin-only. Plywood Network Design Config already done (visible to all, inputs disabled for non-admins, Save button hidden).
 
-### 10. Sync resilience — staggered cron jobs ✅ Shipped (2026-05-22), updated same day
-Split sync into `sync-stock` (stock only, 3 staggered cron jobs) + `sync-orders` (PO+TO, :35 UTC). Solves Zoho inventorysummary ~8 calls/min rate limit and 150s timeout on slow Zoho days. Stagger increased from 1→2 min after Supabase statement timeouts from concurrent reads/writes on the large team_data row. See sync performance constraints section for full architecture.
+### 10. Sync resilience — staggered cron jobs ✅ Shipped (2026-05-22), updated 2026-05-23
+Split sync into `sync-stock` (stock only, 3 staggered cron jobs) + `sync-orders` (PO+TO, :35 UTC). Solves Zoho inventorysummary ~8 calls/min rate limit and 150s timeout on slow Zoho days. Stagger increased 1→2→3 min after successive Supabase statement timeout collisions. Current schedule: :35/:38/:41 UTC = :05/:08/:11 IST. See sync performance constraints section for full architecture.
+
+### 13. invoiceData separation + Supabase compute upgrade ✅ Shipped (2026-05-23)
+3-function sync architecture made 12 Supabase ops/hour on a 7MB payload, exhausting Nano's 30-min daily Disk IO burst within hours. Fix: (1) upgraded to Supabase Pro + Micro compute, (2) moved invoiceData to `team_data/invoice_data` (written once on CSV upload, never touched by sync functions), reducing global payload from ~7MB to ~1-2MB (~70% IO reduction per sync). App startup and saveTeamData both load/write invoice_data row separately with backwards-compat fallback.
 
 ### 11. DC tab — DS Req Covered tag ✅ Shipped (2026-05-22), refined same day
 Purple KPI card on DC tab only (5-column grid). Tags Critical/Low Stock DC-inv SKUs where no supplier PO is needed — DS excess covers the network gap or DC stock covers all short DS replenishment needs. Condition A threshold refined to DC_Min (not DC_Max) — covering DC's floor is sufficient to suppress a PO. See health tags section for formula.
