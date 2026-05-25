@@ -379,7 +379,7 @@ export default function StockHealthTab({
   // ── TO pill counts per health tag (DC-inv SKUs on DS tabs only) ───────────
   const toCountsByTag = useMemo(() => {
     const counts = {};
-    for (const tag of TAG_ORDER) counts[tag] = { noTO: 0, draft: 0, inTransit: 0, received: 0 };
+    for (const tag of TAG_ORDER) counts[tag] = { noTO: 0, draft: 0, inTransit: 0 };
     if (selectedDS === "DC") return counts;
     const rows = selectedCat ? allSkuRows.filter(r => r.category === selectedCat) : allSkuRows;
     for (const row of rows) {
@@ -388,8 +388,7 @@ export default function StockHealthTab({
       const bucket = counts[row.tag];
       if (!bucket) continue;
       if (!to) { bucket.noTO++; continue; }
-      if (to.status === "transferred") bucket.received++;
-      else if (to.status === "in_transit") bucket.inTransit++;
+      if (to.status === "in_transit") bucket.inTransit++;
       else bucket.draft++;
     }
     return counts;
@@ -446,7 +445,6 @@ export default function StockHealthTab({
           if (filterToStatus === "No TO"      && to) return false;
           if (filterToStatus === "Draft"      && (!to || to.status !== "draft"))       return false;
           if (filterToStatus === "In Transit" && (!to || to.status !== "in_transit"))  return false;
-          if (filterToStatus === "Received"   && (!to || to.status !== "transferred")) return false;
         }
 
         return true;
@@ -682,7 +680,6 @@ export default function StockHealthTab({
                       { k: "noTO",      label: "No TO",      tf: "No TO",      bg: "#F3F4F6", color: "#6B7280", border: "#D1D5DB" },
                       { k: "draft",     label: "Picking",    tf: "Draft",      bg: "#FEF3C7", color: "#92400E", border: "#FDE68A" },
                       { k: "inTransit", label: "In Transit", tf: "In Transit", bg: "#DBEAFE", color: "#1E40AF", border: "#BFDBFE" },
-                      { k: "received",  label: "Transferred", tf: "Received",   bg: "#D1FAE5", color: "#065F46", border: "#A7F3D0" },
                     ].map(({ k, label, tf, bg, color, border }) => (
                       <span key={k}
                         onClick={e => { e.stopPropagation(); setFilterTag(tag); setFilterToStatus(tf); }}
@@ -766,7 +763,6 @@ export default function StockHealthTab({
               <option value="All">All TO Status</option>
               <option value="Draft">Picking</option>
               <option value="In Transit">In Transit</option>
-              <option value="Received">Transferred</option>
               <option value="No TO">No TO</option>
             </select>
           )}

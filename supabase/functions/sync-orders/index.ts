@@ -59,87 +59,6 @@ async function fetchActiveTOList(token: string, cutoff: string): Promise<Record<
   return active
 }
 
-// ─── TO: fetch TOs transferred today IST (by last_modified_time) from DC ─────
-async function fetchTransferredToday(
-  token: string,
-  transferredCutoff: string,
-  midnightISTasUTC: string,
-  existingCache: Record<string, any>,
-): Promise<{ entries: Record<string, any>; updatedCache: Record<string, any> }> {
-  const org = Deno.env.get('ZOHO_ORG_ID')
-  const candidates: Array<{ id: string; to: any }> = []
-
-  let page = 1
-  while (true) {
-    const res = await fetch(
-      `https://www.zohoapis.in/books/v3/transferorders?organization_id=${org}&status=transferred&per_page=200&sort_column=date&sort_order=D&page=${page}`,
-      { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-    )
-    const data = await res.json()
-    const tos: any[] = data.transfer_orders ?? []
-
-    let pastCutoff = false
-    for (const to of tos) {
-      if (to.date < transferredCutoff) { pastCutoff = true; break }
-      if (to.from_location_id !== DC_BRANCH_ID) continue
-      const modifiedMs = to.last_modified_time ? new Date(to.last_modified_time).getTime() : 0
-      if (modifiedMs >= new Date(midnightISTasUTC).getTime()) {
-        candidates.push({ id: to.transfer_order_id, to })
-      }
-    }
-    if (pastCutoff || !data.page_context?.has_more_page) break
-    page++
-  }
-
-  const MAX_NEW_DETAIL_CALLS = 50
-  const updatedCache: Record<string, any> = {}
-  let detailCalls = 0
-  for (const { id: toId, to } of candidates) {
-    const cached = existingCache[toId]
-    if (cached && cached.last_modified === to.last_modified_time) {
-      updatedCache[toId] = cached
-    } else if (detailCalls < MAX_NEW_DETAIL_CALLS) {
-      const detail = await fetchTODetail(token, toId)
-      if (!detail) continue
-      const ds = LOCATION_TO_DS[detail.to_location_name ?? '']
-      if (!ds) continue
-      const skus: Record<string, number> = {}
-      for (const li of detail.line_items ?? []) {
-        const sku = (li.sku ?? '').trim()
-        if (sku) skus[sku] = li.quantity_transfer ?? 0
-      }
-      updatedCache[toId] = {
-        last_modified: to.last_modified_time,
-        date:          to.date,
-        to_number:     to.transfer_order_number,
-        to_id:         toId,
-        ds,
-        skus,
-      }
-      detailCalls++
-    }
-  }
-  console.log(`Transferred today candidates: ${candidates.length}, detail calls: ${detailCalls}, capped: ${detailCalls === MAX_NEW_DETAIL_CALLS}`)
-
-  const entries: Record<string, any> = {}
-  for (const [toId, cached] of Object.entries(updatedCache)) {
-    for (const [sku, qty] of Object.entries(cached.skus as Record<string, number>)) {
-      const key = `${cached.ds}:${sku}`
-      const existing = entries[key]
-      if (!existing || cached.last_modified > existing._lastModified) {
-        entries[key] = {
-          qty:           qty,
-          to_date:       cached.date,
-          to_number:     cached.to_number,
-          to_id:         toId,
-          _lastModified: cached.last_modified,
-        }
-      }
-    }
-  }
-  return { entries, updatedCache }
-}
-
 // ─── TO: fetch detail for one TO ─────────────────────────────────────────────
 async function fetchTODetail(token: string, toId: string): Promise<any> {
   const res = await fetch(
@@ -339,29 +258,9 @@ Deno.serve(async (req) => {
     }
     console.log(`TO sync: ${Object.keys(activeTOs).length} active, ${toDetailCalls} detail calls`)
 
-    // Transferred today
-    const nowIST           = new Date(now.getTime() + 5.5 * 3600 * 1000)
-    const todayIST         = nowIST.toISOString().split('T')[0]
-    const midnightISTasUTC = new Date(todayIST + 'T00:00:00+05:30').toISOString()
-    const transferredCutoff = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000)
-      .toISOString().split('T')[0]
-
-    const currentTransferredCache: Record<string, any> = row?.payload?._transferredTodayCache ?? {}
-    console.log(`Fetching transferred TOs since midnight IST (${midnightISTasUTC})...`)
-    let transferredToday: Record<string, any> = {}
-    let updatedTransferredCache: Record<string, any> = {}
-    try {
-      const result = await fetchTransferredToday(token, transferredCutoff, midnightISTasUTC, currentTransferredCache)
-      transferredToday = result.entries
-      updatedTransferredCache = result.updatedCache
-    } catch (err) {
-      console.warn('fetchTransferredToday failed (non-critical, skipping):', err)
-    }
-    console.log(`Transferred today: ${Object.keys(transferredToday).length} SKU×DS combos`)
-
-    // Build toData — pass 1: active TOs (in_transit > draft), highest priority.
-    // Active beats transferred so a new in_transit TO always shows over a
-    // previously-transferred TO whose Zoho record was touched today.
+    // Build toData — active TOs only (in_transit > draft).
+    // Transferred TOs are not shown: once received, stock appears in AFS.
+    // Zoho's last_modified_time is unreliable as a transfer-date signal.
     const toData: Record<string, Record<string, any>> = {}
     const sortedTOEntries = Object.values(updatedToCache)
       .sort((a, b) => {
@@ -387,24 +286,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Pass 2: transferred today — only fills slots with no active TO.
-    // Transferred is only useful when there is no pending in_transit/draft TO.
-    for (const [key, entry] of Object.entries(transferredToday)) {
-      const colonIdx = key.indexOf(':')
-      const ds  = key.slice(0, colonIdx)
-      const sku = key.slice(colonIdx + 1)
-      if (!toData[ds]) toData[ds] = {}
-      if (toData[ds][sku]) continue  // active TO already set — skip transferred
-      toData[ds][sku] = {
-        qty:       entry.qty,
-        rec_qty:   entry.qty,
-        to_date:   entry.to_date,
-        status:    'transferred',
-        to_number: entry.to_number,
-        to_id:     entry.to_id,
-      }
-    }
-
     // ── Fresh read before write — spreads latest payload so sync-stock's ──────
     // concurrent writes are not overwritten by our startup-time snapshot.
     const { data: latestRow, error: latestErr } = await supabase
@@ -417,7 +298,6 @@ Deno.serve(async (req) => {
       _poCache:               updatedPoCache,
       toData,
       _toCache:               updatedToCache,
-      _transferredTodayCache: updatedTransferredCache,
       ordersUploadedAt:       nowIso,
     }
 
