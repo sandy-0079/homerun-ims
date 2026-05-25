@@ -230,9 +230,10 @@ export default function StockHealthTab({
         ? DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0)
         : (res.stores?.[selectedDS]?.dailyAvg || 0);
       let tag = getHealthTag(ecs, min, max, ros);
-      // DC tab only: no PO needed if DS excess exists and either:
-      // A) DS excess + DC stock >= DC Max (network long), or
-      // B) DC stock alone covers all short DS replenishment needs
+      // DC tab only: no PO needed when any of:
+      // A) No DS is short — DSes don't need anything from DC
+      // B) Some DSes are short but DC stock fully covers their replenishment needs
+      // C) Network DS excess + DC stock covers DC's minimum floor
       if (isDC && (tag === "ec" || tag === "critical")) {
         let dsExcessSum = 0;
         let dsReorderSum = 0;
@@ -246,11 +247,10 @@ export default function StockHealthTab({
           if (dsEcs > dsMax) dsExcessSum += dsEcs - dsMax;
           if (dsEcs <= dsMin) { hasShortDS = true; dsReorderSum += Math.max(0, dsMax - dsEcs); }
         }
-        if (dsExcessSum > 0) {
-          const condA = dsExcessSum + ecs >= min;
-          const condB = hasShortDS && ecs >= dsReorderSum;
-          if (condA || condB) tag = "dsReqCovered";
-        }
+        const condA = !hasShortDS;
+        const condB = hasShortDS && ecs >= dsReorderSum;
+        const condC = dsExcessSum + ecs >= min;
+        if (condA || condB || condC) tag = "dsReqCovered";
       }
       const reorderQty = (tag === "ec" || tag === "critical") ? Math.max(0, max - ecs) : 0;
       return [{
