@@ -129,9 +129,12 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 **DC tab additional tag (checked before Critical/Low Stock):**
 | Tag | Condition | Color |
 |---|---|---|
-| DS Req Covered | DC ecs ≤ min AND Σ DS_excess > 0 AND either: (A) Σ DS_excess + DC_ecs ≥ DC_min, OR (B) DC_ecs ≥ Σ (DS_max − DS_ecs) for short DSes | Purple |
+| DS Req Covered | DC ecs ≤ min AND any of: (A) no DS is short, OR (B) DC_ecs ≥ Σ (DS_max − DS_ecs) for short DSes, OR (C) Σ DS_excess + DC_ecs ≥ DC_min | Purple |
 
-DS_excess per DS = max(0, DS_ECS − DS_Max). Gate: at least one DS must have excess for either condition to fire. No PO needed at DC when this tag fires.
+DS_excess per DS = max(0, DS_ECS − DS_Max). No PO needed at DC when this tag fires.
+- Cond A: all DSes have ECS ≥ Min — no demand pressure on DC
+- Cond B: some DSes are short but DC stock fully covers their replenishment needs
+- Cond C: network DS excess + DC stock covers DC's minimum floor (network-long, no supplier PO needed)
 `dsTotals` must derive from `allSkuRows` (not `dsSummary`) to capture this override — `dsSummary` calls `getHealthTag()` directly and misses it.
 
 `ECS = max(0, AFS)` — Available for Sale only. In-transit not included (stock not yet physically at DS). ROS = `dailyAvg` from engine. For DC: ROS = sum of dailyAvg across all 5 DSes.
