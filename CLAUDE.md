@@ -101,8 +101,8 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - **TO:** Transfer Orders from DC. Two fetches per sync:
   - Active (draft + in_transit, last 3 days): incremental via `_toCache`. Priority: in_transit > draft; latest date/last_modified wins within same status. 3 days = 3× buffer over the 24h TO lifecycle (draft ~midnight, transferred ~noon next day).
   - Transferred today IST: incremental via `_transferredTodayCache` (same pattern as `_poCache`/`_toCache`). 2-day date window fetches list; detail calls only for new/modified TOs. Filtered to `last_modified_time >= midnight IST` using Date comparison (not string compare — timezone formats differ). Capped at 50 new detail calls per run — prevents cold-cache timeout deadlock (cache warms over 1-2 runs).
-  - Stored as `toData[ds][sku] = { qty, rec_qty, to_date, status, to_number, to_id }` keyed by destination DS. `rec_qty` = qty for transferred, null for draft/in_transit. Priority: in_transit > draft > transferred (today). Active TOs always win — transferred-today only fills slots with no active TO, preventing a stale Zoho `last_modified_time` update from hiding a new in_transit TO.
-  - `fetchTransferredToday` is wrapped in try-catch — if Zoho call fails, sync continues with draft/in_transit data only.
+  - Stored as `toData[ds][sku] = { qty, rec_qty, to_date, status, to_number, to_id }` keyed by destination DS. `rec_qty` = null for all entries (always draft/in_transit). Priority: in_transit > draft.
+  - Only draft and in_transit TOs are stored. Transferred TOs are not shown: once received, stock appears in AFS. Zoho's `last_modified_time` is unreliable as a transfer-date signal — any edit to a TO in Zoho updates it, causing stale transferred TOs to re-appear as "today".
 
 **Zoho Books branch IDs (confirmed):**
 `DC=2753232000017648109`, `DS01=2753232000000037051`, `DS02=2753232000000037081`, `DS03=2753232000000037109`, `DS04=2753232000007867440`, `DS05=2753232000017634267`
@@ -136,7 +136,7 @@ DS_excess per DS = max(0, DS_ECS − DS_Max). Gate: at least one DS must have ex
 
 `ECS = max(0, AFS)` — Available for Sale only. In-transit not included (stock not yet physically at DS). ROS = `dailyAvg` from engine. For DC: ROS = sum of dailyAvg across all 5 DSes.
 
-**KPI card pills:** Each card has two pill rows on DS tabs — TO pills (No TO / Picking / In Transit / Received, DC-inv SKUs) above PO pills (No PO / Delayed / Issued / Pending, DS-inv SKUs). PO/TO filters are mutually exclusive — activating one excludes the other's SKU type.
+**KPI card pills:** Each card has two pill rows on DS tabs — TO pills (No TO / Picking / In Transit, DC-inv SKUs) above PO pills (No PO / Delayed / Issued / Pending, DS-inv SKUs). PO/TO filters are mutually exclusive — activating one excludes the other's SKU type.
 
 **PO data notes:**
 - `cf_purchase_type` must be "Replenishment" to be included. Ops mandate started 2026-05-13 — older POs may lack this field.
