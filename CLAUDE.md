@@ -101,7 +101,7 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - **TO:** Transfer Orders from DC. Two fetches per sync:
   - Active (draft + in_transit, last 3 days): incremental via `_toCache`. Priority: in_transit > draft; latest date/last_modified wins within same status. 3 days = 3× buffer over the 24h TO lifecycle (draft ~midnight, transferred ~noon next day).
   - Transferred today IST: incremental via `_transferredTodayCache` (same pattern as `_poCache`/`_toCache`). 2-day date window fetches list; detail calls only for new/modified TOs. Filtered to `last_modified_time >= midnight IST` using Date comparison (not string compare — timezone formats differ). Capped at 50 new detail calls per run — prevents cold-cache timeout deadlock (cache warms over 1-2 runs).
-  - Stored as `toData[ds][sku] = { qty, rec_qty, to_date, status, to_number, to_id }` keyed by destination DS. `rec_qty` = qty for transferred, null for draft/in_transit. Priority: transferred (today) > in_transit > draft.
+  - Stored as `toData[ds][sku] = { qty, rec_qty, to_date, status, to_number, to_id }` keyed by destination DS. `rec_qty` = qty for transferred, null for draft/in_transit. Priority: in_transit > draft > transferred (today). Active TOs always win — transferred-today only fills slots with no active TO, preventing a stale Zoho `last_modified_time` update from hiding a new in_transit TO.
   - `fetchTransferredToday` is wrapped in try-catch — if Zoho call fails, sync continues with draft/in_transit data only.
 
 **Zoho Books branch IDs (confirmed):**
