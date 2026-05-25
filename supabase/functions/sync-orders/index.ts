@@ -359,24 +359,10 @@ Deno.serve(async (req) => {
     }
     console.log(`Transferred today: ${Object.keys(transferredToday).length} SKU×DS combos`)
 
-    // Build toData — pass 1: transferred today (highest priority)
+    // Build toData — pass 1: active TOs (in_transit > draft), highest priority.
+    // Active beats transferred so a new in_transit TO always shows over a
+    // previously-transferred TO whose Zoho record was touched today.
     const toData: Record<string, Record<string, any>> = {}
-    for (const [key, entry] of Object.entries(transferredToday)) {
-      const colonIdx = key.indexOf(':')
-      const ds  = key.slice(0, colonIdx)
-      const sku = key.slice(colonIdx + 1)
-      if (!toData[ds]) toData[ds] = {}
-      toData[ds][sku] = {
-        qty:       entry.qty,
-        rec_qty:   entry.qty,
-        to_date:   entry.to_date,
-        status:    'transferred',
-        to_number: entry.to_number,
-        to_id:     entry.to_id,
-      }
-    }
-
-    // Pass 2: active (draft/in_transit) — in_transit beats draft
     const sortedTOEntries = Object.values(updatedToCache)
       .sort((a, b) => {
         const statusRank = (s: string) => s === 'in_transit' ? 0 : 1
@@ -398,6 +384,24 @@ Deno.serve(async (req) => {
           to_number: entry.to_number,
           to_id:     entry.to_id,
         }
+      }
+    }
+
+    // Pass 2: transferred today — only fills slots with no active TO.
+    // Transferred is only useful when there is no pending in_transit/draft TO.
+    for (const [key, entry] of Object.entries(transferredToday)) {
+      const colonIdx = key.indexOf(':')
+      const ds  = key.slice(0, colonIdx)
+      const sku = key.slice(colonIdx + 1)
+      if (!toData[ds]) toData[ds] = {}
+      if (toData[ds][sku]) continue  // active TO already set — skip transferred
+      toData[ds][sku] = {
+        qty:       entry.qty,
+        rec_qty:   entry.qty,
+        to_date:   entry.to_date,
+        status:    'transferred',
+        to_number: entry.to_number,
+        to_id:     entry.to_id,
       }
     }
 
