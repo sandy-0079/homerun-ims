@@ -62,7 +62,33 @@ drain-based DC and a measurable, order-level service level.
 L90D facts: 2,239 ply orders, 365 bulk (16.3%, ~4.1/day), bulk carries 60.7% of sheet
 volume; 52% of bulk orders are mixed (also contain <10 lines, ~1,577 sheets/90d).
 
-## 5. DS Min/Max — greedy capacity allocation
+## 5. DS Min/Max — empirical τ-service formula (revised 2026-06-11, capacity parked)
+
+> **Revision:** after validation, the greedy capacity-budgeted allocator (below, kept as
+> `allocMode: 'greedy'`) was replaced as default by a capacity-unconstrained empirical
+> formula targeting 99% order-level service, per user direction. Capacity is reported,
+> not enforced; the capacity conversation is parked.
+
+```
+Per SKU×DS, regular orders only, fit on lookback (90d):
+Min = max( local ABQ, network ABQ, P[tau=99] of rolling 2-day regular demand )
+Max = max( local max order, P[netOrderTailPct=95] of NETWORK order sizes, Min+1 )
+```
+
+- 2-day rolling window = replenishment exposure (TO raised at close, arrives next noon;
+  worst case ~2 days of demand before refill). Configurable `rollingWindowDays`.
+- Network order-size tails rescue combos with thin local samples — order sizes are a
+  network-level property of the SKU (diagnosed: 57% of out-of-sample misses were sparse
+  combos whose local max-order underestimated the tail).
+- Validation (order-level service): in-sample 99.95% network-wide; out-of-sample
+  (fit w/o last 30d, scored on them) ~91–94%. Residual misses are demand never seen in
+  any history (single orders exceeding full shelf). Fit-window length improves service
+  monotonically (30d 87.5% → 60d 91.5%) → 90d standard.
+- Footprint ~600–760 sheets/DS vs ~510 current capacity — capacity decision parked.
+- Simulation tab has an out-of-sample toggle so the forward-looking estimate is always
+  visible alongside the in-sample number.
+
+## 5b. (Alternative mode) greedy capacity allocation
 
 Budget per (DS × thickness class) = configured capacity (sheets), counted against ΣMax.
 Current capacities: DS01–03 360 thick / 150 thin, DS04 225/150, DS05 200/150.

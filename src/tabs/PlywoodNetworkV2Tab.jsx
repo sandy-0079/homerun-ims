@@ -53,6 +53,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   const [flagFilter, setFlagFilter] = useState("All");
   const [simFrom, setSimFrom] = useState("");
   const [simTo, setSimTo] = useState("");
+  const [simHoldout, setSimHoldout] = useState(false);
   const [simResult, setSimResult] = useState(null);
 
   const ready = invoiceData?.length > 0 && Object.keys(skuMaster || {}).length > 0;
@@ -96,14 +97,34 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
 
   const runSim = () => {
     if (!computed) return;
-    const { universe, plan, dcPlan } = computed;
-    const from = simFrom || computed.demand.cutoff;
-    const to = simTo || computed.demand.windowDates[computed.demand.windowDates.length - 1];
+    const { universe } = computed;
+    const lastDate = computed.demand.windowDates[computed.demand.windowDates.length - 1];
+    let { plan, dcPlan } = computed;
+    let from = simFrom || computed.demand.cutoff;
+    let to = simTo || lastDate;
+
+    if (simHoldout) {
+      // Out-of-sample: fit the plan on data EXCLUDING the last 30 days, score on those 30.
+      const testFromD = new Date(lastDate + "T00:00:00Z");
+      testFromD.setUTCDate(testFromD.getUTCDate() - 29);
+      from = testFromD.toISOString().slice(0, 10);
+      to = lastDate;
+      const fitInv = invoiceData.filter(r => r.date < from);
+      const fitRes = computePlywoodNetworkV2Results(fitInv, skuMaster, { plywoodNetworkV2Config: cfgDraft });
+      if (!Object.keys(fitRes).length) { setSimResult(null); return; }
+      plan = {}; dcPlan = {};
+      for (const [sku, r] of Object.entries(fitRes)) {
+        plan[sku] = {};
+        for (const ds of DS_LIST) plan[sku][ds] = { min: r.storeResults[ds].min, max: r.storeResults[ds].max };
+        dcPlan[sku] = { ...r.dcResult };
+      }
+    }
+
     const slice = invoiceData.filter(r => r.date >= from && r.date <= to);
     const spanDays = Math.round((new Date(to + "T00:00:00Z") - new Date(from + "T00:00:00Z")) / 86400000) + 1;
     const demand = prepareDemand(slice, universe, { ...cfgDraft, lookbackDays: spanDays });
     if (!demand) { setSimResult(null); return; }
-    setSimResult({ sim: replay(plan, dcPlan, demand, cfgDraft), from, to, days: demand.windowDates.length });
+    setSimResult({ sim: replay(plan, dcPlan, demand, cfgDraft), from, to, days: demand.windowDates.length, holdout: simHoldout });
   };
 
   if (!ready) return <div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>Loading data, please wait...</div>;
@@ -146,7 +167,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
                   </div>
                 ))}
                 {(nodeReport[ds].thick.overCapacity || nodeReport[ds].thin.overCapacity) && (
-                  <div style={{fontSize:9,color:HR.red,fontWeight:700,marginTop:2}}>⚠ floors alone exceed capacity</div>
+                  <div style={{fontSize:9,color:HR.red,fontWeight:700,marginTop:2}}>⚠ plan exceeds capacity</div>
                 )}
               </div>
             ))}
@@ -218,6 +239,10 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
             <input type="date" style={{...S.input,width:130}} value={simFrom} onChange={e=>setSimFrom(e.target.value)} placeholder={demand.cutoff}/>
             <span style={{fontSize:11,color:HR.muted}}>to</span>
             <input type="date" style={{...S.input,width:130}} value={simTo} onChange={e=>setSimTo(e.target.value)}/>
+            <label style={{display:"flex",alignItems:"center",gap:4,fontSize:11,cursor:"pointer"}}>
+              <input type="checkbox" checked={simHoldout} onChange={e=>setSimHoldout(e.target.checked)}/>
+              Out-of-sample test (fit excludes last 30d, scored on them)
+            </label>
             <button style={{...S.btn(true)}} onClick={runSim}>Run Simulation</button>
             <span style={{fontSize:10,color:HR.muted}}>Empty dates = full lookback window. Order-level scoring: any short line fails the whole order.</span>
           </div>
@@ -253,6 +278,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
                   })}
                 </div>
                 <div style={{fontSize:11,color:HR.muted,marginBottom:8}}>
+                  {simResult.holdout && <span style={{color:HR.purple,fontWeight:700}}>OUT-OF-SAMPLE (plan fitted without these 30 days) · </span>}
                   Ops load: {simResult.sim.opsLoad.toLines} TO lines ({(simResult.sim.opsLoad.toLines/simResult.days).toFixed(1)}/day), {simResult.sim.opsLoad.poLines} PO lines · {simResult.from} → {simResult.to}
                 </div>
                 <div style={{...S.card,maxHeight:380,overflowY:"auto"}}>
@@ -324,11 +350,22 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
         <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
           <div style={{...S.card,flex:"1 1 320px"}}>
             <div style={S.sectionTitle}>Parameters</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <span style={{fontSize:11}}>Allocation mode</span>
+              <select style={{...S.input,width:100}} value={cfgDraft.allocMode || "empirical"}
+                onChange={e=>setCfgDraft(d=>({...d,allocMode:e.target.value}))}>
+                <option value="empirical">Empirical τ</option>
+                <option value="greedy">Greedy (capacity)</option>
+              </select>
+            </div>
             {[
               ["lookbackDays","Lookback days"],
+              ["tau","τ — service quantile (empirical)"],
+              ["netOrderTailPct","Network order tail pct (empirical)"],
+              ["rollingWindowDays","Rolling window days (empirical)"],
               ["bulkOrderThreshold","Bulk order threshold (sheets)"],
               ["bulkDcServedShare","Bulk DC-served share (0–1)"],
-              ["minDepthStopPercentile","Min depth stop percentile"],
+              ["minDepthStopPercentile","Min depth stop pct (greedy)"],
               ["dcReplPercentile","DC replenishment percentile"],
               ["dcBulkPercentile","DC bulk percentile"],
               ["dcCoverDays","DC cycle cover days"],

@@ -1,14 +1,82 @@
-// Greedy capacity-first allocator (spec §5).
-// Priority 1: floors (breadth, sacred). Priority 2: Min depth by marginal coverage.
-// Priority 3: Max buffer toward Min + median order. Budget = ΣMax per (DS × class).
+// Allocation logic for Plywood v2. Two modes:
+//  - allocateEmpirical (default): τ-service formula, capacity-unconstrained.
+//      Min = max(local ABQ, network ABQ, P[tau] of rolling 2-day regular demand)
+//      Max = max(local max order, P[netOrderTailPct] of NETWORK order sizes, Min+1)
+//    Order sizes are a network-level property of the SKU — network tails rescue
+//    combos whose local sample is too thin to estimate its own tail.
+//  - allocate (greedy): capacity-budgeted; floors → Min depth by marginal coverage
+//    → Max buffer. Kept as an A/B alternative (cfg.allocMode = 'greedy').
 
 import { DS_LIST } from '../../constants.js';
-import { inferThickness } from '../../utils.js';
+import { inferThickness, percentile } from '../../utils.js';
 import { medianOrderQty } from './demand.js';
 
 export function thicknessClass(name, boundaryMm = 9) {
   const mm = inferThickness(name);
   return mm !== null && mm > boundaryMm ? 'thick' : 'thin';
+}
+
+export function allocateEmpirical(universe, demand, cfg) {
+  const { regularDaily, regOrderQtys, regOrderQtysByDS, windowDates } = demand;
+  const tau = cfg.tau ?? 99;
+  const netTailPct = cfg.netOrderTailPct ?? 95;
+  const rollDays = cfg.rollingWindowDays ?? 2;
+  const boundary = cfg.thickBoundaryMm ?? 9;
+  const caps = cfg.dsCapacities || null;
+
+  const skus = Object.keys(universe).sort();
+  const tclass = {};
+  for (const sku of skus) tclass[sku] = thicknessClass(universe[sku].name, boundary);
+
+  const plan = {};
+  const floor = {};
+  for (const sku of skus) {
+    plan[sku] = {};
+    const no = [...(regOrderQtys[sku] || [])].sort((a, b) => a - b);
+    const netAbq = no.length ? Math.ceil(no.reduce((a, b) => a + b, 0) / no.length) : 1;
+    const netTail = no.length ? Math.ceil(percentile(no, netTailPct)) : 1;
+    floor[sku] = netAbq;
+
+    for (const ds of DS_LIST) {
+      const lo = regOrderQtysByDS?.[sku]?.[ds] || [];
+      const dd = regularDaily[sku]?.[ds] || {};
+      // rolling N-day sums over the calendar window (zero days included)
+      const vals = windowDates.map(d => dd[d] || 0);
+      const roll = [];
+      for (let i = 0; i + rollDays <= vals.length; i++) {
+        let s = 0;
+        for (let j = i; j < i + rollDays; j++) s += vals[j];
+        roll.push(s);
+      }
+      roll.sort((a, b) => a - b);
+      const q = roll.length ? Math.ceil(percentile(roll, tau) || 0) : 0;
+
+      const localAbq = lo.length ? Math.ceil(lo.reduce((a, b) => a + b, 0) / lo.length) : 0;
+      const localMax = lo.length ? Math.max(...lo) : 0;
+
+      const floorVal = Math.max(localAbq, netAbq, 1);
+      const min = Math.max(floorVal, q);
+      const max = Math.max(localMax, netTail, min + 1);
+      plan[sku][ds] = { min, max, floor: floorVal };
+    }
+  }
+
+  // Capacity is NOT enforced in this mode — report utilisation only.
+  const nodeReport = {};
+  for (const ds of DS_LIST) {
+    nodeReport[ds] = {};
+    for (const tc of ['thick', 'thin']) {
+      const group = skus.filter(s => tclass[s] === tc);
+      const used = group.reduce((a, s) => a + plan[s][ds].max, 0);
+      const floorUsed = group.reduce((a, s) => a + plan[s][ds].floor + 1, 0);
+      const cap = caps?.[ds]?.[tc];
+      nodeReport[ds][tc] = {
+        capacity: cap ?? null, floorUsed, used,
+        overCapacity: cap != null && used > cap,
+      };
+    }
+  }
+  return { plan, nodeReport, floor, tclass };
 }
 
 export function allocate(universe, demand, cfg) {

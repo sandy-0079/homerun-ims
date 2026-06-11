@@ -38,11 +38,22 @@ describe('computePlywoodNetworkV2Results', () => {
     }
   });
 
-  it('respects capacity: ΣMax per ds×class ≤ cap', () => {
-    const v2 = res['PLY-A'].v2;
+  it('greedy mode respects capacity: ΣMax per ds×class ≤ cap', () => {
+    const resG = computePlywoodNetworkV2Results(inv, SKUM, {
+      plywoodNetworkV2Config: { ...params.plywoodNetworkV2Config, allocMode: 'greedy' },
+    });
+    const v2 = resG['PLY-A'].v2;
     for (const ds of DS_LIST) for (const tc of ['thick', 'thin']) {
       const node = v2.nodeReport[ds][tc];
       if (node.capacity != null) expect(node.used).toBeLessThanOrEqual(node.capacity);
+    }
+  });
+
+  it('empirical mode (default) reports utilisation without trimming', () => {
+    const v2 = res['PLY-A'].v2;
+    for (const ds of DS_LIST) for (const tc of ['thick', 'thin']) {
+      expect(v2.nodeReport[ds][tc]).toHaveProperty('used');
+      expect(v2.nodeReport[ds][tc]).toHaveProperty('overCapacity');
     }
   });
 

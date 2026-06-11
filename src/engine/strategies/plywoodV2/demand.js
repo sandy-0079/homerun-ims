@@ -57,9 +57,10 @@ export function prepareDemand(inv, universe, cfg) {
     a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1);
   for (const o of orders) o.isBulk = o.lines.some(l => l.qty >= bulkTh);
 
-  const regularDaily = {};   // sku → ds → date → qty   (line-level, DS sizing)
-  const bulkDaily = {};      // sku → date → qty        (order-level, DC sizing)
-  const regOrderQtys = {};   // sku → [qty]             (network, for median/floor)
+  const regularDaily = {};      // sku → ds → date → qty   (line-level, DS sizing)
+  const bulkDaily = {};         // sku → date → qty        (order-level, DC sizing)
+  const regOrderQtys = {};      // sku → [qty]             (network order sizes)
+  const regOrderQtysByDS = {};  // sku → ds → [qty]        (local order sizes)
 
   for (const o of orders) {
     for (const { sku, qty } of o.lines) {
@@ -69,6 +70,9 @@ export function prepareDemand(inv, universe, cfg) {
         regularDaily[sku][o.ds][o.date] = (regularDaily[sku][o.ds][o.date] || 0) + qty;
         if (!regOrderQtys[sku]) regOrderQtys[sku] = [];
         regOrderQtys[sku].push(qty);
+        if (!regOrderQtysByDS[sku]) regOrderQtysByDS[sku] = {};
+        if (!regOrderQtysByDS[sku][o.ds]) regOrderQtysByDS[sku][o.ds] = [];
+        regOrderQtysByDS[sku][o.ds].push(qty);
       }
       if (o.isBulk) {
         if (!bulkDaily[sku]) bulkDaily[sku] = {};
@@ -76,5 +80,5 @@ export function prepareDemand(inv, universe, cfg) {
       }
     }
   }
-  return { orders, regularDaily, bulkDaily, regOrderQtys, windowDates, cutoff };
+  return { orders, regularDaily, bulkDaily, regOrderQtys, regOrderQtysByDS, windowDates, cutoff };
 }

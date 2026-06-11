@@ -3,7 +3,7 @@
 
 import { DS_LIST } from '../../constants.js';
 import { buildUniverse, prepareDemand } from './demand.js';
-import { allocate } from './allocator.js';
+import { allocate, allocateEmpirical } from './allocator.js';
 import { replay } from './replay.js';
 import { sizeDC, trimDCToCapacity } from './dc.js';
 
@@ -11,7 +11,11 @@ export const V2_DEFAULTS = {
   lookbackDays: 90,
   bulkOrderThreshold: 10,
   bulkDcServedShare: 1.0,
-  minDepthStopPercentile: 99,
+  allocMode: 'empirical',        // 'empirical' (τ-service, capacity-unconstrained) | 'greedy' (capacity-budgeted)
+  tau: 99,                       // service quantile on rolling-window regular demand
+  netOrderTailPct: 95,           // network order-size tail percentile for Max
+  rollingWindowDays: 2,          // replenishment exposure window (TO daily, arrives next noon)
+  minDepthStopPercentile: 99,    // greedy mode only
   dcReplPercentile: 98,
   dcBulkPercentile: 90,
   dcCoverDays: 2,
@@ -38,7 +42,8 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
   if (!demand) return {};
 
   // DS plans
-  const { plan, nodeReport, floor, tclass } = allocate(universe, demand, c);
+  const allocFn = c.allocMode === 'greedy' ? allocate : allocateEmpirical;
+  const { plan, nodeReport, floor, tclass } = allocFn(universe, demand, c);
 
   // DC: drain pass (infinite DC) → size → capacity trim
   const drainPass = replay(plan, null, demand, { ...c, infiniteDC: true });
@@ -72,7 +77,7 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
 
 // Re-exports for tab / harness use
 export { buildUniverse, prepareDemand, medianOrderQty } from './demand.js';
-export { allocate, thicknessClass } from './allocator.js';
+export { allocate, allocateEmpirical, thicknessClass } from './allocator.js';
 export { replay } from './replay.js';
 export { sizeDC, trimDCToCapacity, rollingSums } from './dc.js';
 export { computeKeepScores } from './keepScore.js';
