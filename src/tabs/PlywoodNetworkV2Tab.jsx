@@ -100,7 +100,8 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
     const from = simFrom || computed.demand.cutoff;
     const to = simTo || computed.demand.windowDates[computed.demand.windowDates.length - 1];
     const slice = invoiceData.filter(r => r.date >= from && r.date <= to);
-    const demand = prepareDemand(slice, universe, { ...cfgDraft, lookbackDays: 100000 });
+    const spanDays = Math.round((new Date(to + "T00:00:00Z") - new Date(from + "T00:00:00Z")) / 86400000) + 1;
+    const demand = prepareDemand(slice, universe, { ...cfgDraft, lookbackDays: spanDays });
     if (!demand) { setSimResult(null); return; }
     setSimResult({ sim: replay(plan, dcPlan, demand, cfgDraft), from, to, days: demand.windowDates.length });
   };
