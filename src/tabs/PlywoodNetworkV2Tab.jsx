@@ -354,8 +354,9 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
             <div style={S.sectionTitle}>Parameters</div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
               <span style={{fontSize:11}}>Allocation mode</span>
-              <select style={{...S.input,width:130}} value={cfgDraft.allocMode || "tiered"}
+              <select style={{...S.input,width:150}} value={cfgDraft.allocMode || "unified"}
                 onChange={e=>setCfgDraft(d=>({...d,allocMode:e.target.value}))}>
+                <option value="unified">Unified (local/net P90)</option>
                 <option value="tiered">Tiered τ (frequency)</option>
                 <option value="empirical">Empirical τ (net tails)</option>
                 <option value="greedy">Greedy (capacity)</option>
@@ -371,7 +372,9 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
             </div>
             {[
               ["lookbackDays","Lookback days"],
-              ["tau","τ — service quantile"],
+              ["minLocalDayPercentile","Local day percentile (unified)"],
+              ["minNetOrderPercentile","Network order percentile (unified)"],
+              ["tau","τ — service quantile (tiered/empirical)"],
               ["rollingWindowDays","Rolling window days"],
               ["tierFrequentNZD","Frequent tier NZD ≥ (per 90d)"],
               ["tierModerateNZD","Moderate tier NZD ≥"],

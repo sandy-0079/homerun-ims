@@ -3,7 +3,7 @@
 
 import { DS_LIST } from '../../constants.js';
 import { buildUniverse, prepareDemand } from './demand.js';
-import { allocate, allocateEmpirical, allocateTiered } from './allocator.js';
+import { allocate, allocateEmpirical, allocateTiered, allocateUnified } from './allocator.js';
 import { replay } from './replay.js';
 import { sizeDC, trimDCToCapacity } from './dc.js';
 
@@ -11,7 +11,9 @@ export const V2_DEFAULTS = {
   lookbackDays: 90,
   bulkOrderThreshold: 10,
   bulkDcServedShare: 1.0,
-  allocMode: 'tiered',           // 'tiered' (frequency-tiered τ-service) | 'empirical' (network tails everywhere) | 'greedy' (capacity-budgeted)
+  allocMode: 'unified',          // 'unified' (two-branch, DEFAULT) | 'tiered' | 'empirical' | 'greedy'
+  minLocalDayPercentile: 90,     // unified: percentile of local selling-day totals
+  minNetOrderPercentile: 90,     // unified: percentile of network order sizes (Min floor)
   tau: 99,                       // service quantile on rolling-window regular demand
   netOrderTailPct: 95,           // network order-size tail percentile for Max (empirical mode)
   rollingWindowDays: 2,          // replenishment exposure window (TO daily, arrives next noon)
@@ -48,7 +50,8 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
   // DS plans
   const allocFn = c.allocMode === 'greedy' ? allocate
     : c.allocMode === 'empirical' ? allocateEmpirical
-    : allocateTiered;
+    : c.allocMode === 'tiered' ? allocateTiered
+    : allocateUnified;
   const { plan, nodeReport, floor, tclass } = allocFn(universe, demand, c);
 
   // DC: drain pass (infinite DC) → size → capacity trim
@@ -83,7 +86,7 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
 
 // Re-exports for tab / harness use
 export { buildUniverse, prepareDemand, medianOrderQty } from './demand.js';
-export { allocate, allocateEmpirical, allocateTiered, thicknessClass } from './allocator.js';
+export { allocate, allocateEmpirical, allocateTiered, allocateUnified, thicknessClass } from './allocator.js';
 export { replay } from './replay.js';
 export { sizeDC, trimDCToCapacity, rollingSums } from './dc.js';
 export { computeKeepScores } from './keepScore.js';

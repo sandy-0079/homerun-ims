@@ -16,7 +16,68 @@ export function thicknessClass(name, boundaryMm = 9) {
   return mm !== null && mm > boundaryMm ? 'thick' : 'thin';
 }
 
-// Tiered τ-service allocator (default): Min logic scales with LOCAL order frequency.
+// Unified two-branch allocator (DEFAULT — user-confirmed 2026-06-11).
+//   NZD ≥ 1: Min = max( P[localDayPct] of local selling-day totals,
+//                        P[netOrderPct] of network order sizes )
+//            Max = max( largest local selling day, Min + 1 )
+//   NZD = 0: Min = network ABQ (qty ÷ orders; 1 if no network history), Max = Min + 1
+// Validated: in-sample 99.15%, out-of-sample 92.6% (DS04 95.0 / DS05 95.4).
+// Capacity reported, not enforced.
+export function allocateUnified(universe, demand, cfg) {
+  const { regularDaily, regOrderQtys } = demand;
+  const localDayPct = cfg.minLocalDayPercentile ?? 90;
+  const netOrdPct = cfg.minNetOrderPercentile ?? 90;
+  const boundary = cfg.thickBoundaryMm ?? 9;
+  const caps = cfg.dsCapacities || null;
+
+  const skus = Object.keys(universe).sort();
+  const tclass = {};
+  for (const sku of skus) tclass[sku] = thicknessClass(universe[sku].name, boundary);
+
+  const plan = {};
+  const floor = {};
+  for (const sku of skus) {
+    plan[sku] = {};
+    const no = [...(regOrderQtys[sku] || [])].sort((a, b) => a - b);
+    const netAbq = no.length ? Math.ceil(no.reduce((a, b) => a + b, 0) / no.length) : 1;
+    const netPx = no.length ? Math.ceil(percentile(no, netOrdPct)) : 1;
+    floor[sku] = netAbq;
+
+    for (const ds of DS_LIST) {
+      const dd = regularDaily[sku]?.[ds] || {};
+      const days = Object.values(dd).sort((a, b) => a - b);
+      let min, max, tier;
+      if (days.length === 0) {
+        tier = 'dead';
+        min = netAbq;
+        max = min + 1;
+      } else {
+        tier = 'active';
+        min = Math.max(Math.ceil(percentile(days, localDayPct)), netPx);
+        max = Math.max(days[days.length - 1], min + 1);
+      }
+      plan[sku][ds] = { min, max, floor: Math.min(min, tier === 'dead' ? netAbq : netPx), tier };
+    }
+  }
+
+  const nodeReport = {};
+  for (const ds of DS_LIST) {
+    nodeReport[ds] = {};
+    for (const tc of ['thick', 'thin']) {
+      const group = skus.filter(s => tclass[s] === tc);
+      const used = group.reduce((a, s) => a + plan[s][ds].max, 0);
+      const floorUsed = group.reduce((a, s) => a + plan[s][ds].floor + 1, 0);
+      const cap = caps?.[ds]?.[tc];
+      nodeReport[ds][tc] = {
+        capacity: cap ?? null, floorUsed, used,
+        overCapacity: cap != null && used > cap,
+      };
+    }
+  }
+  return { plan, nodeReport, floor, tclass };
+}
+
+// Tiered τ-service allocator: Min logic scales with LOCAL order frequency.
 //   Frequent (NZD ≥ tierFrequentNZD): Min = max(localABQ, P[tau] 2-day rolling)
 //   Moderate (NZD ≥ tierModerateNZD): same as frequent (quantile self-scales down)
 //   Sparse   (NZD ≥ tierSparseNZD):   Min = max(localABQ, netABQ)
