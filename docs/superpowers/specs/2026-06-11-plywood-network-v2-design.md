@@ -24,8 +24,8 @@ drain-based DC and a measurable, order-level service level.
 | # | Decision |
 |---|---|
 | 1 | All brands stocked at all locations — brand-level node assignments are removed. |
-| 2 | Blanket bulk definition: any **order** containing a ply line with qty ≥ 10 is a bulk order (all its lines, including small ones). Order-level, not line-level. |
-| 3 | Bulk demand is excluded from DS provisioning; DSes serve regular orders only, targeting ~99% order-level service. |
+| 2 | Blanket bulk definition: any **order** containing a ply line with qty ≥ 10 is a bulk order. Routing is order-level (ops SOP: the whole order, including small lines, ships from DC). |
+| 3 | DS demand sizing is **line-level**: all regular-sized lines (< 10) count toward DS demand even when they arrived inside a bulk order — the same need could arrive standalone tomorrow. Bulk-sized lines (≥ 10) are excluded from DS provisioning. DSes target ~99% order-level service on regular orders. |
 | 4 | Bulk orders are served from DC (assume 100% DC-served for sizing & simulation v1; `bulkDcServedShare` configurable, default 1.0). Supplier-direct fulfilment is upside, not modelled. |
 | 5 | SKUs with no local sales but network demand are stocked everywhere via floors sized from network behaviour. |
 | 6 | Per-DS thick/thin capacity is a hard budget, respected by construction (allocation-first, not compute-then-trim). |
@@ -46,10 +46,17 @@ drain-based DC and a measurable, order-level service level.
 
 1. Window: lookback over invoice data (`lookbackDays`, default 90).
 2. Group invoice lines by order id (`shopifyOrder`). Orders with any ply line
-   qty ≥ `bulkOrderThreshold` (default 10) → **bulk orders**; all their lines are
-   excluded from DS regular demand and routed to the bulk stream.
-3. **Regular stream** per SKU×DS: daily demand series (sum of qty per date) and
-   order-line list. **Bulk stream** per SKU: network daily bulk demand series.
+   qty ≥ `bulkOrderThreshold` (default 10) → **bulk orders** (routing label, used by
+   the simulator and DC bulk sizing).
+3. **Regular stream** (DS demand sizing) per SKU×DS: daily demand series from ALL
+   lines with qty < threshold — including small lines inside bulk orders (line-level;
+   the need could arrive standalone next time). **Bulk stream** per SKU: network daily
+   demand series of ALL lines belonging to bulk orders, including their small lines
+   (order-level; the DC serves the full order under the ops SOP).
+   Consequence (accepted): bulk-embedded small lines (~19% of regular-sized volume,
+   1,577 sheets/90d) are provisioned at both tiers — DS shelf for the standalone-arrival
+   case, DC for the SOP case. 12 SKUs (mostly thin 6–9 mm project companions) are >50%
+   embedded and will carry modest DS oversizing; flagged as a watch item.
 4. Per SKU network stats from regular orders: median order qty, NZD per DS, network NZD.
 
 L90D facts: 2,239 ply orders, 365 bulk (16.3%, ~4.1/day), bulk carries 60.7% of sheet
