@@ -11,6 +11,7 @@ import { standardStrategy } from "./strategies/standard.js";
 import { percentileCoverStrategy } from "./strategies/percentileCover.js";
 import { fixedUnitFloorStrategy } from "./strategies/fixedUnitFloor.js";
 import { computePlywoodNetworkResults } from "./strategies/plywoodNetwork.js";
+import { computePlywoodNetworkV2Results } from "./strategies/plywoodV2/index.js";
 
 /* ── DC movement tag (moved verbatim from App.jsx) ──────────────────────── */
 export function getDCStats(inv, skuId, activeDSCount, intervals, op) {
@@ -97,8 +98,11 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
 
   // Network Design: only runs when explicitly selected in categoryStrategies.
   // Uses full inv (not invSliced) so lookbackDays is independent of overallPeriod.
-  const isNetworkDesign = (p.categoryStrategies?.["Plywood, MDF & HDHMR"] === "network_design");
-  const plywoodNetworkResults = isNetworkDesign ? computePlywoodNetworkResults(inv, skuM, p) : {};
+  const plyMode = p.categoryStrategies?.["Plywood, MDF & HDHMR"];
+  const plywoodNetworkResults =
+    plyMode === "network_design" ? computePlywoodNetworkResults(inv, skuM, p)
+    : plyMode === "network_design_v2" ? computePlywoodNetworkV2Results(inv, skuM, p)
+    : {};
 
   allSKUs.forEach(skuId => {
     // ── NETWORK DESIGN BYPASS ────────────────────────────────────────────────
@@ -177,7 +181,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     let strategy = resolveStrategy(meta.category, p.categoryStrategies);
     // network_design is handled via pre-computed results above; any SKU that reaches here
     // is a non-network brand (e.g. Merino) — use the configured fallback, not Standard.
-    if (strategy === "network_design") strategy = p.plywoodNonNetworkStrategy || "percentile_cover";
+    if (strategy === "network_design" || strategy === "network_design_v2") strategy = p.plywoodNonNetworkStrategy || "percentile_cover";
 
     DS_LIST.forEach(dsId => {
       const k = `${skuId}||${dsId}`, qm = qMap[k] || {}, om = oMap[k] || {};
