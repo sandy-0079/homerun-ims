@@ -3,7 +3,7 @@
 
 import { DS_LIST } from '../../constants.js';
 import { buildUniverse, prepareDemand } from './demand.js';
-import { allocate, allocateEmpirical } from './allocator.js';
+import { allocate, allocateEmpirical, allocateTiered } from './allocator.js';
 import { replay } from './replay.js';
 import { sizeDC, trimDCToCapacity } from './dc.js';
 
@@ -11,10 +11,14 @@ export const V2_DEFAULTS = {
   lookbackDays: 90,
   bulkOrderThreshold: 10,
   bulkDcServedShare: 1.0,
-  allocMode: 'empirical',        // 'empirical' (τ-service, capacity-unconstrained) | 'greedy' (capacity-budgeted)
+  allocMode: 'tiered',           // 'tiered' (frequency-tiered τ-service) | 'empirical' (network tails everywhere) | 'greedy' (capacity-budgeted)
   tau: 99,                       // service quantile on rolling-window regular demand
-  netOrderTailPct: 95,           // network order-size tail percentile for Max
+  netOrderTailPct: 95,           // network order-size tail percentile for Max (empirical mode)
   rollingWindowDays: 2,          // replenishment exposure window (TO daily, arrives next noon)
+  tierFrequentNZD: 10,           // tiered: local NZD (per 90d) ≥ this → frequent
+  tierModerateNZD: 5,            // tiered: ≥ this → moderate
+  tierSparseNZD: 2,              // tiered: ≥ this → sparse; below → dead (lean floor)
+  deadFloorMode: 'netMedian',    // tiered: 'netMedian' | 'lean1' floor for locally-dead combos
   minDepthStopPercentile: 99,    // greedy mode only
   dcReplPercentile: 98,
   dcBulkPercentile: 90,
@@ -42,7 +46,9 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
   if (!demand) return {};
 
   // DS plans
-  const allocFn = c.allocMode === 'greedy' ? allocate : allocateEmpirical;
+  const allocFn = c.allocMode === 'greedy' ? allocate
+    : c.allocMode === 'empirical' ? allocateEmpirical
+    : allocateTiered;
   const { plan, nodeReport, floor, tclass } = allocFn(universe, demand, c);
 
   // DC: drain pass (infinite DC) → size → capacity trim
@@ -61,7 +67,7 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
       const nzd = Object.keys(demand.regularDaily[sku]?.[ds] || {}).length;
       storeResults[ds] = {
         min: p.min, max: p.max, nonZeroCount: nzd, covers: [ds],
-        v2: { floor: p.floor, depth: p.min - p.floor, tclass: tclass[sku] },
+        v2: { floor: p.floor, depth: p.min - p.floor, tclass: tclass[sku], tier: p.tier || null },
       };
     }
     const dc = dcPlan[sku] || { min: 0, max: 0 };
@@ -77,7 +83,7 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
 
 // Re-exports for tab / harness use
 export { buildUniverse, prepareDemand, medianOrderQty } from './demand.js';
-export { allocate, allocateEmpirical, thicknessClass } from './allocator.js';
+export { allocate, allocateEmpirical, allocateTiered, thicknessClass } from './allocator.js';
 export { replay } from './replay.js';
 export { sizeDC, trimDCToCapacity, rollingSums } from './dc.js';
 export { computeKeepScores } from './keepScore.js';

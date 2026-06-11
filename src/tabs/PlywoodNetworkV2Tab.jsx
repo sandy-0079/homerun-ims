@@ -175,17 +175,19 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
           <div style={{...S.card,maxHeight:520,overflowY:"auto"}}>
             <table style={S.table}>
               <thead><tr>
-                {["SKU","Item Name","Brand","Class","Floor","Depth","Min","Max","Reg NZD"].map(h=><th key={h} style={S.th}>{h}</th>)}
+                {["SKU","Item Name","Brand","Class","Tier","Floor","Depth","Min","Max","Reg NZD"].map(h=><th key={h} style={S.th}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {skuRows.map(([sku, r]) => {
                   const sr = r.storeResults[dsSel];
+                  const tierColor = { frequent: HR.green, moderate: "#2563EB", sparse: HR.amber, dead: HR.muted }[sr.v2.tier] || HR.muted;
                   return (
                     <tr key={sku}>
                       <td style={S.td}>{sku}</td>
                       <td style={{...S.td,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis"}} title={skuMaster[sku]?.name}>{skuMaster[sku]?.name}</td>
                       <td style={S.td}>{r.brand}</td>
                       <td style={S.td}>{sr.v2.tclass}</td>
+                      <td style={{...S.td,color:tierColor,fontWeight:600}}>{sr.v2.tier || "—"}</td>
                       <td style={S.td}>{sr.v2.floor}</td>
                       <td style={{...S.td,color:sr.v2.depth>0?HR.green:HR.muted,fontWeight:sr.v2.depth>0?700:400}}>{sr.v2.depth>0?`+${sr.v2.depth}`:"—"}</td>
                       <td style={{...S.td,fontWeight:700}}>{sr.min}</td>
@@ -352,17 +354,29 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
             <div style={S.sectionTitle}>Parameters</div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
               <span style={{fontSize:11}}>Allocation mode</span>
-              <select style={{...S.input,width:100}} value={cfgDraft.allocMode || "empirical"}
+              <select style={{...S.input,width:130}} value={cfgDraft.allocMode || "tiered"}
                 onChange={e=>setCfgDraft(d=>({...d,allocMode:e.target.value}))}>
-                <option value="empirical">Empirical τ</option>
+                <option value="tiered">Tiered τ (frequency)</option>
+                <option value="empirical">Empirical τ (net tails)</option>
                 <option value="greedy">Greedy (capacity)</option>
+              </select>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <span style={{fontSize:11}}>Dead-combo floor (tiered)</span>
+              <select style={{...S.input,width:130}} value={cfgDraft.deadFloorMode || "netMedian"}
+                onChange={e=>setCfgDraft(d=>({...d,deadFloorMode:e.target.value}))}>
+                <option value="netMedian">Network median order</option>
+                <option value="lean1">Lean (Min 1 / Max 2)</option>
               </select>
             </div>
             {[
               ["lookbackDays","Lookback days"],
-              ["tau","τ — service quantile (empirical)"],
+              ["tau","τ — service quantile"],
+              ["rollingWindowDays","Rolling window days"],
+              ["tierFrequentNZD","Frequent tier NZD ≥ (per 90d)"],
+              ["tierModerateNZD","Moderate tier NZD ≥"],
+              ["tierSparseNZD","Sparse tier NZD ≥"],
               ["netOrderTailPct","Network order tail pct (empirical)"],
-              ["rollingWindowDays","Rolling window days (empirical)"],
               ["bulkOrderThreshold","Bulk order threshold (sheets)"],
               ["bulkDcServedShare","Bulk DC-served share (0–1)"],
               ["minDepthStopPercentile","Min depth stop pct (greedy)"],

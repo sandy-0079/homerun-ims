@@ -16,6 +16,82 @@ export function thicknessClass(name, boundaryMm = 9) {
   return mm !== null && mm > boundaryMm ? 'thick' : 'thin';
 }
 
+// Tiered τ-service allocator (default): Min logic scales with LOCAL order frequency.
+//   Frequent (NZD ≥ tierFrequentNZD): Min = max(localABQ, P[tau] 2-day rolling)
+//   Moderate (NZD ≥ tierModerateNZD): same as frequent (quantile self-scales down)
+//   Sparse   (NZD ≥ tierSparseNZD):   Min = max(localABQ, netABQ)
+//   Dead     (below):                  lean Min from network signal (median order or 1)
+// Max = max(local max regular order, Min+1) — no network tails (that's the lean trade).
+// Capacity reported, not enforced.
+export function allocateTiered(universe, demand, cfg) {
+  const { regularDaily, regOrderQtys, regOrderQtysByDS, windowDates } = demand;
+  const tau = cfg.tau ?? 99;
+  const rollDays = cfg.rollingWindowDays ?? 2;
+  const boundary = cfg.thickBoundaryMm ?? 9;
+  const caps = cfg.dsCapacities || null;
+  // NZD thresholds defined on a 90d basis; scale to the actual window length.
+  const scale = windowDates.length / 90;
+  const thFreq = Math.max(2, Math.ceil((cfg.tierFrequentNZD ?? 10) * scale));
+  const thMod = Math.max(2, Math.ceil((cfg.tierModerateNZD ?? 5) * scale));
+  const thSparse = cfg.tierSparseNZD ?? 2;
+  const deadFloorMode = cfg.deadFloorMode ?? 'netMedian'; // 'netMedian' | 'lean1'
+
+  const skus = Object.keys(universe).sort();
+  const tclass = {};
+  for (const sku of skus) tclass[sku] = thicknessClass(universe[sku].name, boundary);
+
+  const plan = {};
+  const floor = {};
+  for (const sku of skus) {
+    plan[sku] = {};
+    const no = [...(regOrderQtys[sku] || [])].sort((a, b) => a - b);
+    const netAbq = no.length ? Math.ceil(no.reduce((a, b) => a + b, 0) / no.length) : 1;
+    const netMed = no.length ? Math.max(1, Math.round(medianOrderQty(no))) : 1;
+    floor[sku] = deadFloorMode === 'lean1' ? 1 : netMed;
+
+    for (const ds of DS_LIST) {
+      const lo = regOrderQtysByDS?.[sku]?.[ds] || [];
+      const dd = regularDaily[sku]?.[ds] || {};
+      const nzd = Object.keys(dd).length;
+      const vals = windowDates.map(d => dd[d] || 0);
+      const roll = [];
+      for (let i = 0; i + rollDays <= vals.length; i++) {
+        let s = 0;
+        for (let j = i; j < i + rollDays; j++) s += vals[j];
+        roll.push(s);
+      }
+      roll.sort((a, b) => a - b);
+      const q = roll.length ? Math.ceil(percentile(roll, tau) || 0) : 0;
+      const localAbq = lo.length ? Math.ceil(lo.reduce((a, b) => a + b, 0) / lo.length) : 0;
+      const localMax = lo.length ? Math.max(...lo) : 0;
+
+      let min, tier;
+      if (nzd >= thFreq) { tier = 'frequent'; min = Math.max(localAbq, q, 1); }
+      else if (nzd >= thMod) { tier = 'moderate'; min = Math.max(localAbq, q, 1); }
+      else if (nzd >= thSparse) { tier = 'sparse'; min = Math.max(localAbq, netAbq, 1); }
+      else { tier = 'dead'; min = floor[sku]; }
+      const max = Math.max(localMax, min + 1);
+      plan[sku][ds] = { min, max, floor: floor[sku], tier };
+    }
+  }
+
+  const nodeReport = {};
+  for (const ds of DS_LIST) {
+    nodeReport[ds] = {};
+    for (const tc of ['thick', 'thin']) {
+      const group = skus.filter(s => tclass[s] === tc);
+      const used = group.reduce((a, s) => a + plan[s][ds].max, 0);
+      const floorUsed = group.reduce((a, s) => a + plan[s][ds].floor + 1, 0);
+      const cap = caps?.[ds]?.[tc];
+      nodeReport[ds][tc] = {
+        capacity: cap ?? null, floorUsed, used,
+        overCapacity: cap != null && used > cap,
+      };
+    }
+  }
+  return { plan, nodeReport, floor, tclass };
+}
+
 export function allocateEmpirical(universe, demand, cfg) {
   const { regularDaily, regOrderQtys, regOrderQtysByDS, windowDates } = demand;
   const tau = cfg.tau ?? 99;
