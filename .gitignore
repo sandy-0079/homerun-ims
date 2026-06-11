@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 .env
 .worktrees
+
+.cache/
+validation-out/

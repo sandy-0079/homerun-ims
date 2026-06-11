@@ -1,0 +1,187 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - img [ref=e7]
+        - generic [ref=e9]:
+          - generic [ref=e10]: Sales & Margin Dashboard
+          - generic [ref=e11]: 5 rows loaded
+      - generic [ref=e12]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: ⌕
+          - textbox "Search SKU or item…" [ref=e16]
+        - button "↺ Sync now" [ref=e17] [cursor=pointer]
+    - generic [ref=e18]:
+      - generic [ref=e19]:
+        - button "QTD" [ref=e20] [cursor=pointer]
+        - button "MTD" [ref=e21] [cursor=pointer]
+        - button "WTD" [ref=e22] [cursor=pointer]
+        - button "L30D" [ref=e23] [cursor=pointer]
+        - button "L7D" [ref=e24] [cursor=pointer]
+        - button "Yesterday" [ref=e25] [cursor=pointer]
+        - button "Today" [ref=e26] [cursor=pointer]
+        - button "Custom" [ref=e27] [cursor=pointer]
+      - generic [ref=e28]:
+        - generic [ref=e29]:
+          - generic [ref=e30]: A
+          - text: 2026-04-30 → 2026-05-06
+        - generic [ref=e31]: vs
+        - generic [ref=e32]:
+          - generic [ref=e33]: B
+          - text: 2026-04-23 → 2026-04-29
+    - generic [ref=e34]:
+      - complementary [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: Drill-down
+          - generic [ref=e38]:
+            - generic "All" [ref=e40] [cursor=pointer]
+            - generic [ref=e384]:
+              - generic [ref=e385]: ›
+              - generic "Plywood, MDF & HDHMR" [ref=e386]: Plywood, MDF …
+        - button "← Back" [ref=e387] [cursor=pointer]
+        - generic [ref=e41]: Brands
+        - list [ref=e42]:
+          - listitem [ref=e388] [cursor=pointer]:
+            - generic "CenturyPly" [ref=e389]
+            - generic [ref=e390]: ›
+          - listitem [ref=e391] [cursor=pointer]:
+            - generic "Archidply" [ref=e392]
+            - generic [ref=e393]: ›
+          - listitem [ref=e394] [cursor=pointer]:
+            - generic "GreenPly" [ref=e395]
+            - generic [ref=e396]: ›
+          - listitem [ref=e397] [cursor=pointer]:
+            - generic "Action Tesa" [ref=e398]
+            - generic [ref=e399]: ›
+          - listitem [ref=e400] [cursor=pointer]:
+            - generic "Merino" [ref=e401]
+            - generic [ref=e402]: ›
+      - main [ref=e44]:
+        - generic [ref=e403]:
+          - generic [ref=e404]:
+            - generic [ref=e405]:
+              - generic [ref=e406]: Total Sales
+              - generic [ref=e407]: ₹
+            - generic [ref=e408]: ₹19,86,283
+            - generic [ref=e409]:
+              - generic [ref=e410]: vs ₹17,41,731
+              - generic [ref=e411]: +₹2,44,552
+          - generic [ref=e412]:
+            - generic [ref=e413]:
+              - generic [ref=e414]: Total Profit
+              - generic [ref=e415]: ◈
+            - generic [ref=e416]: ₹1,59,209
+            - generic [ref=e417]:
+              - generic [ref=e418]: vs ₹1,45,238
+              - generic [ref=e419]: +₹13,971
+          - generic [ref=e420]:
+            - generic [ref=e421]:
+              - generic [ref=e422]: Margin %
+              - generic [ref=e423]: "%"
+            - generic [ref=e424]: 8.02%
+            - generic [ref=e425]:
+              - generic [ref=e426]: vs 8.34%
+              - generic [ref=e427]: "-0.32pp"
+          - generic [ref=e428]:
+            - generic [ref=e429]:
+              - generic [ref=e430]: Units Sold
+              - generic [ref=e431]: "#"
+            - generic [ref=e432]: 1,068
+            - generic [ref=e433]:
+              - generic [ref=e434]: vs 1,034
+              - generic [ref=e435]: "+34"
+        - generic [ref=e436]:
+          - generic [ref=e437]:
+            - generic [ref=e438]:
+              - generic [ref=e439]: Sales & Margin Trend
+              - generic [ref=e440]: Plywood, MDF & HDHMR
+            - generic [ref=e441]:
+              - button "Trend" [ref=e442] [cursor=pointer]
+              - button "Breakdown" [ref=e443] [cursor=pointer]
+            - generic [ref=e444]:
+              - generic [ref=e445]: A — Current
+              - generic [ref=e447]: B — Prior
+              - generic [ref=e449]: Margin A
+              - generic [ref=e451]: Margin B
+          - application [ref=e455]:
+            - generic [ref=e515]:
+              - generic [ref=e516]:
+                - generic [ref=e518]: Apr 30
+                - generic [ref=e520]: May 01
+                - generic [ref=e522]: May 02
+                - generic [ref=e524]: May 03
+                - generic [ref=e526]: May 04
+                - generic [ref=e528]: May 05
+                - generic [ref=e530]: May 06
+              - generic [ref=e531]:
+                - generic [ref=e533]: ₹0
+                - generic [ref=e535]: ₹150k
+                - generic [ref=e537]: ₹300k
+                - generic [ref=e539]: ₹450k
+                - generic [ref=e541]: ₹600k
+              - generic [ref=e542]:
+                - generic [ref=e544]: 0%
+                - generic [ref=e546]: 3%
+                - generic [ref=e548]: 6%
+                - generic [ref=e550]: 9%
+                - generic [ref=e552]: 12%
+        - generic [ref=e553]:
+          - generic [ref=e554]:
+            - generic [ref=e555]: Detail Table
+            - generic [ref=e556]:
+              - generic [ref=e557]:
+                - generic [ref=e558]: ⌕
+                - textbox "Filter table…" [ref=e559]
+              - generic [ref=e560]: 5 rows
+          - table [ref=e562]:
+            - rowgroup [ref=e563]:
+              - row "Name Sales A Sales B Sales Δ Margin A Margin B Margin Δ ▲" [ref=e564]:
+                - columnheader "Name" [ref=e565] [cursor=pointer]
+                - columnheader "Sales A" [ref=e566] [cursor=pointer]
+                - columnheader "Sales B" [ref=e567] [cursor=pointer]
+                - columnheader "Sales Δ" [ref=e568] [cursor=pointer]
+                - columnheader "Margin A" [ref=e569] [cursor=pointer]
+                - columnheader "Margin B" [ref=e570] [cursor=pointer]
+                - columnheader "Margin Δ ▲" [ref=e571] [cursor=pointer]
+            - rowgroup [ref=e572]:
+              - row "Merino ₹30,542 ₹21,322 +₹9,220 6.40% 10.55% -4.15pp" [ref=e573] [cursor=pointer]:
+                - cell "Merino" [ref=e574]
+                - cell "₹30,542" [ref=e575]
+                - cell "₹21,322" [ref=e576]
+                - cell "+₹9,220" [ref=e577]
+                - cell "6.40%" [ref=e578]
+                - cell "10.55%" [ref=e579]
+                - cell "-4.15pp" [ref=e580]
+              - row "Archidply ₹5,49,346 ₹3,70,938 +₹1,78,408 9.96% 11.90% -1.94pp" [ref=e581] [cursor=pointer]:
+                - cell "Archidply" [ref=e582]
+                - cell "₹5,49,346" [ref=e583]
+                - cell "₹3,70,938" [ref=e584]
+                - cell "+₹1,78,408" [ref=e585]
+                - cell "9.96%" [ref=e586]
+                - cell "11.90%" [ref=e587]
+                - cell "-1.94pp" [ref=e588]
+              - row "GreenPly ₹4,70,923 ₹4,80,884 -₹9,961 6.70% 6.47% +0.23pp" [ref=e589] [cursor=pointer]:
+                - cell "GreenPly" [ref=e590]
+                - cell "₹4,70,923" [ref=e591]
+                - cell "₹4,80,884" [ref=e592]
+                - cell "-₹9,961" [ref=e593]
+                - cell "6.70%" [ref=e594]
+                - cell "6.47%" [ref=e595]
+                - cell "+0.23pp" [ref=e596]
+              - row "CenturyPly ₹7,13,416 ₹5,23,178 +₹1,90,238 5.70% 5.31% +0.40pp" [ref=e597] [cursor=pointer]:
+                - cell "CenturyPly" [ref=e598]
+                - cell "₹7,13,416" [ref=e599]
+                - cell "₹5,23,178" [ref=e600]
+                - cell "+₹1,90,238" [ref=e601]
+                - cell "5.70%" [ref=e602]
+                - cell "5.31%" [ref=e603]
+                - cell "+0.40pp" [ref=e604]
+              - row "Action Tesa ₹2,22,055 ₹3,45,409 -₹1,23,353 13.63% 11.56% +2.06pp" [ref=e605] [cursor=pointer]:
+                - cell "Action Tesa" [ref=e606]
+                - cell "₹2,22,055" [ref=e607]
+                - cell "₹3,45,409" [ref=e608]
+                - cell "-₹1,23,353" [ref=e609]
+                - cell "13.63%" [ref=e610]
+                - cell "11.56%" [ref=e611]
+                - cell "+2.06pp" [ref=e612]
+  - generic [ref=e383]: ₹150k

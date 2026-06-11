@@ -1,0 +1,329 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e9]:
+        - generic [ref=e10]: HomeRun
+        - generic [ref=e11]: Inventory Management System
+    - generic [ref=e12]: "Period Considered: 4 Apr '26 → 18 May '26 (45D)"
+    - button "Overview" [ref=e13] [cursor=pointer]
+    - button "SKU Detail" [ref=e14] [cursor=pointer]
+    - button "Baskets" [ref=e15] [cursor=pointer]
+    - button "Plywood" [ref=e16] [cursor=pointer]
+    - button "Stock Health" [ref=e17] [cursor=pointer]
+    - button "OOS Simulation" [ref=e18] [cursor=pointer]
+    - button "Tool Output Download" [ref=e19] [cursor=pointer]
+    - button "🔐 Admin" [ref=e20] [cursor=pointer]
+  - generic [ref=e26]:
+    - generic [ref=e27]:
+      - generic [ref=e29]: Categories
+      - generic [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]:
+          - generic [ref=e32]: All Categories
+          - generic [ref=e33]: "1"
+        - generic [ref=e34]: 944/1359 · 69%
+      - generic [ref=e45] [cursor=pointer]:
+        - generic [ref=e46]:
+          - generic [ref=e47]: Tiling
+          - generic [ref=e48]: "1"
+        - generic [ref=e49]: 64/84 · 76%
+      - generic [ref=e35] [cursor=pointer]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: Furniture & Architectural Hardware
+          - generic [ref=e38]: "55"
+        - generic [ref=e39]: 298/364 · 82%
+      - generic [ref=e70] [cursor=pointer]:
+        - generic [ref=e71]:
+          - generic [ref=e72]: Plywood, MDF & HDHMR
+          - generic [ref=e73]: "23"
+        - generic [ref=e74]: 46/133 · 35%
+      - generic [ref=e85] [cursor=pointer]:
+        - generic [ref=e86]:
+          - generic [ref=e87]: Fevicol
+          - generic [ref=e88]: "17"
+        - generic [ref=e89]: 31/32 · 97%
+      - generic [ref=e75] [cursor=pointer]:
+        - generic [ref=e76]:
+          - generic [ref=e77]: Painting
+          - generic [ref=e78]: "16"
+        - generic [ref=e79]: 45/52 · 87%
+      - generic [ref=e50] [cursor=pointer]:
+        - generic [ref=e51]:
+          - generic [ref=e52]: General Hardware
+          - generic [ref=e53]: "14"
+        - generic [ref=e54]: 29/30 · 97%
+      - generic [ref=e40] [cursor=pointer]:
+        - generic [ref=e41]:
+          - generic [ref=e42]: Switches & Sockets
+          - generic [ref=e43]: "14"
+        - generic [ref=e44]: 61/82 · 74%
+      - generic [ref=e80] [cursor=pointer]:
+        - generic [ref=e81]:
+          - generic [ref=e82]: Wires, MCB & Distribution Boards
+          - generic [ref=e83]: "13"
+        - generic [ref=e84]: 93/258 · 36%
+      - generic [ref=e95] [cursor=pointer]:
+        - generic [ref=e96]:
+          - generic [ref=e97]: Water Proofing
+          - generic [ref=e98]: "7"
+        - generic [ref=e99]: 16/16 · 100%
+      - generic [ref=e65] [cursor=pointer]:
+        - generic [ref=e66]:
+          - generic [ref=e67]: Cement
+          - generic [ref=e68]: "5"
+        - generic [ref=e69]: 19/19 · 100%
+      - generic [ref=e55] [cursor=pointer]:
+        - generic [ref=e56]:
+          - generic [ref=e57]: CPVC Pipes & Fittings
+          - generic [ref=e58]: "4"
+        - generic [ref=e59]: 149/166 · 90%
+      - generic [ref=e60] [cursor=pointer]:
+        - generic [ref=e61]:
+          - generic [ref=e62]: Lighting
+          - generic [ref=e63]: "2"
+        - generic [ref=e64]: 24/42 · 57%
+      - generic [ref=e100] [cursor=pointer]:
+        - generic [ref=e101]:
+          - generic [ref=e102]: Sanitary & Bath Fittings
+          - generic [ref=e37673]: "2"
+        - generic [ref=e104]: 9/15 · 60%
+      - generic [ref=e90] [cursor=pointer]:
+        - generic [ref=e91]:
+          - generic [ref=e92]: Conduits & GI Boxes
+          - generic [ref=e37609]: "1"
+        - generic [ref=e94]: 57/57 · 100%
+      - generic [ref=e37610] [cursor=pointer]:
+        - generic [ref=e37612]: Overhead Tanks
+        - generic [ref=e37614]: 3/8 · 38%
+    - generic [ref=e110]:
+      - generic [ref=e111]:
+        - button "DS01 8" [ref=e112] [cursor=pointer]:
+          - text: DS01
+          - generic [ref=e113]: "8"
+        - button "DS02 10" [ref=e114] [cursor=pointer]:
+          - text: DS02
+          - generic [ref=e115]: "10"
+        - button "DS03 7" [ref=e116] [cursor=pointer]:
+          - text: DS03
+          - generic [ref=e117]: "7"
+        - button "DS04 1" [ref=e118] [cursor=pointer]:
+          - text: DS04
+          - generic [ref=e119]: "1"
+        - button "DS05 1" [active] [ref=e120] [cursor=pointer]:
+          - text: DS05
+          - generic [ref=e121]: "1"
+        - button "DC 37" [ref=e122] [cursor=pointer]:
+          - text: DC
+          - generic [ref=e123]: "37"
+        - generic [ref=e125]:
+          - button "Accounting" [ref=e126] [cursor=pointer]
+          - button "Physical" [ref=e127] [cursor=pointer]
+        - generic [ref=e128]:
+          - generic [ref=e129]: "↻ Syncs hourly · Last synced: 22 May, 04:07 pm"
+          - button "↻ Sync Now" [ref=e130] [cursor=pointer]
+      - generic [ref=e131]:
+        - generic [ref=e132] [cursor=pointer]:
+          - generic [ref=e133]: Critical
+          - generic [ref=e134]: "1"
+          - generic [ref=e135]: 0% of DS05
+          - generic [ref=e37615]:
+            - 'generic "Critical · TO: No TO" [ref=e37616]': No TO 0
+            - 'generic "Critical · TO: Picking" [ref=e37617]': Picking 1
+            - 'generic "Critical · TO: In Transit" [ref=e37618]': In Transit 0
+            - 'generic "Critical · TO: Transferred" [ref=e37619]': Transferred 0
+          - generic [ref=e141]:
+            - 'generic "Critical · PO: No PO" [ref=e142]': No PO 0
+            - 'generic "Critical · PO: Delayed" [ref=e143]': Delayed 0
+            - 'generic "Critical · PO: Issued" [ref=e144]': Issued 0
+            - 'generic "Critical · PO: Pending Approval" [ref=e145]': Pend. 0
+        - generic [ref=e146] [cursor=pointer]:
+          - generic [ref=e147]: Low Stock
+          - generic [ref=e148]: "189"
+          - generic [ref=e149]: 20% of DS05
+          - generic [ref=e37620]:
+            - 'generic "Low Stock · TO: No TO" [ref=e37621]': No TO 122
+            - 'generic "Low Stock · TO: Picking" [ref=e37622]': Picking 9
+            - 'generic "Low Stock · TO: In Transit" [ref=e37623]': In Transit 40
+            - 'generic "Low Stock · TO: Transferred" [ref=e37624]': Transferred 17
+          - generic [ref=e155]:
+            - 'generic "Low Stock · PO: No PO" [ref=e156]': No PO 1
+            - 'generic "Low Stock · PO: Delayed" [ref=e157]': Delayed 0
+            - 'generic "Low Stock · PO: Issued" [ref=e158]': Issued 0
+            - 'generic "Low Stock · PO: Pending Approval" [ref=e159]': Pend. 0
+        - generic [ref=e160] [cursor=pointer]:
+          - generic [ref=e161]: Okay
+          - generic [ref=e162]: "523"
+          - generic [ref=e163]: 55% of DS05
+          - generic [ref=e37625]:
+            - 'generic "Okay · TO: No TO" [ref=e37626]': No TO 493
+            - 'generic "Okay · TO: Picking" [ref=e37627]': Picking 0
+            - 'generic "Okay · TO: In Transit" [ref=e37628]': In Transit 0
+            - 'generic "Okay · TO: Transferred" [ref=e37629]': Transferred 29
+          - generic [ref=e169]:
+            - 'generic "Okay · PO: No PO" [ref=e170]': No PO 1
+            - 'generic "Okay · PO: Delayed" [ref=e171]': Delayed 0
+            - 'generic "Okay · PO: Issued" [ref=e172]': Issued 0
+            - 'generic "Okay · PO: Pending Approval" [ref=e173]': Pend. 0
+        - generic [ref=e174] [cursor=pointer]:
+          - generic [ref=e175]: Excess
+          - generic [ref=e176]: "231"
+          - generic [ref=e177]: 24% of DS05
+          - generic [ref=e37630]:
+            - 'generic "Excess · TO: No TO" [ref=e37631]': No TO 218
+            - 'generic "Excess · TO: Picking" [ref=e37632]': Picking 0
+            - 'generic "Excess · TO: In Transit" [ref=e37633]': In Transit 0
+            - 'generic "Excess · TO: Transferred" [ref=e37634]': Transferred 1
+          - generic [ref=e183]:
+            - 'generic "Excess · PO: No PO" [ref=e184]': No PO 12
+            - 'generic "Excess · PO: Delayed" [ref=e185]': Delayed 0
+            - 'generic "Excess · PO: Issued" [ref=e186]': Issued 0
+            - 'generic "Excess · PO: Pending Approval" [ref=e187]': Pend. 0
+      - generic [ref=e188]:
+        - textbox "Search name, SKU or brand…" [ref=e189] [cursor=pointer]: HAR-TEL-HET-5632-NC-250
+        - combobox [ref=e190] [cursor=pointer]:
+          - option "All Tags" [selected]
+          - option "Critical"
+          - option "Low Stock"
+          - option "Okay"
+          - option "Excess"
+        - combobox [ref=e191] [cursor=pointer]:
+          - option "All Brands" [selected]
+          - option "3M"
+          - option "ACHEM"
+          - option "Action Tesa"
+          - option "Adani"
+          - option "Alagar"
+          - option "Anchor"
+          - option "Araldite"
+          - option "Archidply"
+          - option "Ashirvad"
+          - option "Asian Paints"
+          - option "Bathla"
+          - option "Birla Super"
+          - option "Birla White"
+          - option "Bopp"
+          - option "CenturyPly"
+          - option "Classic"
+          - option "Cobra"
+          - option "Crompton"
+          - option "DOWSIL"
+          - option "Dr. Fixit"
+          - option "Ebco"
+          - option "Europa"
+          - option "Fevicol"
+          - option "Finolex"
+          - option "Freemans"
+          - option "Futura"
+          - option "Godrej"
+          - option "GreenPly"
+          - option "HAKS"
+          - option "Hettich"
+          - option "Homlite"
+          - option "JSW"
+          - option "Jaquar"
+          - option "Jon Bhandari"
+          - option "Kohinoor"
+          - option "Legrand"
+          - option "Liftor"
+          - option "MYK Laticrete"
+          - option "Maha"
+          - option "Merino"
+          - option "PIDILITE"
+          - option "Philips"
+          - option "Polycab"
+          - option "Power"
+          - option "Premium"
+          - option "Priya"
+          - option "Ramco"
+          - option "Roff"
+          - option "Saint-Gobain"
+          - option "Schneider"
+          - option "Supreme"
+          - option "Tenax"
+          - option "Trim Cut"
+          - option "Ultratech"
+          - option "Unbranded"
+          - option "VIP Extrusions"
+          - option "Viking"
+          - option "Zipco"
+        - combobox [ref=e192] [cursor=pointer]:
+          - option "All PO Status" [selected]
+          - option "Issued"
+          - option "Pending Approval"
+          - option "Delayed"
+          - option "No PO"
+        - combobox [ref=e37635] [cursor=pointer]:
+          - option "All TO Status" [selected]
+          - option "Picking"
+          - option "In Transit"
+          - option "Transferred"
+          - option "No TO"
+        - generic [ref=e195]: i
+        - button "✕ Clear filters" [ref=e37608] [cursor=pointer]
+        - generic [ref=e196]: 1 SKU
+        - button "⬇ Download" [ref=e197] [cursor=pointer]
+      - table [ref=e199]:
+        - rowgroup [ref=e218]:
+          - 'row "SKU Item Name ↕ Brand ↕ Stock Health SoH AFS ↕ Min Max ROS Req Qty ↕ DC Stock Rep. Qty Rec Qty Date ↕ Est. Delivery ↕ Ref # Status ↕" [ref=e37637]':
+            - columnheader "SKU" [ref=e220]
+            - columnheader "Item Name ↕" [ref=e221] [cursor=pointer]:
+              - generic [ref=e222]:
+                - text: Item Name
+                - generic [ref=e223]: ↕
+            - columnheader "Brand ↕" [ref=e224] [cursor=pointer]:
+              - generic [ref=e225]:
+                - text: Brand
+                - generic [ref=e226]: ↕
+            - columnheader "Stock Health" [ref=e227]
+            - columnheader "SoH" [ref=e228]
+            - columnheader "AFS ↕" [ref=e229] [cursor=pointer]:
+              - generic [ref=e230]:
+                - text: AFS
+                - generic [ref=e231]: ↕
+            - columnheader "Min" [ref=e232]
+            - columnheader "Max" [ref=e233]
+            - columnheader "ROS" [ref=e234]
+            - columnheader "Req Qty ↕" [ref=e235] [cursor=pointer]:
+              - generic [ref=e236]:
+                - text: Req Qty
+                - generic [ref=e237]: ↕
+            - columnheader "DC Stock" [ref=e37638]
+            - columnheader "Rep. Qty" [ref=e37639]
+            - columnheader "Rec Qty" [ref=e37640]
+            - columnheader "Date ↕" [ref=e37641] [cursor=pointer]:
+              - generic [ref=e242]:
+                - text: Date
+                - generic [ref=e243]: ↕
+            - columnheader "Est. Delivery ↕" [ref=e37642] [cursor=pointer]:
+              - generic [ref=e37643]:
+                - text: Est. Delivery
+                - generic [ref=e37644]: ↕
+            - 'columnheader "Ref #" [ref=e37645]'
+            - columnheader "Status ↕" [ref=e37646] [cursor=pointer]:
+              - generic [ref=e37647]:
+                - text: Status
+                - generic [ref=e37648]: ↕
+        - rowgroup [ref=e251]:
+          - row "HAR-TEL-HET-5632-NC-250 Hettich KA 5632 Telescopic Channel, Regular Close, 45 kg Capacity, Zinc, Length 250mm, 9215435 Hettich Okay 6 6 5 7 0 — 4 — — — — — —" [ref=e37674]:
+            - cell "HAR-TEL-HET-5632-NC-250" [ref=e20844]:
+              - generic [ref=e20845]:
+                - generic [ref=e20846]: HAR-TEL-HET-5632-NC-250
+                - generic "Copy SKU" [ref=e20847] [cursor=pointer]:
+                  - img [ref=e20848]
+            - cell "Hettich KA 5632 Telescopic Channel, Regular Close, 45 kg Capacity, Zinc, Length 250mm, 9215435" [ref=e20851]
+            - cell "Hettich" [ref=e20852]
+            - cell "Okay" [ref=e37658]:
+              - generic [ref=e20854]: Okay
+            - cell "6" [ref=e37675]
+            - cell "6" [ref=e37676]
+            - cell "5" [ref=e37677]
+            - cell "7" [ref=e37672]
+            - cell "0" [ref=e20859]
+            - cell "—" [ref=e37655]
+            - cell "4" [ref=e37656]
+            - cell "—" [ref=e20862]
+            - cell "—" [ref=e20863]
+            - cell "—" [ref=e20864]
+            - cell "—" [ref=e20865]
+            - cell "—" [ref=e20866]
+            - cell "—" [ref=e20867]
