@@ -28,6 +28,8 @@ export function allocateUnified(universe, demand, cfg) {
   const localDayPct = cfg.minLocalDayPercentile ?? 90;
   const netOrdPct = cfg.minNetOrderPercentile ?? 90;
   const docCapDays = cfg.minDocCapDays ?? 45;   // 0 = off; caps Min at velocity×days (floored at local order ABQ)
+  const deadFloorMode = cfg.deadFloorMode ?? 'abq';   // 'abq' | 'lean1' — floor for NZD=0 combos
+  const maxMode = cfg.maxMode ?? 'worstDay';          // 'worstDay' | 'minPlus1' — Max for active combos
   const span = windowDates?.length || 90;
   const boundary = cfg.thickBoundaryMm ?? 9;
   const caps = cfg.dsCapacities || null;
@@ -51,7 +53,7 @@ export function allocateUnified(universe, demand, cfg) {
       let min, max, tier;
       if (days.length === 0) {
         tier = 'dead';
-        min = netAbq;
+        min = deadFloorMode === 'lean1' ? 1 : netAbq;
         max = min + 1;
       } else {
         tier = 'active';
@@ -64,7 +66,7 @@ export function allocateUnified(universe, demand, cfg) {
           const doc = Math.ceil((qty / span) * docCapDays);
           min = Math.min(min, Math.max(doc, localOrdAbq, 1));
         }
-        max = Math.max(days[days.length - 1], min + 1);
+        max = maxMode === 'minPlus1' ? min + 1 : Math.max(days[days.length - 1], min + 1);
       }
       plan[sku][ds] = { min, max, floor: Math.min(min, tier === 'dead' ? netAbq : netPx), tier };
     }

@@ -55,13 +55,18 @@ describe('deriveNZDBuckets / bucketOf', () => {
 });
 
 describe('autoTune (smoke)', () => {
-  it('returns a non-empty Pareto frontier with presets', async () => {
+  it('returns a non-empty Pareto frontier with presets and capacity flags', async () => {
     const { autoTune } = await import('../evaluate.js');
     const r = autoTune(inv, SKUM, CFG);
     expect(r.frontier.length).toBeGreaterThan(0);
-    expect(r.presets.lean).toBeTruthy();
-    expect(r.presets.serviceFirst.service).toBeGreaterThanOrEqual(r.presets.lean.service);
-    // frontier is sorted by footprint and strictly improving in service
+    expect(r.presets.serviceFirst).toBeTruthy();
+    expect(r.presets.closest).toBeTruthy();
+    // every result carries the capacity diagnostics
+    for (const x of r.results.slice(0, 5)) {
+      expect(typeof x.overCount).toBe('number');
+      expect(typeof x.serviceAvg).toBe('number');
+    }
+    // frontier is sorted by footprint and strictly improving in 15d service
     for (let i = 1; i < r.frontier.length; i++) {
       expect(r.frontier[i].footprint).toBeGreaterThanOrEqual(r.frontier[i-1].footprint);
       expect(r.frontier[i].service).toBeGreaterThan(r.frontier[i-1].service);

@@ -15,6 +15,8 @@ export const V2_DEFAULTS = {
   minLocalDayPercentile: 90,     // unified: percentile of local selling-day totals
   minNetOrderPercentile: 90,     // unified: percentile of network order sizes (Min floor)
   minDocCapDays: 45,             // unified: Min ≤ velocity × this (0 = off); floored at local order ABQ
+  deadFloorMode: 'abq',          // unified: 'abq' | 'lean1' — floor for NZD=0 combos
+  maxMode: 'worstDay',           // unified: 'worstDay' | 'minPlus1' — Max for active combos
   tau: 99,                       // service quantile on rolling-window regular demand
   netOrderTailPct: 95,           // network order-size tail percentile for Max (empirical mode)
   rollingWindowDays: 2,          // replenishment exposure window (TO daily, arrives next noon)

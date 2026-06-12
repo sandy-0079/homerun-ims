@@ -155,13 +155,20 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
   const lastDate = dates[dates.length - 1];
   const firstDate = dates[0];
 
-  // Grid extends into very lean configs (netPct 0 = network floor off, 15d caps)
-  // so the frontier reaches the within-capacity region when possible.
+  // Grid sweeps knobs AND structural modes (dead floors, Max sizing) so the
+  // frontier spans from within-capacity territory up to service-max.
   const GRID = [];
-  for (const localPct of [70, 80, 90, 95]) {
-    for (const netPct of [0, 50, 70, 90]) {
-      for (const docCap of [15, 30, 45, 0]) {
-        GRID.push({ minLocalDayPercentile: localPct, minNetOrderPercentile: netPct, minDocCapDays: docCap });
+  for (const localPct of [50, 70, 80, 90, 95]) {
+    for (const netPct of [0, 50, 90]) {
+      for (const docCap of [7, 15, 30, 0]) {
+        for (const deadFloor of ['abq', 'lean1']) {
+          for (const maxMode of ['worstDay', 'minPlus1']) {
+            GRID.push({
+              minLocalDayPercentile: localPct, minNetOrderPercentile: netPct,
+              minDocCapDays: docCap, deadFloorMode: deadFloor, maxMode,
+            });
+          }
+        }
       }
     }
   }
@@ -171,10 +178,13 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
     { fitTo: dateAdd(lastDate, -30), testFrom: dateAdd(lastDate, -29) },
   ];
 
+  // service15 = the 75/15 fold (SAME metric the SKU tab displays — chart plots this);
+  // serviceAvg = 2-fold average (robustness check, shown in tooltip only).
   const scoreOne = (knobs) => {
     let svcSum = 0;
+    let service15 = 0;
     let fp = 0;
-    let fitsCapacity = false;
+    let overNodes = [];
     for (const f of folds) {
       const cfg = { ...baseCfg, ...knobs };
       const fitted = fitPlan(inv, skuM, cfg, firstDate, f.fitTo);
@@ -189,13 +199,21 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
       const sim = replay(fitted.plan, dcPlan, testDemand, tcfg);
       svcSum += sim.serviceLevels.regular.overall;
       if (f === folds[0]) {
+        service15 = sim.serviceLevels.regular.overall;
         fp = planFootprint(fitted.plan).total;
-        // within capacity = no DS×class over its budget (per nodeReport)
-        fitsCapacity = DS_LIST.every(ds =>
-          ['thick', 'thin'].every(tc => !fitted.nodeReport[ds][tc].overCapacity));
+        for (const ds of DS_LIST) for (const tc of ['thick', 'thin']) {
+          if (fitted.nodeReport[ds][tc].overCapacity) overNodes.push(`${ds} ${tc}`);
+        }
       }
     }
-    return { service: svcSum / folds.length, footprint: fp, fitsCapacity };
+    return {
+      service: service15,                 // chart/frontier metric — matches SKU tab
+      serviceAvg: svcSum / folds.length,  // robustness (tooltip)
+      footprint: fp,
+      overCount: overNodes.length,
+      overNodes,
+      fitsCapacity: overNodes.length === 0,
+    };
   };
 
   const results = [];
@@ -205,19 +223,22 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
     if (onProgress) onProgress(i + 1, GRID.length);
   });
 
-  // Pareto frontier (ascending footprint, strictly improving service)
+  // Pareto frontier (ascending footprint, strictly improving 15d service)
   const sorted = [...results].sort((a, b) => a.footprint - b.footprint);
   const frontier = [];
   let best = -1;
   for (const r of sorted) if (r.service > best) { frontier.push(r); best = r.service; }
 
-  // Presets: Lean = first frontier point ≥ (min service + 60% of range);
-  // Service-first = max service; Balanced = knee (max service-per-sheet gain mid-frontier).
+  // Presets: Fits-capacity = best service among all-green configs (if any);
+  // Service-first = max service; Balanced = 75% of the service range.
   const svcMin = frontier[0].service, svcMax = frontier[frontier.length - 1].service;
   const serviceFirst = frontier[frontier.length - 1];
-  const lean = frontier.find(r => r.service >= svcMin + (svcMax - svcMin) * 0.4) || frontier[0];
+  const greens = results.filter(r => r.fitsCapacity).sort((a, b) => b.service - a.service);
+  const fitsCapacity = greens[0] || null;
+  // closest-to-green: fewest over-capacity nodes (tie → best service) — names the blockers
+  const closest = [...results].sort((a, b) => (a.overCount - b.overCount) || (b.service - a.service))[0] || null;
   const mid = frontier.find(r => r.service >= svcMin + (svcMax - svcMin) * 0.75) || serviceFirst;
-  const presets = { lean, balanced: mid, serviceFirst };
+  const presets = { fitsCapacity, closest, balanced: mid, serviceFirst };
 
   // ── Stage 2: complexity gate — DOC cap split by NZD tercile, adopt only if it
   // beats the best single-cap config by ≥ 0.3pts out-of-fold at ≤ its footprint+2%.
@@ -231,7 +252,7 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
   for (const cand of splitCandidates) {
     const knobs = { ...bestSingle.knobs, _docCapSplit: cand };
     const s = scoreSplit(inv, skuM, baseCfg, knobs, folds, firstDate, lastDate);
-    if (s && s.service >= bestSingle.service + 0.003 && s.footprint <= bestSingle.footprint * 1.02) {
+    if (s && s.service >= bestSingle.serviceAvg + 0.003 && s.footprint <= bestSingle.footprint * 1.02) {
       bucketSplit = { ...cand, service: s.service, footprint: s.footprint };
       break;
     }

@@ -52,7 +52,7 @@ function capBar(used, total, label) {
 }
 
 // knob keys that define the formula — used for the testing/published phase check
-const KNOB_KEYS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDays","lookbackDays","bulkOrderThreshold","leadDays","thickBoundaryMm","dcReplPercentile","dcBulkPercentile","dcCoverDays","allocMode"];
+const KNOB_KEYS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDays","deadFloorMode","maxMode","lookbackDays","bulkOrderThreshold","leadDays","thickBoundaryMm","dcReplPercentile","dcBulkPercentile","dcCoverDays","allocMode"];
 function sameKnobs(a, b) {
   if (!a || !b) return false;
   return KNOB_KEYS.every(k => (a[k] ?? V2_DEFAULTS[k]) === (b[k] ?? V2_DEFAULTS[k]));
@@ -210,41 +210,48 @@ function TunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onS
   const knobsActive = (knobs) =>
     knobs.minLocalDayPercentile === cfgDraft.minLocalDayPercentile &&
     knobs.minNetOrderPercentile === cfgDraft.minNetOrderPercentile &&
-    knobs.minDocCapDays === cfgDraft.minDocCapDays;
+    knobs.minDocCapDays === cfgDraft.minDocCapDays &&
+    (knobs.deadFloorMode ?? "abq") === (cfgDraft.deadFloorMode ?? "abq") &&
+    (knobs.maxMode ?? "worstDay") === (cfgDraft.maxMode ?? "worstDay");
 
-  // Chart starts at the first point where every DS×class fits capacity (if any)
-  const firstFit = tuneResult?.frontier.findIndex(r => r.fitsCapacity) ?? -1;
-  const chartFrontier = tuneResult ? (firstFit > 0 ? tuneResult.frontier.slice(firstFit) : tuneResult.frontier) : [];
-  const chartData = chartFrontier.map(r => ({
-    footprint: r.footprint, service: +(r.service * 100).toFixed(2), knobs: r.knobs, fits: r.fitsCapacity,
+  const chartData = (tuneResult?.frontier || []).map(r => ({
+    footprint: r.footprint, service: +(r.service * 100).toFixed(2),
+    serviceAvg: +(r.serviceAvg * 100).toFixed(2),
+    knobs: r.knobs, overCount: r.overCount, overNodes: r.overNodes,
   }));
   const activeIdx = chartData.findIndex(d => knobsActive(d.knobs));
+  const dotColor = (oc) => oc === 0 ? HR.green : oc <= 2 ? HR.amber : HR.white;
+  const knobLabel = (k) => `P${k.minLocalDayPercentile}/P${k.minNetOrderPercentile||"off"}/cap${k.minDocCapDays||"off"} · dead:${k.deadFloorMode==="lean1"?"1/2":"ABQ"} · max:${k.maxMode==="minPlus1"?"Min+1":"worst day"}`;
 
   return (
-    <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
-      <div style={{flex:"1 1 420px",minWidth:380,background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${HR.border}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-          <span style={{fontSize:12,fontWeight:700}}>Auto-tune</span>
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {/* Full-width frontier chart */}
+      <div style={{background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${HR.border}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
+          <span style={{fontSize:12,fontWeight:700}}>Auto-tune — service vs inventory frontier</span>
           <button style={btn(true)} onClick={runTune} disabled={tuning}>{tuning ? "Sweeping…" : tuneResult ? "Re-run Auto-tune" : "Run Auto-tune"}</button>
-          <span style={{fontSize:10,color:HR.muted}}>64 configs × 2 out-of-window folds (~few seconds) · click any point to apply & preview</span>
+          <span style={{fontSize:10,color:HR.muted}}>240 configs (knobs + dead-floor + Max modes) × 2 folds · Y-axis = same 15d service the SKUs tab shows · click any point to apply & preview</span>
         </div>
         {tuneResult && (
           <>
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={chartData} margin={{top:8,right:12,bottom:4,left:-10}}
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={chartData} margin={{top:8,right:16,bottom:4,left:6}}
                 onClick={(st)=>{ const p = st?.activePayload?.[0]?.payload; if (p) applyKnobs(p.knobs); }}>
                 <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
                 <XAxis dataKey="footprint" tick={{fontSize:9}} label={{value:"Total sheets (ΣMax, all DSes)",fontSize:9,position:"insideBottom",offset:-2}}/>
-                <YAxis dataKey="service" tick={{fontSize:9}} domain={["dataMin - 0.3","dataMax + 0.3"]} tickFormatter={v=>v.toFixed(1)} label={{value:"OOS-svc %",fontSize:9,angle:-90,position:"insideLeft"}}/>
-                <RTooltip contentStyle={{fontSize:10}} formatter={(v,n,p)=>[`${v}% · P${p.payload.knobs.minLocalDayPercentile}/P${p.payload.knobs.minNetOrderPercentile}/cap${p.payload.knobs.minDocCapDays||"off"} · click to apply`, "service"]}/>
-                {tuneResult.capacityTotal > 0 && chartData.length > 0 && tuneResult.capacityTotal >= chartData[0].footprint && tuneResult.capacityTotal <= chartData[chartData.length-1].footprint && (
+                <YAxis dataKey="service" tick={{fontSize:9}} domain={["dataMin - 0.3","dataMax + 0.3"]} tickFormatter={v=>v.toFixed(1)} label={{value:"15d service %",fontSize:9,angle:-90,position:"insideLeft",offset:8}}/>
+                <RTooltip contentStyle={{fontSize:10}}
+                  formatter={(v,n,p)=>[
+                    `15d: ${v}% · 2-fold avg: ${p.payload.serviceAvg}% · ${p.payload.overCount===0?"all DSes within capacity":`over at: ${p.payload.overNodes.join(", ")}`} · ${knobLabel(p.payload.knobs)} · click to apply`,
+                    "service"]}/>
+                {tuneResult.capacityTotal > 0 && (
                   <ReferenceLine x={tuneResult.capacityTotal} stroke={HR.red} strokeDasharray="4 3" label={{value:`Σ capacity ${tuneResult.capacityTotal}`,fontSize:9,fill:HR.red,position:"insideTopLeft"}}/>
                 )}
                 <Line type="monotone" dataKey="service" stroke={HR.purple} strokeWidth={2}
                   dot={(props)=>{ const { cx, cy, payload, index } = props; return (
                     <circle key={index} cx={cx} cy={cy} r={index===activeIdx?7:5}
-                      fill={index===activeIdx?HR.yellow:payload.fits?HR.green:HR.white}
-                      stroke={payload.fits?HR.green:HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
+                      fill={index===activeIdx?HR.yellow:dotColor(payload.overCount)}
+                      stroke={payload.overCount===0?HR.green:HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
                       onClick={(e2)=>{e2.stopPropagation(); applyKnobs(payload.knobs);}}/>
                   );}}
                   activeDot={(props)=>{ const { cx, cy, payload } = props; return (
@@ -254,28 +261,38 @@ function TunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onS
               </LineChart>
             </ResponsiveContainer>
             <div style={{fontSize:9,color:HR.muted,marginTop:2}}>
-              {firstFit > 0 && <span>Chart starts at the leanest config where every DS fits capacity (leaner points hidden). </span>}
-              {firstFit === -1 && <span style={{color:HR.amber}}>No swept config fits all DS capacities — leanest point still exceeds at least one node. </span>}
-              <span style={{color:HR.green,fontWeight:700}}>● green</span> = within capacity at every DS · <span style={{color:HR.yellow,fontWeight:700}}>● yellow</span> = currently applied
+              <span style={{color:HR.green,fontWeight:700}}>● green</span> = every DS within capacity ·
+              <span style={{color:HR.amber,fontWeight:700}}> ● amber</span> = 1–2 nodes over ·
+              <span style={{color:HR.purple,fontWeight:700}}> ○ white</span> = 3+ nodes over ·
+              <span style={{color:HR.yellow,fontWeight:700}}> ● yellow</span> = currently applied. Hover any point for which nodes are over.
             </div>
             <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
-              {[["Lean","lean"],["Balanced","balanced"],["Service-first","serviceFirst"]].map(([label,key]) => {
+              {(tuneResult.presets.fitsCapacity
+                ? [["Fits capacity ●","fitsCapacity"],["Balanced","balanced"],["Service-first","serviceFirst"]]
+                : [["Closest to green","closest"],["Balanced","balanced"],["Service-first","serviceFirst"]]
+              ).map(([label,key]) => {
                 const p = tuneResult.presets[key];
                 if (!p) return null;
                 const active = knobsActive(p.knobs);
                 return (
                   <div key={key} onClick={()=>applyKnobs(p.knobs)}
-                    style={{flex:1,minWidth:130,cursor:"pointer",border:`2px solid ${active?HR.yellow:HR.border}`,borderRadius:8,padding:"8px 10px",background:active?"#FFFDF0":HR.white}}>
+                    style={{flex:1,minWidth:170,cursor:"pointer",border:`2px solid ${active?HR.yellow:HR.border}`,borderRadius:8,padding:"8px 10px",background:active?"#FFFDF0":HR.white}}>
                     <div style={{fontSize:11,fontWeight:700}}>{label}{active && " ✓"}</div>
                     <div style={{fontSize:14,fontWeight:800,color:svcColor(p.service)}}>{(p.service*100).toFixed(2)}%</div>
-                    <div style={{fontSize:9,color:HR.muted}}>{p.footprint} sheets · P{p.knobs.minLocalDayPercentile}/P{p.knobs.minNetOrderPercentile}/cap {p.knobs.minDocCapDays||"off"}</div>
+                    <div style={{fontSize:9,color:HR.muted}}>{p.footprint} sheets · {knobLabel(p.knobs)}{p.overCount > 0 ? ` · over at: ${p.overNodes.join(", ")}` : " · all DSes within capacity"}</div>
                   </div>
                 );
               })}
             </div>
+            {!tuneResult.presets.fitsCapacity && tuneResult.presets.closest && (
+              <div style={{fontSize:10,color:"#92400E",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:6,padding:"6px 10px",marginTop:6}}>
+                No configuration keeps every DS within capacity — even the leanest plan exceeds {tuneResult.presets.closest.overNodes.join(" and ")}.
+                Holding minimum presence for every SKU physically exceeds those racks: getting to green needs assortment cuts (Keep Score) or added racking at those nodes.
+              </div>
+            )}
             <div style={{fontSize:10,color:HR.muted,marginTop:6}}>
               {tuneResult.bucketSplit
-                ? <span>Bucket-split DOC cap adopted: slow {tuneResult.bucketSplit.low}d / fast {tuneResult.bucketSplit.high || "off"} (+{((tuneResult.bucketSplit.service - tuneResult.presets.serviceFirst.service)*100).toFixed(1)}pts)</span>
+                ? <span>Bucket-split DOC cap adopted: slow {tuneResult.bucketSplit.low}d / fast {tuneResult.bucketSplit.high || "off"}</span>
                 : <span>Bucket-split DOC cap tested — did not clear the +0.3pt out-of-fold gate; simple formula stands.</span>}
             </div>
           </>
@@ -283,27 +300,46 @@ function TunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onS
         {!tuneResult && !tuning && <div style={{fontSize:11,color:HR.muted,padding:"18px 0"}}>Run the sweep to see the service-vs-inventory frontier and pick an operating point.</div>}
       </div>
 
-      <div style={{flex:"1 1 300px",minWidth:280,background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${HR.border}`}}>
+      {/* Knobs + publish below the chart */}
+      <div style={{background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${HR.border}`}}>
         <div style={{fontSize:12,fontWeight:700,borderBottom:`2px solid ${HR.yellow}`,paddingBottom:4,marginBottom:10}}>Knobs</div>
-        {[
-          ["minLocalDayPercentile","Local day percentile"],
-          ["minNetOrderPercentile","Network order percentile"],
-          ["minDocCapDays","DOC cap days (0 = off)"],
-          ["lookbackDays","Lookback days"],
-          ["bulkOrderThreshold","Bulk threshold (sheets)"],
-          ["leadDays","Supplier lead days"],
-          ["thickBoundaryMm","Thick boundary (mm)"],
-          ["dcReplPercentile","DC replenishment pct"],
-          ["dcBulkPercentile","DC bulk pct"],
-          ["dcCoverDays","DC cycle cover days"],
-        ].map(([key,label]) => (
-          <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-            <span style={{fontSize:11}}>{label}</span>
-            <input type="number" step="any" style={{...sel,width:70,cursor:"text"}}
-              value={cfgDraft[key]} onChange={e=>setCfgDraft(d=>({...d,[key]:Number(e.target.value)}))}/>
+        <div style={{display:"flex",gap:"6px 24px",flexWrap:"wrap"}}>
+          {[
+            ["minLocalDayPercentile","Local day percentile"],
+            ["minNetOrderPercentile","Network order pct (0 = off)"],
+            ["minDocCapDays","DOC cap days (0 = off)"],
+            ["lookbackDays","Lookback days"],
+            ["bulkOrderThreshold","Bulk threshold (sheets)"],
+            ["leadDays","Supplier lead days"],
+            ["thickBoundaryMm","Thick boundary (mm)"],
+            ["dcReplPercentile","DC replenishment pct"],
+            ["dcBulkPercentile","DC bulk pct"],
+            ["dcCoverDays","DC cycle cover days"],
+          ].map(([key,label]) => (
+            <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
+              <span style={{fontSize:11}}>{label}</span>
+              <input type="number" step="any" style={{...sel,width:70,cursor:"text"}}
+                value={cfgDraft[key]} onChange={e=>setCfgDraft(d=>({...d,[key]:Number(e.target.value)}))}/>
+            </div>
+          ))}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
+            <span style={{fontSize:11}}>Dead-combo floor</span>
+            <select style={{...sel,width:110}} value={cfgDraft.deadFloorMode ?? "abq"}
+              onChange={e=>setCfgDraft(d=>({...d,deadFloorMode:e.target.value}))}>
+              <option value="abq">Network ABQ</option>
+              <option value="lean1">Lean (1/2)</option>
+            </select>
           </div>
-        ))}
-        <div style={{borderTop:`1px solid ${HR.border}`,marginTop:10,paddingTop:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
+            <span style={{fontSize:11}}>Active-combo Max</span>
+            <select style={{...sel,width:110}} value={cfgDraft.maxMode ?? "worstDay"}
+              onChange={e=>setCfgDraft(d=>({...d,maxMode:e.target.value}))}>
+              <option value="worstDay">Worst local day</option>
+              <option value="minPlus1">Min + 1</option>
+            </select>
+          </div>
+        </div>
+        <div style={{borderTop:`1px solid ${HR.border}`,marginTop:10,paddingTop:10,maxWidth:480}}>
           {isAdmin ? (
             <>
               <button style={{...btn(true),width:"100%",padding:"8px 0"}} onClick={()=>onSaveConfig && onSaveConfig(cfgDraft)}>
