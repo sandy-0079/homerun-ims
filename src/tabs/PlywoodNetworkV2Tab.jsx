@@ -10,7 +10,7 @@ import {
 } from "recharts";
 import {
   V2_DEFAULTS, evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint,
-  computePlywoodNetworkV2Results,
+  computePlywoodNetworkV2Results, dcEvaluate, dcSweep,
 } from "../engine/strategies/plywoodV2/index.js";
 import { percentile, inferThickness } from "../engine/utils.js";
 import { DS_LIST } from "../engine/constants.js";
@@ -235,6 +235,109 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, live, onClose }) {
 // ── Tune sub-tab (state lifted to parent so results survive sub-tab switches) ──
 const knobLabel = (k) => `P${k.minLocalDayPercentile}/P${k.minNetOrderPercentile||"off"}/cap${k.minDocCapDays||"off"} · dead:${k.deadFloorMode==="lean1"?"1/2":"ABQ"} · max:${k.maxMode==="minPlus1"?"Min+1":"worst day"}`;
 const KNOB_FIELDS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDays","deadFloorMode","maxMode"];
+const DC_KNOB_FIELDS = ["dcReplPercentile","dcBulkOrderPct","dcCoverDays","bulkDcServedShare"];
+const dcKnobLabel = (k) => `repl P${k.dcReplPercentile} · bulk P${k.dcBulkOrderPct} · cycle ${k.dcCoverDays}d · α ${k.bulkDcServedShare ?? 1}`;
+
+// DC tune panel: dual-line frontier (bulk service + induced regular service) over the
+// 27-config DC sweep. Drain derives from the current DS plans — publish DSes first.
+function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, dcPub, onPublishDC, onRevertDC, hasSaved, allDSPublished, dcTune, setDcTune }) {
+  const [running, setRunning] = useState(false);
+  const [open, setOpen] = useState(true);
+
+  const runSweep = () => {
+    setRunning(true);
+    setTimeout(() => {
+      try {
+        const ctx = dcEvaluate(invoiceData, skuMaster, { ...cfgDraft });
+        if (ctx) setDcTune(dcSweep(ctx, { ...cfgDraft }));
+      } catch (e) { console.error("dc sweep error:", e); }
+      setRunning(false);
+    }, 30);
+  };
+
+  const applyDC = (knobs) => setCfgDraft(d => ({ ...d, ...knobs }));
+  const pointActive = (knobs) => ["dcReplPercentile","dcBulkOrderPct","dcCoverDays"].every(f => knobs[f] === cfgDraft[f]);
+
+  const chartData = (dcTune?.points || []).map(p => ({
+    footprint: p.footprint,
+    bulk: +(p.bulk * 100).toFixed(2),
+    regular: +(p.regular * 100).toFixed(2),
+    knobs: p.knobs, fits: p.fits, stillOver: p.stillOver,
+    fpThick: p.fpThick, fpThin: p.fpThin,
+  }));
+  const activeIdx = chartData.findIndex(d => pointActive(d.knobs));
+  const ceiling = dcTune ? +(dcTune.ceilingRegular * 100).toFixed(2) : null;
+
+  return (
+    <div style={{background:HR.surface,borderRadius:8,padding:"10px 14px",border:`1px solid ${HR.border}`,marginBottom:10}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,fontWeight:700,cursor:"pointer"}} onClick={()=>setOpen(o=>!o)}>{open?"▾":"▸"} Tune DC — replenishment + bulk frontier</span>
+        {dcPub ? (
+          <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#DCFCE7",color:HR.green,fontWeight:700}}>✓ DC published</span>
+        ) : (
+          <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#FEF3C7",color:"#92400E",fontWeight:700}}>● DC testing</span>
+        )}
+        <button style={btn(true)} onClick={runSweep} disabled={running}>{running ? "Sweeping…" : dcTune ? "Re-run DC sweep" : "Run DC sweep"}</button>
+        {isAdmin && !dcPub && <button style={{...btn(false),borderColor:HR.green,color:HR.green}} onClick={onPublishDC}>Publish DC only</button>}
+        {isAdmin && !dcPub && hasSaved && <button style={btn(false)} onClick={onRevertDC}>Revert DC</button>}
+        <span style={{fontSize:10,color:HR.muted}}>current: {dcKnobLabel(cfgDraft)}</span>
+        <span style={{fontSize:11,display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
+          α (bulk share routed to DC)
+          <input type="number" step="0.05" min="0" max="1" style={{...sel,width:60,cursor:"text"}}
+            value={cfgDraft.bulkDcServedShare ?? 1} onChange={e=>setCfgDraft(d=>({...d,bulkDcServedShare:Number(e.target.value)}))}/>
+        </span>
+      </div>
+      {!allDSPublished && (
+        <div style={{fontSize:10,color:"#92400E",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:6,padding:"4px 10px",marginTop:6}}>
+          DC sizing derives its TO drain from the DS plans — some DSes are still in testing; publish them first for stable DC numbers.
+        </div>
+      )}
+      {open && dcTune && (
+        <>
+          <ResponsiveContainer width="100%" height={230}>
+            <LineChart data={chartData} margin={{top:8,right:16,bottom:2,left:6}}
+              onClick={(st)=>{ const p = st?.activePayload?.[0]?.payload; if (p) applyDC(p.knobs); }}>
+              <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
+              <XAxis dataKey="footprint" tick={{fontSize:9}} label={{value:"DC sheets (ΣMax, thick+thin, post-trim)",fontSize:9,position:"insideBottom",offset:-1}}/>
+              <YAxis tick={{fontSize:9}} domain={["auto","auto"]} tickFormatter={v=>v.toFixed(0)} label={{value:"15d service %",fontSize:9,angle:-90,position:"insideLeft",offset:8}}/>
+              <RTooltip contentStyle={{fontSize:10}}
+                formatter={(v,name,p)=>[
+                  `${v}% · thick ${p.payload.fpThick} thin ${p.payload.fpThin}${p.payload.stillOver?" · STILL OVER after trim":""} · ${dcKnobLabel({...p.payload.knobs,bulkDcServedShare:cfgDraft.bulkDcServedShare})} · click to apply`,
+                  name]}/>
+              {ceiling != null && (
+                <ReferenceLine y={ceiling} stroke={HR.blue} strokeDasharray="2 3" label={{value:`DS ceiling ${ceiling}%`,fontSize:8,fill:HR.blue,position:"insideBottomRight"}}/>
+              )}
+              {dcTune.capacityTotal > 0 && (
+                <ReferenceLine x={dcTune.capacityTotal} stroke={HR.red} strokeDasharray="4 3" label={{value:`DC capacity ${dcTune.capacityTotal}`,fontSize:9,fill:HR.red,position:"insideTopLeft"}}/>
+              )}
+              <Line type="monotone" dataKey="bulk" name="bulk svc" stroke={HR.purple} strokeWidth={2}
+                dot={(props)=>{ const { cx, cy, payload, index } = props; return (
+                  <circle key={"b"+index} cx={cx} cy={cy} r={index===activeIdx?7:4}
+                    fill={index===activeIdx?HR.yellow:payload.fits?HR.green:HR.white}
+                    stroke={payload.fits?HR.green:HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
+                    onClick={(e2)=>{e2.stopPropagation(); applyDC(payload.knobs);}}/>
+                );}}/>
+              <Line type="monotone" dataKey="regular" name="regular svc" stroke={HR.blue} strokeWidth={2}
+                dot={(props)=>{ const { cx, cy, payload, index } = props; return (
+                  <circle key={"r"+index} cx={cx} cy={cy} r={index===activeIdx?6:3}
+                    fill={index===activeIdx?HR.yellow:HR.white}
+                    stroke={HR.blue} strokeWidth={1.5} style={{cursor:"pointer"}}
+                    onClick={(e2)=>{e2.stopPropagation(); applyDC(payload.knobs);}}/>
+                );}}/>
+            </LineChart>
+          </ResponsiveContainer>
+          <div style={{fontSize:9,color:HR.muted}}>
+            <span style={{color:HR.purple,fontWeight:700}}>― bulk order service</span> (orders ≥10, served from DC) ·
+            <span style={{color:HR.blue,fontWeight:700}}> ― network regular service</span> (your published DS service, after DC TO-shorting) ·
+            blue dashed = DS ceiling (infinite DC) — the gap below it is service lost to the DC ·
+            <span style={{color:HR.green,fontWeight:700}}> ● green</span> = fits DC racks · <span style={{color:HR.yellow,fontWeight:700}}>● yellow</span> = applied.
+          </div>
+        </>
+      )}
+      {open && !dcTune && !running && <div style={{fontSize:11,color:HR.muted,padding:"10px 0 2px"}}>Run the DC sweep (27 configs × repl/bulk/cycle knobs) to see both service curves.</div>}
+    </div>
+  );
+}
 
 // Per-DS tune panel: lives at the top of the SKU view for the selected location.
 // Clicking a point sets a per-DS knob OVERRIDE (dsKnobs[loc]); global knobs apply elsewhere.
@@ -352,7 +455,7 @@ function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdm
                 ["leadDays","Supplier lead days"],
                 ["thickBoundaryMm","Thick boundary (mm)"],
                 ["dcReplPercentile","DC replenishment pct"],
-                ["dcBulkPercentile","DC bulk pct"],
+                ["dcBulkOrderPct","DC bulk order pct"],
                 ["dcCoverDays","DC cycle cover days"],
               ].map(([key,label]) => (
                 <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
@@ -440,6 +543,20 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
     const eff = effKnobsFor(savedCfg, ds);
     setCfgDraft(d => ({ ...d, dsKnobs: { ...(d.dsKnobs || {}), [ds]: eff } }));
   };
+
+  // DC publish state + handlers (DC knobs are the global dc* fields)
+  const dcPub = !!plywoodNetworkV2Config && DC_KNOB_FIELDS.every(f => (cfgDraft[f] ?? V2_DEFAULTS[f]) === (savedCfg[f] ?? V2_DEFAULTS[f]));
+  const publishDC = () => {
+    const newCfg = { ...savedCfg };
+    for (const f of DC_KNOB_FIELDS) newCfg[f] = cfgDraft[f] ?? V2_DEFAULTS[f];
+    if (onSaveConfig) onSaveConfig(newCfg);
+  };
+  const revertDC = () => setCfgDraft(d => {
+    const next = { ...d };
+    for (const f of DC_KNOB_FIELDS) next[f] = savedCfg[f] ?? V2_DEFAULTS[f];
+    return next;
+  });
+  const [dcTune, setDcTune] = useState(null);
 
   // Default view follows the viewed DS's publish state: published → live, testing → eval.
   const locPublished = loc !== "DC" && dsPublished(loc);
@@ -622,13 +739,19 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
             </div>
           </div>
 
-          {/* per-DS tune panel (chart + knobs + publish) — DC has no frontier */}
-          {!isDC && (
+          {/* tune panel: per-DS frontier, or the DC dual-line frontier */}
+          {!isDC ? (
             <DSTunePanel loc={loc} cfgDraft={cfgDraft} setCfgDraft={setCfgDraft}
               invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin}
               onSaveConfig={onSaveConfig} tuneResult={tuneResult} setTuneResult={setTuneResult}
               dsPub={dsPublished(loc)} onPublishDS={publishDS} onRevertDS={revertDS}
               hasSaved={!!plywoodNetworkV2Config}/>
+          ) : (
+            <DCTunePanel cfgDraft={cfgDraft} setCfgDraft={setCfgDraft}
+              invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin}
+              dcPub={dcPub} onPublishDC={publishDC} onRevertDC={revertDC}
+              hasSaved={!!plywoodNetworkV2Config} allDSPublished={publishedCount === 5}
+              dcTune={dcTune} setDcTune={setDcTune}/>
           )}
 
           {/* location stat cards + capacity bars (display-only) */}

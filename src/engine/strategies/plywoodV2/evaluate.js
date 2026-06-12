@@ -10,9 +10,10 @@
 
 import { DS_LIST } from '../../constants.js';
 import { percentile } from '../../utils.js';
-import { buildUniverse, prepareDemand } from './demand.js';
+import { buildUniverse, prepareDemand, collectBulkOrderQty } from './demand.js';
 import { allocateUnified } from './allocator.js';
 import { replay } from './replay.js';
+import { sizeDCOrderBulk, trimDCComponents } from './dc.js';
 
 function dateAdd(dateStr, days) {
   const d = new Date(dateStr + 'T00:00:00Z');
@@ -312,6 +313,82 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
   const dsCapacityTotals = Object.fromEntries(DS_LIST.map(ds => [ds, (caps[ds]?.thick || 0) + (caps[ds]?.thin || 0)]));
 
   return { results, frontier, presets, bucketSplit, capacityTotal, dsFrontiers, dsCapacityTotals };
+}
+
+/**
+ * DC evaluation context: fit DS plans on the window minus testDays (same 75/15 split
+ * as evaluatePlan), derive the TO drain and bulk-order sizes from the FIT window,
+ * keep the test window for scoring. Compute once; dcSweep reuses it for all configs.
+ */
+export function dcEvaluate(inv, skuM, cfg, { testDays = 15 } = {}) {
+  const dates = [...new Set(inv.map(r => r.date))].sort();
+  if (dates.length === 0) return null;
+  const lastDate = dates[dates.length - 1];
+  const testFrom = dateAdd(lastDate, -(testDays - 1));
+  const fitTo = dateAdd(testFrom, -1);
+  const firstDate = dates[0];
+
+  const fitted = fitPlan(inv, skuM, cfg, firstDate, fitTo);
+  if (!fitted) return null;
+  const drain = replay(fitted.plan, null, fitted.demand, { ...cfg, lookbackDays: fitted.demand.windowDates.length, infiniteDC: true }).toDrain;
+  const bulkOrderQty = collectBulkOrderQty(fitted.demand);
+
+  const tspan = Math.round((new Date(lastDate + 'T00:00:00Z') - new Date(testFrom + 'T00:00:00Z')) / 86400000) + 1;
+  const tcfg = { ...cfg, lookbackDays: tspan };
+  const testInv = inv.filter(r => r.date >= testFrom && r.date <= lastDate);
+  const testDemand = prepareDemand(testInv, fitted.universe, tcfg);
+
+  // ceiling: regular service with an infinite DC (what the DS plans alone deliver)
+  const dcInf = {};
+  for (const sku of Object.keys(fitted.plan)) dcInf[sku] = { min: 1e9, max: 1e9 };
+  const ceilSim = replay(fitted.plan, dcInf, testDemand, tcfg);
+
+  return {
+    plan: fitted.plan, universe: fitted.universe, tclass: fitted.tclass,
+    fitDemand: fitted.demand, testDemand, drain, bulkOrderQty,
+    fitWindow: { from: firstDate, to: fitTo },
+    testWindow: { from: testFrom, to: lastDate },
+    ceilingRegular: ceilSim.serviceLevels.regular.overall,
+    tcfg,
+  };
+}
+
+/**
+ * Sweep DC knobs (replPct × bulkOrderPct × coverDays) against a dcEvaluate context.
+ * Each point: size DC (with component-aware trim) → replay test window with finite DC
+ * → bulk service + network regular service + footprint per class.
+ */
+export function dcSweep(ctx, baseCfg) {
+  const GRID = [];
+  for (const replPct of [90, 95, 98]) {
+    for (const bulkPct of [75, 90, 100]) {
+      for (const coverDays of [1, 2, 3]) {
+        GRID.push({ dcReplPercentile: replPct, dcBulkOrderPct: bulkPct, dcCoverDays: coverDays });
+      }
+    }
+  }
+  const points = [];
+  for (const knobs of GRID) {
+    const cfg = { ...baseCfg, ...knobs };
+    const sized = sizeDCOrderBulk(ctx.drain, ctx.bulkOrderQty, ctx.fitDemand.windowDates, cfg);
+    const { dcPlan, trimReport } = trimDCComponents(sized.dcPlan, sized.detail, cfg.dcCapacity, (sku) => ctx.tclass[sku]);
+    const sim = replay(ctx.plan, dcPlan, ctx.testDemand, ctx.tcfg);
+    const fp = { thick: 0, thin: 0 };
+    for (const sku of Object.keys(dcPlan)) fp[ctx.tclass[sku]] += dcPlan[sku].max;
+    const capT = cfg.dcCapacity || {};
+    points.push({
+      knobs,
+      bulk: sim.serviceLevels.bulk.overall,
+      regular: sim.serviceLevels.regular.overall,
+      footprint: fp.thick + fp.thin,
+      fpThick: fp.thick, fpThin: fp.thin,
+      fits: (capT.thick == null || fp.thick <= capT.thick) && (capT.thin == null || fp.thin <= capT.thin),
+      stillOver: !!trimReport?.stillOver,
+    });
+  }
+  points.sort((a, b) => a.footprint - b.footprint);
+  const caps = baseCfg.dcCapacity || {};
+  return { points, ceilingRegular: ctx.ceilingRegular, capacityTotal: (caps.thick || 0) + (caps.thin || 0) };
 }
 
 // score a DOC-cap-split candidate: slow combos (below NZD median of active combos)

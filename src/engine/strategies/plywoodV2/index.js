@@ -5,7 +5,8 @@ import { DS_LIST } from '../../constants.js';
 import { buildUniverse, prepareDemand } from './demand.js';
 import { allocate, allocateEmpirical, allocateTiered, allocateUnified } from './allocator.js';
 import { replay } from './replay.js';
-import { sizeDC, trimDCToCapacity } from './dc.js';
+import { sizeDC, trimDCToCapacity, sizeDCOrderBulk, trimDCComponents } from './dc.js';
+import { collectBulkOrderQty } from './demand.js';
 
 export const V2_DEFAULTS = {
   lookbackDays: 90,
@@ -28,7 +29,8 @@ export const V2_DEFAULTS = {
   deadFloorMode: 'netMedian',    // tiered: 'netMedian' | 'lean1' floor for locally-dead combos
   minDepthStopPercentile: 99,    // greedy mode only
   dcReplPercentile: 98,
-  dcBulkPercentile: 90,
+  dcBulkPercentile: 90,          // legacy rolling-window mode (kept for old sizeDC export)
+  dcBulkOrderPct: 90,            // DC v2: percentile of per-SKU bulk-order sizes
   dcCoverDays: 2,
   thickBoundaryMm: 9,
   excludedBrands: ['Merino'],
@@ -59,12 +61,12 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
     : allocateUnified;
   const { plan, nodeReport, floor, tclass } = allocFn(universe, demand, c);
 
-  // DC: drain pass (infinite DC) → size → capacity trim
+  // DC: drain pass (infinite DC) → order-size bulk sizing → component-aware trim
   const drainPass = replay(plan, null, demand, { ...c, infiniteDC: true });
-  const sized = sizeDC(drainPass.toDrain, demand.bulkDaily, demand.windowDates, c);
-  const { dcPlan, detail: dcDetail, trimReport } = trimDCToCapacity(
-    sized.dcPlan, sized.detail, drainPass.toDrain, demand.bulkDaily,
-    demand.windowDates, c, c.dcCapacity, (sku) => tclass[sku]);
+  const bulkOrderQty = collectBulkOrderQty(demand);
+  const sized = sizeDCOrderBulk(drainPass.toDrain, bulkOrderQty, demand.windowDates, c);
+  const { dcPlan, detail: dcDetail, trimReport } = trimDCComponents(
+    sized.dcPlan, sized.detail, c.dcCapacity, (sku) => tclass[sku]);
 
   // Assemble runEngine-compatible results
   const results = {};
@@ -90,9 +92,10 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
 }
 
 // Re-exports for tab / harness use
-export { buildUniverse, prepareDemand, medianOrderQty } from './demand.js';
+export { buildUniverse, prepareDemand, medianOrderQty, collectBulkOrderQty } from './demand.js';
 export { allocate, allocateEmpirical, allocateTiered, allocateUnified, thicknessClass } from './allocator.js';
 export { replay } from './replay.js';
-export { sizeDC, trimDCToCapacity, rollingSums } from './dc.js';
+export { sizeDC, trimDCToCapacity, sizeDCOrderBulk, trimDCComponents, rollingSums } from './dc.js';
+export { dcEvaluate, dcSweep } from './evaluate.js';
 export { computeKeepScores } from './keepScore.js';
 export { evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint, fitPlan } from './evaluate.js';

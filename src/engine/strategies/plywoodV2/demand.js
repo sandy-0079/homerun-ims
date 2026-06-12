@@ -18,6 +18,21 @@ export function buildUniverse(skuM, cfg) {
   return universe;
 }
 
+// per-SKU bulk-order sizes (order-level: the SKU's total qty in each bulk order)
+export function collectBulkOrderQty(demand) {
+  const out = {};
+  for (const o of demand.orders) {
+    if (!o.isBulk) continue;
+    const per = {};
+    for (const l of o.lines) per[l.sku] = (per[l.sku] || 0) + l.qty;
+    for (const [sku, q] of Object.entries(per)) {
+      if (!out[sku]) out[sku] = [];
+      out[sku].push(q);
+    }
+  }
+  return out;
+}
+
 export function medianOrderQty(qtys) {
   if (!qtys || qtys.length === 0) return 0;
   const s = [...qtys].sort((a, b) => a - b);
