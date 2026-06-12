@@ -126,14 +126,18 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
         ) : (
           <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FAFAF8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
             <div>
-              Min = max( P{localPct} of {row.nzd} local selling days = <b>{p90Local}</b>,
-              &nbsp;P{netPct} of {netOrders.length} network orders = <b>{p90Net}</b> )
+              Min = {netPct > 0 ? <>max( P{localPct} of {row.nzd} local selling days = <b>{p90Local}</b>,
+              &nbsp;P{netPct} of {netOrders.length} network orders = <b>{p90Net}</b> )</> : <>P{localPct} of {row.nzd} local selling days = <b>{p90Local}</b> <span style={{color:"#888",fontSize:10}}>(network floor off)</span></>}
               {docVal != null && (
                 <span> → DOC cap: {qtySum} qty ÷ {span}d × {docCap}d = <b>{docVal}</b> (floor: local ABQ {localOrdAbq})</span>
               )}
               &nbsp;= <b style={{color:"#B91C1C"}}>{row.min}</b>
             </div>
-            <div>Max = max( worst local day = <b>{dayVals.length ? dayVals[dayVals.length-1] : 0}</b>, Min+1 ) = <b style={{color:HR.green}}>{row.max}</b></div>
+            <div>
+              {(cfg.maxMode ?? "worstDay") === "minPlus1"
+                ? <>Max = Min + 1 = <b style={{color:HR.green}}>{row.max}</b> <span style={{color:"#888",fontSize:10}}>(lean Max mode — worst local day was {dayVals.length ? dayVals[dayVals.length-1] : 0})</span></>
+                : <>Max = max( worst local day = <b>{dayVals.length ? dayVals[dayVals.length-1] : 0}</b>, Min+1 ) = <b style={{color:HR.green}}>{row.max}</b></>}
+            </div>
           </div>
         )}
 
