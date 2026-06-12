@@ -58,6 +58,16 @@ function sameKnobs(a, b) {
   if (JSON.stringify(a.dsKnobs || {}) !== JSON.stringify(b.dsKnobs || {})) return false;
   return KNOB_KEYS.every(k => (a[k] ?? V2_DEFAULTS[k]) === (b[k] ?? V2_DEFAULTS[k]));
 }
+// effective per-DS knobs = global merged with that DS's override
+function effKnobsFor(cfg, ds) {
+  const o = cfg?.dsKnobs?.[ds] || {};
+  const fields = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDays","deadFloorMode","maxMode"];
+  return Object.fromEntries(fields.map(f => [f, o[f] ?? cfg?.[f] ?? V2_DEFAULTS[f]]));
+}
+function sameEffKnobs(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+const fmtLakh = (v) => v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : `₹${Math.round(v/1000)}K`;
 
 // ── SKU modal: formula derivation + charts + misses ─────────────────────────
 function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
@@ -205,7 +215,7 @@ const KNOB_FIELDS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapD
 
 // Per-DS tune panel: lives at the top of the SKU view for the selected location.
 // Clicking a point sets a per-DS knob OVERRIDE (dsKnobs[loc]); global knobs apply elsewhere.
-function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult }) {
+function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult, dsPub, onPublishDS, onRevertDS, hasSaved }) {
   const [tuning, setTuning] = useState(false);
   const [open, setOpen] = useState(true);
   const [knobsOpen, setKnobsOpen] = useState(false);
@@ -246,7 +256,18 @@ function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdm
     <div style={{background:HR.surface,borderRadius:8,padding:"10px 14px",border:`1px solid ${HR.border}`,marginBottom:10}}>
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
         <span style={{fontSize:12,fontWeight:700,cursor:"pointer"}} onClick={()=>setOpen(o=>!o)}>{open?"▾":"▸"} Tune {loc} — service vs inventory frontier</span>
+        {dsPub ? (
+          <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#DCFCE7",color:HR.green,fontWeight:700}}>✓ {loc} published</span>
+        ) : (
+          <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#FEF3C7",color:"#92400E",fontWeight:700}}>● {loc} testing</span>
+        )}
         <button style={btn(true)} onClick={runTune} disabled={tuning}>{tuning ? "Sweeping…" : tuneResult ? "Re-run Auto-tune" : "Run Auto-tune"}</button>
+        {isAdmin && !dsPub && (
+          <button style={{...btn(false),borderColor:HR.green,color:HR.green}} onClick={()=>onPublishDS(loc)}>Publish {loc} only</button>
+        )}
+        {isAdmin && !dsPub && hasSaved && (
+          <button style={btn(false)} onClick={()=>onRevertDS(loc)} title={`Discard ${loc}'s draft changes — back to its published knobs`}>Revert {loc}</button>
+        )}
         {hasOverride && (
           <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#EDE9FE",color:"#6D28D9",fontWeight:700}}>
             {loc} override: {knobLabel(effective)}
@@ -368,14 +389,33 @@ function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdm
 }
 
 // ── Main tab ──────────────────────────────────────────────────────────────────
-export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, plywoodNetworkV2Config, onSaveConfig, isActive, engineResults }) {
+export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData, isAdmin, plywoodNetworkV2Config, onSaveConfig, isActive, engineResults }) {
   const [loc, setLoc] = useState("DS01");
   const [cfgDraft, setCfgDraft] = useState(() => ({ ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) }));
   const [tuneResult, setTuneResult] = useState(null);   // lifted: survives sub-tab switches
   const [selected, setSelected] = useState(null);
 
   // Phase: published = saved config matches the draft (and a config exists)
-  const published = !!plywoodNetworkV2Config && sameKnobs(cfgDraft, { ...V2_DEFAULTS, ...plywoodNetworkV2Config });
+  const savedCfg = { ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) };
+  const published = !!plywoodNetworkV2Config && sameKnobs(cfgDraft, savedCfg);
+  // per-DS publish state: that DS's effective knobs (draft) match the saved config's
+  const dsPublished = (ds) => !!plywoodNetworkV2Config && sameEffKnobs(effKnobsFor(cfgDraft, ds), effKnobsFor(savedCfg, ds));
+  const publishedCount = DS_LIST.filter(dsPublished).length;
+
+  // Publish ONE DS: materialize its effective draft knobs into the SAVED config's
+  // dsKnobs — other DSes' saved state untouched. Draft pins the same override so the
+  // DS stays 'published' even if global draft knobs keep moving.
+  const publishDS = (ds) => {
+    const eff = effKnobsFor(cfgDraft, ds);
+    const newCfg = { ...savedCfg, dsKnobs: { ...(savedCfg.dsKnobs || {}), [ds]: eff } };
+    setCfgDraft(d => ({ ...d, dsKnobs: { ...(d.dsKnobs || {}), [ds]: eff } }));
+    if (onSaveConfig) onSaveConfig(newCfg);
+  };
+  // Revert ONE DS: snap the draft back to whatever is published for it.
+  const revertDS = (ds) => {
+    const eff = effKnobsFor(savedCfg, ds);
+    setCfgDraft(d => ({ ...d, dsKnobs: { ...(d.dsKnobs || {}), [ds]: eff } }));
+  };
   const [query, setQuery] = useState("");
   const [fBrand, setFBrand] = useState("All");
   const [fType, setFType] = useState("All");
@@ -503,7 +543,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
           </span>
         ) : (
           <span style={{fontSize:10,padding:"2px 10px",borderRadius:10,background:"#FEF3C7",color:"#92400E",fontWeight:700,border:"1px solid #FDE68A"}}>
-            ⚠ TESTING — unsaved knobs, preview only{plywoodNetworkV2Config ? " (differs from published)" : " (nothing published yet)"}
+            ⚠ TESTING — {plywoodNetworkV2Config ? `${publishedCount}/5 DSes published, rest preview only` : "nothing published yet"}
           </span>
         )}
         <span style={{fontSize:10,color:HR.muted}}>
@@ -548,11 +588,39 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
           {!isDC && (
             <DSTunePanel loc={loc} cfgDraft={cfgDraft} setCfgDraft={setCfgDraft}
               invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin}
-              onSaveConfig={onSaveConfig} tuneResult={tuneResult} setTuneResult={setTuneResult}/>
+              onSaveConfig={onSaveConfig} tuneResult={tuneResult} setTuneResult={setTuneResult}
+              dsPub={dsPublished(loc)} onPublishDS={publishDS} onRevertDS={revertDS}
+              hasSaved={!!plywoodNetworkV2Config}/>
           )}
 
-          {/* capacity bars (display-only) */}
-          <div style={{display:"flex",gap:8,marginBottom:8}}>
+          {/* location stat cards + capacity bars (display-only) */}
+          <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"stretch",flexWrap:"wrap"}}>
+            {(() => {
+              const sumMin = rows.reduce((a, r) => a + r.min, 0);
+              const sumMax = rows.reduce((a, r) => a + r.max, 0);
+              const valMin = rows.reduce((a, r) => a + r.min * (priceData?.[r.sku] || 0), 0);
+              const valMax = rows.reduce((a, r) => a + r.max * (priceData?.[r.sku] || 0), 0);
+              return (
+                <>
+                  <div style={{padding:"5px 12px",background:"#FAFAF8",border:`1px solid ${HR.border}`,borderRadius:6}}>
+                    <div style={{fontSize:9,color:HR.muted}}>{loc} Σ Min qty</div>
+                    <div style={{fontSize:14,fontWeight:800,color:HR.blue}}>{sumMin}</div>
+                  </div>
+                  <div style={{padding:"5px 12px",background:"#FAFAF8",border:`1px solid ${HR.border}`,borderRadius:6}}>
+                    <div style={{fontSize:9,color:HR.muted}}>{loc} Σ Max qty (sheets)</div>
+                    <div style={{fontSize:14,fontWeight:800,color:"#166534"}}>{sumMax}</div>
+                  </div>
+                  <div style={{padding:"5px 12px",background:"#FAFAF8",border:`1px solid ${HR.border}`,borderRadius:6}}>
+                    <div style={{fontSize:9,color:HR.muted}}>{loc} inventory value @ Min</div>
+                    <div style={{fontSize:14,fontWeight:800,color:HR.blue}}>{fmtLakh(valMin)}</div>
+                  </div>
+                  <div style={{padding:"5px 12px",background:"#FAFAF8",border:`1px solid ${HR.border}`,borderRadius:6}}>
+                    <div style={{fontSize:9,color:HR.muted}}>{loc} inventory value @ Max</div>
+                    <div style={{fontSize:14,fontWeight:800,color:"#166534"}}>{fmtLakh(valMax)}</div>
+                  </div>
+                </>
+              );
+            })()}
             {capBar(thickUsed, thickCap, `${loc} — Thick (>${cfgDraft.thickBoundaryMm}mm)`)}
             {capBar(thinUsed, thinCap, `${loc} — Thin`)}
           </div>
