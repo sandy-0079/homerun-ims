@@ -3853,6 +3853,7 @@ const visibleOutput = useMemo(() => {
               plywoodNetworkV2Config={params.plywoodNetworkV2Config || null}
               onSaveConfig={handleSavePlywoodNetworkV2Config}
               isActive={params.categoryStrategies?.["Plywood, MDF & HDHMR"] === "network_design_v2"}
+              engineResults={results}
             />
           )}
         </div>

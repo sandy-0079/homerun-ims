@@ -81,6 +81,8 @@ export function evaluatePlan(inv, skuM, cfg, { testDays = 15 } = {}) {
   }
   return {
     plan, universe,
+    fitDemand: fitted.demand,
+    tclass: fitted.tclass,
     fitWindow: { from: firstDate, to: fitTo },
     testWindow: { from: testFrom, to: lastDate },
     serviceLevels: sim.serviceLevels,

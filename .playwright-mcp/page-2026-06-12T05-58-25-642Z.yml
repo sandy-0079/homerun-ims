@@ -1,0 +1,232 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - img [ref=e7]
+        - generic [ref=e9]:
+          - generic [ref=e10]: HomeRun
+          - generic [ref=e11]: Inventory Management System
+      - generic [ref=e12]: "Period Considered: 25 Apr '26 → 8 Jun '26 (45D)"
+      - button "Overview" [ref=e13] [cursor=pointer]
+      - button "SKU Detail" [ref=e14] [cursor=pointer]
+      - button "Baskets" [ref=e15] [cursor=pointer]
+      - button "Plywood" [ref=e16] [cursor=pointer]
+      - button "Plywood v2" [ref=e17] [cursor=pointer]
+      - button "Stock Health" [ref=e18] [cursor=pointer]
+      - button "OOS Simulation" [ref=e19] [cursor=pointer]
+      - button "Tool Output Download" [ref=e20] [cursor=pointer]
+      - button "🔐 Admin" [ref=e21] [cursor=pointer]
+    - generic [ref=e227]:
+      - generic [ref=e228]:
+        - heading "Plywood Network v2" [level=2] [ref=e229]
+        - generic [ref=e230]: PREVIEW — not active
+        - generic [ref=e231]: fit 2026-03-11 → 2026-05-24 · tested on 2026-05-25 → 2026-06-08
+        - button "SKUs" [ref=e232] [cursor=pointer]
+        - button "Tune" [ref=e233] [cursor=pointer]
+      - generic [ref=e234]:
+        - generic [ref=e235]:
+          - generic [ref=e236]:
+            - generic [ref=e237]: Regular service — last 15d (out-of-window)
+            - generic [ref=e238]: 93.75%
+            - generic [ref=e239]: 23 OOS of 368 orders
+          - generic [ref=e240] [cursor=pointer]:
+            - generic [ref=e241]: DS01
+            - generic [ref=e242]: 90.9%
+            - generic [ref=e243]: 9/99
+          - generic [ref=e244] [cursor=pointer]:
+            - generic [ref=e245]: DS02
+            - generic [ref=e246]: 94.5%
+            - generic [ref=e247]: 7/128
+          - generic [ref=e248] [cursor=pointer]:
+            - generic [ref=e249]: DS03
+            - generic [ref=e250]: 94.3%
+            - generic [ref=e251]: 4/70
+          - generic [ref=e252] [cursor=pointer]:
+            - generic [ref=e253]: DS04
+            - generic [ref=e254]: 96.8%
+            - generic [ref=e255]: 1/31
+          - generic [ref=e256] [cursor=pointer]:
+            - generic [ref=e257]: DS05
+            - generic [ref=e258]: 95.0%
+            - generic [ref=e259]: 2/40
+          - generic [ref=e260] [cursor=pointer]:
+            - generic [ref=e261]: DC
+            - generic [ref=e262]: view
+            - generic [ref=e263]: drain + bulk
+          - generic [ref=e264]:
+            - generic [ref=e265]: Total plan footprint (ΣMax, 5 DS)
+            - generic [ref=e266]: "3071"
+            - generic [ref=e267]: 01:613 02:723 03:643 04:545 05:547
+        - generic [ref=e268]:
+          - generic [ref=e270]:
+            - generic [ref=e271]: DS01 — Thick (>9mm)
+            - generic [ref=e272]: 400/360 · 111% Over
+          - generic [ref=e276]:
+            - generic [ref=e277]: DS01 — Thin
+            - generic [ref=e278]: 213/150 · 142% Over
+        - generic [ref=e281]:
+          - textbox "Search SKU or name…" [ref=e282]
+          - combobox [ref=e283] [cursor=pointer]:
+            - option "All Brands" [selected]
+            - option "Action Tesa"
+            - option "Archidply"
+            - option "CenturyPly"
+            - option "GreenPly"
+          - combobox [ref=e284] [cursor=pointer]:
+            - option "Thick & Thin" [selected]
+            - option "Thick only"
+            - option "Thin only"
+          - combobox [ref=e285] [cursor=pointer]:
+            - option "All NZD buckets" [selected]
+            - option "NZD 0"
+            - option "NZD 1–2"
+            - option "NZD 3–6"
+            - option "NZD 7+"
+          - generic [ref=e286] [cursor=pointer]:
+            - checkbox "OOS only" [checked] [ref=e287]
+            - text: OOS only
+          - button "Clear" [ref=e1523] [cursor=pointer]
+          - generic [ref=e288]: 8 SKUs
+        - table [ref=e290]:
+          - rowgroup [ref=e291]:
+            - row "SKU↕ Item Name↕ Thickness↕ Brand↕ NZD↓ ABQ↕ Min↕ Max↕ OOS (15d)↕" [ref=e292]:
+              - columnheader "SKU↕" [ref=e293] [cursor=pointer]
+              - columnheader "Item Name↕" [ref=e294] [cursor=pointer]
+              - columnheader "Thickness↕" [ref=e295] [cursor=pointer]
+              - columnheader "Brand↕" [ref=e296] [cursor=pointer]
+              - columnheader "NZD↓" [ref=e297] [cursor=pointer]
+              - columnheader "ABQ↕" [ref=e298] [cursor=pointer]
+              - columnheader "Min↕" [ref=e299] [cursor=pointer]
+              - columnheader "Max↕" [ref=e300] [cursor=pointer]
+              - columnheader "OOS (15d)↕" [ref=e301] [cursor=pointer]
+          - rowgroup [ref=e302]:
+            - row "PLY-GRP-GLD-BWP-9M-28 GreenPly Gold 710 BWP Plywood, 9mm, 7'x 4' 9mmThin GreenPly NZD 00 — 1 2 1" [ref=e373] [cursor=pointer]:
+              - cell "PLY-GRP-GLD-BWP-9M-28" [ref=e374]
+              - cell "GreenPly Gold 710 BWP Plywood, 9mm, 7'x 4'" [ref=e375]
+              - cell "9mmThin" [ref=e376]
+              - cell "GreenPly" [ref=e377]
+              - cell "NZD 00" [ref=e378]
+              - cell "—" [ref=e379]
+              - cell "1" [ref=e380]
+              - cell "2" [ref=e381]
+              - cell "1" [ref=e382]
+            - row "PLY-ARC-CLA-MR-710-16M-28 Archidply PURE DECOR 710 BWP Plywood, 16mm, 7x4 16mmThick Archidply NZD 00 — 1 2 2" [ref=e463] [cursor=pointer]:
+              - cell "PLY-ARC-CLA-MR-710-16M-28" [ref=e464]
+              - cell "Archidply PURE DECOR 710 BWP Plywood, 16mm, 7x4" [ref=e465]
+              - cell "16mmThick" [ref=e466]
+              - cell "Archidply" [ref=e467]
+              - cell "NZD 00" [ref=e468]
+              - cell "—" [ref=e469]
+              - cell "1" [ref=e470]
+              - cell "2" [ref=e471]
+              - cell "2" [ref=e472]
+            - row "PLY-GRP-ECP-BWP-12M-28 GreenPly Ecotec 710 BWP Plywood, 12mm, 7'x 4' 12mmThick GreenPly NZD 1–21 1 1 2 1" [ref=e603] [cursor=pointer]:
+              - cell "PLY-GRP-ECP-BWP-12M-28" [ref=e604]
+              - cell "GreenPly Ecotec 710 BWP Plywood, 12mm, 7'x 4'" [ref=e605]
+              - cell "12mmThick" [ref=e606]
+              - cell "GreenPly" [ref=e607]
+              - cell "NZD 1–21" [ref=e608]
+              - cell "1" [ref=e609]
+              - cell "1" [ref=e610]
+              - cell "2" [ref=e611]
+              - cell "1" [ref=e612]
+            - row "PLY-CEN-SAI-MR-12M-28 CenturyPly Sainik MR 303 Plywood, 12mm, 7' X 4' 12mmThick CenturyPly NZD 1–22 1 2 3 1" [ref=e793] [cursor=pointer]:
+              - cell "PLY-CEN-SAI-MR-12M-28" [ref=e794]
+              - cell "CenturyPly Sainik MR 303 Plywood, 12mm, 7' X 4'" [ref=e795]
+              - cell "12mmThick" [ref=e796]
+              - cell "CenturyPly" [ref=e797]
+              - cell "NZD 1–22" [ref=e798]
+              - cell "1" [ref=e799]
+              - cell "2" [ref=e800]
+              - cell "3" [ref=e801]
+              - cell "1" [ref=e802]
+            - row "PLY-GRP-GLD-BWP-19M-28 GreenPly Gold 710 BWP Plywood, 19mm, 7'x 4' 19mmThick GreenPly NZD 1–22 2 3 4 1" [ref=e813] [cursor=pointer]:
+              - cell "PLY-GRP-GLD-BWP-19M-28" [ref=e814]
+              - cell "GreenPly Gold 710 BWP Plywood, 19mm, 7'x 4'" [ref=e815]
+              - cell "19mmThick" [ref=e816]
+              - cell "GreenPly" [ref=e817]
+              - cell "NZD 1–22" [ref=e818]
+              - cell "2" [ref=e819]
+              - cell "3" [ref=e820]
+              - cell "4" [ref=e821]
+              - cell "1" [ref=e822]
+            - row "PLY-ACT-EXT-55MM Action Tesa Plain Exterior Grade MDF, 8' X 4', 5.5mm 5.5mmThin Action Tesa NZD 3–63 2.7 4 5 1" [ref=e873] [cursor=pointer]:
+              - cell "PLY-ACT-EXT-55MM" [ref=e874]
+              - cell "Action Tesa Plain Exterior Grade MDF, 8' X 4', 5.5mm" [ref=e875]
+              - cell "5.5mmThin" [ref=e876]
+              - cell "Action Tesa" [ref=e877]
+              - cell "NZD 3–63" [ref=e878]
+              - cell "2.7" [ref=e879]
+              - cell "4" [ref=e880]
+              - cell "5" [ref=e881]
+              - cell "1" [ref=e882]
+            - row "PLY-ACT-INT-17MM-1 Action Tesa Plain Interior Grade MDF, 8' X 4', 17mm 17mmThick Action Tesa NZD 3–63 1 2 3 1" [ref=e893] [cursor=pointer]:
+              - cell "PLY-ACT-INT-17MM-1" [ref=e894]
+              - cell "Action Tesa Plain Interior Grade MDF, 8' X 4', 17mm" [ref=e895]
+              - cell "17mmThick" [ref=e896]
+              - cell "Action Tesa" [ref=e897]
+              - cell "NZD 3–63" [ref=e898]
+              - cell "1" [ref=e899]
+              - cell "2" [ref=e900]
+              - cell "3" [ref=e901]
+              - cell "1" [ref=e902]
+            - row "HDHMR-ACT-PLN-16mm Action Tesa HDHMR Board, Plain, 8' X 4', 16mm 16mmThick Action Tesa NZD 7+23 3.4 7 9 1" [ref=e1483] [cursor=pointer]:
+              - cell "HDHMR-ACT-PLN-16mm" [ref=e1484]
+              - cell "Action Tesa HDHMR Board, Plain, 8' X 4', 16mm" [ref=e1485]
+              - cell "16mmThick" [ref=e1486]
+              - cell "Action Tesa" [ref=e1487]
+              - cell "NZD 7+23" [ref=e1488]
+              - cell "3.4" [ref=e1489]
+              - cell "7" [ref=e1490]
+              - cell "9" [ref=e1491]
+              - cell "1" [ref=e1492]
+      - generic [ref=e1525]:
+        - generic [ref=e1526]:
+          - generic [ref=e1527]:
+            - generic [ref=e1528]: Archidply PURE DECOR 710 BWP Plywood, 16mm, 7x4
+            - generic [ref=e1529]:
+              - text: PLY-ARC-CLA-MR-710-16M-28 · 16mm · Archidply · DS01
+              - generic [ref=e1530]: "Min: 1 · Max: 2 · 0 NZD · ABQ: 0"
+          - button "Close ✕" [ref=e1531] [cursor=pointer]
+        - generic [ref=e1533]:
+          - text: NZD 0No regular selling days at DS01 in the fit window.
+          - generic [ref=e1534]:
+            - text: Network ABQ = 0 qty ÷ 0 orders = 1 →
+            - generic [ref=e1535]: Min = 1
+            - text: · Max = Min+1 = 2
+        - generic [ref=e1536]:
+          - generic [ref=e1537]: "2 OOS events in the 2026-05-25 → 2026-06-08 test window:"
+          - generic [ref=e1538]:
+            - text: 2026-06-03 · order HR/26/84252 · short 3 sheets
+            - generic [ref=e1539]: self-corrects on publish (refit Max 7)
+          - generic [ref=e1540]:
+            - text: 2026-06-04 · order HR/26/84496 · short 4 sheets
+            - generic [ref=e1541]: self-corrects on publish (refit Max 7)
+          - generic [ref=e1542]: "After publish (full-window refit): Min 6 / Max 7"
+        - generic [ref=e1543]:
+          - generic [ref=e1544]:
+            - generic [ref=e1545]: Daily regular demand at DS01 (fit window) vs Min/Max
+            - application [ref=e1548]:
+              - generic [ref=e1561]:
+                - generic [ref=e1562]:
+                  - generic [ref=e1564]: 03-11
+                  - generic [ref=e1566]: 03-20
+                  - generic [ref=e1568]: 03-29
+                  - generic [ref=e1570]: 04-07
+                  - generic [ref=e1572]: 04-16
+                  - generic [ref=e1574]: 04-25
+                  - generic [ref=e1576]: 05-04
+                  - generic [ref=e1578]: 05-13
+                  - generic [ref=e1580]: 05-22
+                - generic [ref=e1581]:
+                  - generic [ref=e1583]: "0"
+                  - generic [ref=e1585]: "0.75"
+                  - generic [ref=e1587]: "1.5"
+                  - generic [ref=e1589]: "2.25"
+                  - generic [ref=e1591]: "3"
+                - generic [ref=e1592]: Min 1
+                - generic [ref=e1593]: Max 2
+          - generic [ref=e1594]:
+            - generic [ref=e1595]: Order sizes — DS01 (blue) vs rest of network (grey)
+            - application [ref=e1598]
+  - generic [ref=e1604]: "0"

@@ -1,198 +1,546 @@
-// Plywood Network v2 tab — capacity-first allocation (spec: docs/superpowers/specs/2026-06-11-plywood-network-v2-design.md)
-// Panels: Allocation | DC | Simulation | Keep Score | Config
-// All computation is client-side and read-only; only the admin Save Config button writes to Supabase.
+// Plywood Network v2 tab — rebuilt to mirror v1 UX (spec §6b).
+// Workflow: plan fitted on first 75 days; last 15 days are the out-of-window report
+// card (per-DS service + OOS column). Tune sub-tab: knobs + Auto-tune Pareto frontier.
+// Publish (admin) saves config — the engine refits the SAME formula on the FULL window.
+// All computation client-side; only Publish writes to Supabase.
 import React, { useState, useMemo } from "react";
 import {
-  computePlywoodNetworkV2Results, V2_DEFAULTS, buildUniverse, prepareDemand,
-  replay, computeKeepScores,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
+  ReferenceLine, ResponsiveContainer, LineChart, Line,
+} from "recharts";
+import {
+  V2_DEFAULTS, evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint,
+  computePlywoodNetworkV2Results,
 } from "../engine/strategies/plywoodV2/index.js";
+import { percentile, inferThickness } from "../engine/utils.js";
 import { DS_LIST } from "../engine/constants.js";
 
 const HR = {
   yellow:"#F5C400",black:"#1A1A1A",white:"#FFFFFF",
   bg:"#F5F5F0",surface:"#FFFFFF",surfaceLight:"#F0F0E8",border:"#E0E0D0",
-  muted:"#888870",text:"#1A1A1A",green:"#15803D",red:"#DC2626",amber:"#D97706",purple:"#7C3AED",
+  muted:"#888870",text:"#1A1A1A",green:"#16a34a",red:"#DC2626",amber:"#F59E0B",purple:"#7C3AED",blue:"#1e40af",
 };
-const S = {
-  card:{background:HR.surface,borderRadius:8,padding:12,border:`1px solid ${HR.border}`,boxShadow:"0 1px 3px rgba(0,0,0,0.05)"},
-  btn:(on)=>({padding:"4px 10px",borderRadius:6,border:`1px solid ${on?HR.yellow:HR.border}`,cursor:"pointer",fontSize:11,fontWeight:600,background:on?HR.yellow:HR.white,color:on?HR.black:HR.muted,whiteSpace:"nowrap",outline:"none"}),
-  input:{background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"4px 8px",color:HR.text,fontSize:12,width:70},
-  table:{width:"100%",borderCollapse:"collapse",fontSize:11},
-  th:{padding:"5px 8px",textAlign:"left",color:HR.muted,background:HR.surfaceLight,fontWeight:600,fontSize:10,whiteSpace:"nowrap",position:"sticky",top:0},
-  td:{padding:"4px 8px",borderTop:`1px solid ${HR.border}`,whiteSpace:"nowrap"},
-  sectionTitle:{fontSize:12,fontWeight:700,color:"#555",borderBottom:`2px solid ${HR.yellow}`,paddingBottom:4,marginBottom:12},
-  kpi:{flex:1,background:HR.surface,borderRadius:8,padding:"10px 14px",border:`1px solid ${HR.border}`},
-};
+const BUCKET_COLORS = [
+  { bg:"#F8F8F8", badge:{background:"#F1F5F9",color:"#64748B"} },        // NZD 0
+  { bg:"#FFFBEB", badge:{background:"#FEF3C7",color:"#92400E"} },        // low
+  { bg:"#F0F9FF", badge:{background:"#DBEAFE",color:"#1e40af"} },        // mid
+  { bg:"#F0FDF4", badge:{background:"#DCFCE7",color:"#166534"} },        // high
+];
+const sel = {fontSize:11,padding:"4px 8px",border:`1px solid ${HR.border}`,borderRadius:5,background:"#fff",color:"#555",cursor:"pointer",outline:"none"};
+const btn = (on)=>({padding:"4px 10px",borderRadius:6,border:`1px solid ${on?HR.yellow:HR.border}`,cursor:"pointer",fontSize:11,fontWeight:600,background:on?HR.yellow:HR.white,color:on?HR.black:HR.muted,whiteSpace:"nowrap",outline:"none"});
 
-function csvDownload(filename, rows) {
-  const txt = rows.map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([txt], { type: "text/csv" }));
-  a.download = filename;
-  a.click();
-}
+const LOCATIONS = [...DS_LIST, "DC"];
 
-function CapacityBar({ used, capacity }) {
-  if (capacity == null) return <span style={{color:HR.muted}}>∞</span>;
-  const pct = capacity > 0 ? used / capacity * 100 : 0;
-  const color = pct > 100 ? HR.red : pct >= 99 ? HR.amber : HR.green;
+function fmt1(v) { return v == null ? "—" : (Math.round(v * 10) / 10).toString(); }
+
+function svcColor(s) { return s >= 0.99 ? HR.green : s >= 0.95 ? HR.amber : HR.red; }
+
+function capBar(used, total, label) {
+  const pct = total > 0 ? used / total * 100 : 0;
+  const col = pct > 110 ? HR.red : pct > 100 ? HR.amber : HR.green;
   return (
-    <div style={{display:"flex",alignItems:"center",gap:6}}>
-      <div style={{width:90,height:8,background:HR.surfaceLight,borderRadius:4,overflow:"hidden"}}>
-        <div style={{width:`${Math.min(pct,100)}%`,height:"100%",background:color}}/>
+    <div key={label} style={{flex:1,padding:"5px 10px",border:`1px solid ${HR.border}`,borderRadius:6,background:"#FAFAF8"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:3}}>
+        <span style={{fontSize:10,fontWeight:600,color:"#555"}}>{label}</span>
+        <span style={{fontSize:10,fontWeight:700,color:col}}>{used}/{total} · {pct.toFixed(0)}%{pct>100?" Over":""}</span>
       </div>
-      <span style={{fontSize:10,color,fontWeight:600}}>{used}/{capacity} ({Math.round(pct)}%)</span>
+      <div style={{height:4,background:"#E5E5D0",borderRadius:2,overflow:"hidden"}}>
+        <div style={{height:"100%",width:`${Math.min(100,pct)}%`,background:col,borderRadius:2}}/>
+      </div>
     </div>
   );
 }
 
-export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData, isAdmin, plywoodNetworkV2Config, onSaveConfig, isActive }) {
-  const [panel, setPanel] = useState("allocation");
-  const [dsSel, setDsSel] = useState("DS01");
+// ── SKU modal: formula derivation + charts + misses ─────────────────────────
+function SKUModalV2({ row, loc, ev, cfg, dcInfo, onClose }) {
+  if (!row) return null;
+  const isDC = loc === "DC";
+  const d = ev.fitDemand;
+  const days = Object.entries(d.regularDaily[row.sku]?.[loc] || {}).sort();
+  const dayVals = days.map(([, q]) => q).sort((a, b) => a - b);
+  const netOrders = [...(d.regOrderQtys[row.sku] || [])].sort((a, b) => a - b);
+  const localOrders = d.regOrderQtysByDS?.[row.sku]?.[loc] || [];
+  const netAbq = netOrders.length ? Math.ceil(netOrders.reduce((a, b) => a + b, 0) / netOrders.length) : 1;
+  const localPct = cfg.minLocalDayPercentile ?? 90;
+  const netPct = cfg.minNetOrderPercentile ?? 90;
+  const docCap = cfg.minDocCapDays ?? 45;
+  const span = d.windowDates.length;
+  const p90Local = dayVals.length ? Math.ceil(percentile(dayVals, localPct)) : 0;
+  const p90Net = netOrders.length ? Math.ceil(percentile(netOrders, netPct)) : 1;
+  const qtySum = dayVals.reduce((a, b) => a + b, 0);
+  const docVal = dayVals.length && docCap > 0 ? Math.ceil((qtySum / span) * docCap) : null;
+  const localOrdAbq = dayVals.length ? Math.ceil(qtySum / dayVals.length) : 0;
+  const misses = ev.oosCounts[row.sku]?.[loc]?.events || [];
+  const fullP = ev.fullPlan?.[row.sku]?.[loc];
+
+  // timeline (fit window) with Min/Max reference lines
+  const dailyMap = d.regularDaily[row.sku]?.[loc] || {};
+  const timeline = d.windowDates.map(dt => ({ date: dt.slice(5), qty: dailyMap[dt] || 0 }));
+  const yMax = Math.ceil(Math.max(...timeline.map(t => t.qty), row.max || 0, 1) * 1.15);
+  const barSize = Math.max(2, Math.min(16, Math.floor(420 / Math.max(timeline.length, 1))));
+
+  // order-size histogram: local (blue) vs rest of network (grey)
+  const hist = (() => {
+    const b = {};
+    netOrders.forEach(q => { const k = Math.ceil(q); if (!b[k]) b[k] = { qty: k, local: 0, network: 0 }; b[k].network++; });
+    localOrders.forEach(q => { const k = Math.ceil(q); b[k].network--; b[k].local++; });
+    return Object.values(b).sort((a, c) => a.qty - c.qty);
+  })();
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
+      <div style={{background:"#fff",borderRadius:10,padding:"16px 20px",width:"min(860px,96vw)",maxHeight:"88vh",overflowY:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,lineHeight:1.3}}>{row.name}</div>
+            <div style={{fontSize:10,color:"#888",marginTop:2}}>
+              {row.sku} · {row.mm != null ? `${row.mm}mm` : "—"} · {row.brand} · <b>{loc}</b>
+              <span style={{marginLeft:12,color:"#333",fontWeight:600}}>
+                Min: {row.min} · Max: {row.max} · {row.nzd} NZD · ABQ: {fmt1(row.abq)}
+              </span>
+            </div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:`1px solid ${HR.border}`,borderRadius:5,padding:"3px 10px",cursor:"pointer",fontSize:11,color:"#888",flexShrink:0,marginLeft:12}}>Close ✕</button>
+        </div>
+        <div style={{borderTop:"1px solid #F0F0E8",marginBottom:10}}/>
+
+        {/* Formula derivation */}
+        {isDC ? (
+          <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FAFAF8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            <div>DC Min = Replenishment P{cfg.dcReplPercentile ?? 98} of TO drain (<b>{dcInfo?.repl ?? "—"}</b>) + Bulk P{cfg.dcBulkPercentile ?? 90} (<b>{dcInfo?.bulk ?? "—"}</b>) = <b style={{color:"#B91C1C"}}>{row.min}</b></div>
+            <div>DC Max = Min + cycle stock ({cfg.dcCoverDays ?? 2}d × mean drain = <b>{dcInfo?.cycle ?? "—"}</b>) = <b style={{color:HR.green}}>{row.max}</b></div>
+          </div>
+        ) : row.nzd === 0 ? (
+          <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#F8F8F8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            <span style={{...BUCKET_COLORS[0].badge,padding:"1px 6px",borderRadius:3,fontSize:9,fontWeight:700,marginRight:8}}>NZD 0</span>
+            No regular selling days at {loc} in the fit window.
+            <div>Network ABQ = {netOrders.reduce((a,b)=>a+b,0)} qty ÷ {netOrders.length} orders = <b>{netAbq}</b> → <b style={{color:"#B91C1C"}}>Min = {row.min}</b> · Max = Min+1 = <b style={{color:HR.green}}>{row.max}</b></div>
+          </div>
+        ) : (
+          <div style={{fontSize:11,lineHeight:1.9,color:"#444",background:"#FAFAF8",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            <div>
+              Min = max( P{localPct} of {row.nzd} local selling days = <b>{p90Local}</b>,
+              &nbsp;P{netPct} of {netOrders.length} network orders = <b>{p90Net}</b> )
+              {docVal != null && (
+                <span> → DOC cap: {qtySum} qty ÷ {span}d × {docCap}d = <b>{docVal}</b> (floor: local ABQ {localOrdAbq})</span>
+              )}
+              &nbsp;= <b style={{color:"#B91C1C"}}>{row.min}</b>
+            </div>
+            <div>Max = max( worst local day = <b>{dayVals.length ? dayVals[dayVals.length-1] : 0}</b>, Min+1 ) = <b style={{color:HR.green}}>{row.max}</b></div>
+          </div>
+        )}
+
+        {/* Misses in the test window */}
+        {!isDC && misses.length > 0 && (
+          <div style={{fontSize:11,background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+            <b style={{color:HR.red}}>{misses.length} OOS event{misses.length>1?"s":""} in the {ev.testWindow.from} → {ev.testWindow.to} test window:</b>
+            {misses.map((e, i) => (
+              <div key={i} style={{marginTop:3}}>
+                {e.date} · order {e.orderId} · short <b>{e.short}</b> sheets
+                {e.selfCorrects
+                  ? <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,background:"#DCFCE7",color:"#166534"}}>self-corrects on publish (refit Max {e.fullRefitMax})</span>
+                  : <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,background:"#FEF3C7",color:"#92400E"}}>still uncovered after refit (Max {e.fullRefitMax})</span>}
+              </div>
+            ))}
+            {fullP && <div style={{marginTop:4,color:"#888",fontSize:10}}>After publish (full-window refit): Min {fullP.min} / Max {fullP.max}</div>}
+          </div>
+        )}
+
+        {/* Charts */}
+        {!isDC && (
+          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            <div style={{flex:"1 1 380px",minWidth:320}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#555",marginBottom:4}}>Daily regular demand at {loc} (fit window) vs Min/Max</div>
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart data={timeline} margin={{top:4,right:8,bottom:0,left:-22}}>
+                  <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
+                  <XAxis dataKey="date" tick={{fontSize:8}} interval={Math.ceil(timeline.length/10)}/>
+                  <YAxis tick={{fontSize:9}} domain={[0, yMax]}/>
+                  <RTooltip contentStyle={{fontSize:10}}/>
+                  <Bar dataKey="qty" fill={HR.blue} barSize={barSize}/>
+                  <ReferenceLine y={row.min} stroke="#B91C1C" strokeDasharray="4 3" label={{value:`Min ${row.min}`,fontSize:9,fill:"#B91C1C",position:"insideTopRight"}}/>
+                  <ReferenceLine y={row.max} stroke={HR.green} strokeDasharray="4 3" label={{value:`Max ${row.max}`,fontSize:9,fill:HR.green,position:"insideTopRight"}}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{flex:"1 1 320px",minWidth:280}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#555",marginBottom:4}}>Order sizes — {loc} (blue) vs rest of network (grey)</div>
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart data={hist} margin={{top:4,right:8,bottom:0,left:-22}}>
+                  <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
+                  <XAxis dataKey="qty" tick={{fontSize:9}}/>
+                  <YAxis tick={{fontSize:9}} allowDecimals={false}/>
+                  <RTooltip contentStyle={{fontSize:10}}/>
+                  <Bar dataKey="local" stackId="a" fill={HR.blue} barSize={14}/>
+                  <Bar dataKey="network" stackId="a" fill="#CBD5E1" barSize={14}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Tune sub-tab ──────────────────────────────────────────────────────────────
+function TunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig }) {
+  const [tuning, setTuning] = useState(false);
+  const [tuneResult, setTuneResult] = useState(null);
+
+  const runTune = () => {
+    setTuning(true);
+    setTimeout(() => {
+      try {
+        const r = autoTune(invoiceData, skuMaster, { ...cfgDraft });
+        setTuneResult(r);
+      } catch (e) { console.error("auto-tune error:", e); }
+      setTuning(false);
+    }, 30);
+  };
+
+  const applyKnobs = (knobs) => setCfgDraft(d => ({ ...d, ...knobs }));
+  const knobsActive = (knobs) =>
+    knobs.minLocalDayPercentile === cfgDraft.minLocalDayPercentile &&
+    knobs.minNetOrderPercentile === cfgDraft.minNetOrderPercentile &&
+    knobs.minDocCapDays === cfgDraft.minDocCapDays;
+
+  const chartData = tuneResult?.frontier.map(r => ({
+    footprint: r.footprint, service: +(r.service * 100).toFixed(2), knobs: r.knobs,
+  }));
+
+  return (
+    <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+      <div style={{flex:"1 1 420px",minWidth:380,background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${HR.border}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <span style={{fontSize:12,fontWeight:700}}>Auto-tune</span>
+          <button style={btn(true)} onClick={runTune} disabled={tuning}>{tuning ? "Sweeping…" : "Run Auto-tune"}</button>
+          <span style={{fontSize:10,color:HR.muted}}>48 configs × 2 out-of-window folds (~few seconds)</span>
+        </div>
+        {tuneResult && (
+          <>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={chartData} margin={{top:8,right:12,bottom:4,left:-10}}>
+                <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
+                <XAxis dataKey="footprint" tick={{fontSize:9}} label={{value:"Total sheets (ΣMax, all DSes)",fontSize:9,position:"insideBottom",offset:-2}}/>
+                <YAxis dataKey="service" tick={{fontSize:9}} domain={["dataMin - 0.3","dataMax + 0.3"]} tickFormatter={v=>v.toFixed(1)} label={{value:"OOS-svc %",fontSize:9,angle:-90,position:"insideLeft"}}/>
+                <RTooltip contentStyle={{fontSize:10}} formatter={(v,n,p)=>[`${v}% · P${p.payload.knobs.minLocalDayPercentile}/P${p.payload.knobs.minNetOrderPercentile}/cap${p.payload.knobs.minDocCapDays||"off"}`, "service"]}/>
+                <Line type="monotone" dataKey="service" stroke={HR.purple} strokeWidth={2} dot={{r:3}}/>
+              </LineChart>
+            </ResponsiveContainer>
+            <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+              {[["Lean","lean"],["Balanced","balanced"],["Service-first","serviceFirst"]].map(([label,key]) => {
+                const p = tuneResult.presets[key];
+                if (!p) return null;
+                const active = knobsActive(p.knobs);
+                return (
+                  <div key={key} onClick={()=>applyKnobs(p.knobs)}
+                    style={{flex:1,minWidth:130,cursor:"pointer",border:`2px solid ${active?HR.yellow:HR.border}`,borderRadius:8,padding:"8px 10px",background:active?"#FFFDF0":HR.white}}>
+                    <div style={{fontSize:11,fontWeight:700}}>{label}{active && " ✓"}</div>
+                    <div style={{fontSize:14,fontWeight:800,color:svcColor(p.service)}}>{(p.service*100).toFixed(2)}%</div>
+                    <div style={{fontSize:9,color:HR.muted}}>{p.footprint} sheets · P{p.knobs.minLocalDayPercentile}/P{p.knobs.minNetOrderPercentile}/cap {p.knobs.minDocCapDays||"off"}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{fontSize:10,color:HR.muted,marginTop:6}}>
+              {tuneResult.bucketSplit
+                ? <span>Bucket-split DOC cap adopted: slow {tuneResult.bucketSplit.low}d / fast {tuneResult.bucketSplit.high || "off"} (+{((tuneResult.bucketSplit.service - tuneResult.presets.serviceFirst.service)*100).toFixed(1)}pts)</span>
+                : <span>Bucket-split DOC cap tested — did not clear the +0.3pt out-of-fold gate; simple formula stands.</span>}
+            </div>
+          </>
+        )}
+        {!tuneResult && !tuning && <div style={{fontSize:11,color:HR.muted,padding:"18px 0"}}>Run the sweep to see the service-vs-inventory frontier and pick an operating point.</div>}
+      </div>
+
+      <div style={{flex:"1 1 300px",minWidth:280,background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${HR.border}`}}>
+        <div style={{fontSize:12,fontWeight:700,borderBottom:`2px solid ${HR.yellow}`,paddingBottom:4,marginBottom:10}}>Knobs</div>
+        {[
+          ["minLocalDayPercentile","Local day percentile"],
+          ["minNetOrderPercentile","Network order percentile"],
+          ["minDocCapDays","DOC cap days (0 = off)"],
+          ["lookbackDays","Lookback days"],
+          ["bulkOrderThreshold","Bulk threshold (sheets)"],
+          ["leadDays","Supplier lead days"],
+          ["thickBoundaryMm","Thick boundary (mm)"],
+          ["dcReplPercentile","DC replenishment pct"],
+          ["dcBulkPercentile","DC bulk pct"],
+          ["dcCoverDays","DC cycle cover days"],
+        ].map(([key,label]) => (
+          <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <span style={{fontSize:11}}>{label}</span>
+            <input type="number" step="any" style={{...sel,width:70,cursor:"text"}}
+              value={cfgDraft[key]} onChange={e=>setCfgDraft(d=>({...d,[key]:Number(e.target.value)}))}/>
+          </div>
+        ))}
+        <div style={{borderTop:`1px solid ${HR.border}`,marginTop:10,paddingTop:10}}>
+          {isAdmin ? (
+            <>
+              <button style={{...btn(true),width:"100%",padding:"8px 0"}} onClick={()=>onSaveConfig && onSaveConfig(cfgDraft)}>
+                Publish — save config & refit on FULL window
+              </button>
+              <div style={{fontSize:9,color:HR.muted,marginTop:5}}>
+                The tab previews a 75-day fit scored on the last 15 days. Publishing re-runs the engine with the same knobs on the entire window, absorbing the test days into the fit.
+              </div>
+            </>
+          ) : <div style={{fontSize:10,color:HR.muted}}>Read-only — admin login required to publish.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main tab ──────────────────────────────────────────────────────────────────
+export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, plywoodNetworkV2Config, onSaveConfig, isActive, engineResults }) {
+  const [subTab, setSubTab] = useState("skus");
+  const [loc, setLoc] = useState("DS01");
   const [cfgDraft, setCfgDraft] = useState(() => ({ ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) }));
-  const [flagFilter, setFlagFilter] = useState("All");
-  const [simFrom, setSimFrom] = useState("");
-  const [simTo, setSimTo] = useState("");
-  const [simHoldout, setSimHoldout] = useState(false);
-  const [simResult, setSimResult] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [query, setQuery] = useState("");
+  const [fBrand, setFBrand] = useState("All");
+  const [fType, setFType] = useState("All");
+  const [fBucket, setFBucket] = useState("All");
+  const [fOOS, setFOOS] = useState(false);
+  const [sortBy, setSortBy] = useState("nzd");
+  const [sortDir, setSortDir] = useState(-1);
 
   const ready = invoiceData?.length > 0 && Object.keys(skuMaster || {}).length > 0;
 
-  const computed = useMemo(() => {
+  // 75/15 evaluation (the tab's core computation)
+  const ev = useMemo(() => {
     if (!ready) return null;
-    try {
-      const params = { plywoodNetworkV2Config: cfgDraft };
-      const res = computePlywoodNetworkV2Results(invoiceData, skuMaster, params);
-      if (!Object.keys(res).length) return null;
-      const universe = buildUniverse(skuMaster, cfgDraft);
-      const demand = prepareDemand(invoiceData, universe, cfgDraft);
-      const plan = {}, dcPlan = {};
-      for (const [sku, r] of Object.entries(res)) {
-        plan[sku] = {};
-        for (const ds of DS_LIST) plan[sku][ds] = { min: r.storeResults[ds].min, max: r.storeResults[ds].max };
-        dcPlan[sku] = { ...r.dcResult };
-      }
-      return { res, universe, demand, plan, dcPlan };
-    } catch (e) { console.error("plywood v2 compute error:", e); return null; }
+    try { return evaluatePlan(invoiceData, skuMaster, cfgDraft, { testDays: 15 }); }
+    catch (e) { console.error("v2 evaluate error:", e); return null; }
   }, [ready, invoiceData, skuMaster, cfgDraft]);
 
-  const keepScores = useMemo(() => {
-    if (!computed) return [];
-    const { universe, demand, plan, dcPlan } = computed;
-    const windowQty = {}, networkNZD = {}, regularNZD = {};
-    const allDates = {};
-    for (const sku of Object.keys(universe)) { windowQty[sku] = 0; }
-    for (const o of demand.orders) for (const l of o.lines) {
-      windowQty[l.sku] = (windowQty[l.sku] || 0) + l.qty;
-      (allDates[l.sku] = allDates[l.sku] || new Set()).add(o.date);
-    }
-    for (const sku of Object.keys(universe)) {
-      networkNZD[sku] = allDates[sku]?.size || 0;
-      const rd = new Set();
-      for (const ds of DS_LIST) for (const d of Object.keys(demand.regularDaily[sku]?.[ds] || {})) rd.add(d);
-      regularNZD[sku] = rd.size;
-    }
-    return computeKeepScores({ plan, dcPlan, priceData: priceData || {}, windowQty, networkNZD, regularNZD }, cfgDraft.keepScore || {});
-  }, [computed, priceData, cfgDraft]);
+  // DC plan (full pipeline incl. drain-based DC) on the fit window
+  const dcRes = useMemo(() => {
+    if (!ev) return null;
+    try {
+      const fitInv = invoiceData.filter(r => r.date <= ev.fitWindow.to);
+      return computePlywoodNetworkV2Results(fitInv, skuMaster, { plywoodNetworkV2Config: cfgDraft });
+    } catch (e) { console.error("v2 dc error:", e); return null; }
+  }, [ev, invoiceData, skuMaster, cfgDraft]);
 
-  const runSim = () => {
-    if (!computed) return;
-    const { universe } = computed;
-    const lastDate = computed.demand.windowDates[computed.demand.windowDates.length - 1];
-    let { plan, dcPlan } = computed;
-    let from = simFrom || computed.demand.cutoff;
-    let to = simTo || lastDate;
+  const buckets = useMemo(() => ev ? deriveNZDBuckets(ev.fitDemand, ev.universe) : null, [ev]);
 
-    if (simHoldout) {
-      // Out-of-sample: fit the plan on data EXCLUDING the last 30 days, score on those 30.
-      const testFromD = new Date(lastDate + "T00:00:00Z");
-      testFromD.setUTCDate(testFromD.getUTCDate() - 29);
-      from = testFromD.toISOString().slice(0, 10);
-      to = lastDate;
-      const fitInv = invoiceData.filter(r => r.date < from);
-      const fitRes = computePlywoodNetworkV2Results(fitInv, skuMaster, { plywoodNetworkV2Config: cfgDraft });
-      if (!Object.keys(fitRes).length) { setSimResult(null); return; }
-      plan = {}; dcPlan = {};
-      for (const [sku, r] of Object.entries(fitRes)) {
-        plan[sku] = {};
-        for (const ds of DS_LIST) plan[sku][ds] = { min: r.storeResults[ds].min, max: r.storeResults[ds].max };
-        dcPlan[sku] = { ...r.dcResult };
-      }
+  // Build display rows for the selected location
+  const rows = useMemo(() => {
+    if (!ev) return [];
+    const out = [];
+    for (const sku of Object.keys(ev.universe)) {
+      const meta = ev.universe[sku];
+      const mm = inferThickness(meta.name);
+      const isDC = loc === "DC";
+      const p = isDC ? null : ev.plan[sku][loc];
+      const dc = isDC ? dcRes?.[sku]?.dcResult : null;
+      const dd = isDC ? {} : (ev.fitDemand.regularDaily[sku]?.[loc] || {});
+      const dayVals = Object.values(dd);
+      const nzd = dayVals.length;
+      const qty = dayVals.reduce((a, b) => a + b, 0);
+      const oos = isDC ? null : (ev.oosCounts[sku]?.[loc]?.oosOrders || 0);
+      const floored = engineResults?.[sku]?.stores?.[loc]?.logicTag === "SKU Floor";
+      out.push({
+        sku, name: meta.name, brand: meta.brand, mm,
+        tclass: ev.tclass[sku],
+        nzd, qty, abq: nzd ? qty / nzd : 0,
+        bucket: isDC ? null : bucketOf(nzd, buckets?.edges || [1]),
+        min: isDC ? (dc?.min ?? 0) : p.min,
+        max: isDC ? (dc?.max ?? 0) : p.max,
+        oos, floored,
+        dcInfo: isDC ? dcRes?.[sku]?.v2?.dcDetail : null,
+      });
     }
-
-    const slice = invoiceData.filter(r => r.date >= from && r.date <= to);
-    const spanDays = Math.round((new Date(to + "T00:00:00Z") - new Date(from + "T00:00:00Z")) / 86400000) + 1;
-    const demand = prepareDemand(slice, universe, { ...cfgDraft, lookbackDays: spanDays });
-    if (!demand) { setSimResult(null); return; }
-    setSimResult({ sim: replay(plan, dcPlan, demand, cfgDraft), from, to, days: demand.windowDates.length, holdout: simHoldout });
-  };
+    return out;
+  }, [ev, dcRes, loc, buckets, engineResults]);
 
   if (!ready) return <div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>Loading data, please wait...</div>;
-  if (!computed) return <div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>No plywood SKUs found for v2 universe.</div>;
+  if (!ev) return <div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>No plywood SKUs found for v2 universe.</div>;
 
-  const { res, demand } = computed;
-  const anySku = Object.keys(res)[0];
-  const nodeReport = res[anySku].v2.nodeReport;
-  const trimReport = res[anySku].v2.dcTrimReport;
-  const skuRows = Object.entries(res).sort((a, b) => a[0] < b[0] ? -1 : 1);
+  const isDC = loc === "DC";
+  const svc = ev.serviceLevels.regular;
+  const fp = planFootprint(ev.plan);
+  const caps = cfgDraft.dsCapacities || {};
+  const brands = ["All", ...[...new Set(rows.map(r => r.brand).filter(Boolean))].sort()];
 
-  const PANELS = [["allocation","Allocation"],["dc","DC"],["sim","Simulation"],["keep","Keep Score"],["config","Config"]];
+  // location-scoped capacity (thick/thin)
+  const thickUsed = rows.filter(r => r.tclass === "thick").reduce((a, r) => a + r.max, 0);
+  const thinUsed = rows.filter(r => r.tclass === "thin").reduce((a, r) => a + r.max, 0);
+  const thickCap = isDC ? (cfgDraft.dcCapacity?.thick ?? 0) : (caps[loc]?.thick ?? 0);
+  const thinCap = isDC ? (cfgDraft.dcCapacity?.thin ?? 0) : (caps[loc]?.thin ?? 0);
+
+  const q = query.toLowerCase();
+  const filtered = rows
+    .filter(r => {
+      if (fBrand !== "All" && r.brand !== fBrand) return false;
+      if (fType === "Thick" && r.tclass !== "thick") return false;
+      if (fType === "Thin" && r.tclass !== "thin") return false;
+      if (!isDC && fBucket !== "All" && (buckets?.labels[r.bucket] !== fBucket)) return false;
+      if (fOOS && !(r.oos > 0)) return false;
+      if (q && !r.sku.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q)) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case "sku": return a.sku.localeCompare(b.sku) * sortDir;
+        case "name": return a.name.localeCompare(b.name) * sortDir;
+        case "brand": return (a.brand || "").localeCompare(b.brand || "") * sortDir;
+        case "mm": return ((b.mm ?? -1) - (a.mm ?? -1)) * sortDir;
+        case "nzd": return (b.nzd - a.nzd) * sortDir;
+        case "abq": return (b.abq - a.abq) * sortDir;
+        case "min": return (b.min - a.min) * sortDir;
+        case "max": return (b.max - a.max) * sortDir;
+        case "oos": return ((b.oos || 0) - (a.oos || 0)) * sortDir;
+        default: return 0;
+      }
+    });
+
+  const handleSort = col => {
+    if (sortBy === col) setSortDir(d => d * -1);
+    else { setSortBy(col); setSortDir(["sku", "name", "brand"].includes(col) ? 1 : -1); }
+  };
+  const sh = (col, label, center) => {
+    const on = sortBy === col;
+    return (
+      <th key={col} onClick={() => handleSort(col)}
+        style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:on?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,
+          textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2"}}>
+        {label}{on ? (sortDir === -1 ? "↓" : "↑") : <span style={{color:"#ccc",fontSize:8}}>↕</span>}
+      </th>
+    );
+  };
+  const hasFilter = query || fBrand !== "All" || fType !== "All" || fBucket !== "All" || fOOS;
 
   return (
     <div>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+      {/* header */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
         <h2 style={{margin:0,fontSize:16}}>Plywood Network v2</h2>
         <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:isActive?"#DCFCE7":HR.surfaceLight,color:isActive?HR.green:HR.muted,fontWeight:700}}>
           {isActive ? "ACTIVE IN ENGINE" : "PREVIEW — not active"}
         </span>
         <span style={{fontSize:10,color:HR.muted}}>
-          {Object.keys(res).length} SKUs · window {demand.cutoff} → {demand.windowDates[demand.windowDates.length-1]} ({demand.windowDates.length}d)
+          fit {ev.fitWindow.from} → {ev.fitWindow.to} · tested on {ev.testWindow.from} → {ev.testWindow.to}
         </span>
         <div style={{flex:1}}/>
-        {PANELS.map(([k, label]) => (
-          <button key={k} style={S.btn(panel===k)} onClick={()=>setPanel(k)}>{label}</button>
-        ))}
+        <button style={btn(subTab==="skus")} onClick={()=>setSubTab("skus")}>SKUs</button>
+        <button style={btn(subTab==="tune")} onClick={()=>setSubTab("tune")}>Tune</button>
       </div>
 
-      {panel === "allocation" && (
+      {subTab === "tune" ? (
+        <TunePanel cfgDraft={cfgDraft} setCfgDraft={setCfgDraft} invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin} onSaveConfig={onSaveConfig}/>
+      ) : (
         <div>
-          <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
-            {DS_LIST.map(ds => (
-              <div key={ds} style={{...S.kpi,minWidth:170,cursor:"pointer",border:`1px solid ${dsSel===ds?HR.yellow:HR.border}`}} onClick={()=>setDsSel(ds)}>
-                <div style={{fontSize:11,fontWeight:700,marginBottom:6}}>{ds}</div>
-                {["thick","thin"].map(tc => (
-                  <div key={tc} style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
-                    <span style={{fontSize:9,color:HR.muted,width:32}}>{tc}</span>
-                    <CapacityBar used={nodeReport[ds][tc].used} capacity={nodeReport[ds][tc].capacity}/>
-                  </div>
-                ))}
-                {(nodeReport[ds].thick.overCapacity || nodeReport[ds].thin.overCapacity) && (
-                  <div style={{fontSize:9,color:HR.red,fontWeight:700,marginTop:2}}>⚠ plan exceeds capacity</div>
-                )}
-              </div>
-            ))}
+          {/* service strip — the 15-day report card */}
+          <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"stretch"}}>
+            <div style={{padding:"6px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8}}>
+              <div style={{fontSize:9,color:HR.muted}}>Regular service — last 15d (out-of-window)</div>
+              <div style={{fontSize:20,fontWeight:800,color:svcColor(svc.overall)}}>{(svc.overall*100).toFixed(2)}%</div>
+              <div style={{fontSize:9,color:HR.muted}}>{svc.oos} OOS of {svc.total} orders</div>
+            </div>
+            {DS_LIST.map(ds => {
+              const c = svc.perDS[ds];
+              const s = c ? c.service : 1;
+              return (
+                <div key={ds} style={{padding:"6px 12px",background:HR.surface,border:`1px solid ${loc===ds?HR.yellow:HR.border}`,borderRadius:8,cursor:"pointer"}} onClick={()=>setLoc(ds)}>
+                  <div style={{fontSize:9,color:HR.muted}}>{ds}</div>
+                  <div style={{fontSize:15,fontWeight:700,color:svcColor(s)}}>{(s*100).toFixed(1)}%</div>
+                  <div style={{fontSize:9,color:HR.muted}}>{c ? `${c.oos}/${c.total}` : "0 orders"}</div>
+                </div>
+              );
+            })}
+            <div style={{padding:"6px 12px",background:HR.surface,border:`1px solid ${loc==="DC"?HR.yellow:HR.border}`,borderRadius:8,cursor:"pointer"}} onClick={()=>setLoc("DC")}>
+              <div style={{fontSize:9,color:HR.muted}}>DC</div>
+              <div style={{fontSize:15,fontWeight:700,color:HR.text}}>{isDC ? "viewing" : "view"}</div>
+              <div style={{fontSize:9,color:HR.muted}}>drain + bulk</div>
+            </div>
+            <div style={{padding:"6px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8,marginLeft:"auto"}}>
+              <div style={{fontSize:9,color:HR.muted}}>Total plan footprint (ΣMax, 5 DS)</div>
+              <div style={{fontSize:20,fontWeight:800}}>{fp.total}</div>
+              <div style={{fontSize:9,color:HR.muted}}>{DS_LIST.map(ds=>`${ds.slice(2)}:${fp.perDS[ds]}`).join(" ")}</div>
+            </div>
           </div>
-          <div style={{...S.card,maxHeight:520,overflowY:"auto"}}>
-            <table style={S.table}>
+
+          {/* capacity bars (display-only) */}
+          <div style={{display:"flex",gap:8,marginBottom:8}}>
+            {capBar(thickUsed, thickCap, `${loc} — Thick (>${cfgDraft.thickBoundaryMm}mm)`)}
+            {capBar(thinUsed, thinCap, `${loc} — Thin`)}
+          </div>
+
+          {/* filters */}
+          <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+            <input type="text" placeholder="Search SKU or name…" value={query} onChange={e=>setQuery(e.target.value)} style={{...sel,width:200,cursor:"text"}}/>
+            <select value={fBrand} onChange={e=>setFBrand(e.target.value)} style={sel}>
+              {brands.map(b => <option key={b} value={b}>{b==="All"?"All Brands":b}</option>)}
+            </select>
+            <select value={fType} onChange={e=>setFType(e.target.value)} style={sel}>
+              <option value="All">Thick & Thin</option><option value="Thick">Thick only</option><option value="Thin">Thin only</option>
+            </select>
+            {!isDC && buckets && (
+              <select value={fBucket} onChange={e=>setFBucket(e.target.value)} style={sel}>
+                <option value="All">All NZD buckets</option>
+                {buckets.labels.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+            )}
+            {!isDC && (
+              <label style={{display:"flex",alignItems:"center",gap:4,fontSize:11,cursor:"pointer",color:HR.red,fontWeight:600}}>
+                <input type="checkbox" checked={fOOS} onChange={e=>setFOOS(e.target.checked)}/> OOS only
+              </label>
+            )}
+            {hasFilter && (
+              <button onClick={()=>{setQuery("");setFBrand("All");setFType("All");setFBucket("All");setFOOS(false);}}
+                style={{fontSize:10,color:HR.purple,background:"none",border:`1px solid ${HR.purple}`,borderRadius:4,padding:"3px 8px",cursor:"pointer"}}>Clear</button>
+            )}
+            <span style={{fontSize:10,color:"#bbb",marginLeft:"auto"}}>{filtered.length} SKUs</span>
+          </div>
+
+          {/* table */}
+          <div style={{overflowX:"auto",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
               <thead><tr>
-                {["SKU","Item Name","Brand","Class","Tier","Floor","Depth","Min","Max","Reg NZD"].map(h=><th key={h} style={S.th}>{h}</th>)}
+                {sh("sku","SKU")}
+                {sh("name","Item Name")}
+                {sh("mm","Thickness",true)}
+                {sh("brand","Brand")}
+                {!isDC && sh("nzd","NZD",true)}
+                {!isDC && sh("abq","ABQ",true)}
+                {sh("min", isDC?"DC Min":"Min", true)}
+                {sh("max", isDC?"DC Max":"Max", true)}
+                {!isDC && sh("oos","OOS (15d)",true)}
               </tr></thead>
               <tbody>
-                {skuRows.map(([sku, r]) => {
-                  const sr = r.storeResults[dsSel];
-                  const tierColor = { frequent: HR.green, moderate: "#2563EB", sparse: HR.amber, dead: HR.muted }[sr.v2.tier] || HR.muted;
+                {filtered.length === 0 ? (
+                  <tr><td colSpan={9} style={{padding:16,textAlign:"center",color:"#aaa"}}>No SKUs match the current filters</td></tr>
+                ) : filtered.map(r => {
+                  const bc = BUCKET_COLORS[Math.min(r.bucket ?? 0, BUCKET_COLORS.length-1)];
                   return (
-                    <tr key={sku}>
-                      <td style={S.td}>{sku}</td>
-                      <td style={{...S.td,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis"}} title={skuMaster[sku]?.name}>{skuMaster[sku]?.name}</td>
-                      <td style={S.td}>{r.brand}</td>
-                      <td style={S.td}>{sr.v2.tclass}</td>
-                      <td style={{...S.td,color:tierColor,fontWeight:600}}>{sr.v2.tier || "—"}</td>
-                      <td style={S.td}>{sr.v2.floor}</td>
-                      <td style={{...S.td,color:sr.v2.depth>0?HR.green:HR.muted,fontWeight:sr.v2.depth>0?700:400}}>{sr.v2.depth>0?`+${sr.v2.depth}`:"—"}</td>
-                      <td style={{...S.td,fontWeight:700}}>{sr.min}</td>
-                      <td style={{...S.td,fontWeight:700}}>{sr.max}</td>
-                      <td style={S.td}>{sr.nonZeroCount}</td>
+                    <tr key={r.sku} onClick={()=>setSelected(r)} style={{background:isDC?"#fff":bc.bg,cursor:"pointer"}}>
+                      <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#555",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap"}}>{r.sku}</td>
+                      <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {r.name}
+                        {r.floored && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#EDE9FE",color:"#6D28D9",border:"1px solid #C4B5FD"}}>Floor</span>}
+                      </td>
+                      <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
+                        <span style={{fontSize:10,color:"#555"}}>{r.mm != null ? `${r.mm}mm` : "—"}</span>
+                        <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:r.tclass==="thick"?"#FEF3C7":"#DBEAFE",color:r.tclass==="thick"?"#92400E":HR.blue}}>
+                          {r.tclass === "thick" ? "Thick" : "Thin"}
+                        </span>
+                      </td>
+                      <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555",whiteSpace:"nowrap"}}>{r.brand || "—"}</td>
+                      {!isDC && (
+                        <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
+                          <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,...bc.badge}}>{buckets?.labels[r.bucket] ?? r.nzd}</span>
+                          <span style={{marginLeft:5,fontSize:10,color:"#555"}}>{r.nzd}</span>
+                        </td>
+                      )}
+                      {!isDC && <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555"}}>{r.nzd ? fmt1(r.abq) : "—"}</td>}
+                      <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:HR.blue,borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.min}</td>
+                      <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:"#166534",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.max}</td>
+                      {!isDC && (
+                        <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,borderBottom:"1px solid rgba(0,0,0,0.05)",color:r.oos>0?HR.red:"#ccc"}}>
+                          {r.oos > 0 ? r.oos : "—"}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -202,254 +550,8 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
         </div>
       )}
 
-      {panel === "dc" && (
-        <div>
-          {trimReport?.steps?.length > 0 && (
-            <div style={{...S.card,marginBottom:10,background:"#FEF3C7",border:"1px solid #FCD34D",fontSize:11}}>
-              <b>DC capacity trim applied:</b> {trimReport.steps.join(" → ")}
-              {trimReport.stillOver && <span style={{color:HR.red,fontWeight:700}}> — still over capacity after trim</span>}
-            </div>
-          )}
-          <div style={{...S.card,maxHeight:560,overflowY:"auto"}}>
-            <table style={S.table}>
-              <thead><tr>
-                {["SKU","Item Name","Class","Repl (P"+(cfgDraft.dcReplPercentile??98)+")","Bulk","Cycle","DC Min","DC Max"].map(h=><th key={h} style={S.th}>{h}</th>)}
-              </tr></thead>
-              <tbody>
-                {skuRows.map(([sku, r]) => (
-                  <tr key={sku}>
-                    <td style={S.td}>{sku}</td>
-                    <td style={{...S.td,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis"}} title={skuMaster[sku]?.name}>{skuMaster[sku]?.name}</td>
-                    <td style={S.td}>{r.storeResults.DS01.v2.tclass}</td>
-                    <td style={S.td}>{r.v2.dcDetail?.repl ?? "—"}</td>
-                    <td style={S.td}>{r.v2.dcDetail?.bulk ?? "—"}</td>
-                    <td style={S.td}>{r.v2.dcDetail?.cycle ?? "—"}</td>
-                    <td style={{...S.td,fontWeight:700}}>{r.dcResult.min}</td>
-                    <td style={{...S.td,fontWeight:700}}>{r.dcResult.max}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {panel === "sim" && (
-        <div>
-          <div style={{...S.card,marginBottom:10,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-            <span style={{fontSize:11,fontWeight:600}}>Window:</span>
-            <input type="date" style={{...S.input,width:130}} value={simFrom} onChange={e=>setSimFrom(e.target.value)} placeholder={demand.cutoff}/>
-            <span style={{fontSize:11,color:HR.muted}}>to</span>
-            <input type="date" style={{...S.input,width:130}} value={simTo} onChange={e=>setSimTo(e.target.value)}/>
-            <label style={{display:"flex",alignItems:"center",gap:4,fontSize:11,cursor:"pointer"}}>
-              <input type="checkbox" checked={simHoldout} onChange={e=>setSimHoldout(e.target.checked)}/>
-              Out-of-sample test (fit excludes last 30d, scored on them)
-            </label>
-            <button style={{...S.btn(true)}} onClick={runSim}>Run Simulation</button>
-            <span style={{fontSize:10,color:HR.muted}}>Empty dates = full lookback window. Order-level scoring: any short line fails the whole order.</span>
-          </div>
-          {simResult && (() => {
-            const sl = simResult.sim.serviceLevels;
-            return (
-              <div>
-                <div style={{display:"flex",gap:10,marginBottom:10,flexWrap:"wrap"}}>
-                  <div style={S.kpi}>
-                    <div style={{fontSize:10,color:HR.muted}}>Regular orders (DS)</div>
-                    <div style={{fontSize:22,fontWeight:800,color:sl.regular.overall>=0.99?HR.green:sl.regular.overall>=0.95?HR.amber:HR.red}}>
-                      {(sl.regular.overall*100).toFixed(2)}%
-                    </div>
-                    <div style={{fontSize:10,color:HR.muted}}>{sl.regular.oos} OOS of {sl.regular.total}</div>
-                  </div>
-                  <div style={S.kpi}>
-                    <div style={{fontSize:10,color:HR.muted}}>Bulk orders (DC)</div>
-                    <div style={{fontSize:22,fontWeight:800,color:sl.bulk.overall>=0.9?HR.green:sl.bulk.overall>=0.8?HR.amber:HR.red}}>
-                      {(sl.bulk.overall*100).toFixed(2)}%
-                    </div>
-                    <div style={{fontSize:10,color:HR.muted}}>{sl.bulk.oos} OOS of {sl.bulk.total}</div>
-                  </div>
-                  {DS_LIST.map(ds => {
-                    const c = sl.regular.perDS[ds];
-                    if (!c) return null;
-                    return (
-                      <div key={ds} style={S.kpi}>
-                        <div style={{fontSize:10,color:HR.muted}}>{ds}</div>
-                        <div style={{fontSize:16,fontWeight:700,color:c.service>=0.99?HR.green:c.service>=0.95?HR.amber:HR.red}}>{(c.service*100).toFixed(1)}%</div>
-                        <div style={{fontSize:10,color:HR.muted}}>{c.oos}/{c.total}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{fontSize:11,color:HR.muted,marginBottom:8}}>
-                  {simResult.holdout && <span style={{color:HR.purple,fontWeight:700}}>OUT-OF-SAMPLE (plan fitted without these 30 days) · </span>}
-                  Ops load: {simResult.sim.opsLoad.toLines} TO lines ({(simResult.sim.opsLoad.toLines/simResult.days).toFixed(1)}/day), {simResult.sim.opsLoad.poLines} PO lines · {simResult.from} → {simResult.to}
-                </div>
-                <div style={{...S.card,maxHeight:380,overflowY:"auto"}}>
-                  <table style={S.table}>
-                    <thead><tr>{["Type","Date","DS","SKU","Item Name","Order","Short"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-                    <tbody>
-                      {simResult.sim.oosEvents.map((e, i) => (
-                        <tr key={i}>
-                          <td style={{...S.td,color:e.type==="bulk"?HR.purple:HR.red,fontWeight:600}}>{e.type}</td>
-                          <td style={S.td}>{e.date}</td>
-                          <td style={S.td}>{e.ds}</td>
-                          <td style={S.td}>{e.sku}</td>
-                          <td style={{...S.td,maxWidth:240,overflow:"hidden",textOverflow:"ellipsis"}} title={skuMaster[e.sku]?.name}>{skuMaster[e.sku]?.name}</td>
-                          <td style={S.td}>{e.orderId}</td>
-                          <td style={{...S.td,fontWeight:700}}>{e.short}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            );
-          })()}
-          {!simResult && <div style={{textAlign:"center",padding:40,color:HR.muted,fontSize:12}}>Run a simulation to see service levels.</div>}
-        </div>
-      )}
-
-      {panel === "keep" && (
-        <div>
-          <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
-            {["All","Keep","Watch","Cut"].map(f => (
-              <button key={f} style={S.btn(flagFilter===f)} onClick={()=>setFlagFilter(f)}>
-                {f}{f!=="All"?` (${keepScores.filter(s=>s.flag===f).length})`:""}
-              </button>
-            ))}
-            <div style={{flex:1}}/>
-            <button style={S.btn(false)} onClick={()=>csvDownload("plywood-v2-keepscore.csv", [
-              ["SKU","Item Name","PP","Avg Position","Holding Val","Rent Ratio","Service Ratio","Keep Score","Flag"],
-              ...keepScores.map(s=>[s.sku, skuMaster[s.sku]?.name, s.pp, s.avgPosition.toFixed(1), Math.round(s.holdingValue), s.rentRatio.toFixed(2), s.serviceRatio.toFixed(2), s.keepScore.toFixed(2), s.flag]),
-            ])}>Export CSV</button>
-          </div>
-          <div style={{...S.card,maxHeight:540,overflowY:"auto"}}>
-            <table style={S.table}>
-              <thead><tr>{["SKU","Item Name","PP","Avg Position","Holding Val","Rent Ratio","Service Ratio","Keep Score","Flag"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>
-                {keepScores
-                  .filter(s => flagFilter === "All" || s.flag === flagFilter)
-                  .sort((a, b) => a.keepScore - b.keepScore)
-                  .map(s => (
-                  <tr key={s.sku}>
-                    <td style={S.td}>{s.sku}</td>
-                    <td style={{...S.td,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis"}} title={skuMaster[s.sku]?.name}>{skuMaster[s.sku]?.name}</td>
-                    <td style={S.td}>{s.pp ? Math.round(s.pp).toLocaleString() : "-"}</td>
-                    <td style={S.td}>{s.avgPosition.toFixed(1)}</td>
-                    <td style={S.td}>{Math.round(s.holdingValue).toLocaleString()}</td>
-                    <td style={S.td}>{s.rentRatio.toFixed(2)}</td>
-                    <td style={S.td}>{s.serviceRatio.toFixed(2)}</td>
-                    <td style={{...S.td,fontWeight:700}}>{s.keepScore.toFixed(2)}</td>
-                    <td style={{...S.td,fontWeight:700,color:s.flag==="Cut"?HR.red:s.flag==="Watch"?HR.amber:HR.green}}>{s.flag}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {panel === "config" && (
-        <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-          <div style={{...S.card,flex:"1 1 320px"}}>
-            <div style={S.sectionTitle}>Parameters</div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-              <span style={{fontSize:11}}>Allocation mode</span>
-              <select style={{...S.input,width:150}} value={cfgDraft.allocMode || "unified"}
-                onChange={e=>setCfgDraft(d=>({...d,allocMode:e.target.value}))}>
-                <option value="unified">Unified (local/net P90)</option>
-                <option value="tiered">Tiered τ (frequency)</option>
-                <option value="empirical">Empirical τ (net tails)</option>
-                <option value="greedy">Greedy (capacity)</option>
-              </select>
-            </div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-              <span style={{fontSize:11}}>Dead-combo floor (tiered)</span>
-              <select style={{...S.input,width:130}} value={cfgDraft.deadFloorMode || "netMedian"}
-                onChange={e=>setCfgDraft(d=>({...d,deadFloorMode:e.target.value}))}>
-                <option value="netMedian">Network median order</option>
-                <option value="lean1">Lean (Min 1 / Max 2)</option>
-              </select>
-            </div>
-            {[
-              ["lookbackDays","Lookback days"],
-              ["minLocalDayPercentile","Local day percentile (unified)"],
-              ["minNetOrderPercentile","Network order percentile (unified)"],
-              ["tau","τ — service quantile (tiered/empirical)"],
-              ["rollingWindowDays","Rolling window days"],
-              ["tierFrequentNZD","Frequent tier NZD ≥ (per 90d)"],
-              ["tierModerateNZD","Moderate tier NZD ≥"],
-              ["tierSparseNZD","Sparse tier NZD ≥"],
-              ["netOrderTailPct","Network order tail pct (empirical)"],
-              ["bulkOrderThreshold","Bulk order threshold (sheets)"],
-              ["bulkDcServedShare","Bulk DC-served share (0–1)"],
-              ["minDepthStopPercentile","Min depth stop pct (greedy)"],
-              ["dcReplPercentile","DC replenishment percentile"],
-              ["dcBulkPercentile","DC bulk percentile"],
-              ["dcCoverDays","DC cycle cover days"],
-              ["leadDays","Supplier lead days"],
-              ["thickBoundaryMm","Thick boundary (mm)"],
-            ].map(([key, label]) => (
-              <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                <span style={{fontSize:11}}>{label}</span>
-                <input type="number" step="any" style={S.input}
-                  value={cfgDraft[key]}
-                  onChange={e=>setCfgDraft(d=>({...d,[key]:Number(e.target.value)}))}/>
-              </div>
-            ))}
-            <div style={{fontSize:10,color:HR.muted,marginTop:8}}>Changes recompute the preview live. Save (admin) persists + re-runs the engine.</div>
-          </div>
-          <div style={{...S.card,flex:"1 1 320px"}}>
-            <div style={S.sectionTitle}>Capacities (sheets, ΣMax budget)</div>
-            <table style={S.table}>
-              <thead><tr><th style={S.th}>Node</th><th style={S.th}>Thick</th><th style={S.th}>Thin</th></tr></thead>
-              <tbody>
-                {DS_LIST.map(ds => (
-                  <tr key={ds}>
-                    <td style={{...S.td,fontWeight:600}}>{ds}</td>
-                    {["thick","thin"].map(tc => (
-                      <td key={tc} style={S.td}>
-                        <input type="number" style={S.input}
-                          value={cfgDraft.dsCapacities?.[ds]?.[tc] ?? 0}
-                          onChange={e=>setCfgDraft(d=>({...d,dsCapacities:{...d.dsCapacities,[ds]:{...d.dsCapacities?.[ds],[tc]:Number(e.target.value)}}}))}/>
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-                <tr>
-                  <td style={{...S.td,fontWeight:600}}>DC</td>
-                  {["thick","thin"].map(tc => (
-                    <td key={tc} style={S.td}>
-                      <input type="number" style={S.input}
-                        value={cfgDraft.dcCapacity?.[tc] ?? 0}
-                        onChange={e=>setCfgDraft(d=>({...d,dcCapacity:{...d.dcCapacity,[tc]:Number(e.target.value)}}))}/>
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
-            <div style={{...S.sectionTitle,marginTop:14}}>Keep Score</div>
-            {[
-              ["grossMarginPct","Gross margin (0–1)"],
-              ["carryRateQuarterly","Carrying cost /quarter (0–1)"],
-              ["opsBuffer","Ops buffer ×"],
-              ["serviceNZDThreshold","Service NZD threshold"],
-            ].map(([key, label]) => (
-              <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                <span style={{fontSize:11}}>{label}</span>
-                <input type="number" step="any" style={S.input}
-                  value={cfgDraft.keepScore?.[key] ?? ""}
-                  onChange={e=>setCfgDraft(d=>({...d,keepScore:{...d.keepScore,[key]:Number(e.target.value)}}))}/>
-              </div>
-            ))}
-            {isAdmin && (
-              <button style={{...S.btn(true),marginTop:10,padding:"8px 16px"}}
-                onClick={()=>onSaveConfig && onSaveConfig(cfgDraft)}>
-                Save Config & Re-run Engine
-              </button>
-            )}
-            {!isAdmin && <div style={{fontSize:10,color:HR.muted,marginTop:10}}>Read-only — admin login required to save.</div>}
-          </div>
-        </div>
+      {selected && (
+        <SKUModalV2 row={selected} loc={loc} ev={ev} cfg={cfgDraft} dcInfo={selected.dcInfo} onClose={()=>setSelected(null)}/>
       )}
     </div>
   );
