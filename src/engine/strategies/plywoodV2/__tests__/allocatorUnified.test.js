@@ -52,6 +52,20 @@ describe('allocateUnified', () => {
     expect(plan['A']['DS05']).toMatchObject({ min: 1, max: 2, tier: 'dead' });
   });
 
+  it('DOC cap trims slow-mover Min below the network floor', () => {
+    // 3 days × 1 sheet in 90d (velocity 0.033/day); network orders push netP90 to 6
+    const dd = { A: { DS01: { [DATES[0]]: 1, [DATES[30]]: 1, [DATES[60]]: 1 } } };
+    const d = demandOf({
+      regularDaily: dd,
+      regOrderQtys: { A: [1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6, 9] },
+    });
+    const noCap = allocateUnified(U, d, { ...CFG, minDocCapDays: 0 });
+    const capped = allocateUnified(U, d, { ...CFG, minDocCapDays: 45 });
+    expect(noCap.plan['A']['DS01'].min).toBeGreaterThanOrEqual(5);  // net floor dominates
+    // cap: qty 3 → doc = ceil(3/90×45) = 2, local order ABQ 1 → Min 2, Max = Min+1
+    expect(capped.plan['A']['DS01']).toMatchObject({ min: 2, max: 3 });
+  });
+
   it('reports capacity utilisation without enforcing', () => {
     const dd = { A: { DS01: { [DATES[0]]: 8 } } };
     const d = demandOf({ regularDaily: dd, regOrderQtys: { A: [8] } });

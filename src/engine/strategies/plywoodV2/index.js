@@ -14,6 +14,7 @@ export const V2_DEFAULTS = {
   allocMode: 'unified',          // 'unified' (two-branch, DEFAULT) | 'tiered' | 'empirical' | 'greedy'
   minLocalDayPercentile: 90,     // unified: percentile of local selling-day totals
   minNetOrderPercentile: 90,     // unified: percentile of network order sizes (Min floor)
+  minDocCapDays: 45,             // unified: Min ≤ velocity × this (0 = off); floored at local order ABQ
   tau: 99,                       // service quantile on rolling-window regular demand
   netOrderTailPct: 95,           // network order-size tail percentile for Max (empirical mode)
   rollingWindowDays: 2,          // replenishment exposure window (TO daily, arrives next noon)
@@ -90,3 +91,4 @@ export { allocate, allocateEmpirical, allocateTiered, allocateUnified, thickness
 export { replay } from './replay.js';
 export { sizeDC, trimDCToCapacity, rollingSums } from './dc.js';
 export { computeKeepScores } from './keepScore.js';
+export { evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint, fitPlan } from './evaluate.js';

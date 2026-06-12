@@ -139,6 +139,38 @@ naturally size to ~0.
 (1) dcCoverDays cycle stock, (2) bulk component percentile (90→85→80), never the 98%
 replenishment component. Any trim is reported, not silent.
 
+## 6b. Operating workflow + tab rehaul (agreed 2026-06-12)
+
+**Workflow (per upload cycle):** Upload latest 90d → tab shows plan FITTED ON FIRST 75
+DAYS with a 15-day out-of-window report card (per-DS service, OOS per SKU×DS) →
+diagnose misses by pattern (NZD bucket / DS / class) → Auto-tune knobs → Publish
+(admin save) — the engine refits the SAME formula on the FULL window. Surgical edits to
+computed Min/Max are rejected as a workflow; overrides exist only as declared,
+forward-looking exceptions (new-SKU floors via the existing SKU Floors upload —
+mechanism unchanged, DC auto-calc via skuFloorDCMult).
+
+**Final regular formula (user-confirmed):** unified two-branch + DOC cap:
+NZD≥1: Min = min( max(P[localDayPct](local day totals), P[netOrderPct](network order
+sizes)), max(velocity×minDocCapDays, local order ABQ, 1) ); Max = max(worst local day,
+Min+1). NZD=0: Min = network ABQ, Max = Min+1. Capacity NOT constrained (parked);
+footprint display-only.
+
+**Auto-tune:** grid sweep over (localDayPct, netOrderPct, minDocCapDays), scored
+out-of-window on ≥2 folds (75/15 + 60/30 averages), Pareto frontier presented as a
+chart with Lean/Balanced/Service-first presets; picking a point sets the knobs.
+Stage-2 complexity gate: tuner may test bucket-split knobs (e.g. DOC cap split by NZD
+tercile) and adopts ONLY if out-of-fold gain ≥ +0.3pts; adoption is reported.
+
+**Tab rehaul:** mirror v1 PlywoodNetworkTab UX — location filter (DS01–05 + DC as just
+another location), unified thick/thin SKU table with capacity bars + sortable columns,
+SKU modal with formula derivation + lookback charts, summary cards. Changes: no
+brand-level config; NZD display buckets auto-derived network-level from the NZD≥1
+distribution (terciles, deduped edges); new OOS column (missed regular orders in the
+15d window per SKU×location) + per-DS service strip; sub-tabs: SKUs | Tune (config +
+auto-tune + frontier). Keep Score returns after the rehaul. Fix workflow this build:
+report-only (modal lists misses, flags which self-correct on full-window publish);
+Accept/Cover actions next iteration per user's sample logic.
+
 ## 7. Service-level simulator
 
 One pure replay engine, two consumers (DC sizing step 6.1 reuses it):

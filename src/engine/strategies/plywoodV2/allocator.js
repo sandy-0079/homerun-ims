@@ -24,9 +24,11 @@ export function thicknessClass(name, boundaryMm = 9) {
 // Validated: in-sample 99.15%, out-of-sample 92.6% (DS04 95.0 / DS05 95.4).
 // Capacity reported, not enforced.
 export function allocateUnified(universe, demand, cfg) {
-  const { regularDaily, regOrderQtys } = demand;
+  const { regularDaily, regOrderQtys, windowDates } = demand;
   const localDayPct = cfg.minLocalDayPercentile ?? 90;
   const netOrdPct = cfg.minNetOrderPercentile ?? 90;
+  const docCapDays = cfg.minDocCapDays ?? 45;   // 0 = off; caps Min at velocity×days (floored at local order ABQ)
+  const span = windowDates?.length || 90;
   const boundary = cfg.thickBoundaryMm ?? 9;
   const caps = cfg.dsCapacities || null;
 
@@ -54,6 +56,14 @@ export function allocateUnified(universe, demand, cfg) {
       } else {
         tier = 'active';
         min = Math.max(Math.ceil(percentile(days, localDayPct)), netPx);
+        if (docCapDays > 0) {
+          // velocity cap: never hold more Min than local rate justifies,
+          // floored at the local per-day ABQ so one typical order stays coverable
+          const qty = days.reduce((a, b) => a + b, 0);
+          const localOrdAbq = Math.ceil(qty / days.length);
+          const doc = Math.ceil((qty / span) * docCapDays);
+          min = Math.min(min, Math.max(doc, localOrdAbq, 1));
+        }
         max = Math.max(days[days.length - 1], min + 1);
       }
       plan[sku][ds] = { min, max, floor: Math.min(min, tier === 'dead' ? netAbq : netPx), tier };
