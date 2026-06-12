@@ -264,8 +264,11 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
     footprint: p.footprint,
     bulk: +(p.bulk * 100).toFixed(2),
     regular: +(p.regular * 100).toFixed(2),
+    toFill: +((p.toFill ?? 1) * 100).toFixed(2),
+    toFillQty: +((p.toFillQty ?? 1) * 100).toFixed(2),
     knobs: p.knobs, fits: p.fits, stillOver: p.stillOver,
     fpThick: p.fpThick, fpThin: p.fpThin,
+    postTotal: p.postTotal, trimmed: p.trimmed,
   }));
   const activeIdx = chartData.findIndex(d => pointActive(d.knobs));
   const ceiling = dcTune ? +(dcTune.ceilingRegular * 100).toFixed(2) : null;
@@ -314,11 +317,8 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
               <YAxis tick={{fontSize:9}} domain={["auto","auto"]} tickFormatter={v=>v.toFixed(0)} label={{value:"15d service %",fontSize:9,angle:-90,position:"insideLeft",offset:8}}/>
               <RTooltip contentStyle={{fontSize:10}}
                 formatter={(v,name,p)=>[
-                  `${v}% · wants thick ${p.payload.fpThick} thin ${p.payload.fpThin}${p.payload.trimmed>0?` · trimmed −${p.payload.trimmed} to fit ${p.payload.postTotal}`:""}${p.payload.stillOver?" · STILL OVER after trim":""} · ${dcKnobLabel({...p.payload.knobs,bulkDcServedShare:cfgDraft.bulkDcServedShare})} · click to apply`,
+                  `${v}% · TO qty-fill ${p.payload.toFillQty}% · network regular ${p.payload.regular}% (ceiling ${ceiling}%) · wants thick ${p.payload.fpThick} thin ${p.payload.fpThin}${p.payload.trimmed>0?` · trimmed −${p.payload.trimmed} to fit ${p.payload.postTotal}`:""}${p.payload.stillOver?" · STILL OVER after trim":""} · ${dcKnobLabel({...p.payload.knobs,bulkDcServedShare:cfgDraft.bulkDcServedShare})} · click to apply`,
                   name]}/>
-              {ceiling != null && (
-                <ReferenceLine y={ceiling} stroke={HR.blue} strokeDasharray="2 3" label={{value:`DS ceiling ${ceiling}%`,fontSize:8,fill:HR.blue,position:"insideBottomRight"}}/>
-              )}
               {dcTune.capacityTotal > 0 && (
                 <ReferenceLine x={dcTune.capacityTotal} stroke={HR.red} strokeDasharray="4 3" label={{value:`DC capacity ${dcTune.capacityTotal}`,fontSize:9,fill:HR.red,position:"insideTopLeft"}}/>
               )}
@@ -329,7 +329,7 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
                     stroke={payload.fits?HR.green:HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
                     onClick={(e2)=>{e2.stopPropagation(); applyDC(payload.knobs);}}/>
                 );}}/>
-              <Line type="monotone" dataKey="regular" name="regular svc" stroke={HR.blue} strokeWidth={2}
+              <Line type="monotone" dataKey="toFill" name="TO fulfilment" stroke={HR.blue} strokeWidth={2}
                 dot={(props)=>{ const { cx, cy, payload, index } = props; return (
                   <circle key={"r"+index} cx={cx} cy={cy} r={index===activeIdx?6:3}
                     fill={index===activeIdx?HR.yellow:HR.white}
@@ -339,9 +339,9 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
             </LineChart>
           </ResponsiveContainer>
           <div style={{fontSize:9,color:HR.muted}}>
-            <span style={{color:HR.purple,fontWeight:700}}>― bulk order service</span> (DC-routed share only; the (1−α) routed supplier-direct is assumed served and excluded) ·
-            <span style={{color:HR.blue,fontWeight:700}}> ― network regular service</span> (your published DS service, after DC TO-shorting) ·
-            blue dashed = DS ceiling (infinite DC) — the gap below it is service lost to the DC ·
+            <span style={{color:HR.blue,fontWeight:700}}>― TO fulfilment</span> — the replenishment promise: % of DS replenishment requests (TO lines) the DC shipped IN FULL, daily ·
+            <span style={{color:HR.purple,fontWeight:700}}> ― bulk order service</span> (DC-routed share; the (1−α) supplier-direct is assumed served) ·
+            network regular service + DS ceiling in tooltip ·
             <span style={{color:HR.green,fontWeight:700}}> ● green</span> = fits DC racks · <span style={{color:HR.yellow,fontWeight:700}}>● yellow</span> = applied.
           </div>
         </>

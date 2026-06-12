@@ -383,6 +383,9 @@ export function dcSweep(ctx, baseCfg) {
       knobs,
       bulk: sim.serviceLevels.bulk.overall,
       regular: sim.serviceLevels.regular.overall,
+      toFill: sim.serviceLevels.toFill.lineRate,
+      toFillQty: sim.serviceLevels.toFill.qtyRate,
+      toLines: sim.serviceLevels.toFill.lines,
       footprint: pre.thick + pre.thin,                  // desired (pre-trim)
       fpThick: pre.thick, fpThin: pre.thin,
       postTotal: post.thick + post.thin,                // what fits after trim

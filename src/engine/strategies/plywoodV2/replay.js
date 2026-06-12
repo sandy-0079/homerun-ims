@@ -38,6 +38,9 @@ export function replay(plan, dcPlan, demand, cfg) {
     ordersByDate[o.date].push(o);
   }
 
+  // TO fulfilment: the DC's replenishment promise — every TO line shipped in full?
+  const toFill = { lines: 0, fullLines: 0, qtyRequested: 0, qtyShipped: 0 };
+
   const pendingTO = {};          // arriveDate → [{sku, ds, qty}]
   const pendingPO = {};          // arriveDate → [{sku, qty}]
   const toDrain = {};            // sku → date → requested qty (DC-side demand view)
@@ -54,6 +57,10 @@ export function replay(plan, dcPlan, demand, cfg) {
       dsStock[t.sku][t.ds] += ship;
       if (!toDrain[t.sku]) toDrain[t.sku] = {};
       toDrain[t.sku][date] = (toDrain[t.sku][date] || 0) + t.qty;
+      toFill.lines += 1;
+      if (ship >= t.qty) toFill.fullLines += 1;
+      toFill.qtyRequested += t.qty;
+      toFill.qtyShipped += ship;
     }
     for (const p of pendingPO[date] || []) {
       dcStock[p.sku] += p.qty;
@@ -138,6 +145,12 @@ export function replay(plan, dcPlan, demand, cfg) {
       overall: counts.bulk.total ? 1 - counts.bulk.oos / counts.bulk.total : 1,
       total: counts.bulk.total, oos: counts.bulk.oos,
       supplierRouted: counts.bulk.supplierRouted,
+    },
+    toFill: {
+      lineRate: toFill.lines ? toFill.fullLines / toFill.lines : 1,
+      qtyRate: toFill.qtyRequested ? toFill.qtyShipped / toFill.qtyRequested : 1,
+      lines: toFill.lines, fullLines: toFill.fullLines,
+      qtyShort: toFill.qtyRequested - toFill.qtyShipped,
     },
   };
   return { toDrain, oosEvents, serviceLevels, opsLoad, dcStockByDate };
