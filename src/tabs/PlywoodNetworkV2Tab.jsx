@@ -123,7 +123,7 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
             <div style={{fontSize:10,color:"#888",marginTop:2}}>
               {row.sku} · {row.mm != null ? `${row.mm}mm` : "—"} · {row.brand} · <b>{loc}</b>
               <span style={{marginLeft:12,color:"#333",fontWeight:600}}>
-                Min: {row.min} · Max: {row.max} · {row.nzd} NZD · ABQ: {fmt1(row.abq)}
+                Min: {row.min} · Max: {row.max} <span style={{color:"#888",fontWeight:400}}>(preview — fitted without the last 15d)</span> · {row.nzd} NZD · ABQ: {fmt1(row.abq)}
               </span>
             </div>
           </div>
@@ -175,7 +175,13 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
               </div>
             ))}
             {!published && fullP && <div style={{marginTop:4,color:"#888",fontSize:10}}>After publish (full-window refit): Min {fullP.min} / Max {fullP.max}</div>}
-            {published && fullP && <div style={{marginTop:4,color:"#888",fontSize:10}}>Published plan (full-window fit): Min {fullP.min} / Max {fullP.max}</div>}
+            {published && fullP && (
+              <div style={{marginTop:4,color:"#888",fontSize:10}}>
+                Misses above were scored against the preview plan (Min {row.min}/Max {row.max}, fitted without these 15 days).
+                The LIVE published plan refits on the full window — these days included — and now holds <b>Min {fullP.min} / Max {fullP.max}</b>
+                {(fullP.min > row.min || fullP.max > row.max) ? " — the misses self-corrected into it." : "."}
+              </div>
+            )}
           </div>
         )}
 
