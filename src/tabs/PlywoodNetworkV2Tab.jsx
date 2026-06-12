@@ -5,8 +5,8 @@
 // All computation client-side; only Publish writes to Supabase.
 import React, { useState, useMemo } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
-  ReferenceLine, ResponsiveContainer, LineChart, Line,
+  BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
+  ReferenceLine, ReferenceArea, ResponsiveContainer, LineChart, Line,
 } from "recharts";
 import {
   V2_DEFAULTS, evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint,
@@ -93,9 +93,16 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
   const misses = ev.oosCounts[row.sku]?.[loc]?.events || [];
   const fullP = ev.fullPlan?.[row.sku]?.[loc];
 
-  // timeline (fit window) with Min/Max reference lines
+  // timeline = fit window + test window (test days marked) with Min/Max reference lines
   const dailyMap = d.regularDaily[row.sku]?.[loc] || {};
-  const timeline = d.windowDates.map(dt => ({ date: dt.slice(5), qty: dailyMap[dt] || 0 }));
+  const testDailyMap = ev.testDemand?.regularDaily?.[row.sku]?.[loc] || {};
+  const testDates = ev.testDemand?.windowDates || [];
+  const timeline = [
+    ...d.windowDates.map(dt => ({ date: dt.slice(5), qty: dailyMap[dt] || 0, test: false })),
+    ...testDates.map(dt => ({ date: dt.slice(5), qty: testDailyMap[dt] || 0, test: true })),
+  ];
+  const testStartLabel = testDates[0]?.slice(5);
+  const testEndLabel = testDates[testDates.length - 1]?.slice(5);
   const yMax = Math.ceil(Math.max(...timeline.map(t => t.qty), row.max || 0, 1) * 1.15);
   const barSize = Math.max(2, Math.min(16, Math.floor(420 / Math.max(timeline.length, 1))));
 
@@ -176,14 +183,22 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
         {!isDC && (
           <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
             <div style={{flex:"1 1 380px",minWidth:320}}>
-              <div style={{fontSize:10,fontWeight:700,color:"#555",marginBottom:4}}>Daily regular demand at {loc} (fit window) vs Min/Max</div>
+              <div style={{fontSize:10,fontWeight:700,color:"#555",marginBottom:4}}>
+                Daily regular demand at {loc} vs Min/Max — <span style={{color:HR.blue}}>fit window</span> · <span style={{color:HR.purple}}>test window (where OOS is scored)</span>
+              </div>
               <ResponsiveContainer width="100%" height={160}>
                 <BarChart data={timeline} margin={{top:4,right:8,bottom:0,left:-22}}>
                   <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
                   <XAxis dataKey="date" tick={{fontSize:8}} interval={Math.ceil(timeline.length/10)}/>
                   <YAxis tick={{fontSize:9}} domain={[0, yMax]}/>
                   <RTooltip contentStyle={{fontSize:10}}/>
-                  <Bar dataKey="qty" fill={HR.blue} barSize={barSize}/>
+                  {testStartLabel && (
+                    <ReferenceArea x1={testStartLabel} x2={testEndLabel} fill={HR.purple} fillOpacity={0.07}
+                      label={{value:"test 15d",fontSize:8,fill:HR.purple,position:"insideTopLeft"}}/>
+                  )}
+                  <Bar dataKey="qty" barSize={barSize}>
+                    {timeline.map((t, i) => <Cell key={i} fill={t.test ? HR.purple : HR.blue}/>)}
+                  </Bar>
                   <ReferenceLine y={row.min} stroke="#B91C1C" strokeDasharray="4 3" label={{value:`Min ${row.min}`,fontSize:9,fill:"#B91C1C",position:"insideTopRight"}}/>
                   <ReferenceLine y={row.max} stroke={HR.green} strokeDasharray="4 3" label={{value:`Max ${row.max}`,fontSize:9,fill:HR.green,position:"insideTopRight"}}/>
                 </BarChart>
