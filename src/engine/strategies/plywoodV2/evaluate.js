@@ -362,7 +362,7 @@ export function dcSweep(ctx, baseCfg) {
   const GRID = [];
   for (const replPct of [90, 95, 98]) {
     for (const bulkPct of [75, 90, 100]) {
-      for (const coverDays of [1, 2, 3]) {
+      for (const coverDays of [2, 4, 7]) {   // PO cadence: cycle stock ≈ days of drain per supplier order
         GRID.push({ dcReplPercentile: replPct, dcBulkOrderPct: bulkPct, dcCoverDays: coverDays });
       }
     }
@@ -386,6 +386,7 @@ export function dcSweep(ctx, baseCfg) {
       toFill: sim.serviceLevels.toFill.lineRate,
       toFillQty: sim.serviceLevels.toFill.qtyRate,
       toLines: sim.serviceLevels.toFill.lines,
+      poLinesPerDay: sim.opsLoad.poLines / Math.max(ctx.testDemand.windowDates.length, 1),
       footprint: pre.thick + pre.thin,                  // desired (pre-trim)
       fpThick: pre.thick, fpThin: pre.thin,
       postTotal: post.thick + post.thin,                // what fits after trim

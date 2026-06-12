@@ -10,7 +10,7 @@ import {
 } from "recharts";
 import {
   V2_DEFAULTS, evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint,
-  computePlywoodNetworkV2Results, dcEvaluate, dcSweep,
+  computePlywoodNetworkV2Results, dcEvaluate, dcSweep, replay,
 } from "../engine/strategies/plywoodV2/index.js";
 import { percentile, inferThickness } from "../engine/utils.js";
 import { DS_LIST } from "../engine/constants.js";
@@ -72,7 +72,7 @@ function sameEffKnobs(a, b) {
 const fmtLakh = (v) => v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : `₹${Math.round(v/1000)}K`;
 
 // ── SKU modal: formula derivation + charts + misses ─────────────────────────
-function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, live, onClose }) {
+function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, live, oosCounts, onClose }) {
   if (!row) return null;
   const isDC = loc === "DC";
   const d = live && ev.fullDemand ? ev.fullDemand : ev.fitDemand;
@@ -92,7 +92,7 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, live, onClose }) {
   const qtySum = dayVals.reduce((a, b) => a + b, 0);
   const docVal = dayVals.length && docCap > 0 ? Math.ceil((qtySum / span) * docCap) : null;
   const localOrdAbq = dayVals.length ? Math.ceil(qtySum / dayVals.length) : 0;
-  const misses = (live ? ev.liveOosCounts : ev.oosCounts)?.[row.sku]?.[loc]?.events || [];
+  const misses = (oosCounts ?? (live ? ev.liveOosCounts : ev.oosCounts))?.[row.sku]?.[loc]?.events || [];
   const fullP = ev.fullPlan?.[row.sku]?.[loc];
 
   // timeline = fit window + test window (test days marked) with Min/Max reference lines
@@ -253,8 +253,7 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
         <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#DCFCE7",color:HR.green,fontWeight:700}}>✓ locked</span>
         {liveSummary && (
           <span style={{fontSize:11,color:"#333"}}>
-            TO fulfilment: <b style={{color:svcColor(liveSummary.toFill)}}>{(liveSummary.toFill*100).toFixed(1)}%</b>
-            &nbsp;·&nbsp; bulk service: <b style={{color:liveSummary.bulk>=0.9?HR.green:liveSummary.bulk>=0.7?HR.amber:HR.red}}>{(liveSummary.bulk*100).toFixed(1)}%</b>
+            TO fulfilment (last 15d, vs published plan): <b style={{color:svcColor(liveSummary.toFill)}}>{(liveSummary.toFill*100).toFixed(1)}%</b>
             &nbsp;·&nbsp; plan size: <b>{liveSummary.fp}</b> sheets (ΣMax)
           </span>
         )}
@@ -290,6 +289,7 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
     regular: +(p.regular * 100).toFixed(2),
     toFill: +((p.toFill ?? 1) * 100).toFixed(2),
     toFillQty: +((p.toFillQty ?? 1) * 100).toFixed(2),
+    poPerDay: +(p.poLinesPerDay ?? 0).toFixed(1),
     knobs: p.knobs, fits: p.fits, stillOver: p.stillOver,
     fpThick: p.fpThick, fpThin: p.fpThin,
     postTotal: p.postTotal, trimmed: p.trimmed,
@@ -342,31 +342,23 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
               <YAxis tick={{fontSize:9}} domain={["auto","auto"]} tickFormatter={v=>v.toFixed(0)} label={{value:"15d service %",fontSize:9,angle:-90,position:"insideLeft",offset:8}}/>
               <RTooltip contentStyle={{fontSize:10}}
                 formatter={(v,name,p)=>[
-                  `${v}% · TO qty-fill ${p.payload.toFillQty}% · network regular ${p.payload.regular}% (ceiling ${ceiling}%) · wants thick ${p.payload.fpThick} thin ${p.payload.fpThin}${p.payload.trimmed>0?` · trimmed −${p.payload.trimmed} to fit ${p.payload.postTotal}`:""}${p.payload.stillOver?" · STILL OVER after trim":""} · ${dcKnobLabel({...p.payload.knobs,bulkDcServedShare:cfgDraft.bulkDcServedShare})} · click to apply`,
+                  `${v}% · TO qty-fill ${p.payload.toFillQty}% · ~${p.payload.poPerDay} PO lines/day · bulk svc ${p.payload.bulk}% (stocked, not a target) · network regular ${p.payload.regular}% (ceiling ${ceiling}%) · wants thick ${p.payload.fpThick} thin ${p.payload.fpThin}${p.payload.trimmed>0?` · trimmed −${p.payload.trimmed} to fit ${p.payload.postTotal}`:""}${p.payload.stillOver?" · STILL OVER after trim":""} · ${dcKnobLabel({...p.payload.knobs,bulkDcServedShare:cfgDraft.bulkDcServedShare})} · click to apply`,
                   name]}/>
               {dcTune.capacityTotal > 0 && (
                 <ReferenceLine x={dcTune.capacityTotal} stroke={HR.red} strokeDasharray="4 3" label={{value:`DC capacity ${dcTune.capacityTotal}`,fontSize:9,fill:HR.red,position:"insideTopLeft"}}/>
               )}
-              <Line type="monotone" dataKey="bulk" name="bulk svc" stroke={HR.purple} strokeWidth={2}
-                dot={(props)=>{ const { cx, cy, payload, index } = props; return (
-                  <circle key={"b"+index} cx={cx} cy={cy} r={index===activeIdx?7:4}
-                    fill={index===activeIdx?HR.yellow:payload.fits?HR.green:HR.white}
-                    stroke={payload.fits?HR.green:HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
-                    onClick={(e2)=>{e2.stopPropagation(); applyDC(payload.knobs);}}/>
-                );}}/>
               <Line type="monotone" dataKey="toFill" name="TO fulfilment" stroke={HR.blue} strokeWidth={2}
                 dot={(props)=>{ const { cx, cy, payload, index } = props; return (
-                  <circle key={"r"+index} cx={cx} cy={cy} r={index===activeIdx?6:3}
-                    fill={index===activeIdx?HR.yellow:HR.white}
-                    stroke={HR.blue} strokeWidth={1.5} style={{cursor:"pointer"}}
+                  <circle key={"r"+index} cx={cx} cy={cy} r={index===activeIdx?7:5}
+                    fill={index===activeIdx?HR.yellow:payload.fits?HR.green:HR.white}
+                    stroke={payload.fits?HR.green:HR.blue} strokeWidth={2} style={{cursor:"pointer"}}
                     onClick={(e2)=>{e2.stopPropagation(); applyDC(payload.knobs);}}/>
                 );}}/>
             </LineChart>
           </ResponsiveContainer>
           <div style={{fontSize:9,color:HR.muted}}>
-            <span style={{color:HR.blue,fontWeight:700}}>― TO fulfilment</span> — the replenishment promise: % of DS replenishment requests (TO lines) the DC shipped IN FULL, daily ·
-            <span style={{color:HR.purple,fontWeight:700}}> ― bulk order service</span> (DC-routed share; the (1−α) supplier-direct is assumed served) ·
-            network regular service + DS ceiling in tooltip ·
+            <span style={{color:HR.blue,fontWeight:700}}>― TO fulfilment</span> — the only DC target: % of DS replenishment requests (TO lines) shipped IN FULL, daily.
+            Bulk stays STOCKED (the bulk component is in every point's footprint) but is not a tracked target — supplier-direct is the fallback; its number lives in the tooltip ·
             <span style={{color:HR.green,fontWeight:700}}> ● green</span> = fits DC racks · <span style={{color:HR.yellow,fontWeight:700}}>● yellow</span> = applied.
           </div>
         </>
@@ -680,7 +672,6 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   const live = locked && !!ev?.fullPlan;
   const modeDemand = live ? ev.fullDemand : ev?.fitDemand;
   const modePlan = live ? ev.fullPlan : ev?.plan;
-  const modeOos = live ? ev?.liveOosCounts : ev?.oosCounts;
 
   const dcRes = useMemo(() => {
     if (!ev) return null;
@@ -689,6 +680,34 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
       return computePlywoodNetworkV2Results(dcInv, skuMaster, { plywoodNetworkV2Config: cfgDraft });
     } catch (e) { console.error("v2 dc error:", e); return null; }
   }, [ev, live, invoiceData, skuMaster, cfgDraft]);
+
+  // Honest live check: replay the last 15d against the FULL-WINDOW plans INCLUDING the
+  // real DC plan (evaluatePlan's internal live numbers assume an infinite DC — wrong
+  // for TO fulfilment / bulk; this replaces them wherever live numbers are shown).
+  const liveCheck = useMemo(() => {
+    if (!live || !ev?.fullPlan || !dcRes || !ev?.testDemand) return null;
+    try {
+      const dcPlan = {};
+      for (const sku of Object.keys(ev.fullPlan)) {
+        dcPlan[sku] = dcRes[sku]?.dcResult ? { ...dcRes[sku].dcResult } : { min: 0, max: 0 };
+      }
+      const sim = replay(ev.fullPlan, dcPlan, ev.testDemand, { ...cfgDraft, lookbackDays: ev.testDemand.windowDates.length });
+      const oosCounts = {};
+      const seen = {};
+      for (const e of sim.oosEvents) {
+        if (e.type !== "regular") continue;
+        if (!oosCounts[e.sku]) { oosCounts[e.sku] = {}; seen[e.sku] = {}; }
+        if (!oosCounts[e.sku][e.ds]) { oosCounts[e.sku][e.ds] = { oosOrders: 0, events: [] }; seen[e.sku][e.ds] = new Set(); }
+        seen[e.sku][e.ds].add(e.orderId);
+        oosCounts[e.sku][e.ds].oosOrders = seen[e.sku][e.ds].size;
+        oosCounts[e.sku][e.ds].events.push({ ...e });
+      }
+      return { serviceLevels: sim.serviceLevels, oosCounts };
+    } catch (e) { console.error("live check error:", e); return null; }
+  }, [live, ev, dcRes, cfgDraft]);
+
+  // live OOS column comes from the honest live check (real DC), not the infinite-DC numbers
+  const modeOos = live ? (liveCheck?.oosCounts || {}) : ev?.oosCounts;
 
   const buckets = useMemo(() => ev ? deriveNZDBuckets(modeDemand, ev.universe) : null, [ev, modeDemand]);
 
@@ -727,7 +746,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   if (!ev) return <div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>No plywood SKUs found for v2 universe.</div>;
 
   const isDC = loc === "DC";
-  const svc = (live && ev.liveServiceLevels ? ev.liveServiceLevels : ev.serviceLevels).regular;
+  const svc = (live ? (liveCheck?.serviceLevels || ev.liveServiceLevels || ev.serviceLevels) : ev.serviceLevels).regular;
   const fp = planFootprint(modePlan);
   const caps = cfgDraft.dsCapacities || {};
   const brands = ["All", ...[...new Set(rows.map(r => r.brand).filter(Boolean))].sort()];
@@ -846,7 +865,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
               dsPub={dsPublished(loc)} onPublishDS={publishDS} onRevertDS={revertDS}
               hasSaved={!!plywoodNetworkV2Config}
               locked={locked} onUnpublish={unpublishLoc} onRelock={lockLoc}
-              liveSummary={live ? { svc: ev.liveServiceLevels?.regular.perDS[loc]?.service ?? 1, fp: fp.perDS[loc] } : null}/>
+              liveSummary={live ? { svc: liveCheck?.serviceLevels?.regular.perDS[loc]?.service ?? 1, fp: fp.perDS[loc] } : null}/>
           ) : (
             <DCTunePanel cfgDraft={cfgDraft} setCfgDraft={setCfgDraft}
               invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin}
@@ -854,7 +873,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
               hasSaved={!!plywoodNetworkV2Config} allDSPublished={publishedCount === 5}
               dcTune={dcTune} setDcTune={setDcTune}
               locked={locked} onUnpublish={unpublishLoc} onRelock={lockLoc}
-              liveSummary={live ? { toFill: ev.liveServiceLevels?.toFill?.lineRate ?? 1, bulk: ev.liveServiceLevels?.bulk.overall ?? 1, fp: thickUsed + thinUsed } : null}/>
+              liveSummary={live && liveCheck ? { toFill: liveCheck.serviceLevels.toFill?.lineRate ?? 1, fp: thickUsed + thinUsed } : null}/>
           )}
 
           {/* location stat cards + capacity bars (display-only) */}
@@ -980,7 +999,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
       )}
 
       {selected && (
-        <SKUModalV2 row={selected} loc={loc} ev={ev} cfg={cfgDraft} dcInfo={selected.dcInfo} published={published} live={live} onClose={()=>setSelected(null)}/>
+        <SKUModalV2 row={selected} loc={loc} ev={ev} cfg={cfgDraft} dcInfo={selected.dcInfo} published={published} live={live} oosCounts={modeOos} onClose={()=>setSelected(null)}/>
       )}
     </div>
   );
