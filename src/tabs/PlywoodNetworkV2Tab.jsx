@@ -56,6 +56,8 @@ const KNOB_KEYS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDay
 function sameKnobs(a, b) {
   if (!a || !b) return false;
   if (JSON.stringify(a.dsKnobs || {}) !== JSON.stringify(b.dsKnobs || {})) return false;
+  if (JSON.stringify(a.dsCapacities ?? V2_DEFAULTS.dsCapacities) !== JSON.stringify(b.dsCapacities ?? V2_DEFAULTS.dsCapacities)) return false;
+  if (JSON.stringify(a.dcCapacity ?? V2_DEFAULTS.dcCapacity) !== JSON.stringify(b.dcCapacity ?? V2_DEFAULTS.dcCapacity)) return false;
   return KNOB_KEYS.every(k => (a[k] ?? V2_DEFAULTS[k]) === (b[k] ?? V2_DEFAULTS[k]));
 }
 // effective per-DS knobs = global merged with that DS's override
@@ -286,6 +288,16 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
           <input type="number" step="0.05" min="0" max="1" style={{...sel,width:60,cursor:"text"}}
             value={cfgDraft.bulkDcServedShare ?? 1} onChange={e=>setCfgDraft(d=>({...d,bulkDcServedShare:Number(e.target.value)}))}/>
         </span>
+        <span style={{fontSize:11,display:"flex",alignItems:"center",gap:4}}>
+          DC capacity — thick
+          <input type="number" style={{...sel,width:64,cursor:"text"}}
+            value={cfgDraft.dcCapacity?.thick ?? 0}
+            onChange={e=>setCfgDraft(d=>({...d,dcCapacity:{...d.dcCapacity,thick:Number(e.target.value)}}))}/>
+          thin
+          <input type="number" style={{...sel,width:64,cursor:"text"}}
+            value={cfgDraft.dcCapacity?.thin ?? 0}
+            onChange={e=>setCfgDraft(d=>({...d,dcCapacity:{...d.dcCapacity,thin:Number(e.target.value)}}))}/>
+        </span>
       </div>
       {!allDSPublished && (
         <div style={{fontSize:10,color:"#92400E",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:6,padding:"4px 10px",marginTop:6}}>
@@ -298,11 +310,11 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
             <LineChart data={chartData} margin={{top:8,right:16,bottom:2,left:6}}
               onClick={(st)=>{ const p = st?.activePayload?.[0]?.payload; if (p) applyDC(p.knobs); }}>
               <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
-              <XAxis dataKey="footprint" tick={{fontSize:9}} label={{value:"DC sheets (ΣMax, thick+thin, post-trim)",fontSize:9,position:"insideBottom",offset:-1}}/>
+              <XAxis dataKey="footprint" tick={{fontSize:9}} label={{value:"DC sheets desired (ΣMax pre-trim) — trim caps what actually fits",fontSize:9,position:"insideBottom",offset:-1}}/>
               <YAxis tick={{fontSize:9}} domain={["auto","auto"]} tickFormatter={v=>v.toFixed(0)} label={{value:"15d service %",fontSize:9,angle:-90,position:"insideLeft",offset:8}}/>
               <RTooltip contentStyle={{fontSize:10}}
                 formatter={(v,name,p)=>[
-                  `${v}% · thick ${p.payload.fpThick} thin ${p.payload.fpThin}${p.payload.stillOver?" · STILL OVER after trim":""} · ${dcKnobLabel({...p.payload.knobs,bulkDcServedShare:cfgDraft.bulkDcServedShare})} · click to apply`,
+                  `${v}% · wants thick ${p.payload.fpThick} thin ${p.payload.fpThin}${p.payload.trimmed>0?` · trimmed −${p.payload.trimmed} to fit ${p.payload.postTotal}`:""}${p.payload.stillOver?" · STILL OVER after trim":""} · ${dcKnobLabel({...p.payload.knobs,bulkDcServedShare:cfgDraft.bulkDcServedShare})} · click to apply`,
                   name]}/>
               {ceiling != null && (
                 <ReferenceLine y={ceiling} stroke={HR.blue} strokeDasharray="2 3" label={{value:`DS ceiling ${ceiling}%`,fontSize:8,fill:HR.blue,position:"insideBottomRight"}}/>
@@ -401,6 +413,16 @@ function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdm
           </span>
         )}
         {!hasOverride && <span style={{fontSize:10,color:HR.muted}}>using global knobs: {knobLabel(effective)}</span>}
+        <span style={{fontSize:11,display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
+          {loc} capacity — thick
+          <input type="number" style={{...sel,width:64,cursor:"text"}}
+            value={cfgDraft.dsCapacities?.[loc]?.thick ?? 0}
+            onChange={e=>setCfgDraft(d=>({...d,dsCapacities:{...d.dsCapacities,[loc]:{...d.dsCapacities?.[loc],thick:Number(e.target.value)}}}))}/>
+          thin
+          <input type="number" style={{...sel,width:64,cursor:"text"}}
+            value={cfgDraft.dsCapacities?.[loc]?.thin ?? 0}
+            onChange={e=>setCfgDraft(d=>({...d,dsCapacities:{...d.dsCapacities,[loc]:{...d.dsCapacities?.[loc],thin:Number(e.target.value)}}}))}/>
+        </span>
       </div>
       {open && tuneResult && (
         <>
@@ -525,8 +547,11 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   // Phase: published = saved config matches the draft (and a config exists)
   const savedCfg = { ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) };
   const published = !!plywoodNetworkV2Config && sameKnobs(cfgDraft, savedCfg);
-  // per-DS publish state: that DS's effective knobs (draft) match the saved config's
-  const dsPublished = (ds) => !!plywoodNetworkV2Config && sameEffKnobs(effKnobsFor(cfgDraft, ds), effKnobsFor(savedCfg, ds));
+  // per-DS publish state: effective knobs AND that DS's capacity match the saved config
+  const dsCapOf = (cfg, ds) => cfg?.dsCapacities?.[ds] ?? V2_DEFAULTS.dsCapacities[ds];
+  const dsPublished = (ds) => !!plywoodNetworkV2Config
+    && sameEffKnobs(effKnobsFor(cfgDraft, ds), effKnobsFor(savedCfg, ds))
+    && JSON.stringify(dsCapOf(cfgDraft, ds)) === JSON.stringify(dsCapOf(savedCfg, ds));
   const publishedCount = DS_LIST.filter(dsPublished).length;
 
   // Publish ONE DS: materialize its effective draft knobs into the SAVED config's
@@ -534,25 +559,37 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   // DS stays 'published' even if global draft knobs keep moving.
   const publishDS = (ds) => {
     const eff = effKnobsFor(cfgDraft, ds);
-    const newCfg = { ...savedCfg, dsKnobs: { ...(savedCfg.dsKnobs || {}), [ds]: eff } };
+    const cap = dsCapOf(cfgDraft, ds);
+    const newCfg = {
+      ...savedCfg,
+      dsKnobs: { ...(savedCfg.dsKnobs || {}), [ds]: eff },
+      dsCapacities: { ...(savedCfg.dsCapacities || V2_DEFAULTS.dsCapacities), [ds]: cap },
+    };
     setCfgDraft(d => ({ ...d, dsKnobs: { ...(d.dsKnobs || {}), [ds]: eff } }));
     if (onSaveConfig) onSaveConfig(newCfg);
   };
-  // Revert ONE DS: snap the draft back to whatever is published for it.
+  // Revert ONE DS: snap the draft back to whatever is published for it (knobs + capacity).
   const revertDS = (ds) => {
     const eff = effKnobsFor(savedCfg, ds);
-    setCfgDraft(d => ({ ...d, dsKnobs: { ...(d.dsKnobs || {}), [ds]: eff } }));
+    const cap = dsCapOf(savedCfg, ds);
+    setCfgDraft(d => ({
+      ...d,
+      dsKnobs: { ...(d.dsKnobs || {}), [ds]: eff },
+      dsCapacities: { ...(d.dsCapacities || V2_DEFAULTS.dsCapacities), [ds]: cap },
+    }));
   };
 
   // DC publish state + handlers (DC knobs are the global dc* fields)
-  const dcPub = !!plywoodNetworkV2Config && DC_KNOB_FIELDS.every(f => (cfgDraft[f] ?? V2_DEFAULTS[f]) === (savedCfg[f] ?? V2_DEFAULTS[f]));
+  const dcPub = !!plywoodNetworkV2Config
+    && DC_KNOB_FIELDS.every(f => (cfgDraft[f] ?? V2_DEFAULTS[f]) === (savedCfg[f] ?? V2_DEFAULTS[f]))
+    && JSON.stringify(cfgDraft.dcCapacity ?? V2_DEFAULTS.dcCapacity) === JSON.stringify(savedCfg.dcCapacity ?? V2_DEFAULTS.dcCapacity);
   const publishDC = () => {
-    const newCfg = { ...savedCfg };
+    const newCfg = { ...savedCfg, dcCapacity: cfgDraft.dcCapacity ?? V2_DEFAULTS.dcCapacity };
     for (const f of DC_KNOB_FIELDS) newCfg[f] = cfgDraft[f] ?? V2_DEFAULTS[f];
     if (onSaveConfig) onSaveConfig(newCfg);
   };
   const revertDC = () => setCfgDraft(d => {
-    const next = { ...d };
+    const next = { ...d, dcCapacity: savedCfg.dcCapacity ?? V2_DEFAULTS.dcCapacity };
     for (const f of DC_KNOB_FIELDS) next[f] = savedCfg[f] ?? V2_DEFAULTS[f];
     return next;
   });
@@ -839,6 +876,12 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
                         {r.name}
                         {r.floored && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#EDE9FE",color:"#6D28D9",border:"1px solid #C4B5FD"}}>Floor</span>}
                         {r.maxTrimmed > 0 && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#FEF3C7",color:"#B45309",border:"1px solid #FDE68A"}} title={`Max reduced by ${r.maxTrimmed} to fit ${loc} rack (NZD-ordered trim)`}>Max −{r.maxTrimmed}</span>}
+                        {isDC && ((r.dcInfo?.trimmedCycle || 0) + (r.dcInfo?.trimmedBulk || 0)) > 0 && (
+                          <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#FEF3C7",color:"#B45309",border:"1px solid #FDE68A"}}
+                            title={`DC capacity trim: cycle −${r.dcInfo?.trimmedCycle || 0}, bulk −${r.dcInfo?.trimmedBulk || 0} (repl never trimmed)`}>
+                            DC trim −{(r.dcInfo?.trimmedCycle || 0) + (r.dcInfo?.trimmedBulk || 0)}
+                          </span>
+                        )}
                       </td>
                       <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
                         <span style={{fontSize:10,color:"#555"}}>{r.mm != null ? `${r.mm}mm` : "—"}</span>

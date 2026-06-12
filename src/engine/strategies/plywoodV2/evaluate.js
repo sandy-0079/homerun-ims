@@ -371,18 +371,23 @@ export function dcSweep(ctx, baseCfg) {
   for (const knobs of GRID) {
     const cfg = { ...baseCfg, ...knobs };
     const sized = sizeDCOrderBulk(ctx.drain, ctx.bulkOrderQty, ctx.fitDemand.windowDates, cfg);
+    // pre-trim (desired) footprint — the config's true appetite; X-axis of the chart
+    const pre = { thick: 0, thin: 0 };
+    for (const sku of Object.keys(sized.dcPlan)) pre[ctx.tclass[sku]] += sized.dcPlan[sku].max;
     const { dcPlan, trimReport } = trimDCComponents(sized.dcPlan, sized.detail, cfg.dcCapacity, (sku) => ctx.tclass[sku]);
     const sim = replay(ctx.plan, dcPlan, ctx.testDemand, ctx.tcfg);
-    const fp = { thick: 0, thin: 0 };
-    for (const sku of Object.keys(dcPlan)) fp[ctx.tclass[sku]] += dcPlan[sku].max;
+    const post = { thick: 0, thin: 0 };
+    for (const sku of Object.keys(dcPlan)) post[ctx.tclass[sku]] += dcPlan[sku].max;
     const capT = cfg.dcCapacity || {};
     points.push({
       knobs,
       bulk: sim.serviceLevels.bulk.overall,
       regular: sim.serviceLevels.regular.overall,
-      footprint: fp.thick + fp.thin,
-      fpThick: fp.thick, fpThin: fp.thin,
-      fits: (capT.thick == null || fp.thick <= capT.thick) && (capT.thin == null || fp.thin <= capT.thin),
+      footprint: pre.thick + pre.thin,                  // desired (pre-trim)
+      fpThick: pre.thick, fpThin: pre.thin,
+      postTotal: post.thick + post.thin,                // what fits after trim
+      trimmed: pre.thick + pre.thin - (post.thick + post.thin),
+      fits: (capT.thick == null || pre.thick <= capT.thick) && (capT.thin == null || pre.thin <= capT.thin),
       stillOver: !!trimReport?.stillOver,
     });
   }
