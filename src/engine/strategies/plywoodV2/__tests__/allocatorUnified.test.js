@@ -66,6 +66,47 @@ describe('allocateUnified', () => {
     expect(capped.plan['A']['DS01']).toMatchObject({ min: 2, max: 3 });
   });
 
+  it('per-DS knob overrides apply only at that DS', () => {
+    const dd = { A: { DS01: { [DATES[0]]: 4 }, DS02: { [DATES[1]]: 4 } } };
+    const d = demandOf({
+      regularDaily: dd,
+      regOrderQtys: { A: [4, 4, 9] },   // netP90 = 8
+    });
+    const cfg = { ...CFG, minNetOrderPercentile: 90, minDocCapDays: 0, dsKnobs: { DS02: { minNetOrderPercentile: 0 } } };
+    const { plan } = allocateUnified(U, d, cfg);
+    expect(plan['A']['DS01'].min).toBeGreaterThanOrEqual(8);  // net floor on
+    expect(plan['A']['DS02'].min).toBeLessThanOrEqual(4);     // net floor off at DS02 only
+  });
+
+  it('maxTrim: NZD-ordered Max→Min+1 trim fits the rack, lowest NZD first, Min untouched', () => {
+    // Three thick SKUs at DS01: MID (5 selling days, slack 2), FAST (20 days, slack 5), SLOW (1 day, no slack)
+    const U3 = {
+      MID: { sku: 'MID', name: 'Mid 18mm', brand: 'GreenPly' },
+      FAST: { sku: 'FAST', name: 'Fast 18mm', brand: 'GreenPly' },
+      SLOW: { sku: 'SLOW', name: 'Slow 18mm', brand: 'GreenPly' },
+    };
+    const dd = { MID: { DS01: {} }, FAST: { DS01: {} }, SLOW: { DS01: { [DATES[60]]: 4 } } };
+    DATES.slice(0, 4).forEach(dt => { dd.MID.DS01[dt] = 1; });
+    dd.MID.DS01[DATES[10]] = 9;                                   // MID: min P90≈6, max 9 → slack 2
+    DATES.slice(20, 39).forEach(dt => { dd.FAST.DS01[dt] = 3; });
+    dd.FAST.DS01[DATES[40]] = 9;                                  // FAST: min 3, max 9 → slack 5
+    const d = demandOf({
+      regularDaily: dd,
+      regOrderQtys: { MID: [1], FAST: [3], SLOW: [4] },
+    });
+    const base = { ...CFG, minNetOrderPercentile: 0, minDocCapDays: 0 };
+    const noTrim = allocateUnified(U3, d, { ...base, capacityFit: 'off', dsCapacities: { DS01: { thick: 19, thin: 0 } } });
+    const sumNoTrim = ['MID','FAST','SLOW'].reduce((a,s)=>a+noTrim.plan[s].DS01.max,0);
+    expect(sumNoTrim).toBe(23);                                   // 9 + 9 + 5
+    const t = allocateUnified(U3, d, { ...base, capacityFit: 'maxTrim', dsCapacities: { DS01: { thick: 19, thin: 0 } } });
+    const sum = ['MID','FAST','SLOW'].reduce((a,s)=>a+t.plan[s].DS01.max,0);
+    expect(sum).toBeLessThanOrEqual(19);
+    expect(t.plan.MID.DS01.maxTrimmed).toBe(2);                   // lowest NZD with slack: trimmed to Min+1 first
+    expect(t.plan.FAST.DS01.maxTrimmed).toBe(2);                  // remainder from the faster SKU
+    expect(t.plan.SLOW.DS01.maxTrimmed).toBeUndefined();          // no slack to give
+    expect(t.plan.MID.DS01.min).toBe(noTrim.plan.MID.DS01.min);   // Min never touched
+  });
+
   it('reports capacity utilisation without enforcing', () => {
     const dd = { A: { DS01: { [DATES[0]]: 8 } } };
     const d = demandOf({ regularDaily: dd, regOrderQtys: { A: [8] } });

@@ -52,9 +52,10 @@ function capBar(used, total, label) {
 }
 
 // knob keys that define the formula — used for the testing/published phase check
-const KNOB_KEYS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDays","deadFloorMode","maxMode","lookbackDays","bulkOrderThreshold","leadDays","thickBoundaryMm","dcReplPercentile","dcBulkPercentile","dcCoverDays","allocMode"];
+const KNOB_KEYS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDays","deadFloorMode","maxMode","capacityFit","lookbackDays","bulkOrderThreshold","leadDays","thickBoundaryMm","dcReplPercentile","dcBulkPercentile","dcCoverDays","allocMode"];
 function sameKnobs(a, b) {
   if (!a || !b) return false;
+  if (JSON.stringify(a.dsKnobs || {}) !== JSON.stringify(b.dsKnobs || {})) return false;
   return KNOB_KEYS.every(k => (a[k] ?? V2_DEFAULTS[k]) === (b[k] ?? V2_DEFAULTS[k]));
 }
 
@@ -68,9 +69,11 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
   const netOrders = [...(d.regOrderQtys[row.sku] || [])].sort((a, b) => a - b);
   const localOrders = d.regOrderQtysByDS?.[row.sku]?.[loc] || [];
   const netAbq = netOrders.length ? Math.ceil(netOrders.reduce((a, b) => a + b, 0) / netOrders.length) : 1;
-  const localPct = cfg.minLocalDayPercentile ?? 90;
-  const netPct = cfg.minNetOrderPercentile ?? 90;
-  const docCap = cfg.minDocCapDays ?? 45;
+  // effective knobs at this location (per-DS override merged over globals)
+  const eff = { ...cfg, ...(cfg.dsKnobs?.[loc] || {}) };
+  const localPct = eff.minLocalDayPercentile ?? 90;
+  const netPct = eff.minNetOrderPercentile ?? 90;
+  const docCap = eff.minDocCapDays ?? 45;
   const span = d.windowDates.length;
   const p90Local = dayVals.length ? Math.ceil(percentile(dayVals, localPct)) : 0;
   const p90Net = netOrders.length ? Math.ceil(percentile(netOrders, netPct)) : 1;
@@ -134,9 +137,10 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
               &nbsp;= <b style={{color:"#B91C1C"}}>{row.min}</b>
             </div>
             <div>
-              {(cfg.maxMode ?? "worstDay") === "minPlus1"
+              {(eff.maxMode ?? "worstDay") === "minPlus1"
                 ? <>Max = Min + 1 = <b style={{color:HR.green}}>{row.max}</b> <span style={{color:"#888",fontSize:10}}>(lean Max mode — worst local day was {dayVals.length ? dayVals[dayVals.length-1] : 0})</span></>
-                : <>Max = max( worst local day = <b>{dayVals.length ? dayVals[dayVals.length-1] : 0}</b>, Min+1 ) = <b style={{color:HR.green}}>{row.max}</b></>}
+                : <>Max = max( worst local day = <b>{dayVals.length ? dayVals[dayVals.length-1] : 0}</b>, Min+1 ) = <b style={{color:HR.green}}>{row.max + (row.maxTrimmed || 0)}</b></>}
+              {row.maxTrimmed > 0 && <span style={{marginLeft:6,fontSize:10,color:"#B45309",fontWeight:600}}>→ Max trimmed −{row.maxTrimmed} to <b>{row.max}</b> (NZD-ordered capacity fit at {loc})</span>}
             </div>
           </div>
         )}
@@ -196,165 +200,168 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
 }
 
 // ── Tune sub-tab (state lifted to parent so results survive sub-tab switches) ──
-function TunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult }) {
+const knobLabel = (k) => `P${k.minLocalDayPercentile}/P${k.minNetOrderPercentile||"off"}/cap${k.minDocCapDays||"off"} · dead:${k.deadFloorMode==="lean1"?"1/2":"ABQ"} · max:${k.maxMode==="minPlus1"?"Min+1":"worst day"}`;
+const KNOB_FIELDS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDays","deadFloorMode","maxMode"];
+
+// Per-DS tune panel: lives at the top of the SKU view for the selected location.
+// Clicking a point sets a per-DS knob OVERRIDE (dsKnobs[loc]); global knobs apply elsewhere.
+function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult }) {
   const [tuning, setTuning] = useState(false);
+  const [open, setOpen] = useState(true);
+  const [knobsOpen, setKnobsOpen] = useState(false);
 
   const runTune = () => {
     setTuning(true);
     setTimeout(() => {
-      try {
-        const r = autoTune(invoiceData, skuMaster, { ...cfgDraft });
-        setTuneResult(r);
-      } catch (e) { console.error("auto-tune error:", e); }
+      try { setTuneResult(autoTune(invoiceData, skuMaster, { ...cfgDraft })); }
+      catch (e) { console.error("auto-tune error:", e); }
       setTuning(false);
     }, 30);
   };
 
-  const applyKnobs = (knobs) => setCfgDraft(d => ({ ...d, ...knobs }));
-  const knobsActive = (knobs) =>
-    knobs.minLocalDayPercentile === cfgDraft.minLocalDayPercentile &&
-    knobs.minNetOrderPercentile === cfgDraft.minNetOrderPercentile &&
-    knobs.minDocCapDays === cfgDraft.minDocCapDays &&
-    (knobs.deadFloorMode ?? "abq") === (cfgDraft.deadFloorMode ?? "abq") &&
-    (knobs.maxMode ?? "worstDay") === (cfgDraft.maxMode ?? "worstDay");
+  // effective knobs at this DS = global merged with override
+  const effective = Object.fromEntries(KNOB_FIELDS.map(f => [f, cfgDraft.dsKnobs?.[loc]?.[f] ?? cfgDraft[f]]));
+  const hasOverride = !!cfgDraft.dsKnobs?.[loc];
+  const applyToDS = (knobs) => setCfgDraft(d => ({ ...d, dsKnobs: { ...(d.dsKnobs || {}), [loc]: Object.fromEntries(KNOB_FIELDS.map(f => [f, knobs[f]])) } }));
+  const clearOverride = () => setCfgDraft(d => {
+    const dsKnobs = { ...(d.dsKnobs || {}) };
+    delete dsKnobs[loc];
+    return { ...d, dsKnobs };
+  });
+  const pointActive = (knobs) => KNOB_FIELDS.every(f => (knobs[f] ?? null) === (effective[f] ?? null));
 
-  const chartData = (tuneResult?.frontier || []).map(r => ({
-    footprint: r.footprint, service: +(r.service * 100).toFixed(2),
-    serviceAvg: +(r.serviceAvg * 100).toFixed(2),
-    knobs: r.knobs, overCount: r.overCount, overNodes: r.overNodes,
+  const frontier = tuneResult?.dsFrontiers?.[loc] || [];
+  const capTotal = tuneResult?.dsCapacityTotals?.[loc] || 0;
+  const chartData = frontier.map(r => ({
+    footprint: r.perDS[loc].footprint,
+    service: +(r.perDS[loc].service * 100).toFixed(2),
+    serviceNet: +(r.service * 100).toFixed(2),
+    knobs: r.knobs,
+    fits: r.perDS[loc].fits,
+    overNodes: r.perDS[loc].overNodes,
   }));
-  const activeIdx = chartData.findIndex(d => knobsActive(d.knobs));
-  const dotColor = (oc) => oc === 0 ? HR.green : oc <= 2 ? HR.amber : HR.white;
-  const knobLabel = (k) => `P${k.minLocalDayPercentile}/P${k.minNetOrderPercentile||"off"}/cap${k.minDocCapDays||"off"} · dead:${k.deadFloorMode==="lean1"?"1/2":"ABQ"} · max:${k.maxMode==="minPlus1"?"Min+1":"worst day"}`;
+  const activeIdx = chartData.findIndex(d => pointActive(d.knobs));
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {/* Full-width frontier chart */}
-      <div style={{background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${HR.border}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
-          <span style={{fontSize:12,fontWeight:700}}>Auto-tune — service vs inventory frontier</span>
-          <button style={btn(true)} onClick={runTune} disabled={tuning}>{tuning ? "Sweeping…" : tuneResult ? "Re-run Auto-tune" : "Run Auto-tune"}</button>
-          <span style={{fontSize:10,color:HR.muted}}>240 configs (knobs + dead-floor + Max modes) × 2 folds · Y-axis = same 15d service the SKUs tab shows · click any point to apply & preview</span>
-        </div>
-        {tuneResult && (
-          <>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData} margin={{top:8,right:16,bottom:4,left:6}}
-                onClick={(st)=>{ const p = st?.activePayload?.[0]?.payload; if (p) applyKnobs(p.knobs); }}>
-                <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
-                <XAxis dataKey="footprint" tick={{fontSize:9}} label={{value:"Total sheets (ΣMax, all DSes)",fontSize:9,position:"insideBottom",offset:-2}}/>
-                <YAxis dataKey="service" tick={{fontSize:9}} domain={["dataMin - 0.3","dataMax + 0.3"]} tickFormatter={v=>v.toFixed(1)} label={{value:"15d service %",fontSize:9,angle:-90,position:"insideLeft",offset:8}}/>
-                <RTooltip contentStyle={{fontSize:10}}
-                  formatter={(v,n,p)=>[
-                    `15d: ${v}% · 2-fold avg: ${p.payload.serviceAvg}% · ${p.payload.overCount===0?"all DSes within capacity":`over at: ${p.payload.overNodes.join(", ")}`} · ${knobLabel(p.payload.knobs)} · click to apply`,
-                    "service"]}/>
-                {tuneResult.capacityTotal > 0 && (
-                  <ReferenceLine x={tuneResult.capacityTotal} stroke={HR.red} strokeDasharray="4 3" label={{value:`Σ capacity ${tuneResult.capacityTotal}`,fontSize:9,fill:HR.red,position:"insideTopLeft"}}/>
-                )}
-                <Line type="monotone" dataKey="service" stroke={HR.purple} strokeWidth={2}
-                  dot={(props)=>{ const { cx, cy, payload, index } = props; return (
-                    <circle key={index} cx={cx} cy={cy} r={index===activeIdx?7:5}
-                      fill={index===activeIdx?HR.yellow:dotColor(payload.overCount)}
-                      stroke={payload.overCount===0?HR.green:HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
-                      onClick={(e2)=>{e2.stopPropagation(); applyKnobs(payload.knobs);}}/>
-                  );}}
-                  activeDot={(props)=>{ const { cx, cy, payload } = props; return (
-                    <circle cx={cx} cy={cy} r={8} fill={HR.yellow} stroke={HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
-                      onClick={(e2)=>{e2.stopPropagation(); applyKnobs(payload.knobs);}}/>
-                  );}}/>
-              </LineChart>
-            </ResponsiveContainer>
-            <div style={{fontSize:9,color:HR.muted,marginTop:2}}>
-              <span style={{color:HR.green,fontWeight:700}}>● green</span> = every DS within capacity ·
-              <span style={{color:HR.amber,fontWeight:700}}> ● amber</span> = 1–2 nodes over ·
-              <span style={{color:HR.purple,fontWeight:700}}> ○ white</span> = 3+ nodes over ·
-              <span style={{color:HR.yellow,fontWeight:700}}> ● yellow</span> = currently applied. Hover any point for which nodes are over.
+    <div style={{background:HR.surface,borderRadius:8,padding:"10px 14px",border:`1px solid ${HR.border}`,marginBottom:10}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,fontWeight:700,cursor:"pointer"}} onClick={()=>setOpen(o=>!o)}>{open?"▾":"▸"} Tune {loc} — service vs inventory frontier</span>
+        <button style={btn(true)} onClick={runTune} disabled={tuning}>{tuning ? "Sweeping…" : tuneResult ? "Re-run Auto-tune" : "Run Auto-tune"}</button>
+        {hasOverride && (
+          <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#EDE9FE",color:"#6D28D9",fontWeight:700}}>
+            {loc} override: {knobLabel(effective)}
+            <span onClick={clearOverride} style={{marginLeft:6,cursor:"pointer",fontWeight:800}}>✕</span>
+          </span>
+        )}
+        {!hasOverride && <span style={{fontSize:10,color:HR.muted}}>using global knobs: {knobLabel(effective)}</span>}
+      </div>
+      {open && tuneResult && (
+        <>
+          <ResponsiveContainer width="100%" height={210}>
+            <LineChart data={chartData} margin={{top:8,right:16,bottom:2,left:6}}
+              onClick={(st)=>{ const p = st?.activePayload?.[0]?.payload; if (p) applyToDS(p.knobs); }}>
+              <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
+              <XAxis dataKey="footprint" tick={{fontSize:9}} label={{value:`${loc} sheets (ΣMax, thick+thin)`,fontSize:9,position:"insideBottom",offset:-1}}/>
+              <YAxis dataKey="service" tick={{fontSize:9}} domain={["dataMin - 0.4","dataMax + 0.4"]} tickFormatter={v=>v.toFixed(1)} label={{value:`${loc} 15d svc %`,fontSize:9,angle:-90,position:"insideLeft",offset:8}}/>
+              <RTooltip contentStyle={{fontSize:10}}
+                formatter={(v,n,p)=>[
+                  `${loc}: ${v}% · network: ${p.payload.serviceNet}% · ${p.payload.fits?`fits ${loc} racks`:`over: ${p.payload.overNodes.join("+")}`} · ${knobLabel(p.payload.knobs)} · click to apply to ${loc}`,
+                  "service"]}/>
+              {capTotal > 0 && (
+                <ReferenceLine x={capTotal} stroke={HR.red} strokeDasharray="4 3" label={{value:`${loc} capacity ${capTotal}`,fontSize:9,fill:HR.red,position:"insideTopLeft"}}/>
+              )}
+              <Line type="monotone" dataKey="service" stroke={HR.purple} strokeWidth={2}
+                dot={(props)=>{ const { cx, cy, payload, index } = props; return (
+                  <circle key={index} cx={cx} cy={cy} r={index===activeIdx?7:5}
+                    fill={index===activeIdx?HR.yellow:payload.fits?HR.green:HR.white}
+                    stroke={payload.fits?HR.green:HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
+                    onClick={(e2)=>{e2.stopPropagation(); applyToDS(payload.knobs);}}/>
+                );}}
+                activeDot={(props)=>{ const { cx, cy, payload } = props; return (
+                  <circle cx={cx} cy={cy} r={8} fill={HR.yellow} stroke={HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
+                    onClick={(e2)=>{e2.stopPropagation(); applyToDS(payload.knobs);}}/>
+                );}}/>
+            </LineChart>
+          </ResponsiveContainer>
+          <div style={{fontSize:9,color:HR.muted}}>
+            <span style={{color:HR.green,fontWeight:700}}>● green</span> = fits {loc}'s racks (thick & thin) ·
+            <span style={{color:HR.purple,fontWeight:700}}> ○ white</span> = over ·
+            <span style={{color:HR.yellow,fontWeight:700}}> ● yellow</span> = applied at {loc}.
+            Clicking sets knobs for {loc} only — other DSes keep theirs. Max-trim then snaps Max into the racks where possible.
+          </div>
+        </>
+      )}
+      {open && !tuneResult && !tuning && <div style={{fontSize:11,color:HR.muted,padding:"10px 0 2px"}}>Run Auto-tune to see {loc}'s own service-vs-inventory frontier.</div>}
+
+      {/* Global knobs + publish (collapsible) */}
+      <div style={{borderTop:`1px solid ${HR.surfaceLight}`,marginTop:8,paddingTop:8}}>
+        <span style={{fontSize:11,fontWeight:700,cursor:"pointer",color:"#555"}} onClick={()=>setKnobsOpen(o=>!o)}>{knobsOpen?"▾":"▸"} Global knobs & publish</span>
+        {knobsOpen && (
+          <div style={{marginTop:8}}>
+            <div style={{display:"flex",gap:"6px 24px",flexWrap:"wrap"}}>
+              {[
+                ["minLocalDayPercentile","Local day percentile"],
+                ["minNetOrderPercentile","Network order pct (0 = off)"],
+                ["minDocCapDays","DOC cap days (0 = off)"],
+                ["lookbackDays","Lookback days"],
+                ["bulkOrderThreshold","Bulk threshold (sheets)"],
+                ["leadDays","Supplier lead days"],
+                ["thickBoundaryMm","Thick boundary (mm)"],
+                ["dcReplPercentile","DC replenishment pct"],
+                ["dcBulkPercentile","DC bulk pct"],
+                ["dcCoverDays","DC cycle cover days"],
+              ].map(([key,label]) => (
+                <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
+                  <span style={{fontSize:11}}>{label}</span>
+                  <input type="number" step="any" style={{...sel,width:70,cursor:"text"}}
+                    value={cfgDraft[key]} onChange={e=>setCfgDraft(d=>({...d,[key]:Number(e.target.value)}))}/>
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
+                <span style={{fontSize:11}}>Dead-combo floor</span>
+                <select style={{...sel,width:110}} value={cfgDraft.deadFloorMode ?? "abq"}
+                  onChange={e=>setCfgDraft(d=>({...d,deadFloorMode:e.target.value}))}>
+                  <option value="abq">Network ABQ</option>
+                  <option value="lean1">Lean (1/2)</option>
+                </select>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
+                <span style={{fontSize:11}}>Active-combo Max</span>
+                <select style={{...sel,width:110}} value={cfgDraft.maxMode ?? "worstDay"}
+                  onChange={e=>setCfgDraft(d=>({...d,maxMode:e.target.value}))}>
+                  <option value="worstDay">Worst local day</option>
+                  <option value="minPlus1">Min + 1</option>
+                </select>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
+                <span style={{fontSize:11}}>Capacity fit (Max trim)</span>
+                <select style={{...sel,width:110}} value={cfgDraft.capacityFit ?? "maxTrim"}
+                  onChange={e=>setCfgDraft(d=>({...d,capacityFit:e.target.value}))}>
+                  <option value="maxTrim">NZD-ordered trim</option>
+                  <option value="off">Off</option>
+                </select>
+              </div>
             </div>
-            <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
-              {(tuneResult.presets.fitsCapacity
-                ? [["Fits capacity ●","fitsCapacity"],["Balanced","balanced"],["Service-first","serviceFirst"]]
-                : [["Closest to green","closest"],["Balanced","balanced"],["Service-first","serviceFirst"]]
-              ).map(([label,key]) => {
-                const p = tuneResult.presets[key];
-                if (!p) return null;
-                const active = knobsActive(p.knobs);
-                return (
-                  <div key={key} onClick={()=>applyKnobs(p.knobs)}
-                    style={{flex:1,minWidth:170,cursor:"pointer",border:`2px solid ${active?HR.yellow:HR.border}`,borderRadius:8,padding:"8px 10px",background:active?"#FFFDF0":HR.white}}>
-                    <div style={{fontSize:11,fontWeight:700}}>{label}{active && " ✓"}</div>
-                    <div style={{fontSize:14,fontWeight:800,color:svcColor(p.service)}}>{(p.service*100).toFixed(2)}%</div>
-                    <div style={{fontSize:9,color:HR.muted}}>{p.footprint} sheets · {knobLabel(p.knobs)}{p.overCount > 0 ? ` · over at: ${p.overNodes.join(", ")}` : " · all DSes within capacity"}</div>
-                  </div>
-                );
-              })}
-            </div>
-            {!tuneResult.presets.fitsCapacity && tuneResult.presets.closest && (
-              <div style={{fontSize:10,color:"#92400E",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:6,padding:"6px 10px",marginTop:6}}>
-                No configuration keeps every DS within capacity — even the leanest plan exceeds {tuneResult.presets.closest.overNodes.join(" and ")}.
-                Holding minimum presence for every SKU physically exceeds those racks: getting to green needs assortment cuts (Keep Score) or added racking at those nodes.
+            {Object.keys(cfgDraft.dsKnobs || {}).length > 0 && (
+              <div style={{fontSize:10,color:"#6D28D9",marginTop:6}}>
+                Per-DS overrides active: {Object.entries(cfgDraft.dsKnobs).map(([d2,k]) => `${d2} (${knobLabel({...cfgDraft,...k})})`).join(" · ")}
+                <span onClick={()=>setCfgDraft(d=>({...d,dsKnobs:{}}))} style={{marginLeft:8,cursor:"pointer",fontWeight:700,border:"1px solid #C4B5FD",borderRadius:4,padding:"1px 6px"}}>clear all</span>
               </div>
             )}
-            <div style={{fontSize:10,color:HR.muted,marginTop:6}}>
-              {tuneResult.bucketSplit
-                ? <span>Bucket-split DOC cap adopted: slow {tuneResult.bucketSplit.low}d / fast {tuneResult.bucketSplit.high || "off"}</span>
-                : <span>Bucket-split DOC cap tested — did not clear the +0.3pt out-of-fold gate; simple formula stands.</span>}
+            <div style={{borderTop:`1px solid ${HR.border}`,marginTop:10,paddingTop:10,maxWidth:480}}>
+              {isAdmin ? (
+                <>
+                  <button style={{...btn(true),width:"100%",padding:"8px 0"}} onClick={()=>onSaveConfig && onSaveConfig(cfgDraft)}>
+                    Publish — save config & refit on FULL window
+                  </button>
+                  <div style={{fontSize:9,color:HR.muted,marginTop:5}}>
+                    Publishes global knobs + all per-DS overrides. The tab previews a 75-day fit scored on the last 15 days; publishing refits on the entire window.
+                  </div>
+                </>
+              ) : <div style={{fontSize:10,color:HR.muted}}>Read-only — admin login required to publish.</div>}
             </div>
-          </>
+          </div>
         )}
-        {!tuneResult && !tuning && <div style={{fontSize:11,color:HR.muted,padding:"18px 0"}}>Run the sweep to see the service-vs-inventory frontier and pick an operating point.</div>}
-      </div>
-
-      {/* Knobs + publish below the chart */}
-      <div style={{background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${HR.border}`}}>
-        <div style={{fontSize:12,fontWeight:700,borderBottom:`2px solid ${HR.yellow}`,paddingBottom:4,marginBottom:10}}>Knobs</div>
-        <div style={{display:"flex",gap:"6px 24px",flexWrap:"wrap"}}>
-          {[
-            ["minLocalDayPercentile","Local day percentile"],
-            ["minNetOrderPercentile","Network order pct (0 = off)"],
-            ["minDocCapDays","DOC cap days (0 = off)"],
-            ["lookbackDays","Lookback days"],
-            ["bulkOrderThreshold","Bulk threshold (sheets)"],
-            ["leadDays","Supplier lead days"],
-            ["thickBoundaryMm","Thick boundary (mm)"],
-            ["dcReplPercentile","DC replenishment pct"],
-            ["dcBulkPercentile","DC bulk pct"],
-            ["dcCoverDays","DC cycle cover days"],
-          ].map(([key,label]) => (
-            <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
-              <span style={{fontSize:11}}>{label}</span>
-              <input type="number" step="any" style={{...sel,width:70,cursor:"text"}}
-                value={cfgDraft[key]} onChange={e=>setCfgDraft(d=>({...d,[key]:Number(e.target.value)}))}/>
-            </div>
-          ))}
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
-            <span style={{fontSize:11}}>Dead-combo floor</span>
-            <select style={{...sel,width:110}} value={cfgDraft.deadFloorMode ?? "abq"}
-              onChange={e=>setCfgDraft(d=>({...d,deadFloorMode:e.target.value}))}>
-              <option value="abq">Network ABQ</option>
-              <option value="lean1">Lean (1/2)</option>
-            </select>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
-            <span style={{fontSize:11}}>Active-combo Max</span>
-            <select style={{...sel,width:110}} value={cfgDraft.maxMode ?? "worstDay"}
-              onChange={e=>setCfgDraft(d=>({...d,maxMode:e.target.value}))}>
-              <option value="worstDay">Worst local day</option>
-              <option value="minPlus1">Min + 1</option>
-            </select>
-          </div>
-        </div>
-        <div style={{borderTop:`1px solid ${HR.border}`,marginTop:10,paddingTop:10,maxWidth:480}}>
-          {isAdmin ? (
-            <>
-              <button style={{...btn(true),width:"100%",padding:"8px 0"}} onClick={()=>onSaveConfig && onSaveConfig(cfgDraft)}>
-                Publish — save config & refit on FULL window
-              </button>
-              <div style={{fontSize:9,color:HR.muted,marginTop:5}}>
-                The tab previews a 75-day fit scored on the last 15 days. Publishing re-runs the engine with the same knobs on the entire window, absorbing the test days into the fit.
-              </div>
-            </>
-          ) : <div style={{fontSize:10,color:HR.muted}}>Read-only — admin login required to publish.</div>}
-        </div>
       </div>
     </div>
   );
@@ -362,7 +369,6 @@ function TunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onS
 
 // ── Main tab ──────────────────────────────────────────────────────────────────
 export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, plywoodNetworkV2Config, onSaveConfig, isActive, engineResults }) {
-  const [subTab, setSubTab] = useState("skus");
   const [loc, setLoc] = useState("DS01");
   const [cfgDraft, setCfgDraft] = useState(() => ({ ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) }));
   const [tuneResult, setTuneResult] = useState(null);   // lifted: survives sub-tab switches
@@ -421,6 +427,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
         bucket: isDC ? null : bucketOf(nzd, buckets?.edges || [1]),
         min: isDC ? (dc?.min ?? 0) : p.min,
         max: isDC ? (dc?.max ?? 0) : p.max,
+        maxTrimmed: isDC ? 0 : (p.maxTrimmed || 0),
         oos, floored,
         dcInfo: isDC ? dcRes?.[sku]?.v2?.dcDetail : null,
       });
@@ -503,14 +510,9 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
           fit {ev.fitWindow.from} → {ev.fitWindow.to} · tested on {ev.testWindow.from} → {ev.testWindow.to}
         </span>
         <div style={{flex:1}}/>
-        <button style={btn(subTab==="skus")} onClick={()=>setSubTab("skus")}>SKUs</button>
-        <button style={btn(subTab==="tune")} onClick={()=>setSubTab("tune")}>Tune</button>
       </div>
 
-      {subTab === "tune" ? (
-        <TunePanel cfgDraft={cfgDraft} setCfgDraft={setCfgDraft} invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin} onSaveConfig={onSaveConfig}
-          tuneResult={tuneResult} setTuneResult={setTuneResult}/>
-      ) : (
+      {(
         <div>
           {/* service strip — the 15-day report card */}
           <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"stretch"}}>
@@ -541,6 +543,13 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
               <div style={{fontSize:9,color:HR.muted}}>{DS_LIST.map(ds=>`${ds.slice(2)}:${fp.perDS[ds]}`).join(" ")}</div>
             </div>
           </div>
+
+          {/* per-DS tune panel (chart + knobs + publish) — DC has no frontier */}
+          {!isDC && (
+            <DSTunePanel loc={loc} cfgDraft={cfgDraft} setCfgDraft={setCfgDraft}
+              invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin}
+              onSaveConfig={onSaveConfig} tuneResult={tuneResult} setTuneResult={setTuneResult}/>
+          )}
 
           {/* capacity bars (display-only) */}
           <div style={{display:"flex",gap:8,marginBottom:8}}>
@@ -600,6 +609,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
                       <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                         {r.name}
                         {r.floored && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#EDE9FE",color:"#6D28D9",border:"1px solid #C4B5FD"}}>Floor</span>}
+                        {r.maxTrimmed > 0 && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#FEF3C7",color:"#B45309",border:"1px solid #FDE68A"}} title={`Max reduced by ${r.maxTrimmed} to fit ${loc} rack (NZD-ordered trim)`}>Max −{r.maxTrimmed}</span>}
                       </td>
                       <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
                         <span style={{fontSize:10,color:"#555"}}>{r.mm != null ? `${r.mm}mm` : "—"}</span>

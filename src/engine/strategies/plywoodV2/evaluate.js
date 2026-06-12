@@ -185,8 +185,10 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
     let service15 = 0;
     let fp = 0;
     let overNodes = [];
+    const perDS = {};
     for (const f of folds) {
-      const cfg = { ...baseCfg, ...knobs };
+      // sweep with uniform knobs — existing per-DS overrides must not leak into candidates
+      const cfg = { ...baseCfg, ...knobs, dsKnobs: {} };
       const fitted = fitPlan(inv, skuM, cfg, firstDate, f.fitTo);
       if (!fitted) return null;
       const span = Math.round((new Date(lastDate + 'T00:00:00Z') - new Date(f.testFrom + 'T00:00:00Z')) / 86400000) + 1;
@@ -200,9 +202,24 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
       svcSum += sim.serviceLevels.regular.overall;
       if (f === folds[0]) {
         service15 = sim.serviceLevels.regular.overall;
-        fp = planFootprint(fitted.plan).total;
-        for (const ds of DS_LIST) for (const tc of ['thick', 'thin']) {
-          if (fitted.nodeReport[ds][tc].overCapacity) overNodes.push(`${ds} ${tc}`);
+        const fpAll = planFootprint(fitted.plan);
+        fp = fpAll.total;
+        for (const ds of DS_LIST) {
+          const dsOver = [];
+          for (const tc of ['thick', 'thin']) {
+            if (fitted.nodeReport[ds][tc].overCapacity) {
+              overNodes.push(`${ds} ${tc}`);
+              dsOver.push(tc);
+            }
+          }
+          const c = sim.serviceLevels.regular.perDS[ds];
+          perDS[ds] = {
+            service: c ? c.service : 1,
+            orders: c ? c.total : 0,
+            footprint: fpAll.perDS[ds],
+            overNodes: dsOver,
+            fits: dsOver.length === 0,
+          };
         }
       }
     }
@@ -213,6 +230,7 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
       overCount: overNodes.length,
       overNodes,
       fitsCapacity: overNodes.length === 0,
+      perDS,
     };
   };
 
@@ -259,7 +277,21 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
   }
   const caps = baseCfg.dsCapacities || {};
   const capacityTotal = DS_LIST.reduce((a, ds) => a + (caps[ds]?.thick || 0) + (caps[ds]?.thin || 0), 0);
-  return { results, frontier, presets, bucketSplit, capacityTotal };
+
+  // Per-DS Pareto frontiers: that DS's service vs that DS's footprint
+  const dsFrontiers = {};
+  for (const ds of DS_LIST) {
+    const sorted2 = [...results].sort((a, b) => a.perDS[ds].footprint - b.perDS[ds].footprint);
+    const fr = [];
+    let best2 = -1;
+    for (const r of sorted2) {
+      if (r.perDS[ds].service > best2) { fr.push(r); best2 = r.perDS[ds].service; }
+    }
+    dsFrontiers[ds] = fr;
+  }
+  const dsCapacityTotals = Object.fromEntries(DS_LIST.map(ds => [ds, (caps[ds]?.thick || 0) + (caps[ds]?.thin || 0)]));
+
+  return { results, frontier, presets, bucketSplit, capacityTotal, dsFrontiers, dsCapacityTotals };
 }
 
 // score a DOC-cap-split candidate: slow combos (below NZD median of active combos)

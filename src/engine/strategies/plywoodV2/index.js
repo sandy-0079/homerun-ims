@@ -17,6 +17,8 @@ export const V2_DEFAULTS = {
   minDocCapDays: 45,             // unified: Min ≤ velocity × this (0 = off); floored at local order ABQ
   deadFloorMode: 'abq',          // unified: 'abq' | 'lean1' — floor for NZD=0 combos
   maxMode: 'worstDay',           // unified: 'worstDay' | 'minPlus1' — Max for active combos
+  capacityFit: 'maxTrim',        // 'off' | 'maxTrim' — NZD-ordered Max→Min+1 trim at over-capacity racks
+  dsKnobs: {},                   // per-DS knob overrides, e.g. { DS05: { minLocalDayPercentile: 80 } }
   tau: 99,                       // service quantile on rolling-window regular demand
   netOrderTailPct: 95,           // network order-size tail percentile for Max (empirical mode)
   rollingWindowDays: 2,          // replenishment exposure window (TO daily, arrives next noon)

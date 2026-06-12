@@ -25,14 +25,22 @@ export function thicknessClass(name, boundaryMm = 9) {
 // Capacity reported, not enforced.
 export function allocateUnified(universe, demand, cfg) {
   const { regularDaily, regOrderQtys, windowDates } = demand;
-  const localDayPct = cfg.minLocalDayPercentile ?? 90;
-  const netOrdPct = cfg.minNetOrderPercentile ?? 90;
-  const docCapDays = cfg.minDocCapDays ?? 45;   // 0 = off; caps Min at velocity×days (floored at local order ABQ)
-  const deadFloorMode = cfg.deadFloorMode ?? 'abq';   // 'abq' | 'lean1' — floor for NZD=0 combos
-  const maxMode = cfg.maxMode ?? 'worstDay';          // 'worstDay' | 'minPlus1' — Max for active combos
   const span = windowDates?.length || 90;
   const boundary = cfg.thickBoundaryMm ?? 9;
   const caps = cfg.dsCapacities || null;
+  const capacityFit = cfg.capacityFit ?? 'maxTrim';   // 'off' | 'maxTrim'
+
+  // Per-DS knob resolution: cfg.dsKnobs[ds] overrides the global knobs for that DS.
+  const knobsFor = (ds) => {
+    const o = cfg.dsKnobs?.[ds] || {};
+    return {
+      localDayPct: o.minLocalDayPercentile ?? cfg.minLocalDayPercentile ?? 90,
+      netOrdPct: o.minNetOrderPercentile ?? cfg.minNetOrderPercentile ?? 90,
+      docCapDays: o.minDocCapDays ?? cfg.minDocCapDays ?? 45,
+      deadFloorMode: o.deadFloorMode ?? cfg.deadFloorMode ?? 'abq',
+      maxMode: o.maxMode ?? cfg.maxMode ?? 'worstDay',
+    };
+  };
 
   const skus = Object.keys(universe).sort();
   const tclass = {};
@@ -44,31 +52,61 @@ export function allocateUnified(universe, demand, cfg) {
     plan[sku] = {};
     const no = [...(regOrderQtys[sku] || [])].sort((a, b) => a - b);
     const netAbq = no.length ? Math.ceil(no.reduce((a, b) => a + b, 0) / no.length) : 1;
-    const netPx = netOrdPct > 0 && no.length ? Math.ceil(percentile(no, netOrdPct)) : 1;  // 0 = floor off
     floor[sku] = netAbq;
 
     for (const ds of DS_LIST) {
+      const k = knobsFor(ds);
+      const netPx = k.netOrdPct > 0 && no.length ? Math.ceil(percentile(no, k.netOrdPct)) : 1;  // 0 = floor off
       const dd = regularDaily[sku]?.[ds] || {};
       const days = Object.values(dd).sort((a, b) => a - b);
       let min, max, tier;
       if (days.length === 0) {
         tier = 'dead';
-        min = deadFloorMode === 'lean1' ? 1 : netAbq;
+        min = k.deadFloorMode === 'lean1' ? 1 : netAbq;
         max = min + 1;
       } else {
         tier = 'active';
-        min = Math.max(Math.ceil(percentile(days, localDayPct)), netPx);
-        if (docCapDays > 0) {
+        min = Math.max(Math.ceil(percentile(days, k.localDayPct)), netPx);
+        if (k.docCapDays > 0) {
           // velocity cap: never hold more Min than local rate justifies,
           // floored at the local per-day ABQ so one typical order stays coverable
           const qty = days.reduce((a, b) => a + b, 0);
           const localOrdAbq = Math.ceil(qty / days.length);
-          const doc = Math.ceil((qty / span) * docCapDays);
+          const doc = Math.ceil((qty / span) * k.docCapDays);
           min = Math.min(min, Math.max(doc, localOrdAbq, 1));
         }
-        max = maxMode === 'minPlus1' ? min + 1 : Math.max(days[days.length - 1], min + 1);
+        max = k.maxMode === 'minPlus1' ? min + 1 : Math.max(days[days.length - 1], min + 1);
       }
       plan[sku][ds] = { min, max, floor: Math.min(min, tier === 'dead' ? netAbq : netPx), tier };
+    }
+  }
+
+  // ── Capacity fit: NZD-ordered Max trim (spec: trim Max→Min+1 on lowest-NZD
+  // combos first at any DS×class over its rack; Min never touched) ──
+  if (capacityFit === 'maxTrim' && caps) {
+    for (const ds of DS_LIST) {
+      for (const tc of ['thick', 'thin']) {
+        const cap = caps[ds]?.[tc];
+        if (cap == null || cap <= 0) continue;
+        const group = skus.filter(s => tclass[s] === tc);
+        let used = group.reduce((a, s) => a + plan[s][ds].max, 0);
+        if (used <= cap) continue;
+        const candidates = group
+          .map(s => ({
+            s,
+            nzd: Object.keys(regularDaily[s]?.[ds] || {}).length,
+            slack: plan[s][ds].max - (plan[s][ds].min + 1),
+          }))
+          .filter(x => x.slack > 0)
+          .sort((a, b) => a.nzd - b.nzd || b.slack - a.slack || (a.s < b.s ? -1 : 1));
+        for (const x of candidates) {
+          if (used <= cap) break;
+          const take = Math.min(x.slack, used - cap);
+          plan[x.s][ds].max -= take;
+          plan[x.s][ds].maxTrimmed = take;
+          used -= take;
+        }
+      }
     }
   }
 
