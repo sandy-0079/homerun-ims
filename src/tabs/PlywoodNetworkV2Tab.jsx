@@ -339,7 +339,7 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
             </LineChart>
           </ResponsiveContainer>
           <div style={{fontSize:9,color:HR.muted}}>
-            <span style={{color:HR.purple,fontWeight:700}}>― bulk order service</span> (orders ≥10, served from DC) ·
+            <span style={{color:HR.purple,fontWeight:700}}>― bulk order service</span> (DC-routed share only; the (1−α) routed supplier-direct is assumed served and excluded) ·
             <span style={{color:HR.blue,fontWeight:700}}> ― network regular service</span> (your published DS service, after DC TO-shorting) ·
             blue dashed = DS ceiling (infinite DC) — the gap below it is service lost to the DC ·
             <span style={{color:HR.green,fontWeight:700}}> ● green</span> = fits DC racks · <span style={{color:HR.yellow,fontWeight:700}}>● yellow</span> = applied.

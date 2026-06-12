@@ -53,7 +53,6 @@ export function sizeDCOrderBulk(toDrain, bulkOrderQty, windowDates, cfg) {
   const L = (cfg.leadDays ?? 3) + 1;
   const replP = cfg.dcReplPercentile ?? 98;
   const bulkP = cfg.dcBulkOrderPct ?? 90;
-  const share = cfg.bulkDcServedShare ?? 1.0;
   const cover = cfg.dcCoverDays ?? 2;
 
   const skus = [...new Set([...Object.keys(toDrain || {}), ...Object.keys(bulkOrderQty || {})])].sort();
@@ -62,7 +61,9 @@ export function sizeDCOrderBulk(toDrain, bulkOrderQty, windowDates, cfg) {
     const sums = rollingSums(toDrain?.[sku], windowDates, L).sort((a, b) => a - b);
     const repl = Math.ceil(percentile(sums, replP) || 0);
     const q = [...(bulkOrderQty?.[sku] || [])].sort((a, b) => a - b);
-    const bulk = q.length ? Math.ceil((percentile(q, bulkP) || 0) * share) : 0;
+    // NOTE: deliberately NOT scaled by bulkDcServedShare — a DC-routed order needs its
+    // FULL quantity. α routes orders (in the replay), it does not shrink the buffer.
+    const bulk = q.length ? Math.ceil(percentile(q, bulkP) || 0) : 0;
     const totalDrain = windowDates.reduce((a, d) => a + (toDrain?.[sku]?.[d] || 0), 0);
     const cycle = Math.ceil((totalDrain / Math.max(windowDates.length, 1)) * cover);
     dcPlan[sku] = { min: repl + bulk, max: repl + bulk + cycle };

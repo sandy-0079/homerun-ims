@@ -6,10 +6,20 @@
 // evaluated on CLOSING stock. TO raised on day D arrives start of D+1. PO raised on
 // day D arrives start of D+leadDays. Initial stock = Max everywhere.
 
+// deterministic 0..1 hash of an order id — stable bulk routing across runs
+function orderHash01(id) {
+  let h = 2166136261;
+  const s = String(id);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 1000) / 1000;
+}
+
 export function replay(plan, dcPlan, demand, cfg) {
   const { orders, windowDates } = demand;
   const leadDays = cfg.leadDays ?? 3;
   const infiniteDC = !!cfg.infiniteDC;
+  // α: share of bulk orders routed to DC; the rest go supplier-direct (assumed served)
+  const dcShare = cfg.bulkDcServedShare ?? 1.0;
 
   const skus = Object.keys(plan);
   const dsStock = {};            // sku → ds → qty
@@ -32,7 +42,7 @@ export function replay(plan, dcPlan, demand, cfg) {
   const pendingPO = {};          // arriveDate → [{sku, qty}]
   const toDrain = {};            // sku → date → requested qty (DC-side demand view)
   const oosEvents = [];
-  const counts = { regular: { total: 0, oos: 0, perDS: {} }, bulk: { total: 0, oos: 0 } };
+  const counts = { regular: { total: 0, oos: 0, perDS: {} }, bulk: { total: 0, oos: 0, supplierRouted: 0 } };
   const dcStockByDate = {};      // sku → date → closing qty (tests/UI)
   const opsLoad = { toLines: 0, poLines: 0 };
 
@@ -52,6 +62,11 @@ export function replay(plan, dcPlan, demand, cfg) {
 
     // 2) Demand
     for (const o of ordersByDate[date] || []) {
+      // α-routing: (1−α) of bulk orders go supplier-direct — never touch DC stock
+      if (o.isBulk && dcShare < 1 && orderHash01(o.id) >= dcShare) {
+        counts.bulk.supplierRouted += 1;
+        continue;
+      }
       let short = false;
       for (const { sku, qty } of o.lines) {
         if (!plan[sku]) continue; // not in plan
@@ -122,6 +137,7 @@ export function replay(plan, dcPlan, demand, cfg) {
     bulk: {
       overall: counts.bulk.total ? 1 - counts.bulk.oos / counts.bulk.total : 1,
       total: counts.bulk.total, oos: counts.bulk.oos,
+      supplierRouted: counts.bulk.supplierRouted,
     },
   };
   return { toDrain, oosEvents, serviceLevels, opsLoad, dcStockByDate };

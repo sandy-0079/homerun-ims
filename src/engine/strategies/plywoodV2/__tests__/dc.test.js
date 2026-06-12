@@ -24,10 +24,28 @@ describe('sizeDCOrderBulk + trimDCComponents (DC v2)', () => {
     expect(detail['A'].bulk).toBe(28);
     expect(dcPlan['A'].min).toBe(36);
     expect(dcPlan['A'].max).toBe(36 + detail['A'].cycle);
+    // α must NOT shrink the buffer — a DC-routed order needs its full quantity
     const half = sizeDCOrderBulk(toDrain, bulkOrderQty, DATES, {
       leadDays: 3, dcReplPercentile: 98, dcBulkOrderPct: 90, dcCoverDays: 2, bulkDcServedShare: 0.5,
     });
-    expect(half.detail['A'].bulk).toBe(14);
+    expect(half.detail['A'].bulk).toBe(28);
+  });
+
+  it('replay routes (1−α) of bulk orders supplier-direct, deterministically', async () => {
+    const { replay } = await import('../replay.js');
+    const plan = { A: { DS01: { min: 1, max: 2 } } };
+    const orders = Array.from({ length: 40 }, (_, i) => ({
+      id: 'B' + i, ds: 'DS01', date: DATES[i % DATES.length], lines: [{ sku: 'A', qty: 12 }], isBulk: true,
+    }));
+    const d = { orders, windowDates: DATES, bulkDaily: {} };
+    const full = replay(plan, { A: { min: 0, max: 0 } }, d, { leadDays: 3, bulkDcServedShare: 1.0 });
+    expect(full.serviceLevels.bulk.total).toBe(40);
+    expect(full.serviceLevels.bulk.supplierRouted).toBe(0);
+    const split = replay(plan, { A: { min: 0, max: 0 } }, d, { leadDays: 3, bulkDcServedShare: 0.7 });
+    expect(split.serviceLevels.bulk.supplierRouted).toBeGreaterThan(4);
+    expect(split.serviceLevels.bulk.total + split.serviceLevels.bulk.supplierRouted).toBe(40);
+    const split2 = replay(plan, { A: { min: 0, max: 0 } }, d, { leadDays: 3, bulkDcServedShare: 0.7 });
+    expect(split2.serviceLevels.bulk.supplierRouted).toBe(split.serviceLevels.bulk.supplierRouted);
   });
 
   it('trim order: cycle first, then bulk (fewest bulk orders first), repl never', async () => {
