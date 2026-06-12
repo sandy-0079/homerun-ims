@@ -3,7 +3,7 @@
 // card (per-DS service + OOS column). Tune sub-tab: knobs + Auto-tune Pareto frontier.
 // Publish (admin) saves config — the engine refits the SAME formula on the FULL window.
 // All computation client-side; only Publish writes to Supabase.
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   ReferenceLine, ReferenceArea, ResponsiveContainer, LineChart, Line,
@@ -70,10 +70,10 @@ function sameEffKnobs(a, b) {
 const fmtLakh = (v) => v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : `₹${Math.round(v/1000)}K`;
 
 // ── SKU modal: formula derivation + charts + misses ─────────────────────────
-function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
+function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, live, onClose }) {
   if (!row) return null;
   const isDC = loc === "DC";
-  const d = ev.fitDemand;
+  const d = live && ev.fullDemand ? ev.fullDemand : ev.fitDemand;
   const days = Object.entries(d.regularDaily[row.sku]?.[loc] || {}).sort();
   const dayVals = days.map(([, q]) => q).sort((a, b) => a - b);
   const netOrders = [...(d.regOrderQtys[row.sku] || [])].sort((a, b) => a - b);
@@ -90,17 +90,21 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
   const qtySum = dayVals.reduce((a, b) => a + b, 0);
   const docVal = dayVals.length && docCap > 0 ? Math.ceil((qtySum / span) * docCap) : null;
   const localOrdAbq = dayVals.length ? Math.ceil(qtySum / dayVals.length) : 0;
-  const misses = ev.oosCounts[row.sku]?.[loc]?.events || [];
+  const misses = (live ? ev.liveOosCounts : ev.oosCounts)?.[row.sku]?.[loc]?.events || [];
   const fullP = ev.fullPlan?.[row.sku]?.[loc];
 
   // timeline = fit window + test window (test days marked) with Min/Max reference lines
   const dailyMap = d.regularDaily[row.sku]?.[loc] || {};
   const testDailyMap = ev.testDemand?.regularDaily?.[row.sku]?.[loc] || {};
   const testDates = ev.testDemand?.windowDates || [];
-  const timeline = [
-    ...d.windowDates.map(dt => ({ date: dt.slice(5), qty: dailyMap[dt] || 0, test: false })),
-    ...testDates.map(dt => ({ date: dt.slice(5), qty: testDailyMap[dt] || 0, test: true })),
-  ];
+  // live mode: d already spans the full window incl. test days — don't append twice
+  const testSet = new Set(testDates);
+  const timeline = live
+    ? d.windowDates.map(dt => ({ date: dt.slice(5), qty: dailyMap[dt] || 0, test: testSet.has(dt) }))
+    : [
+        ...d.windowDates.map(dt => ({ date: dt.slice(5), qty: dailyMap[dt] || 0, test: false })),
+        ...testDates.map(dt => ({ date: dt.slice(5), qty: testDailyMap[dt] || 0, test: true })),
+      ];
   const testStartLabel = testDates[0]?.slice(5);
   const testEndLabel = testDates[testDates.length - 1]?.slice(5);
   const yMax = Math.ceil(Math.max(...timeline.map(t => t.qty), row.max || 0, 1) * 1.15);
@@ -123,7 +127,7 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
             <div style={{fontSize:10,color:"#888",marginTop:2}}>
               {row.sku} · {row.mm != null ? `${row.mm}mm` : "—"} · {row.brand} · <b>{loc}</b>
               <span style={{marginLeft:12,color:"#333",fontWeight:600}}>
-                Min: {row.min} · Max: {row.max} <span style={{color:"#888",fontWeight:400}}>(preview — fitted without the last 15d)</span> · {row.nzd} NZD · ABQ: {fmt1(row.abq)}
+                Min: {row.min} · Max: {row.max} <span style={{color:"#888",fontWeight:400}}>{live ? "(live — full-window fit)" : "(preview — fitted without the last 15d)"}</span> · {row.nzd} NZD · ABQ: {fmt1(row.abq)}
               </span>
             </div>
           </div>
@@ -165,23 +169,21 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
         {/* Misses in the test window */}
         {!isDC && misses.length > 0 && (
           <div style={{fontSize:11,background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
-            <b style={{color:HR.red}}>{misses.length} OOS event{misses.length>1?"s":""} in the {ev.testWindow.from} → {ev.testWindow.to} test window:</b>
+            <b style={{color:HR.red}}>
+              {live
+                ? `${misses.length} order${misses.length>1?"s":""} in the last 15d that even the LIVE plan would miss:`
+                : `${misses.length} OOS event${misses.length>1?"s":""} in the ${ev.testWindow.from} → ${ev.testWindow.to} test window:`}
+            </b>
             {misses.map((e, i) => (
               <div key={i} style={{marginTop:3}}>
                 {e.date} · order {e.orderId} · short <b>{e.short}</b> sheets
-                {!published && (e.selfCorrects
+                {!live && !published && (e.selfCorrects
                   ? <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,background:"#DCFCE7",color:"#166534"}}>self-corrects on publish (refit Max {e.fullRefitMax})</span>
                   : <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,background:"#FEF3C7",color:"#92400E"}}>still uncovered after refit (Max {e.fullRefitMax})</span>)}
               </div>
             ))}
-            {!published && fullP && <div style={{marginTop:4,color:"#888",fontSize:10}}>After publish (full-window refit): Min {fullP.min} / Max {fullP.max}</div>}
-            {published && fullP && (
-              <div style={{marginTop:4,color:"#888",fontSize:10}}>
-                Misses above were scored against the preview plan (Min {row.min}/Max {row.max}, fitted without these 15 days).
-                The LIVE published plan refits on the full window — these days included — and now holds <b>Min {fullP.min} / Max {fullP.max}</b>
-                {(fullP.min > row.min || fullP.max > row.max) ? " — the misses self-corrected into it." : "."}
-              </div>
-            )}
+            {!live && fullP && <div style={{marginTop:4,color:"#888",fontSize:10}}>After publish (full-window refit): Min {fullP.min} / Max {fullP.max}</div>}
+            {live && <div style={{marginTop:4,color:"#888",fontSize:10}}>These are residual gaps — orders larger than the full-window plan covers (in-sample check). Covering them means raising Max permanently.</div>}
           </div>
         )}
 
@@ -415,6 +417,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   const [cfgDraft, setCfgDraft] = useState(() => ({ ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) }));
   const [tuneResult, setTuneResult] = useState(null);   // lifted: survives sub-tab switches
   const [selected, setSelected] = useState(null);
+  const [viewMode, setViewMode] = useState("eval");      // 'eval' (75/15 report card) | 'live' (full-window published fit)
 
   // Phase: published = saved config matches the draft (and a config exists)
   const savedCfg = { ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) };
@@ -437,6 +440,10 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
     const eff = effKnobsFor(savedCfg, ds);
     setCfgDraft(d => ({ ...d, dsKnobs: { ...(d.dsKnobs || {}), [ds]: eff } }));
   };
+
+  // Default view follows the viewed DS's publish state: published → live, testing → eval.
+  const locPublished = loc !== "DC" && dsPublished(loc);
+  useEffect(() => { setViewMode(locPublished ? "live" : "eval"); }, [loc, locPublished]);
   const [query, setQuery] = useState("");
   const [fBrand, setFBrand] = useState("All");
   const [fType, setFType] = useState("All");
@@ -455,15 +462,21 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   }, [ready, invoiceData, skuMaster, cfgDraft]);
 
   // DC plan (full pipeline incl. drain-based DC) on the fit window
+  // live mode only meaningful when the full plan exists
+  const live = viewMode === "live" && !!ev?.fullPlan;
+  const modeDemand = live ? ev.fullDemand : ev?.fitDemand;
+  const modePlan = live ? ev.fullPlan : ev?.plan;
+  const modeOos = live ? ev?.liveOosCounts : ev?.oosCounts;
+
   const dcRes = useMemo(() => {
     if (!ev) return null;
     try {
-      const fitInv = invoiceData.filter(r => r.date <= ev.fitWindow.to);
-      return computePlywoodNetworkV2Results(fitInv, skuMaster, { plywoodNetworkV2Config: cfgDraft });
+      const dcInv = live ? invoiceData : invoiceData.filter(r => r.date <= ev.fitWindow.to);
+      return computePlywoodNetworkV2Results(dcInv, skuMaster, { plywoodNetworkV2Config: cfgDraft });
     } catch (e) { console.error("v2 dc error:", e); return null; }
-  }, [ev, invoiceData, skuMaster, cfgDraft]);
+  }, [ev, live, invoiceData, skuMaster, cfgDraft]);
 
-  const buckets = useMemo(() => ev ? deriveNZDBuckets(ev.fitDemand, ev.universe) : null, [ev]);
+  const buckets = useMemo(() => ev ? deriveNZDBuckets(modeDemand, ev.universe) : null, [ev, modeDemand]);
 
   // Build display rows for the selected location
   const rows = useMemo(() => {
@@ -473,13 +486,13 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
       const meta = ev.universe[sku];
       const mm = inferThickness(meta.name);
       const isDC = loc === "DC";
-      const p = isDC ? null : ev.plan[sku][loc];
+      const p = isDC ? null : modePlan[sku][loc];
       const dc = isDC ? dcRes?.[sku]?.dcResult : null;
-      const dd = isDC ? {} : (ev.fitDemand.regularDaily[sku]?.[loc] || {});
+      const dd = isDC ? {} : (modeDemand.regularDaily[sku]?.[loc] || {});
       const dayVals = Object.values(dd);
       const nzd = dayVals.length;
       const qty = dayVals.reduce((a, b) => a + b, 0);
-      const oos = isDC ? null : (ev.oosCounts[sku]?.[loc]?.oosOrders || 0);
+      const oos = isDC ? null : (modeOos?.[sku]?.[loc]?.oosOrders || 0);
       const floored = engineResults?.[sku]?.stores?.[loc]?.logicTag === "SKU Floor";
       out.push({
         sku, name: meta.name, brand: meta.brand, mm,
@@ -494,14 +507,14 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
       });
     }
     return out;
-  }, [ev, dcRes, loc, buckets, engineResults]);
+  }, [ev, dcRes, loc, buckets, engineResults, modePlan, modeDemand, modeOos]);
 
   if (!ready) return <div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>Loading data, please wait...</div>;
   if (!ev) return <div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>No plywood SKUs found for v2 universe.</div>;
 
   const isDC = loc === "DC";
-  const svc = ev.serviceLevels.regular;
-  const fp = planFootprint(ev.plan);
+  const svc = (live && ev.liveServiceLevels ? ev.liveServiceLevels : ev.serviceLevels).regular;
+  const fp = planFootprint(modePlan);
   const caps = cfgDraft.dsCapacities || {};
   const brands = ["All", ...[...new Set(rows.map(r => r.brand).filter(Boolean))].sort()];
 
@@ -568,9 +581,13 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
           </span>
         )}
         <span style={{fontSize:10,color:HR.muted}}>
-          fit {ev.fitWindow.from} → {ev.fitWindow.to} · tested on {ev.testWindow.from} → {ev.testWindow.to}
+          {live
+            ? `live plan · fitted on full window ${ev.fitWindow.from} → ${ev.testWindow.to}`
+            : `fit ${ev.fitWindow.from} → ${ev.fitWindow.to} · tested on ${ev.testWindow.from} → ${ev.testWindow.to}`}
         </span>
         <div style={{flex:1}}/>
+        <button style={btn(viewMode==="eval")} onClick={()=>setViewMode("eval")} title="Plan fitted without the last 15 days, scored on them — the honest tuning view">Evaluation (75/15)</button>
+        <button style={btn(viewMode==="live")} onClick={()=>setViewMode("live")} disabled={!ev.fullPlan} title="Full-window fit — what publish produces; OOS column shows what it would have missed in the last 15d">Live plan</button>
       </div>
 
       {(
@@ -578,7 +595,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
           {/* service strip — the 15-day report card */}
           <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"stretch"}}>
             <div style={{padding:"6px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8}}>
-              <div style={{fontSize:9,color:HR.muted}}>Regular service — last 15d (out-of-window)</div>
+              <div style={{fontSize:9,color:HR.muted}}>{live ? "Live-plan check — last 15d (in its fit)" : "Regular service — last 15d (out-of-window)"}</div>
               <div style={{fontSize:20,fontWeight:800,color:svcColor(svc.overall)}}>{(svc.overall*100).toFixed(2)}%</div>
               <div style={{fontSize:9,color:HR.muted}}>{svc.oos} OOS of {svc.total} orders</div>
             </div>
@@ -731,7 +748,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
       )}
 
       {selected && (
-        <SKUModalV2 row={selected} loc={loc} ev={ev} cfg={cfgDraft} dcInfo={selected.dcInfo} published={published} onClose={()=>setSelected(null)}/>
+        <SKUModalV2 row={selected} loc={loc} ev={ev} cfg={cfgDraft} dcInfo={selected.dcInfo} published={published} live={live} onClose={()=>setSelected(null)}/>
       )}
     </div>
   );

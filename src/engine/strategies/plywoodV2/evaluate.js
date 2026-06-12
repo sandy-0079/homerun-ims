@@ -61,24 +61,40 @@ export function evaluatePlan(inv, skuM, cfg, { testDays = 15 } = {}) {
   const sim = replay(plan, dcPlan, testDemand, tcfg);
 
   // per-SKU×DS OOS aggregation (regular only) + selfCorrects flag per miss
-  const oosBySkuDs = {};   // sku → ds → { orders: Set, events: [...] }
-  for (const e of sim.oosEvents) {
-    if (e.type !== 'regular') continue;
-    if (!oosBySkuDs[e.sku]) oosBySkuDs[e.sku] = {};
-    if (!oosBySkuDs[e.sku][e.ds]) oosBySkuDs[e.sku][e.ds] = { orders: new Set(), events: [] };
-    const fullMax = fullFit?.plan?.[e.sku]?.[e.ds]?.max ?? 0;
-    // heuristic: the miss self-corrects if the full-window Max covers (shortfall + what was served)
-    oosBySkuDs[e.sku][e.ds].orders.add(e.orderId);
-    oosBySkuDs[e.sku][e.ds].events.push({ ...e, fullRefitMax: fullMax, selfCorrects: fullMax >= e.short + (fittedServed(plan, e)) });
-  }
-  // flatten counts
-  const oosCounts = {};
-  for (const [sku, byDs] of Object.entries(oosBySkuDs)) {
-    oosCounts[sku] = {};
-    for (const [ds, v] of Object.entries(byDs)) {
-      oosCounts[sku][ds] = { oosOrders: v.orders.size, events: v.events };
+  const aggregateOos = (events, withFlags) => {
+    const bySkuDs = {};
+    for (const e of events) {
+      if (e.type !== 'regular') continue;
+      if (!bySkuDs[e.sku]) bySkuDs[e.sku] = {};
+      if (!bySkuDs[e.sku][e.ds]) bySkuDs[e.sku][e.ds] = { orders: new Set(), events: [] };
+      bySkuDs[e.sku][e.ds].orders.add(e.orderId);
+      if (withFlags) {
+        const fullMax = fullFit?.plan?.[e.sku]?.[e.ds]?.max ?? 0;
+        bySkuDs[e.sku][e.ds].events.push({ ...e, fullRefitMax: fullMax, selfCorrects: fullMax >= e.short + (fittedServed(plan, e)) });
+      } else {
+        bySkuDs[e.sku][e.ds].events.push({ ...e });
+      }
     }
+    const counts = {};
+    for (const [sku, byDs] of Object.entries(bySkuDs)) {
+      counts[sku] = {};
+      for (const [ds, v] of Object.entries(byDs)) counts[sku][ds] = { oosOrders: v.orders.size, events: v.events };
+    }
+    return counts;
+  };
+  const oosCounts = aggregateOos(sim.oosEvents, true);
+
+  // LIVE check: replay the same test window against the FULL-WINDOW plan (in-sample —
+  // those days are inside its fit). This is what the published plan would have done.
+  let liveServiceLevels = null, liveOosCounts = null;
+  if (fullFit) {
+    const dcPlan2 = {};
+    for (const sku of Object.keys(fullFit.plan)) dcPlan2[sku] = { min: 1e9, max: 1e9 };
+    const liveSim = replay(fullFit.plan, dcPlan2, testDemand, tcfg);
+    liveServiceLevels = liveSim.serviceLevels;
+    liveOosCounts = aggregateOos(liveSim.oosEvents, false);
   }
+
   return {
     plan, universe,
     fitDemand: fitted.demand,
@@ -90,6 +106,9 @@ export function evaluatePlan(inv, skuM, cfg, { testDays = 15 } = {}) {
     oosCounts,
     opsLoad: sim.opsLoad,
     fullPlan: fullFit?.plan || null,
+    fullDemand: fullFit?.demand || null,
+    liveServiceLevels,
+    liveOosCounts,
   };
 }
 
