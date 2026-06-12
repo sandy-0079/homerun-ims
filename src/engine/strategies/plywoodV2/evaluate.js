@@ -155,10 +155,12 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
   const lastDate = dates[dates.length - 1];
   const firstDate = dates[0];
 
+  // Grid extends into very lean configs (netPct 0 = network floor off, 15d caps)
+  // so the frontier reaches the within-capacity region when possible.
   const GRID = [];
-  for (const localPct of [80, 90, 95]) {
-    for (const netPct of [50, 70, 80, 90]) {
-      for (const docCap of [0, 30, 45, 60]) {
+  for (const localPct of [70, 80, 90, 95]) {
+    for (const netPct of [0, 50, 70, 90]) {
+      for (const docCap of [15, 30, 45, 0]) {
         GRID.push({ minLocalDayPercentile: localPct, minNetOrderPercentile: netPct, minDocCapDays: docCap });
       }
     }
@@ -172,6 +174,7 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
   const scoreOne = (knobs) => {
     let svcSum = 0;
     let fp = 0;
+    let fitsCapacity = false;
     for (const f of folds) {
       const cfg = { ...baseCfg, ...knobs };
       const fitted = fitPlan(inv, skuM, cfg, firstDate, f.fitTo);
@@ -185,9 +188,14 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
       for (const sku of Object.keys(fitted.plan)) dcPlan[sku] = { min: 1e9, max: 1e9 };
       const sim = replay(fitted.plan, dcPlan, testDemand, tcfg);
       svcSum += sim.serviceLevels.regular.overall;
-      if (f === folds[0]) fp = planFootprint(fitted.plan).total;
+      if (f === folds[0]) {
+        fp = planFootprint(fitted.plan).total;
+        // within capacity = no DS×class over its budget (per nodeReport)
+        fitsCapacity = DS_LIST.every(ds =>
+          ['thick', 'thin'].every(tc => !fitted.nodeReport[ds][tc].overCapacity));
+      }
     }
-    return { service: svcSum / folds.length, footprint: fp };
+    return { service: svcSum / folds.length, footprint: fp, fitsCapacity };
   };
 
   const results = [];
@@ -228,7 +236,9 @@ export function autoTune(inv, skuM, baseCfg, { onProgress } = {}) {
       break;
     }
   }
-  return { results, frontier, presets, bucketSplit };
+  const caps = baseCfg.dsCapacities || {};
+  const capacityTotal = DS_LIST.reduce((a, ds) => a + (caps[ds]?.thick || 0) + (caps[ds]?.thin || 0), 0);
+  return { results, frontier, presets, bucketSplit, capacityTotal };
 }
 
 // score a DOC-cap-split candidate: slow combos (below NZD median of active combos)

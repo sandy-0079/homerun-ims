@@ -1,0 +1,115 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - img [ref=e7]
+        - generic [ref=e9]:
+          - generic [ref=e10]: HomeRun
+          - generic [ref=e11]: Inventory Management System
+      - generic [ref=e12]: "Period Considered: 25 Apr '26 → 8 Jun '26 (45D)"
+      - button "Overview" [ref=e13] [cursor=pointer]
+      - button "SKU Detail" [ref=e14] [cursor=pointer]
+      - button "Baskets" [ref=e15] [cursor=pointer]
+      - button "Plywood" [ref=e16] [cursor=pointer]
+      - button "Plywood v2" [ref=e17] [cursor=pointer]
+      - button "Stock Health" [ref=e18] [cursor=pointer]
+      - button "OOS Simulation" [ref=e19] [cursor=pointer]
+      - button "Tool Output Download" [ref=e20] [cursor=pointer]
+      - button "🔐 Admin" [ref=e21] [cursor=pointer]
+    - generic [ref=e28]:
+      - generic [ref=e29]:
+        - heading "Plywood Network v2" [level=2] [ref=e30]
+        - generic [ref=e31]: ✓ PUBLISHED · engine strategy not switched on
+        - generic [ref=e32]: fit 2026-03-11 → 2026-05-24 · tested on 2026-05-25 → 2026-06-08
+        - button "SKUs" [ref=e33] [cursor=pointer]
+        - button "Tune" [active] [ref=e34] [cursor=pointer]
+      - generic [ref=e2779]:
+        - generic [ref=e2780]:
+          - generic [ref=e2781]:
+            - generic [ref=e2782]: Auto-tune
+            - button "Re-run Auto-tune" [ref=e2783] [cursor=pointer]
+            - generic [ref=e2784]: 64 configs × 2 out-of-window folds (~few seconds) · click any point to apply & preview
+          - application [ref=e2787]:
+            - generic [ref=e2830]:
+              - generic [ref=e2831]:
+                - generic [ref=e2833]: "2811"
+                - generic [ref=e2835]: "2815"
+                - generic [ref=e2837]: "2817"
+                - generic [ref=e2839]: "2820"
+                - generic [ref=e2841]: "2830"
+                - generic [ref=e2843]: "2832"
+                - generic [ref=e2845]: "2846"
+                - generic [ref=e2847]: "2847"
+                - generic [ref=e2849]: "2849"
+                - generic [ref=e2851]: "2861"
+                - generic [ref=e2853]: "2895"
+                - generic [ref=e2855]: "2904"
+                - generic [ref=e2857]: "2941"
+                - generic [ref=e2859]: "2943"
+                - generic [ref=e2861]: "2950"
+                - generic [ref=e2863]: "2968"
+                - generic [ref=e2865]: "3002"
+                - generic [ref=e2867]: "3004"
+                - generic [ref=e2869]: "3024"
+                - generic [ref=e2871]: "3071"
+                - generic [ref=e2873]: "3118"
+                - generic [ref=e2875]: "3140"
+                - generic [ref=e2877]: "3361"
+                - generic [ref=e2879]: "3386"
+                - generic [ref=e2881]: "3434"
+              - generic [ref=e2882]: Total sheets (ΣMax, all DSes)
+              - generic [ref=e2883]:
+                - generic [ref=e2885]: "88.4"
+                - generic [ref=e2887]: "90.4"
+                - generic [ref=e2889]: "92.4"
+                - generic [ref=e2891]: "94.4"
+              - generic [ref=e2892]: OOS-svc %
+          - generic [ref=e2893]: No swept config fits all DS capacities — leanest point still exceeds at least one node. ● green = within capacity at every DS · ● yellow = currently applied
+          - generic [ref=e2894]:
+            - generic [ref=e2895] [cursor=pointer]:
+              - generic [ref=e2896]: Lean
+              - generic [ref=e2897]: 90.93%
+              - generic [ref=e2898]: 2904 sheets · P90/P70/cap 30
+            - generic [ref=e2899] [cursor=pointer]:
+              - generic [ref=e2900]: Balanced
+              - generic [ref=e2901]: 92.81%
+              - generic [ref=e2902]: 3118 sheets · P95/P90/cap 45
+            - generic [ref=e2903] [cursor=pointer]:
+              - generic [ref=e2904]: Service-first
+              - generic [ref=e2905]: 94.07%
+              - generic [ref=e2906]: 3434 sheets · P95/P90/cap off
+          - generic [ref=e2907]: Bucket-split DOC cap tested — did not clear the +0.3pt out-of-fold gate; simple formula stands.
+        - generic [ref=e2908]:
+          - generic [ref=e2909]: Knobs
+          - generic [ref=e2910]:
+            - generic [ref=e2911]: Local day percentile
+            - spinbutton [ref=e2912]: "95"
+          - generic [ref=e2913]:
+            - generic [ref=e2914]: Network order percentile
+            - spinbutton [ref=e2915]: "50"
+          - generic [ref=e2916]:
+            - generic [ref=e2917]: DOC cap days (0 = off)
+            - spinbutton [ref=e2918]: "30"
+          - generic [ref=e2919]:
+            - generic [ref=e2920]: Lookback days
+            - spinbutton [ref=e2921]: "90"
+          - generic [ref=e2922]:
+            - generic [ref=e2923]: Bulk threshold (sheets)
+            - spinbutton [ref=e2924]: "10"
+          - generic [ref=e2925]:
+            - generic [ref=e2926]: Supplier lead days
+            - spinbutton [ref=e2927]: "3"
+          - generic [ref=e2928]:
+            - generic [ref=e2929]: Thick boundary (mm)
+            - spinbutton [ref=e2930]: "9"
+          - generic [ref=e2931]:
+            - generic [ref=e2932]: DC replenishment pct
+            - spinbutton [ref=e2933]: "98"
+          - generic [ref=e2934]:
+            - generic [ref=e2935]: DC bulk pct
+            - spinbutton [ref=e2936]: "90"
+          - generic [ref=e2937]:
+            - generic [ref=e2938]: DC cycle cover days
+            - spinbutton [ref=e2939]: "2"
+          - generic [ref=e2941]: Read-only — admin login required to publish.
+  - generic [ref=e1489]: "88.4"

@@ -51,8 +51,15 @@ function capBar(used, total, label) {
   );
 }
 
+// knob keys that define the formula — used for the testing/published phase check
+const KNOB_KEYS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDays","lookbackDays","bulkOrderThreshold","leadDays","thickBoundaryMm","dcReplPercentile","dcBulkPercentile","dcCoverDays","allocMode"];
+function sameKnobs(a, b) {
+  if (!a || !b) return false;
+  return KNOB_KEYS.every(k => (a[k] ?? V2_DEFAULTS[k]) === (b[k] ?? V2_DEFAULTS[k]));
+}
+
 // ── SKU modal: formula derivation + charts + misses ─────────────────────────
-function SKUModalV2({ row, loc, ev, cfg, dcInfo, onClose }) {
+function SKUModalV2({ row, loc, ev, cfg, dcInfo, published, onClose }) {
   if (!row) return null;
   const isDC = loc === "DC";
   const d = ev.fitDemand;
@@ -137,12 +144,13 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, onClose }) {
             {misses.map((e, i) => (
               <div key={i} style={{marginTop:3}}>
                 {e.date} · order {e.orderId} · short <b>{e.short}</b> sheets
-                {e.selfCorrects
+                {!published && (e.selfCorrects
                   ? <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,background:"#DCFCE7",color:"#166534"}}>self-corrects on publish (refit Max {e.fullRefitMax})</span>
-                  : <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,background:"#FEF3C7",color:"#92400E"}}>still uncovered after refit (Max {e.fullRefitMax})</span>}
+                  : <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,background:"#FEF3C7",color:"#92400E"}}>still uncovered after refit (Max {e.fullRefitMax})</span>)}
               </div>
             ))}
-            {fullP && <div style={{marginTop:4,color:"#888",fontSize:10}}>After publish (full-window refit): Min {fullP.min} / Max {fullP.max}</div>}
+            {!published && fullP && <div style={{marginTop:4,color:"#888",fontSize:10}}>After publish (full-window refit): Min {fullP.min} / Max {fullP.max}</div>}
+            {published && fullP && <div style={{marginTop:4,color:"#888",fontSize:10}}>Published plan (full-window fit): Min {fullP.min} / Max {fullP.max}</div>}
           </div>
         )}
 
@@ -183,10 +191,9 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, onClose }) {
   );
 }
 
-// ── Tune sub-tab ──────────────────────────────────────────────────────────────
-function TunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig }) {
+// ── Tune sub-tab (state lifted to parent so results survive sub-tab switches) ──
+function TunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult }) {
   const [tuning, setTuning] = useState(false);
-  const [tuneResult, setTuneResult] = useState(null);
 
   const runTune = () => {
     setTuning(true);
@@ -205,29 +212,52 @@ function TunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onS
     knobs.minNetOrderPercentile === cfgDraft.minNetOrderPercentile &&
     knobs.minDocCapDays === cfgDraft.minDocCapDays;
 
-  const chartData = tuneResult?.frontier.map(r => ({
-    footprint: r.footprint, service: +(r.service * 100).toFixed(2), knobs: r.knobs,
+  // Chart starts at the first point where every DS×class fits capacity (if any)
+  const firstFit = tuneResult?.frontier.findIndex(r => r.fitsCapacity) ?? -1;
+  const chartFrontier = tuneResult ? (firstFit > 0 ? tuneResult.frontier.slice(firstFit) : tuneResult.frontier) : [];
+  const chartData = chartFrontier.map(r => ({
+    footprint: r.footprint, service: +(r.service * 100).toFixed(2), knobs: r.knobs, fits: r.fitsCapacity,
   }));
+  const activeIdx = chartData.findIndex(d => knobsActive(d.knobs));
 
   return (
     <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
       <div style={{flex:"1 1 420px",minWidth:380,background:HR.surface,borderRadius:8,padding:14,border:`1px solid ${HR.border}`}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
           <span style={{fontSize:12,fontWeight:700}}>Auto-tune</span>
-          <button style={btn(true)} onClick={runTune} disabled={tuning}>{tuning ? "Sweeping…" : "Run Auto-tune"}</button>
-          <span style={{fontSize:10,color:HR.muted}}>48 configs × 2 out-of-window folds (~few seconds)</span>
+          <button style={btn(true)} onClick={runTune} disabled={tuning}>{tuning ? "Sweeping…" : tuneResult ? "Re-run Auto-tune" : "Run Auto-tune"}</button>
+          <span style={{fontSize:10,color:HR.muted}}>64 configs × 2 out-of-window folds (~few seconds) · click any point to apply & preview</span>
         </div>
         {tuneResult && (
           <>
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={chartData} margin={{top:8,right:12,bottom:4,left:-10}}>
+              <LineChart data={chartData} margin={{top:8,right:12,bottom:4,left:-10}}
+                onClick={(st)=>{ const p = st?.activePayload?.[0]?.payload; if (p) applyKnobs(p.knobs); }}>
                 <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
                 <XAxis dataKey="footprint" tick={{fontSize:9}} label={{value:"Total sheets (ΣMax, all DSes)",fontSize:9,position:"insideBottom",offset:-2}}/>
                 <YAxis dataKey="service" tick={{fontSize:9}} domain={["dataMin - 0.3","dataMax + 0.3"]} tickFormatter={v=>v.toFixed(1)} label={{value:"OOS-svc %",fontSize:9,angle:-90,position:"insideLeft"}}/>
-                <RTooltip contentStyle={{fontSize:10}} formatter={(v,n,p)=>[`${v}% · P${p.payload.knobs.minLocalDayPercentile}/P${p.payload.knobs.minNetOrderPercentile}/cap${p.payload.knobs.minDocCapDays||"off"}`, "service"]}/>
-                <Line type="monotone" dataKey="service" stroke={HR.purple} strokeWidth={2} dot={{r:3}}/>
+                <RTooltip contentStyle={{fontSize:10}} formatter={(v,n,p)=>[`${v}% · P${p.payload.knobs.minLocalDayPercentile}/P${p.payload.knobs.minNetOrderPercentile}/cap${p.payload.knobs.minDocCapDays||"off"} · click to apply`, "service"]}/>
+                {tuneResult.capacityTotal > 0 && chartData.length > 0 && tuneResult.capacityTotal >= chartData[0].footprint && tuneResult.capacityTotal <= chartData[chartData.length-1].footprint && (
+                  <ReferenceLine x={tuneResult.capacityTotal} stroke={HR.red} strokeDasharray="4 3" label={{value:`Σ capacity ${tuneResult.capacityTotal}`,fontSize:9,fill:HR.red,position:"insideTopLeft"}}/>
+                )}
+                <Line type="monotone" dataKey="service" stroke={HR.purple} strokeWidth={2}
+                  dot={(props)=>{ const { cx, cy, payload, index } = props; return (
+                    <circle key={index} cx={cx} cy={cy} r={index===activeIdx?7:5}
+                      fill={index===activeIdx?HR.yellow:payload.fits?HR.green:HR.white}
+                      stroke={payload.fits?HR.green:HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
+                      onClick={(e2)=>{e2.stopPropagation(); applyKnobs(payload.knobs);}}/>
+                  );}}
+                  activeDot={(props)=>{ const { cx, cy, payload } = props; return (
+                    <circle cx={cx} cy={cy} r={8} fill={HR.yellow} stroke={HR.purple} strokeWidth={2} style={{cursor:"pointer"}}
+                      onClick={(e2)=>{e2.stopPropagation(); applyKnobs(payload.knobs);}}/>
+                  );}}/>
               </LineChart>
             </ResponsiveContainer>
+            <div style={{fontSize:9,color:HR.muted,marginTop:2}}>
+              {firstFit > 0 && <span>Chart starts at the leanest config where every DS fits capacity (leaner points hidden). </span>}
+              {firstFit === -1 && <span style={{color:HR.amber}}>No swept config fits all DS capacities — leanest point still exceeds at least one node. </span>}
+              <span style={{color:HR.green,fontWeight:700}}>● green</span> = within capacity at every DS · <span style={{color:HR.yellow,fontWeight:700}}>● yellow</span> = currently applied
+            </div>
             <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
               {[["Lean","lean"],["Balanced","balanced"],["Service-first","serviceFirst"]].map(([label,key]) => {
                 const p = tuneResult.presets[key];
@@ -295,7 +325,11 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
   const [subTab, setSubTab] = useState("skus");
   const [loc, setLoc] = useState("DS01");
   const [cfgDraft, setCfgDraft] = useState(() => ({ ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) }));
+  const [tuneResult, setTuneResult] = useState(null);   // lifted: survives sub-tab switches
   const [selected, setSelected] = useState(null);
+
+  // Phase: published = saved config matches the draft (and a config exists)
+  const published = !!plywoodNetworkV2Config && sameKnobs(cfgDraft, { ...V2_DEFAULTS, ...plywoodNetworkV2Config });
   const [query, setQuery] = useState("");
   const [fBrand, setFBrand] = useState("All");
   const [fType, setFType] = useState("All");
@@ -416,9 +450,15 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
       {/* header */}
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
         <h2 style={{margin:0,fontSize:16}}>Plywood Network v2</h2>
-        <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:isActive?"#DCFCE7":HR.surfaceLight,color:isActive?HR.green:HR.muted,fontWeight:700}}>
-          {isActive ? "ACTIVE IN ENGINE" : "PREVIEW — not active"}
-        </span>
+        {published ? (
+          <span style={{fontSize:10,padding:"2px 10px",borderRadius:10,background:"#DCFCE7",color:HR.green,fontWeight:700,border:"1px solid #BBF7D0"}}>
+            ✓ PUBLISHED{isActive ? " · ACTIVE IN ENGINE" : " · engine strategy not switched on"}
+          </span>
+        ) : (
+          <span style={{fontSize:10,padding:"2px 10px",borderRadius:10,background:"#FEF3C7",color:"#92400E",fontWeight:700,border:"1px solid #FDE68A"}}>
+            ⚠ TESTING — unsaved knobs, preview only{plywoodNetworkV2Config ? " (differs from published)" : " (nothing published yet)"}
+          </span>
+        )}
         <span style={{fontSize:10,color:HR.muted}}>
           fit {ev.fitWindow.from} → {ev.fitWindow.to} · tested on {ev.testWindow.from} → {ev.testWindow.to}
         </span>
@@ -428,7 +468,8 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
       </div>
 
       {subTab === "tune" ? (
-        <TunePanel cfgDraft={cfgDraft} setCfgDraft={setCfgDraft} invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin} onSaveConfig={onSaveConfig}/>
+        <TunePanel cfgDraft={cfgDraft} setCfgDraft={setCfgDraft} invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin} onSaveConfig={onSaveConfig}
+          tuneResult={tuneResult} setTuneResult={setTuneResult}/>
       ) : (
         <div>
           {/* service strip — the 15-day report card */}
@@ -551,7 +592,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, isAdmin, p
       )}
 
       {selected && (
-        <SKUModalV2 row={selected} loc={loc} ev={ev} cfg={cfgDraft} dcInfo={selected.dcInfo} onClose={()=>setSelected(null)}/>
+        <SKUModalV2 row={selected} loc={loc} ev={ev} cfg={cfgDraft} dcInfo={selected.dcInfo} published={published} onClose={()=>setSelected(null)}/>
       )}
     </div>
   );

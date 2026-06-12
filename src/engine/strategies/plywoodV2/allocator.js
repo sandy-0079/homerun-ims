@@ -42,7 +42,7 @@ export function allocateUnified(universe, demand, cfg) {
     plan[sku] = {};
     const no = [...(regOrderQtys[sku] || [])].sort((a, b) => a - b);
     const netAbq = no.length ? Math.ceil(no.reduce((a, b) => a + b, 0) / no.length) : 1;
-    const netPx = no.length ? Math.ceil(percentile(no, netOrdPct)) : 1;
+    const netPx = netOrdPct > 0 && no.length ? Math.ceil(percentile(no, netOrdPct)) : 1;  // 0 = floor off
     floor[sku] = netAbq;
 
     for (const ds of DS_LIST) {
