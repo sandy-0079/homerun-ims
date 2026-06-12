@@ -595,8 +595,9 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   });
   const [dcTune, setDcTune] = useState(null);
 
-  // Default view follows the viewed DS's publish state: published → live, testing → eval.
-  const locPublished = loc !== "DC" && dsPublished(loc);
+  // Default view follows the viewed location's publish state (DC included):
+  // published → live, testing → eval. Manual toggle still overrides afterwards.
+  const locPublished = loc === "DC" ? dcPub : dsPublished(loc);
   useEffect(() => { setViewMode(locPublished ? "live" : "eval"); }, [loc, locPublished]);
   const [query, setQuery] = useState("");
   const [fBrand, setFBrand] = useState("All");
