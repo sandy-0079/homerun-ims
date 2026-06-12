@@ -3,7 +3,7 @@
 // card (per-DS service + OOS column). Tune sub-tab: knobs + Auto-tune Pareto frontier.
 // Publish (admin) saves config — the engine refits the SAME formula on the FULL window.
 // All computation client-side; only Publish writes to Supabase.
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   ReferenceLine, ReferenceArea, ResponsiveContainer, LineChart, Line,
@@ -242,9 +242,33 @@ const dcKnobLabel = (k) => `repl P${k.dcReplPercentile} · bulk P${k.dcBulkOrder
 
 // DC tune panel: dual-line frontier (bulk service + induced regular service) over the
 // 27-config DC sweep. Drain derives from the current DS plans — publish DSes first.
-function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, dcPub, onPublishDC, onRevertDC, hasSaved, allDSPublished, dcTune, setDcTune }) {
+function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, dcPub, onPublishDC, onRevertDC, hasSaved, allDSPublished, dcTune, setDcTune, locked, onUnpublish, onRelock, liveSummary }) {
   const [running, setRunning] = useState(false);
   const [open, setOpen] = useState(true);
+
+  if (locked) {
+    return (
+      <div style={{background:HR.surface,borderRadius:8,padding:"10px 14px",border:`1px solid #BFDBFE`,marginBottom:10,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,fontWeight:700}}>DC — published plan</span>
+        <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#DCFCE7",color:HR.green,fontWeight:700}}>✓ locked</span>
+        {liveSummary && (
+          <span style={{fontSize:11,color:"#333"}}>
+            TO fulfilment: <b style={{color:svcColor(liveSummary.toFill)}}>{(liveSummary.toFill*100).toFixed(1)}%</b>
+            &nbsp;·&nbsp; bulk service: <b style={{color:liveSummary.bulk>=0.9?HR.green:liveSummary.bulk>=0.7?HR.amber:HR.red}}>{(liveSummary.bulk*100).toFixed(1)}%</b>
+            &nbsp;·&nbsp; plan size: <b>{liveSummary.fp}</b> sheets (ΣMax)
+          </span>
+        )}
+        <span style={{fontSize:10,color:HR.muted}}>knobs: {dcKnobLabel(cfgDraft)}</span>
+        <div style={{flex:1}}/>
+        {isAdmin && (
+          <button style={btn(false)} onClick={()=>onUnpublish("DC")}
+            title="Unlock the DC for re-tuning — the published plan stays live in the engine until you publish again">
+            Unpublish & tune
+          </button>
+        )}
+      </div>
+    );
+  }
 
   const runSweep = () => {
     setRunning(true);
@@ -285,6 +309,7 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
         <button style={btn(true)} onClick={runSweep} disabled={running}>{running ? "Sweeping…" : dcTune ? "Re-run DC sweep" : "Run DC sweep"}</button>
         {isAdmin && !dcPub && <button style={{...btn(false),borderColor:HR.green,color:HR.green}} onClick={onPublishDC}>Publish DC only</button>}
         {isAdmin && !dcPub && hasSaved && <button style={btn(false)} onClick={onRevertDC}>Revert DC</button>}
+        {isAdmin && dcPub && <button style={btn(false)} onClick={()=>onRelock("DC")} title="No changes made — lock back onto the published plan">Keep published plan</button>}
         <span style={{fontSize:10,color:HR.muted}}>current: {dcKnobLabel(cfgDraft)}</span>
         <span style={{fontSize:11,display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
           α (bulk share routed to DC)
@@ -353,10 +378,35 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
 
 // Per-DS tune panel: lives at the top of the SKU view for the selected location.
 // Clicking a point sets a per-DS knob OVERRIDE (dsKnobs[loc]); global knobs apply elsewhere.
-function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult, dsPub, onPublishDS, onRevertDS, hasSaved }) {
+function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult, dsPub, onPublishDS, onRevertDS, hasSaved, locked, onUnpublish, onRelock, liveSummary }) {
   const [tuning, setTuning] = useState(false);
   const [open, setOpen] = useState(true);
   const [knobsOpen, setKnobsOpen] = useState(false);
+
+  // Published & locked: frozen summary — the graph only returns via Unpublish & tune.
+  if (locked) {
+    const eff = Object.fromEntries(KNOB_FIELDS.map(f => [f, cfgDraft.dsKnobs?.[loc]?.[f] ?? cfgDraft[f]]));
+    return (
+      <div style={{background:HR.surface,borderRadius:8,padding:"10px 14px",border:`1px solid #BFDBFE`,marginBottom:10,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,fontWeight:700}}>{loc} — published plan</span>
+        <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#DCFCE7",color:HR.green,fontWeight:700}}>✓ locked</span>
+        {liveSummary && (
+          <span style={{fontSize:11,color:"#333"}}>
+            service (last 15d, in its fit): <b style={{color:svcColor(liveSummary.svc)}}>{(liveSummary.svc*100).toFixed(1)}%</b>
+            &nbsp;·&nbsp; plan size: <b>{liveSummary.fp}</b> sheets (ΣMax)
+          </span>
+        )}
+        <span style={{fontSize:10,color:HR.muted}}>knobs: {knobLabel(eff)}</span>
+        <div style={{flex:1}}/>
+        {isAdmin && (
+          <button style={btn(false)} onClick={()=>onUnpublish(loc)}
+            title="Unlock this DS for re-tuning — the published plan stays live in the engine until you publish again">
+            Unpublish & tune
+          </button>
+        )}
+      </div>
+    );
+  }
 
   const runTune = () => {
     setTuning(true);
@@ -405,6 +455,9 @@ function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdm
         )}
         {isAdmin && !dsPub && hasSaved && (
           <button style={btn(false)} onClick={()=>onRevertDS(loc)} title={`Discard ${loc}'s draft changes — back to its published knobs`}>Revert {loc}</button>
+        )}
+        {isAdmin && dsPub && (
+          <button style={btn(false)} onClick={()=>onRelock(loc)} title="No changes made — lock back onto the published plan">Keep published plan</button>
         )}
         {hasOverride && (
           <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#EDE9FE",color:"#6D28D9",fontWeight:700}}>
@@ -542,7 +595,8 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   const [cfgDraft, setCfgDraft] = useState(() => ({ ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) }));
   const [tuneResult, setTuneResult] = useState(null);   // lifted: survives sub-tab switches
   const [selected, setSelected] = useState(null);
-  const [viewMode, setViewMode] = useState("eval");      // 'eval' (75/15 report card) | 'live' (full-window published fit)
+  // per-location edit state: published locations are LOCKED until explicitly unpublished
+  const [editing, setEditing] = useState({});
 
   // Phase: published = saved config matches the draft (and a config exists)
   const savedCfg = { ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) };
@@ -567,6 +621,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
     };
     setCfgDraft(d => ({ ...d, dsKnobs: { ...(d.dsKnobs || {}), [ds]: eff } }));
     if (onSaveConfig) onSaveConfig(newCfg);
+    lockLoc(ds);
   };
   // Revert ONE DS: snap the draft back to whatever is published for it (knobs + capacity).
   const revertDS = (ds) => {
@@ -587,6 +642,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
     const newCfg = { ...savedCfg, dcCapacity: cfgDraft.dcCapacity ?? V2_DEFAULTS.dcCapacity };
     for (const f of DC_KNOB_FIELDS) newCfg[f] = cfgDraft[f] ?? V2_DEFAULTS[f];
     if (onSaveConfig) onSaveConfig(newCfg);
+    lockLoc("DC");
   };
   const revertDC = () => setCfgDraft(d => {
     const next = { ...d, dcCapacity: savedCfg.dcCapacity ?? V2_DEFAULTS.dcCapacity };
@@ -595,10 +651,13 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   });
   const [dcTune, setDcTune] = useState(null);
 
-  // Default view follows the viewed location's publish state (DC included):
-  // published → live, testing → eval. Manual toggle still overrides afterwards.
+  // Lifecycle: published → LOCKED (live view, frozen graph) until Unpublish & tune;
+  // unpublished/editing → unlocked (evaluation view). No manual toggle.
   const locPublished = loc === "DC" ? dcPub : dsPublished(loc);
-  useEffect(() => { setViewMode(locPublished ? "live" : "eval"); }, [loc, locPublished]);
+  const isEditing = (l) => editing[l] ?? !(l === "DC" ? dcPub : dsPublished(l));
+  const locked = locPublished && !isEditing(loc);
+  const unpublishLoc = (l) => setEditing(e => ({ ...e, [l]: true }));
+  const lockLoc = (l) => setEditing(e => ({ ...e, [l]: false }));
   const [query, setQuery] = useState("");
   const [fBrand, setFBrand] = useState("All");
   const [fType, setFType] = useState("All");
@@ -618,7 +677,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
 
   // DC plan (full pipeline incl. drain-based DC) on the fit window
   // live mode only meaningful when the full plan exists
-  const live = viewMode === "live" && !!ev?.fullPlan;
+  const live = locked && !!ev?.fullPlan;
   const modeDemand = live ? ev.fullDemand : ev?.fitDemand;
   const modePlan = live ? ev.fullPlan : ev?.plan;
   const modeOos = live ? ev?.liveOosCounts : ev?.oosCounts;
@@ -741,8 +800,10 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
             : `fit ${ev.fitWindow.from} → ${ev.fitWindow.to} · tested on ${ev.testWindow.from} → ${ev.testWindow.to}`}
         </span>
         <div style={{flex:1}}/>
-        <button style={btn(viewMode==="eval")} onClick={()=>setViewMode("eval")} title="Plan fitted without the last 15 days, scored on them — the honest tuning view">Evaluation (75/15)</button>
-        <button style={btn(viewMode==="live")} onClick={()=>setViewMode("live")} disabled={!ev.fullPlan} title="Full-window fit — what publish produces; OOS column shows what it would have missed in the last 15d">Live plan</button>
+        <span style={{fontSize:10,padding:"2px 10px",borderRadius:10,fontWeight:700,
+          background:locked?"#EFF6FF":"#FEF9E7",color:locked?HR.blue:"#92400E",border:`1px solid ${locked?"#BFDBFE":"#FDE68A"}`}}>
+          {locked ? "LIVE — published plan (full-window fit)" : "TUNING — evaluation view (fit 75d, scored on last 15d)"}
+        </span>
       </div>
 
       {(
@@ -783,13 +844,17 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
               invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin}
               onSaveConfig={onSaveConfig} tuneResult={tuneResult} setTuneResult={setTuneResult}
               dsPub={dsPublished(loc)} onPublishDS={publishDS} onRevertDS={revertDS}
-              hasSaved={!!plywoodNetworkV2Config}/>
+              hasSaved={!!plywoodNetworkV2Config}
+              locked={locked} onUnpublish={unpublishLoc} onRelock={lockLoc}
+              liveSummary={live ? { svc: ev.liveServiceLevels?.regular.perDS[loc]?.service ?? 1, fp: fp.perDS[loc] } : null}/>
           ) : (
             <DCTunePanel cfgDraft={cfgDraft} setCfgDraft={setCfgDraft}
               invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin}
               dcPub={dcPub} onPublishDC={publishDC} onRevertDC={revertDC}
               hasSaved={!!plywoodNetworkV2Config} allDSPublished={publishedCount === 5}
-              dcTune={dcTune} setDcTune={setDcTune}/>
+              dcTune={dcTune} setDcTune={setDcTune}
+              locked={locked} onUnpublish={unpublishLoc} onRelock={lockLoc}
+              liveSummary={live ? { toFill: ev.liveServiceLevels?.toFill?.lineRate ?? 1, bulk: ev.liveServiceLevels?.bulk.overall ?? 1, fp: thickUsed + thinUsed } : null}/>
           )}
 
           {/* location stat cards + capacity bars (display-only) */}
