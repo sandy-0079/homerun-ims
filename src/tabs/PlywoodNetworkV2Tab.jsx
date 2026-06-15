@@ -987,12 +987,12 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
         case "sku": return a.sku.localeCompare(b.sku) * sortDir;
         case "name": return a.name.localeCompare(b.name) * sortDir;
         case "brand": return (a.brand || "").localeCompare(b.brand || "") * sortDir;
-        case "mm": return ((b.mm ?? -1) - (a.mm ?? -1)) * sortDir;
-        case "nzd": return (b.nzd - a.nzd) * sortDir;
-        case "abq": return (b.abq - a.abq) * sortDir;
-        case "min": return (b.min - a.min) * sortDir;
-        case "max": return (b.max - a.max) * sortDir;
-        case "oos": return ((b.oos || 0) - (a.oos || 0)) * sortDir;
+        case "mm": return ((a.mm ?? -1) - (b.mm ?? -1)) * sortDir;
+        case "nzd": return (a.nzd - b.nzd) * sortDir;
+        case "abq": return (a.abq - b.abq) * sortDir;
+        case "min": return (a.min - b.min) * sortDir;
+        case "max": return (a.max - b.max) * sortDir;
+        case "oos": return ((a.oos || 0) - (b.oos || 0)) * sortDir;
         default: return 0;
       }
     });
