@@ -615,8 +615,8 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
 
   const exportCsv = () => {
     const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const hdr = ["SKU","Item Name","Brand","Class","Total Sales Qty","Total Sales (cost ₹)","Network NZD","Holding Value ₹","Rent Ratio","Service Ratio","Keep Score","Flag"];
-    const lines = rows.map(r => [r.sku, r.name, r.brand, r.tclass, r.windowQty, Math.round(r.salesValue), r.networkNZD, Math.round(r.holdingValue), r.rentRatio.toFixed(2), r.serviceRatio.toFixed(2), r.keepScore.toFixed(2), r.flag].map(esc).join(","));
+    const hdr = ["SKU","Item Name","Brand","Class","Network NZD","Max Hold Qty","Sold Qty","Holding ₹ (avg)","Sales ₹ (cost)","Rent Ratio","Service Ratio","Keep Score","Flag"];
+    const lines = rows.map(r => [r.sku, r.name, r.brand, r.tclass, r.networkNZD, r.maxHoldQty, r.windowQty, Math.round(r.holdingValue), Math.round(r.salesValue), r.rentRatio.toFixed(2), r.serviceRatio.toFixed(2), r.keepScore.toFixed(2), r.flag].map(esc).join(","));
     const blob = new Blob([[hdr.map(esc).join(","), ...lines].join("\n")], { type: "text/csv" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "plywood-v2-keepscore.csv"; a.click();
   };
@@ -692,8 +692,9 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
           <thead><tr>
             {th("sku","SKU")}{th("name","Item Name")}{th("brand","Brand")}{th("tclass","Class")}
-            {th("salesValue","Total Sales ₹",true)}{th("networkNZD","Net NZD",true)}{th("holdingValue","Holding ₹",true)}
-            {th("rentRatio","Rent",true)}{th("serviceRatio","Service",true)}{th("keepScore","Keep Score",true)}{th("flag","Flag",true)}
+            {th("networkNZD","Net NZD",true)}{th("maxHoldQty","Max Hol Qty",true)}{th("windowQty","Sold Qty",true)}
+            {th("holdingValue","Holding ₹",true)}{th("salesValue","Sales ₹",true)}
+            {th("rentRatio","Rent Ratio",true)}{th("serviceRatio","Service Ratio",true)}{th("keepScore","Keep Score",true)}{th("flag","Flag",true)}
           </tr></thead>
           <tbody>
             {filtered.map(r => (
@@ -704,9 +705,11 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
                 <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
                   <span style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:r.tclass==="thick"?"#FEF3C7":"#DBEAFE",color:r.tclass==="thick"?"#92400E":HR.blue}}>{r.tclass==="thick"?"Thick":"Thin"}</span>
                 </td>
-                <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.salesValue?fmtL(r.salesValue):"—"}</td>
                 <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.networkNZD}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.maxHoldQty}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.windowQty}</td>
                 <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.holdingValue?fmtL(r.holdingValue):"—"}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.salesValue?fmtL(r.salesValue):"—"}</td>
                 <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:r.rentRatio>=1?HR.green:"#555"}}>{r.rentRatio.toFixed(2)}</td>
                 <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:r.serviceRatio>=1?HR.green:"#555"}}>{r.serviceRatio.toFixed(2)}</td>
                 <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.keepScore.toFixed(2)}</td>

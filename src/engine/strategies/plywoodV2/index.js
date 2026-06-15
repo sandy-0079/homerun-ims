@@ -138,9 +138,10 @@ export function keepScoreAnalysis(inv, skuM, priceData, cfg) {
     name: skuM[s.sku]?.name || s.sku,
     brand: skuM[s.sku]?.brand || '',
     tclass: tclass[s.sku],
-    windowQty: windowQty[s.sku] || 0,
+    windowQty: windowQty[s.sku] || 0,                 // Sold Qty (total, regular + bulk)
     networkNZD: networkNZD[s.sku] || 0,
-    salesValue: (windowQty[s.sku] || 0) * (priceData?.[s.sku] || 0),
+    maxHoldQty: DS_LIST.reduce((a, ds) => a + plan[s.sku][ds].max, 0) + (dcPlan[s.sku]?.max || 0), // ΣMax = peak shelf footprint
+    salesValue: (windowQty[s.sku] || 0) * (priceData?.[s.sku] || 0),  // Sales ₹ (cost basis)
   }));
 
   // capacity-freed consequence of the Cut set, per node × class (DS + DC)
