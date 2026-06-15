@@ -353,6 +353,10 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
                     fill={index===activeIdx?HR.yellow:payload.fits?HR.green:HR.white}
                     stroke={payload.fits?HR.green:HR.blue} strokeWidth={2} style={{cursor:"pointer"}}
                     onClick={(e2)=>{e2.stopPropagation(); applyDC(payload.knobs);}}/>
+                );}}
+                activeDot={(props)=>{ const { cx, cy, payload } = props; return (
+                  <circle cx={cx} cy={cy} r={8} fill={HR.yellow} stroke={HR.blue} strokeWidth={2} style={{cursor:"pointer"}}
+                    onClick={(e2)=>{e2.stopPropagation(); applyDC(payload.knobs);}}/>
                 );}}/>
             </LineChart>
           </ResponsiveContainer>
