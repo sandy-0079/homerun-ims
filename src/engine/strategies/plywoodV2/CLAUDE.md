@@ -1,12 +1,13 @@
 # CLAUDE.md — Plywood Network v2
 
 Capacity-aware plywood Min/Max engine. Replaces v1 Network Design (`../plywoodNetwork.js`,
-brand-node stocking). **Status: feature-complete on the engine + tune UI; not yet activated
-in prod. Next step is Keep Score → category discontinuation → re-run, then prod cutover.**
+brand-node stocking). **Status: feature-complete on engine + tune UI + Keep Score/Assortment view;
+not yet activated in prod. Remaining before cutover is the capacity/SOP business decisions and the
+category-team cut-list review — see Open items.**
 
 - **Branch:** `feature/plywood-network-v2` — NEVER push or PR without explicit user instruction. Local testing only.
 - **Spec:** `docs/superpowers/specs/2026-06-11-plywood-network-v2-design.md` (read for full rationale).
-- **Tests:** `npx vitest run` — 59 passing as of last session. vitest is a devDependency; `npm test` also works.
+- **Tests:** `npx vitest run` — 60 passing as of 2026-06-15. vitest is a devDependency; `npm test` also works.
 - **Activation:** dormant until `categoryStrategies["Plywood, MDF & HDHMR"] === "network_design_v2"` in prod config. v1 (`network_design`) untouched and still the live strategy.
 - **Config row:** `params/plywoodNetworkV2Config` (separate Supabase row, like v1's `plywoodNetworkConfig`). 406 errors for this row are EXPECTED until first admin publish.
 
@@ -105,6 +106,10 @@ is the worst-case fallback. Bulk % shows in tooltip only.
 - **Evaluation** (tuning view): 75d fit scored on unseen last 15d. The HONEST forward number — use to *choose* configs.
 - **Live** (locked view): full-window fit scored on last 15d (in-sample). A health reading of what's running — always reads higher.
 
+**Top location strip** (both views): one card per DS + a DC card + overall regular-service card. DS cards show 15d regular service; **DC card shows TO-fulfilment %** (real-DC replay over the 15d window — `dcToFill` memo, not the infinite-DC number). All strip %'s use the **90/80 band** (`pillColor`: ≥90 green / ≥80 amber / <80 red — distinct from the stricter `svcColor` used on tuning charts). Selected location pill is visually distinct (tint + 2px yellow border + ● marker). Clicking a DS/DC card selects that location.
+
+**The tab is kept mounted** (App.jsx lazy-mounts on first open via `v2Mounted`, then never unmounts) so all draft/tuning state survives tab switches. Keep Score knobs additionally persist across reloads via `localStorage["plywoodV2KeepScore"]`.
+
 ---
 
 ## Per-DS tuning
@@ -171,10 +176,18 @@ to a turnover test** (PP cancels: `turns × [gm/(1−gm)]/(carry·buffer)` = tur
 **Service = networkNZD ÷ threshold(5)**. `nodes` carries the capacity-freed consequence of cutting
 (per DS/DC × class: before→after, flips-green) — **capacity is shown, never a score factor.**
 Surfaced as the **Assortment / Keep Score** view (header toggle, network-level, alongside Locations):
-summary cards + capacity-impact panel + sortable/filterable table + editable knobs (admin) + CSV export.
+summary cards (Keep/Watch/Cut, sales-at-risk, holding freed, capacity-impact panel) + sortable/filterable
+table + editable knobs (admin) + CSV export. **Table columns:** SKU (with copy icon), Item Name, Brand,
+Class, Net NZD, Max Hol Qty (ΣMax peak shelf), Sold Qty (total reg+bulk), Holding ₹ (avg, cost), Sales ₹
+(revenue), Rent Ratio, Service Ratio, Keep Score, Flag. Sticky header + viewport-fill scroll (pinned
+cards/filters/knobs, only rows scroll). Default sort: Keep Score ascending (cuts first).
 **Recommend-only** — cutting happens via discontinuation → SKU master, then the plan re-runs on survivors.
 Validated: ~27–30 cuts, ~1–1.7% sales, ~₹6–9L holding freed; cuts flip DS thin nodes green but NOT
 DS04/DS05 thick (those need deeper cuts or racking — consistent with the capacity wall).
+
+**Other UI notes:** copy-SKU icon on both the Locations and Assortment tables (mirrors Stock Health).
+Locations table default sort = **descending NZD**; numeric sort comparators are `(a−b)×sortDir`
+(arrow ↓ = descending) — same convention as the Assortment table.
 
 ## Open items / NEXT SESSION
 
@@ -184,6 +197,7 @@ DS04/DS05 thick (those need deeper cuts or racking — consistent with the capac
 4. **Cleanup**: prune legacy knobs (`dcBulkPercentile`, greedy/empirical/tiered knobs if those modes are dropped). `deadFloorMode` dedupe DONE.
 5. **Keep Score knobs → Supabase (shared persistence):** currently the 4 Keep Score knobs (margin, carry, ops buffer, service threshold) persist only to `localStorage["plywoodV2KeepScore"]` — per-browser, not shared across users/devices. They're a business decision driving the cut list, so they should also write to the Supabase `params/plywoodNetworkV2Config` row (e.g. fold a `keepScore` slice into a publish path or add a dedicated save) so every viewer sees the same verdict. Precedence to decide: localStorage (in-progress edits) vs saved config.
 6. **Keep Score knobs reset control:** add a small "reset to defaults" link next to the knobs (clears the localStorage key + restores `V2_DEFAULTS.keepScore`).
+7. **SKU modal in DC view:** DS rows open the `SKUModalV2` with full formula derivation (Min/Max breakdown + demand-vs-Min/Max timeline + order-size histogram). The DC view needs the equivalent — clicking a DC SKU row should open a modal showing the DC formula derivation (Repl P98 of TO-drain + Bulk P[pct] of order sizes + Cycle), the component breakdown, and the TO-drain / bulk-order charts for that SKU. (`SKUModalV2` already has an `isDC` branch for the formula text; wire DC rows to open it and add the DC-specific charts.)
 
 ---
 
