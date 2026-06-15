@@ -10,7 +10,7 @@ import {
 } from "recharts";
 import {
   V2_DEFAULTS, evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint,
-  computePlywoodNetworkV2Results, dcEvaluate, dcSweep, replay,
+  computePlywoodNetworkV2Results, dcEvaluate, dcSweep, replay, keepScoreAnalysis,
 } from "../engine/strategies/plywoodV2/index.js";
 import { percentile, inferThickness } from "../engine/utils.js";
 import { DS_LIST } from "../engine/constants.js";
@@ -582,11 +582,150 @@ function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdm
 }
 
 // ── Main tab ──────────────────────────────────────────────────────────────────
+// ── Assortment / Keep Score view (network-level, recommend-only) ──────────────
+const KS_FLAG_COLOR = { Keep: HR.green, Watch: HR.amber, Cut: HR.red };
+function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
+  const [flagF, setFlagF] = useState("All");
+  const [brandF, setBrandF] = useState("All");
+  const [q, setQ] = useState("");
+  const [sortBy, setSortBy] = useState("keepScore");
+  const [sortDir, setSortDir] = useState(1);   // cuts (lowest score) first by default
+
+  if (!ks) return <div style={{textAlign:"center",padding:60,color:HR.muted,fontSize:13}}>No plywood SKUs to score.</div>;
+  const { rows, summary, nodes } = ks;
+  const ksCfg = cfgDraft.keepScore || {};
+  const setKs = (k, v) => setCfgDraft(d => ({ ...d, keepScore: { ...(d.keepScore || {}), [k]: v } }));
+
+  const brands = ["All", ...[...new Set(rows.map(r => r.brand).filter(Boolean))].sort()];
+  const ql = q.toLowerCase();
+  const filtered = rows
+    .filter(r => (flagF === "All" || r.flag === flagF) && (brandF === "All" || r.brand === brandF)
+      && (!ql || r.sku.toLowerCase().includes(ql) || r.name.toLowerCase().includes(ql)))
+    .sort((a, b) => {
+      const v = (x) => sortBy === "name" ? x.name : sortBy === "brand" ? x.brand : sortBy === "sku" ? x.sku : x[sortBy];
+      const va = v(a), vb = v(b);
+      if (typeof va === "string") return va.localeCompare(vb) * sortDir;
+      return (va - vb) * sortDir;
+    });
+  const hSort = (col) => { if (sortBy === col) setSortDir(d => -d); else { setSortBy(col); setSortDir(col === "keepScore" ? 1 : -1); } };
+  const th = (col, label, center) => (
+    <th key={col} onClick={() => hSort(col)} style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:sortBy===col?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2"}}>
+      {label}{sortBy===col?(sortDir===-1?"↓":"↑"):<span style={{color:"#ccc",fontSize:8}}>↕</span>}</th>
+  );
+
+  const exportCsv = () => {
+    const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const hdr = ["SKU","Item Name","Brand","Class","Total Sales Qty","Total Sales (cost ₹)","Network NZD","Holding Value ₹","Rent Ratio","Service Ratio","Keep Score","Flag"];
+    const lines = rows.map(r => [r.sku, r.name, r.brand, r.tclass, r.windowQty, Math.round(r.salesValue), r.networkNZD, Math.round(r.holdingValue), r.rentRatio.toFixed(2), r.serviceRatio.toFixed(2), r.keepScore.toFixed(2), r.flag].map(esc).join(","));
+    const blob = new Blob([[hdr.map(esc).join(","), ...lines].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "plywood-v2-keepscore.csv"; a.click();
+  };
+  const fmtL = v => v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : `₹${Math.round(v/1000)}K`;
+  const overNodes = nodes.filter(n => n.cap != null && n.before > n.cap);
+
+  return (
+    <div>
+      {/* summary cards */}
+      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+        <div style={{padding:"8px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8}}>
+          <div style={{fontSize:9,color:HR.muted}}>Verdict (network-level, per SKU)</div>
+          <div style={{fontSize:15,fontWeight:800}}>
+            <span style={{color:HR.green}}>{summary.keep} Keep</span> · <span style={{color:HR.amber}}>{summary.watch} Watch</span> · <span style={{color:HR.red}}>{summary.cut} Cut</span>
+          </div>
+          <div style={{fontSize:9,color:HR.muted}}>of {summary.total} SKUs</div>
+        </div>
+        <div style={{padding:"8px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8}}>
+          <div style={{fontSize:9,color:HR.muted}}>Sales at risk (cutting all Cut)</div>
+          <div style={{fontSize:15,fontWeight:800,color:HR.red}}>{fmtL(summary.salesAtRisk)}</div>
+          <div style={{fontSize:9,color:HR.muted}}>{(summary.salesAtRisk/Math.max(summary.totalSales,1)*100).toFixed(1)}% of ₹{(summary.totalSales/10000000).toFixed(2)}Cr</div>
+        </div>
+        <div style={{padding:"8px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8}}>
+          <div style={{fontSize:9,color:HR.muted}}>Holding freed</div>
+          <div style={{fontSize:15,fontWeight:800,color:HR.green}}>{fmtL(summary.holdingFreed)}</div>
+          <div style={{fontSize:9,color:HR.muted}}>{(summary.holdingFreed/Math.max(summary.totalHolding,1)*100).toFixed(0)}% of plan capital</div>
+        </div>
+        <div style={{padding:"8px 14px",background:summary.flipsGreen.length?"#F0FDF4":HR.surface,border:`1px solid ${summary.flipsGreen.length?"#BBF7D0":HR.border}`,borderRadius:8,flex:1,minWidth:220}}>
+          <div style={{fontSize:9,color:HR.muted}}>Capacity impact of the cut</div>
+          {summary.flipsGreen.length
+            ? <div style={{fontSize:12,fontWeight:700,color:HR.green}}>↳ flips green: {summary.flipsGreen.join(", ")}</div>
+            : <div style={{fontSize:12,fontWeight:700,color:HR.muted}}>no over-capacity node flips on cuts alone</div>}
+          {overNodes.length > 0 && (
+            <div style={{fontSize:9,color:HR.muted,marginTop:2}}>
+              {overNodes.map(n => `${n.node} ${n.tclass} ${n.before}→${n.after}/${n.cap}${n.flips?" ✓":n.stillOver?" (still over)":""}`).join(" · ")}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>
+        Recommend-only. Score = max(Rent, Service); Keep ≥1.3 · Watch 1.0–1.3 · Cut &lt;1. Rent = turns × margin/carry (price cancels); Service = network NZD ÷ {ksCfg.serviceNZDThreshold ?? 5}. Totals include bulk. Cutting happens via discontinuation → SKU master, then the plan re-runs on survivors.
+      </div>
+
+      {/* filters + knobs + export */}
+      <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+        <input type="text" placeholder="Search SKU or name…" value={q} onChange={e=>setQ(e.target.value)} style={{...sel,width:200,cursor:"text"}}/>
+        {["All","Keep","Watch","Cut"].map(f => (
+          <button key={f} style={btn(flagF===f)} onClick={()=>setFlagF(f)}>{f}{f!=="All"?` ${summary[f.toLowerCase()]}`:""}</button>
+        ))}
+        <select value={brandF} onChange={e=>setBrandF(e.target.value)} style={sel}>
+          {brands.map(b => <option key={b} value={b}>{b==="All"?"All Brands":b}</option>)}
+        </select>
+        <div style={{flex:1}}/>
+        <button style={btn(false)} onClick={exportCsv}>⬇ Export CSV</button>
+      </div>
+
+      {/* knobs (admin) */}
+      {isAdmin && (
+        <div style={{display:"flex",gap:"6px 20px",flexWrap:"wrap",marginBottom:8,padding:"8px 12px",background:"#FAFAF8",border:`1px solid ${HR.border}`,borderRadius:8}}>
+          {[["grossMarginPct","Gross margin",0.06,"×100%"],["carryRateQuarterly","Carry /qtr",0.05,"×100%"],["opsBuffer","Ops buffer",1.5,""],["serviceNZDThreshold","Service NZD threshold",5,""]].map(([k,label,def]) => (
+            <div key={k} style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:11}}>{label}</span>
+              <input type="number" step="any" style={{...sel,width:64,cursor:"text"}} value={ksCfg[k] ?? def} onChange={e=>setKs(k, Number(e.target.value))}/>
+            </div>
+          ))}
+          <span style={{fontSize:9,color:HR.muted,alignSelf:"center"}}>edits recompute the verdict live; saved on next Publish</span>
+        </div>
+      )}
+
+      {/* table */}
+      <div style={{overflowX:"auto",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`,maxHeight:560,overflowY:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+          <thead><tr>
+            {th("sku","SKU")}{th("name","Item Name")}{th("brand","Brand")}{th("tclass","Class")}
+            {th("salesValue","Total Sales ₹",true)}{th("networkNZD","Net NZD",true)}{th("holdingValue","Holding ₹",true)}
+            {th("rentRatio","Rent",true)}{th("serviceRatio","Service",true)}{th("keepScore","Keep Score",true)}{th("flag","Flag",true)}
+          </tr></thead>
+          <tbody>
+            {filtered.map(r => (
+              <tr key={r.sku} style={{background:r.flag==="Cut"?"#FEF2F2":r.flag==="Watch"?"#FFFBEB":"#fff"}}>
+                <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#555",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap"}}>{r.sku}</td>
+                <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.name}>{r.name}</td>
+                <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555",whiteSpace:"nowrap"}}>{r.brand}</td>
+                <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
+                  <span style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:r.tclass==="thick"?"#FEF3C7":"#DBEAFE",color:r.tclass==="thick"?"#92400E":HR.blue}}>{r.tclass==="thick"?"Thick":"Thin"}</span>
+                </td>
+                <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.salesValue?fmtL(r.salesValue):"—"}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.networkNZD}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.holdingValue?fmtL(r.holdingValue):"—"}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:r.rentRatio>=1?HR.green:"#555"}}>{r.rentRatio.toFixed(2)}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:r.serviceRatio>=1?HR.green:"#555"}}>{r.serviceRatio.toFixed(2)}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.keepScore.toFixed(2)}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,borderBottom:"1px solid rgba(0,0,0,0.05)",color:KS_FLAG_COLOR[r.flag]}}>{r.flag}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData, isAdmin, plywoodNetworkV2Config, onSaveConfig, isActive, engineResults }) {
   const [loc, setLoc] = useState("DS01");
   const [cfgDraft, setCfgDraft] = useState(() => ({ ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) }));
   const [tuneResult, setTuneResult] = useState(null);   // lifted: survives sub-tab switches
   const [selected, setSelected] = useState(null);
+  const [view, setView] = useState("location");          // 'location' | 'assortment'
   // per-location edit state: published locations are LOCKED until explicitly unpublished
   const [editing, setEditing] = useState({});
 
@@ -659,6 +798,13 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   const [sortDir, setSortDir] = useState(-1);
 
   const ready = invoiceData?.length > 0 && Object.keys(skuMaster || {}).length > 0;
+
+  // Keep Score / assortment analysis — full effective plan, only when that view is open
+  const ks = useMemo(() => {
+    if (!ready || view !== "assortment") return null;
+    try { return keepScoreAnalysis(invoiceData, skuMaster, priceData || {}, cfgDraft); }
+    catch (e) { console.error("keep score error:", e); return null; }
+  }, [ready, view, invoiceData, skuMaster, priceData, cfgDraft]);
 
   // 75/15 evaluation (the tab's core computation)
   const ev = useMemo(() => {
@@ -819,13 +965,19 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
             : `fit ${ev.fitWindow.from} → ${ev.fitWindow.to} · tested on ${ev.testWindow.from} → ${ev.testWindow.to}`}
         </span>
         <div style={{flex:1}}/>
-        <span style={{fontSize:10,padding:"2px 10px",borderRadius:10,fontWeight:700,
-          background:locked?"#EFF6FF":"#FEF9E7",color:locked?HR.blue:"#92400E",border:`1px solid ${locked?"#BFDBFE":"#FDE68A"}`}}>
-          {locked ? "LIVE — published plan (full-window fit)" : "TUNING — evaluation view (fit 75d, scored on last 15d)"}
-        </span>
+        <button style={btn(view==="location")} onClick={()=>setView("location")}>Locations</button>
+        <button style={btn(view==="assortment")} onClick={()=>setView("assortment")}>Assortment / Keep Score</button>
+        {view==="location" && (
+          <span style={{fontSize:10,padding:"2px 10px",borderRadius:10,fontWeight:700,
+            background:locked?"#EFF6FF":"#FEF9E7",color:locked?HR.blue:"#92400E",border:`1px solid ${locked?"#BFDBFE":"#FDE68A"}`}}>
+            {locked ? "LIVE — published plan (full-window fit)" : "TUNING — evaluation view (fit 75d, scored on last 15d)"}
+          </span>
+        )}
       </div>
 
-      {(
+      {view === "assortment" ? (
+        <AssortmentView ks={ks} cfgDraft={cfgDraft} setCfgDraft={setCfgDraft} isAdmin={isAdmin}/>
+      ) : (
         <div>
           {/* service strip — the 15-day report card */}
           <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"stretch"}}>
