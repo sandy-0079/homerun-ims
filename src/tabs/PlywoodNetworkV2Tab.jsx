@@ -609,7 +609,7 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
     });
   const hSort = (col) => { if (sortBy === col) setSortDir(d => -d); else { setSortBy(col); setSortDir(col === "keepScore" ? 1 : -1); } };
   const th = (col, label, center) => (
-    <th key={col} onClick={() => hSort(col)} style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:sortBy===col?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2"}}>
+    <th key={col} onClick={() => hSort(col)} style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:sortBy===col?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2",position:"sticky",top:0,zIndex:2}}>
       {label}{sortBy===col?(sortDir===-1?"↓":"↑"):<span style={{color:"#ccc",fontSize:8}}>↕</span>}</th>
   );
 
@@ -688,7 +688,7 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
       )}
 
       {/* table */}
-      <div style={{overflowX:"auto",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
+      <div style={{overflow:"auto",maxHeight:"calc(100vh / 0.85 - 290px)",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
           <thead><tr>
             {th("sku","SKU")}{th("name","Item Name")}{th("brand","Brand")}{th("tclass","Class")}
