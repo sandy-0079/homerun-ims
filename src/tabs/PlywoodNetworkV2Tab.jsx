@@ -34,6 +34,15 @@ const LOCATIONS = [...DS_LIST, "DC"];
 function fmt1(v) { return v == null ? "—" : (Math.round(v * 10) / 10).toString(); }
 
 function svcColor(s) { return s >= 0.99 ? HR.green : s >= 0.95 ? HR.amber : HR.red; }
+// top location-pick cards use a 90/80 band
+function pillColor(s) { return s >= 0.9 ? HR.green : s >= 0.8 ? HR.amber : HR.red; }
+// selected vs unselected location pill
+const pillBox = (sel) => ({
+  padding:"6px 12px", borderRadius:8, cursor:"pointer",
+  background: sel ? "#FFFBEB" : HR.surface,
+  border: `2px solid ${sel ? HR.yellow : HR.border}`,
+  boxShadow: sel ? "0 0 0 2px rgba(245,196,0,0.25)" : "none",
+});
 
 function capBar(used, total, label) {
   const pct = total > 0 ? used / total * 100 : 0;
@@ -766,6 +775,13 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   const [tuneResult, setTuneResult] = useState(null);   // lifted: survives sub-tab switches
   const [selected, setSelected] = useState(null);
   const [view, setView] = useState("location");          // 'location' | 'assortment'
+  const [copiedSku, setCopiedSku] = useState(null);
+  const copySku = (sku, e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(sku).catch(() => {});
+    setCopiedSku(sku);
+    setTimeout(() => setCopiedSku(s => s === sku ? null : s), 1500);
+  };
   // per-location edit state: published locations are LOCKED until explicitly unpublished
   const [editing, setEditing] = useState({});
 
@@ -895,6 +911,18 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   // live OOS column comes from the honest live check (real DC), not the infinite-DC numbers
   const modeOos = live ? (liveCheck?.oosCounts || {}) : ev?.oosCounts;
 
+  // DC TO-fulfilment for the top strip — replay current plan + REAL effective DC over the
+  // 15d test window (evaluatePlan's main sim uses an infinite DC, which would read 100%).
+  const dcToFill = useMemo(() => {
+    if (!ev?.testDemand || !dcRes || !modePlan) return null;
+    try {
+      const dcPlan = {};
+      for (const sku of Object.keys(modePlan)) dcPlan[sku] = dcRes[sku]?.dcResult ? { ...dcRes[sku].dcResult } : { min: 0, max: 0 };
+      const sim = replay(modePlan, dcPlan, ev.testDemand, { ...cfgDraft, lookbackDays: ev.testDemand.windowDates.length });
+      return sim.serviceLevels.toFill?.lineRate ?? null;
+    } catch (e) { console.error("dc strip toFill error:", e); return null; }
+  }, [ev, dcRes, modePlan, cfgDraft]);
+
   const buckets = useMemo(() => ev ? deriveNZDBuckets(modeDemand, ev.universe) : null, [ev, modeDemand]);
 
   // Build display rows for the selected location
@@ -1023,24 +1051,24 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
           <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"stretch"}}>
             <div style={{padding:"6px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8}}>
               <div style={{fontSize:9,color:HR.muted}}>{live ? "Live-plan check — last 15d (in its fit)" : "Regular service — last 15d (out-of-window)"}</div>
-              <div style={{fontSize:20,fontWeight:800,color:svcColor(svc.overall)}}>{(svc.overall*100).toFixed(2)}%</div>
+              <div style={{fontSize:20,fontWeight:800,color:pillColor(svc.overall)}}>{(svc.overall*100).toFixed(2)}%</div>
               <div style={{fontSize:9,color:HR.muted}}>{svc.oos} OOS of {svc.total} orders</div>
             </div>
             {DS_LIST.map(ds => {
               const c = svc.perDS[ds];
               const s = c ? c.service : 1;
               return (
-                <div key={ds} style={{padding:"6px 12px",background:HR.surface,border:`1px solid ${loc===ds?HR.yellow:HR.border}`,borderRadius:8,cursor:"pointer"}} onClick={()=>setLoc(ds)}>
-                  <div style={{fontSize:9,color:HR.muted}}>{ds}</div>
-                  <div style={{fontSize:15,fontWeight:700,color:svcColor(s)}}>{(s*100).toFixed(1)}%</div>
+                <div key={ds} style={pillBox(loc===ds)} onClick={()=>setLoc(ds)}>
+                  <div style={{fontSize:9,color:HR.muted,fontWeight:loc===ds?700:400}}>{ds}{loc===ds?" ●":""}</div>
+                  <div style={{fontSize:15,fontWeight:700,color:pillColor(s)}}>{(s*100).toFixed(1)}%</div>
                   <div style={{fontSize:9,color:HR.muted}}>{c ? `${c.oos}/${c.total}` : "0 orders"}</div>
                 </div>
               );
             })}
-            <div style={{padding:"6px 12px",background:HR.surface,border:`1px solid ${loc==="DC"?HR.yellow:HR.border}`,borderRadius:8,cursor:"pointer"}} onClick={()=>setLoc("DC")}>
-              <div style={{fontSize:9,color:HR.muted}}>DC</div>
-              <div style={{fontSize:15,fontWeight:700,color:HR.text}}>{isDC ? "viewing" : "view"}</div>
-              <div style={{fontSize:9,color:HR.muted}}>drain + bulk</div>
+            <div style={pillBox(loc==="DC")} onClick={()=>setLoc("DC")}>
+              <div style={{fontSize:9,color:HR.muted,fontWeight:loc==="DC"?700:400}}>DC — TO fulfilment{loc==="DC"?" ●":""}</div>
+              <div style={{fontSize:15,fontWeight:700,color:dcToFill!=null?pillColor(dcToFill):HR.muted}}>{dcToFill!=null?`${(dcToFill*100).toFixed(1)}%`:"—"}</div>
+              <div style={{fontSize:9,color:HR.muted}}>replenishment</div>
             </div>
             <div style={{padding:"6px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8,marginLeft:"auto"}}>
               <div style={{fontSize:9,color:HR.muted}}>Total plan footprint (ΣMax, 5 DS)</div>
@@ -1148,7 +1176,17 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
                   const bc = BUCKET_COLORS[Math.min(r.bucket ?? 0, BUCKET_COLORS.length-1)];
                   return (
                     <tr key={r.sku} onClick={()=>setSelected(r)} style={{background:isDC?"#fff":bc.bg,cursor:"pointer"}}>
-                      <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#555",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap"}}>{r.sku}</td>
+                      <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap"}} onClick={e=>e.stopPropagation()}>
+                        <span style={{display:"flex",alignItems:"center",gap:4}}>
+                          <span style={{fontFamily:"monospace",fontSize:10,color:"#555"}}>{r.sku}</span>
+                          <span onClick={e=>copySku(r.sku,e)} title="Copy SKU"
+                            style={{cursor:"pointer",flexShrink:0,color:copiedSku===r.sku?"#059669":"#BBAC97",lineHeight:1,display:"flex",alignItems:"center"}}>
+                            {copiedSku===r.sku
+                              ? <span style={{fontSize:9,fontWeight:700,color:"#059669"}}>✓</span>
+                              : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
+                          </span>
+                        </span>
+                      </td>
                       <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                         {r.name}
                         {r.floored && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#EDE9FE",color:"#6D28D9",border:"1px solid #C4B5FD"}}>Floor</span>}
