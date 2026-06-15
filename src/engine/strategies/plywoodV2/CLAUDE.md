@@ -124,7 +124,7 @@ service-rich while DS05 runs lean — they have very different rack pressure.
 | `allocator.js` | `allocateUnified` (default) + `allocateEmpirical`/`allocateTiered`/`allocate`(greedy) + `maxTrim` pass; `thicknessClass` |
 | `replay.js` | deterministic day-by-day sim: TO/PO timing, order-level OOS, α-routing of bulk, TO-fill tracking, drain series |
 | `dc.js` | `sizeDCOrderBulk` (Repl+Bulk+Cycle), `trimDCComponents`; legacy `sizeDC`/`trimDCToCapacity` kept for old export |
-| `keepScore.js` | `computeKeepScores` — Rent/Service ratios (NOT yet re-integrated into the rebuilt tab) |
+| `keepScore.js` | `computeKeepScores` — Rent/Service ratios. Wrapped by `keepScoreAnalysis` in index.js (real-plan holding + capacity-freed); surfaced as the Assortment view. |
 | `evaluate.js` | `evaluatePlan` (75/15), `autoTune` (240-config sweep, Pareto, presets, bucket gate), `dcEvaluate`/`dcSweep`, `deriveNZDBuckets`, `planFootprint`, `fitPlan` |
 | `index.js` | `computePlywoodNetworkV2Results` (runEngine-compatible assembly), `V2_DEFAULTS`, barrel exports |
 | `../../runEngine.js` | dispatch: `plyMode === 'network_design_v2'` → `computePlywoodNetworkV2Results` |
@@ -144,7 +144,7 @@ Capacity: `capacityFit='maxTrim'`, `dsCapacities` (per DS thick/thin — editabl
 DC (auto-tuned): `dcReplPercentile=98`, `dcBulkOrderPct=90`, `dcCoverDays` (2/4/7 in sweep). User-owned: `bulkDcServedShare` (α).
 Per-DS: `dsKnobs={}`. Keep Score: `{grossMarginPct:0.06, carryRateQuarterly:0.05, opsBuffer:1.5, serviceNZDThreshold:5}`.
 
-⚠️ **KNOWN ISSUE:** `V2_DEFAULTS` has a DUPLICATE `deadFloorMode` key (`'abq'` then `'netMedian'`). JS keeps the last → effective default is `'netMedian'`, but `allocateUnified` treats anything ≠ `'lean1'` as ABQ, so behavior is correct by accident. Clean up: dedupe (unified wants `'abq'`); the tiered allocator's `deadFloorMode` should be namespaced or read separately. Same file also carries legacy `dcBulkPercentile` (rolling-window, superseded by `dcBulkOrderPct`) and greedy/tiered/empirical knobs — harmless but prune when consolidating.
+Note: `V2_DEFAULTS` still carries legacy `dcBulkPercentile` (rolling-window, superseded by `dcBulkOrderPct`) and greedy/tiered/empirical-mode knobs — harmless but prune if those alt allocators are dropped. (The old duplicate `deadFloorMode` key is now fixed — single `'abq'`; tiered's internal else-branch is unaffected.)
 
 ---
 
@@ -158,13 +158,27 @@ Per-DS: `dsKnobs={}`. Keep Score: `{grossMarginPct:0.06, carryRateQuarterly:0.05
 
 ---
 
+## Keep Score / Assortment view (DONE 2026-06-15)
+
+`keepScoreAnalysis(inv, skuM, priceData, cfg)` in index.js → `{ rows, summary, nodes }`.
+Grades every SKU on the REAL effective plan: holding = Σ (Min+Max)/2 × PP across 5 DS + DC.
+Sales & network NZD are **total** (regular + bulk); the NZD≥2 rent gate uses total NZD.
+`KeepScore = max(Rent, Service)` — Keep ≥1.3 / Watch 1.0–1.3 / Cut <1. **Rent reduces to a turnover
+test** (price cancels: `turns × margin/(carry·buffer)`, turns = 90d sheets sold ÷ avg sheets held);
+**Service = networkNZD ÷ threshold(5)**. `nodes` carries the capacity-freed consequence of cutting
+(per DS/DC × class: before→after, flips-green) — **capacity is shown, never a score factor.**
+Surfaced as the **Assortment / Keep Score** view (header toggle, network-level, alongside Locations):
+summary cards + capacity-impact panel + sortable/filterable table + editable knobs (admin) + CSV export.
+**Recommend-only** — cutting happens via discontinuation → SKU master, then the plan re-runs on survivors.
+Validated: ~27–30 cuts, ~1–1.7% sales, ~₹6–9L holding freed; cuts flip DS thin nodes green but NOT
+DS04/DS05 thick (those need deeper cuts or racking — consistent with the capacity wall).
+
 ## Open items / NEXT SESSION
 
-1. **Keep Score** — `computeKeepScores` exists but was dropped from the rebuilt tab. Re-integrate as a panel/sub-view, grade against the FINALIZED DS+DC plan (holding value now honest), export cut-list CSV → category team → confirm cuts → re-run on survivors (likely flips DS04/05 thick green). This is the gating next step.
-2. **Capacity decision** (parked, business): is `dcCapacity` 1000/500 real or can Rampura hold ~2000 thick? Is DS04/05 thick rack expandable? The charts price both levers; the answer picks the operating point.
-3. **Bulk SOP / α**: get the DC-vs-supplier routing rule written so α stops being an estimate.
-4. **Prod cutover**: only after sim regular ≥ target, DC TO-fill ≥ target, capacity reconciled, cut-list reviewed. Then switch `categoryStrategies` to `network_design_v2`.
-5. **Cleanup**: dedupe `deadFloorMode`; prune legacy knobs; consider whether `dcKnobs`-style per-DS-DC is needed.
+1. **Capacity decision** (parked, business): is `dcCapacity` 1000/500 real or can Rampura hold ~2000 thick? Is DS04/05 thick rack expandable? The charts price both levers; the answer picks the operating point.
+2. **Bulk SOP / α**: get the DC-vs-supplier routing rule written so α stops being an estimate.
+3. **Prod cutover**: only after sim regular ≥ target, DC TO-fill ≥ target, capacity reconciled, cut-list reviewed with category team. Then switch `categoryStrategies` to `network_design_v2`.
+4. **Cleanup**: prune legacy knobs (`dcBulkPercentile`, greedy/empirical/tiered knobs if those modes are dropped). `deadFloorMode` dedupe DONE.
 
 ---
 
