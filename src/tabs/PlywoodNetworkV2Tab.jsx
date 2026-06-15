@@ -590,6 +590,13 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = useState("keepScore");
   const [sortDir, setSortDir] = useState(1);   // cuts (lowest score) first by default
+  const [copiedSku, setCopiedSku] = useState(null);
+  const copySku = (sku, e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(sku).catch(() => {});
+    setCopiedSku(sku);
+    setTimeout(() => setCopiedSku(s => s === sku ? null : s), 1500);
+  };
 
   if (!ks) return <div style={{textAlign:"center",padding:60,color:HR.muted,fontSize:13}}>No plywood SKUs to score.</div>;
   const { rows, summary, nodes } = ks;
@@ -702,7 +709,17 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
           <tbody>
             {filtered.map(r => (
               <tr key={r.sku} style={{background:r.flag==="Cut"?"#FEF2F2":r.flag==="Watch"?"#FFFBEB":"#fff"}}>
-                <td style={{padding:"3px 6px",fontFamily:"monospace",fontSize:10,color:"#555",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap"}}>{r.sku}</td>
+                <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap"}}>
+                  <span style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{fontFamily:"monospace",fontSize:10,color:"#555"}}>{r.sku}</span>
+                    <span onClick={e=>copySku(r.sku,e)} title="Copy SKU"
+                      style={{cursor:"pointer",flexShrink:0,color:copiedSku===r.sku?"#059669":"#BBAC97",lineHeight:1,display:"flex",alignItems:"center"}}>
+                      {copiedSku===r.sku
+                        ? <span style={{fontSize:9,fontWeight:700,color:"#059669"}}>✓</span>
+                        : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
+                    </span>
+                  </span>
+                </td>
                 <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.name}>{r.name}</td>
                 <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555",whiteSpace:"nowrap"}}>{r.brand}</td>
                 <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
