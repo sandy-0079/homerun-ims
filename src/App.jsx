@@ -2855,6 +2855,9 @@ function copyText(text) {
 
 export default function App(){
   const [tab,setTab]=useState("overview"),[pendingTab,setPending]=useState(null);
+  // Plywood v2: lazy-mount on first open, then keep mounted so its tuning/knob draft survives tab switches
+  const [v2Mounted,setV2Mounted]=useState(false);
+  useEffect(()=>{ if(tab==="plywoodV2") setV2Mounted(true); },[tab]);
   const [toastMsg, setToastMsg] = useState("");
   _setToastMsg = setToastMsg;
   const [invoiceData,setInv]=useState([]),[skuMaster,setSKU]=useState({});
@@ -3844,7 +3847,8 @@ const visibleOutput = useMemo(() => {
           />
         </div>
         <div style={{display:tab==="plywoodV2"?"block":"none"}}>
-          {tab==="plywoodV2" && (
+          {/* kept mounted (no tab=== guard) so tuning/knob draft state survives tab switches */}
+          {(tab==="plywoodV2" || v2Mounted) && (
             <PlywoodNetworkV2Tab
               invoiceData={invoiceData}
               skuMaster={skuMaster}
