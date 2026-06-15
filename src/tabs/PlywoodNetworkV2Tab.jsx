@@ -688,7 +688,7 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
       )}
 
       {/* table */}
-      <div style={{overflowX:"auto",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`,maxHeight:560,overflowY:"auto"}}>
+      <div style={{overflowX:"auto",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
           <thead><tr>
             {th("sku","SKU")}{th("name","Item Name")}{th("brand","Brand")}{th("tclass","Class")}
