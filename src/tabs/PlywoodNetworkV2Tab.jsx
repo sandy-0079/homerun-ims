@@ -657,8 +657,11 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
         </div>
       </div>
 
-      <div style={{fontSize:10,color:HR.muted,marginBottom:8}}>
-        Recommend-only. Score = max(Rent, Service); Keep ≥1.3 · Watch 1.0–1.3 · Cut &lt;1. Rent = turns × margin/carry (price cancels); Service = network NZD ÷ {ksCfg.serviceNZDThreshold ?? 5}. Totals include bulk. Cutting happens via discontinuation → SKU master, then the plan re-runs on survivors.
+      <div style={{fontSize:10,color:HR.muted,marginBottom:8,lineHeight:1.7}}>
+        Recommend-only · Keep Score = max(Rent, Service) · Keep ≥1.3 · Watch 1.0–1.3 · Cut &lt;1. A SKU survives if it clears <b>either</b> ratio; Cut = fails both. Totals include bulk.<br/>
+        <b>Rent Ratio</b> — does it earn enough to pay for the stock it ties up? ≈ (Sold Qty × Margin) ÷ (Avg Holding Qty × Carry Cost). Exactly: (Sales ₹ × {Math.round((ksCfg.grossMarginPct ?? 0.06)*100)}%) ÷ (Holding ₹ × {Math.round((ksCfg.carryRateQuarterly ?? 0.05)*100)}%/qtr × {ksCfg.opsBuffer ?? 1.5} buffer). ≥1 = its gross profit covers the carrying cost of the inventory it holds.<br/>
+        <b>Service Ratio</b> — does it sell often enough that customers would miss it? = network selling-days ÷ {ksCfg.serviceNZDThreshold ?? 5}. ≥1 means it sold on ≥{ksCfg.serviceNZDThreshold ?? 5} days in the 90-day window (≈ once a fortnight or more) — a staple worth keeping on demand grounds alone, regardless of economics.<br/>
+        Cutting happens via discontinuation → SKU master; the plan then re-runs on survivors.
       </div>
 
       {/* filters + knobs + export */}
