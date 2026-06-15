@@ -3,7 +3,7 @@
 // card (per-DS service + OOS column). Tune sub-tab: knobs + Auto-tune Pareto frontier.
 // Publish (admin) saves config — the engine refits the SAME formula on the FULL window.
 // All computation client-side; only Publish writes to Supabase.
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   ReferenceLine, ReferenceArea, ResponsiveContainer, LineChart, Line,
@@ -749,7 +749,20 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
 
 export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData, isAdmin, plywoodNetworkV2Config, onSaveConfig, isActive, engineResults }) {
   const [loc, setLoc] = useState("DS01");
-  const [cfgDraft, setCfgDraft] = useState(() => ({ ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) }));
+  const [cfgDraft, setCfgDraft] = useState(() => {
+    const base = { ...V2_DEFAULTS, ...(plywoodNetworkV2Config || {}) };
+    // hydrate Keep Score knobs from localStorage so edits survive reloads (recommend-only,
+    // not part of the publish lifecycle — safe to persist in isolation)
+    try {
+      const saved = JSON.parse(localStorage.getItem("plywoodV2KeepScore") || "null");
+      if (saved && typeof saved === "object") base.keepScore = { ...(base.keepScore || {}), ...saved };
+    } catch { /* ignore */ }
+    return base;
+  });
+  // persist Keep Score knob edits to localStorage
+  useEffect(() => {
+    try { localStorage.setItem("plywoodV2KeepScore", JSON.stringify(cfgDraft.keepScore || {})); } catch { /* ignore */ }
+  }, [cfgDraft.keepScore]);
   const [tuneResult, setTuneResult] = useState(null);   // lifted: survives sub-tab switches
   const [selected, setSelected] = useState(null);
   const [view, setView] = useState("location");          // 'location' | 'assortment'
