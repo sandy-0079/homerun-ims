@@ -182,6 +182,8 @@ DS04/DS05 thick (those need deeper cuts or racking — consistent with the capac
 2. **Bulk SOP / α**: get the DC-vs-supplier routing rule written so α stops being an estimate.
 3. **Prod cutover**: only after sim regular ≥ target, DC TO-fill ≥ target, capacity reconciled, cut-list reviewed with category team. Then switch `categoryStrategies` to `network_design_v2`.
 4. **Cleanup**: prune legacy knobs (`dcBulkPercentile`, greedy/empirical/tiered knobs if those modes are dropped). `deadFloorMode` dedupe DONE.
+5. **Keep Score knobs → Supabase (shared persistence):** currently the 4 Keep Score knobs (margin, carry, ops buffer, service threshold) persist only to `localStorage["plywoodV2KeepScore"]` — per-browser, not shared across users/devices. They're a business decision driving the cut list, so they should also write to the Supabase `params/plywoodNetworkV2Config` row (e.g. fold a `keepScore` slice into a publish path or add a dedicated save) so every viewer sees the same verdict. Precedence to decide: localStorage (in-progress edits) vs saved config.
+6. **Keep Score knobs reset control:** add a small "reset to defaults" link next to the knobs (clears the localStorage key + restores `V2_DEFAULTS.keepScore`).
 
 ---
 
