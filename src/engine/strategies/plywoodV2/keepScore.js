@@ -14,13 +14,17 @@ export function computeKeepScores(inputs, cfg) {
     let avgPosition = 0;
     for (const p of Object.values(plan[sku])) avgPosition += (p.min + p.max) / 2;
     if (dcPlan?.[sku]) avgPosition += (dcPlan[sku].min + dcPlan[sku].max) / 2;
-    const holdingValue = avgPosition * pp;
-    const margin = (windowQty?.[sku] || 0) * pp * gm;
-    const rentRaw = holdingValue > 0 ? margin / (holdingValue * carry * buffer) : 0;
+    const holdingValue = avgPosition * pp;            // capital tied up, at cost
+    // gm = Profit / Sales (margin on selling price). Cost = PP, so Sales = PP / (1−gm),
+    // and gross profit = Sales × gm. (1−gm) guarded for gm≥1.
+    const denomGm = gm < 1 ? (1 - gm) : 1e-9;
+    const salesValue = (windowQty?.[sku] || 0) * pp / denomGm;   // true revenue (sell-price basis)
+    const grossProfit = salesValue * gm;
+    const rentRaw = holdingValue > 0 ? grossProfit / (holdingValue * carry * buffer) : 0;
     const rentRatio = (regularNZD?.[sku] || 0) >= 2 ? rentRaw : 0;
     const serviceRatio = (networkNZD?.[sku] || 0) / svcTh;
     const keepScore = Math.max(rentRatio, serviceRatio);
     const flag = keepScore < 1 ? 'Cut' : keepScore < 1.3 ? 'Watch' : 'Keep';
-    return { sku, pp, avgPosition, holdingValue, rentRatio, serviceRatio, keepScore, flag };
+    return { sku, pp, avgPosition, holdingValue, salesValue, rentRatio, serviceRatio, keepScore, flag };
   });
 }

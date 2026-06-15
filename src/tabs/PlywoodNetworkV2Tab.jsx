@@ -615,7 +615,7 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
 
   const exportCsv = () => {
     const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const hdr = ["SKU","Item Name","Brand","Class","Network NZD","Max Hold Qty","Sold Qty","Holding ₹ (avg)","Sales ₹ (cost)","Rent Ratio","Service Ratio","Keep Score","Flag"];
+    const hdr = ["SKU","Item Name","Brand","Class","Network NZD","Max Hold Qty","Sold Qty","Holding ₹ (avg, cost)","Sales ₹ (revenue)","Rent Ratio","Service Ratio","Keep Score","Flag"];
     const lines = rows.map(r => [r.sku, r.name, r.brand, r.tclass, r.networkNZD, r.maxHoldQty, r.windowQty, Math.round(r.holdingValue), Math.round(r.salesValue), r.rentRatio.toFixed(2), r.serviceRatio.toFixed(2), r.keepScore.toFixed(2), r.flag].map(esc).join(","));
     const blob = new Blob([[hdr.map(esc).join(","), ...lines].join("\n")], { type: "text/csv" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "plywood-v2-keepscore.csv"; a.click();

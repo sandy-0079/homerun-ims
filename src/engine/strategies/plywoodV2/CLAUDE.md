@@ -163,8 +163,11 @@ Note: `V2_DEFAULTS` still carries legacy `dcBulkPercentile` (rolling-window, sup
 `keepScoreAnalysis(inv, skuM, priceData, cfg)` in index.js → `{ rows, summary, nodes }`.
 Grades every SKU on the REAL effective plan: holding = Σ (Min+Max)/2 × PP across 5 DS + DC.
 Sales & network NZD are **total** (regular + bulk); the NZD≥2 rent gate uses total NZD.
-`KeepScore = max(Rent, Service)` — Keep ≥1.3 / Watch 1.0–1.3 / Cut <1. **Rent reduces to a turnover
-test** (price cancels: `turns × margin/(carry·buffer)`, turns = 90d sheets sold ÷ avg sheets held);
+`KeepScore = max(Rent, Service)` — Keep ≥1.3 / Watch 1.0–1.3 / Cut <1. **gm = Profit/Sales (margin on
+sale price)** → Sales ₹ = SoldQty × PP / (1−gm) [true revenue]; gross profit = Sales × gm. **Rent reduces
+to a turnover test** (PP cancels: `turns × [gm/(1−gm)]/(carry·buffer)` = turns × 0.85 at defaults; Rent≥1 ⟺
+~1.18 turns/qtr; turns = 90d sheets sold ÷ avg sheets held). Reproducible from the table:
+`Rent = (Sales ₹ × gm)/(Holding ₹ × carry × buffer)`. Holding ₹ = avg (Min+Max)/2 × PP (at cost).
 **Service = networkNZD ÷ threshold(5)**. `nodes` carries the capacity-freed consequence of cutting
 (per DS/DC × class: before→after, flips-green) — **capacity is shown, never a score factor.**
 Surfaced as the **Assortment / Keep Score** view (header toggle, network-level, alongside Locations):

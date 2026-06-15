@@ -141,7 +141,7 @@ export function keepScoreAnalysis(inv, skuM, priceData, cfg) {
     windowQty: windowQty[s.sku] || 0,                 // Sold Qty (total, regular + bulk)
     networkNZD: networkNZD[s.sku] || 0,
     maxHoldQty: DS_LIST.reduce((a, ds) => a + plan[s.sku][ds].max, 0) + (dcPlan[s.sku]?.max || 0), // ΣMax = peak shelf footprint
-    salesValue: (windowQty[s.sku] || 0) * (priceData?.[s.sku] || 0),  // Sales ₹ (cost basis)
+    // salesValue (true revenue = Sold Qty × PP / (1−margin)) comes from computeKeepScores via ...s
   }));
 
   // capacity-freed consequence of the Cut set, per node × class (DS + DC)
