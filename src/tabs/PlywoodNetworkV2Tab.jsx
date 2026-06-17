@@ -9,9 +9,8 @@ import {
   ReferenceLine, ReferenceArea, ResponsiveContainer, LineChart, Line,
 } from "recharts";
 import {
-  V2_DEFAULTS, evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint,
+  V2_DEFAULTS, evaluatePlan, autoTune, deriveNZDBuckets, bucketOf,
   computePlywoodNetworkV2Results, dcEvaluate, dcSweep, replay, keepScoreAnalysis,
-  collectBulkOrderQty,
 } from "../engine/strategies/plywoodV2/index.js";
 import { percentile, inferThickness } from "../engine/utils.js";
 import { DS_LIST } from "../engine/constants.js";
@@ -34,7 +33,6 @@ const LOCATIONS = [...DS_LIST, "DC"];
 
 function fmt1(v) { return v == null ? "—" : (Math.round(v * 10) / 10).toString(); }
 
-function svcColor(s) { return s >= 0.99 ? HR.green : s >= 0.95 ? HR.amber : HR.red; }
 // top location-pick cards use a 90/80 band
 function pillColor(s) { return s >= 0.9 ? HR.green : s >= 0.8 ? HR.amber : HR.red; }
 // Hover note — wraps a (dotted-underlined) label; popover drops DOWNWARD so it never clips into
@@ -153,7 +151,7 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, drainSeries, published, live, o
     return Object.values(b).sort((a, c) => a.qty - c.qty);
   })();
 
-  // ── DC-specific data: reorder point + bulk buffer + TO-drain timeline + bulk histogram ──
+  // ── DC-specific data: reorder point + bulk buffer + TO-drain timeline + daily bulk timeline ──
   const sLevel = dcInfo?.s ?? row.min;
   const buffer = dcInfo?.buffer ?? Math.max(0, row.max - sLevel);   // = max(one bulk order, lead batch)
   const bulkUnit = dcInfo?.bulkUnit ?? 0, leadBatch = dcInfo?.leadBatch ?? 0;
@@ -164,13 +162,11 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, drainSeries, published, live, o
   const dcTimeline = d.windowDates.map(dt => ({ date: dt.slice(5), qty: drainMap[dt] || 0 }));
   const dcDrainMax = Math.ceil(Math.max(...dcTimeline.map(t => t.qty), row.max || 0, 1) * 1.15);
   const dcBarSize = Math.max(2, Math.min(16, Math.floor(420 / Math.max(dcTimeline.length, 1))));
-  // per-order bulk sizes for this SKU — informational only (bulk is served incidentally, not sized for)
-  const bulkSizes = isDC ? [...(collectBulkOrderQty(d)[row.sku] || [])].sort((a, b) => a - b) : [];
-  const bulkHist = (() => {
-    const b = {};
-    bulkSizes.forEach(q => { const k = Math.ceil(q); if (!b[k]) b[k] = { qty: k, count: 0 }; b[k].count++; });
-    return Object.values(b).sort((a, c) => a.qty - c.qty);
-  })();
+  // daily-summed bulk order qty for this SKU over the window — vs DC Min/Max
+  const bulkDayMap = isDC ? (d.bulkDaily?.[row.sku] || {}) : {};
+  const dcBulkTimeline = isDC ? d.windowDates.map(dt => ({ date: dt.slice(5), qty: bulkDayMap[dt] || 0 })) : [];
+  const hasBulk = dcBulkTimeline.some(t => t.qty > 0);
+  const dcBulkMax = Math.ceil(Math.max(...dcBulkTimeline.map(t => t.qty), row.max || 0, 1) * 1.15);
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
@@ -258,7 +254,7 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, drainSeries, published, live, o
           </div>
         )}
 
-        {/* DC charts: TO-drain timeline (drives s & S) + bulk-order-size histogram (informational) */}
+        {/* DC charts: TO-drain timeline (drives s & S) + daily bulk order qty vs Min/Max */}
         {isDC && (
           <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
             <div style={{flex:"1 1 380px",minWidth:320}}>
@@ -277,23 +273,28 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, drainSeries, published, live, o
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div style={{flex:"1 1 320px",minWidth:280}}>
+            <div style={{flex:"1 1 380px",minWidth:320}}>
               <div style={{fontSize:10,fontWeight:700,color:"#555",marginBottom:4}}>
-                Bulk order sizes (informational — served incidentally from DC stock, not sized for)
+                Daily bulk order qty vs DC Min/Max — the buffer (Max − Min) is sized to cover one typical bulk order
               </div>
-              {bulkHist.length ? (
+              {hasBulk ? (
                 <ResponsiveContainer width="100%" height={160}>
-                  <BarChart data={bulkHist} margin={{top:4,right:8,bottom:0,left:-22}}>
+                  <BarChart data={dcBulkTimeline} margin={{top:4,right:8,bottom:0,left:-22}}>
                     <CartesianGrid strokeDasharray="2 4" stroke="#eee"/>
-                    <XAxis dataKey="qty" tick={{fontSize:9}}/>
-                    <YAxis tick={{fontSize:9}} allowDecimals={false}/>
+                    <XAxis dataKey="date" tick={{fontSize:8}} interval={Math.ceil(dcBulkTimeline.length/10)}/>
+                    <YAxis tick={{fontSize:9}} domain={[0, dcBulkMax]}/>
                     <RTooltip contentStyle={{fontSize:10}}/>
-                    <Bar dataKey="count" fill="#CBD5E1" barSize={14}/>
+                    <Bar dataKey="qty" barSize={dcBarSize} fill="#D97706"/>
+                    <ReferenceLine y={row.min} stroke="#B91C1C" strokeDasharray="4 3" label={{value:`Min ${row.min}`,fontSize:9,fill:"#B91C1C",position:"insideTopRight"}}/>
+                    <ReferenceLine y={row.max} stroke={HR.green} strokeDasharray="4 3" label={{value:`Max ${row.max}`,fontSize:9,fill:HR.green,position:"insideTopRight"}}/>
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
                 <div style={{fontSize:11,color:"#888",padding:"40px 0",textAlign:"center"}}>No bulk orders for this SKU in the window.</div>
               )}
+              <div style={{fontSize:9,color:"#999",marginTop:3}}>
+                Daily total — a day may combine orders, but the buffer sizes one order. Of bulk that fits, only the α≈{(cfg.bulkDcServedShare ?? 0.7).toFixed(2)} share routes to DC; the rest is supplier-direct by geography.
+              </div>
             </div>
           </div>
         )}
@@ -350,7 +351,7 @@ const DC_KNOB_FIELDS = ["dcServicePct","dcBulkServicePct","bulkDcServedShare"];
 
 // DC tune panel: dual-line frontier (bulk service + induced regular service) over the
 // 27-config DC sweep. Drain derives from the current DS plans — publish DSes first.
-function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, dcPub, onPublishDC, onRevertDC, hasSaved, allDSPublished, valuePerSheet, dcTune, setDcTune, locked, onUnpublish, onRelock, liveSummary }) {
+function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, dcPub, onPublishDC, onRevertDC, hasSaved, allDSPublished, valuePerSheet, dcTune, setDcTune, locked, onUnpublish, onRelock }) {
   const [running, setRunning] = useState(false);
   const [open, setOpen] = useState(true);
 
@@ -359,16 +360,10 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
       <div style={{background:HR.surface,borderRadius:8,padding:"10px 14px",border:`1px solid #BFDBFE`,marginBottom:10,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
         <span style={{fontSize:12,fontWeight:700}}>DC</span>
         <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#DCFCE7",color:HR.green,fontWeight:700}}>✓ locked</span>
-        {liveSummary && (
-          <span style={{fontSize:11,color:"#333"}}>
-            bulk served from DC (last 15d): <b style={{color:pillColor(liveSummary.bulkServed ?? 0)}}>{((liveSummary.bulkServed ?? 0)*100).toFixed(1)}%</b>
-            &nbsp;·&nbsp; TO qty-fill <b>{((liveSummary.toFill ?? 0)*100).toFixed(0)}%</b> <span style={{opacity:0.7}}>diag</span>
-            &nbsp;·&nbsp; plan size: <b>{liveSummary.fp}</b> sheets (ΣMax)
-          </span>
-        )}
+        <span style={{fontSize:10,color:HR.muted}}>bulk served & plan size are on the card and stat strip above</span>
         <div style={{flex:1}}/>
         {isAdmin && (
-          <button style={btn(false)} onClick={()=>onUnpublish("DC")}
+          <button style={{...btn(false),borderColor:HR.blue,color:HR.blue}} onClick={()=>onUnpublish("DC")}
             title="Unlock the DC for re-tuning — the published plan stays live in the engine until you publish again">
             Unpublish & tune
           </button>
@@ -499,7 +494,7 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
 
 // Per-DS tune panel: lives at the top of the SKU view for the selected location.
 // Clicking a point sets a per-DS knob OVERRIDE (dsKnobs[loc]); global knobs apply elsewhere.
-function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult, dsPub, onPublishDS, onRevertDS, hasSaved, valuePerSheet, locked, onUnpublish, onRelock, liveSummary }) {
+function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult, dsPub, onPublishDS, onRevertDS, hasSaved, valuePerSheet, locked, onUnpublish, onRelock }) {
   const [tuning, setTuning] = useState(false);
   const [open, setOpen] = useState(true);
   const [knobsOpen, setKnobsOpen] = useState(false);
@@ -510,15 +505,10 @@ function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdm
       <div style={{background:HR.surface,borderRadius:8,padding:"10px 14px",border:`1px solid #BFDBFE`,marginBottom:10,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
         <span style={{fontSize:12,fontWeight:700}}>{loc}</span>
         <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#DCFCE7",color:HR.green,fontWeight:700}}>✓ locked</span>
-        {liveSummary && (
-          <span style={{fontSize:11,color:"#333"}}>
-            service (last 15d, in its fit): <b style={{color:svcColor(liveSummary.svc)}}>{(liveSummary.svc*100).toFixed(1)}%</b>
-            &nbsp;·&nbsp; plan size: <b>{liveSummary.fp}</b> sheets (ΣMax)
-          </span>
-        )}
+        <span style={{fontSize:10,color:HR.muted}}>service & plan size are on the card and stat strip above</span>
         <div style={{flex:1}}/>
         {isAdmin && (
-          <button style={btn(false)} onClick={()=>onUnpublish(loc)}
+          <button style={{...btn(false),borderColor:HR.blue,color:HR.blue}} onClick={()=>onUnpublish(loc)}
             title="Unlock this DS for re-tuning — the published plan stays live in the engine until you publish again">
             Unpublish & tune
           </button>
@@ -1000,30 +990,10 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   // Honest live check: replay the last 15d against the FULL-WINDOW plans INCLUDING the
   // real DC plan (evaluatePlan's internal live numbers assume an infinite DC — wrong
   // for TO fulfilment / bulk; this replaces them wherever live numbers are shown).
-  const liveCheck = useMemo(() => {
-    if (!live || !ev?.fullPlan || !dcRes || !ev?.testDemand) return null;
-    try {
-      const dcPlan = {};
-      for (const sku of Object.keys(ev.fullPlan)) {
-        dcPlan[sku] = dcRes[sku]?.dcResult ? { ...dcRes[sku].dcResult } : { min: 0, max: 0 };
-      }
-      const sim = replay(ev.fullPlan, dcPlan, ev.testDemand, { ...cfgDraft, lookbackDays: ev.testDemand.windowDates.length });
-      const oosCounts = {};
-      const seen = {};
-      for (const e of sim.oosEvents) {
-        if (e.type !== "regular") continue;
-        if (!oosCounts[e.sku]) { oosCounts[e.sku] = {}; seen[e.sku] = {}; }
-        if (!oosCounts[e.sku][e.ds]) { oosCounts[e.sku][e.ds] = { oosOrders: 0, events: [] }; seen[e.sku][e.ds] = new Set(); }
-        seen[e.sku][e.ds].add(e.orderId);
-        oosCounts[e.sku][e.ds].oosOrders = seen[e.sku][e.ds].size;
-        oosCounts[e.sku][e.ds].events.push({ ...e });
-      }
-      return { serviceLevels: sim.serviceLevels, oosCounts };
-    } catch (e) { console.error("live check error:", e); return null; }
-  }, [live, ev, dcRes, cfgDraft]);
-
-  // live OOS column comes from the honest live check (real DC), not the infinite-DC numbers
-  const modeOos = live ? (liveCheck?.oosCounts || {}) : ev?.oosCounts;
+  // DS service + OOS are DS-shelf metrics, evaluated with an infinite DC (DC assumed to keep DSes
+  // stocked). A DC shortfall is the DC's failure and surfaces on the DC card (TO-fill), not in the
+  // DS numbers — so every DS-side figure (strip cards, network card, OOS column) uses the same basis.
+  const modeOos = live ? (ev?.liveOosCounts || {}) : ev?.oosCounts;
 
   // DC strip stats — replay current plan + REAL effective DC over the 15d test window.
   // Headline = bulk served from DC; TO qty-fill kept as a diagnostic.
@@ -1072,23 +1042,39 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   // Build display rows for the selected location
   const rows = useMemo(() => {
     if (!ev) return [];
+    const isDC = loc === "DC";
+    // DC tab: network-wide demand (ALL orders, regular + bulk) + bulk-day counts
+    const netNZD = {}, netQty = {}, bulkDays = {};
+    if (isDC) {
+      const seen = {};
+      for (const o of modeDemand.orders) {
+        for (const l of o.lines) {
+          if (!ev.universe[l.sku]) continue;
+          netQty[l.sku] = (netQty[l.sku] || 0) + l.qty;
+          (seen[l.sku] || (seen[l.sku] = new Set())).add(o.date);
+        }
+      }
+      for (const sku in seen) netNZD[sku] = seen[sku].size;
+      for (const sku in (modeDemand.bulkDaily || {})) bulkDays[sku] = Object.keys(modeDemand.bulkDaily[sku]).length;
+    }
     const out = [];
     for (const sku of Object.keys(ev.universe)) {
       const meta = ev.universe[sku];
       const mm = inferThickness(meta.name);
-      const isDC = loc === "DC";
       const p = isDC ? null : modePlan[sku][loc];
       const dc = isDC ? dcRes?.[sku]?.dcResult : null;
       const dd = isDC ? {} : (modeDemand.regularDaily[sku]?.[loc] || {});
       const dayVals = Object.values(dd);
-      const nzd = dayVals.length;
-      const qty = dayVals.reduce((a, b) => a + b, 0);
+      // Qty/NZD scope: DS = regular orders only (local); DC = all orders (network)
+      const nzd = isDC ? (netNZD[sku] || 0) : dayVals.length;
+      const qty = isDC ? (netQty[sku] || 0) : dayVals.reduce((a, b) => a + b, 0);
       const oos = isDC ? null : (modeOos?.[sku]?.[loc]?.oosOrders || 0);
       const floored = engineResults?.[sku]?.stores?.[loc]?.logicTag === "SKU Floor";
       out.push({
         sku, name: meta.name, brand: meta.brand, mm,
         tclass: ev.tclass[sku],
         nzd, qty, abq: nzd ? qty / nzd : 0,
+        bulkDays: isDC ? (bulkDays[sku] || 0) : 0,
         bucket: isDC ? null : bucketOf(nzd, buckets?.edges || [1]),
         min: isDC ? (dc?.min ?? 0) : p.min,
         max: isDC ? (dc?.max ?? 0) : p.max,
@@ -1104,7 +1090,6 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   if (!ev) return <div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>No plywood SKUs found for v2 universe.</div>;
 
   const isDC = loc === "DC";
-  const fp = planFootprint(modePlan);
   const caps = cfgDraft.dsCapacities || {};
   const brands = ["All", ...[...new Set(rows.map(r => r.brand).filter(Boolean))].sort()];
 
@@ -1133,6 +1118,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
         case "mm": return ((a.mm ?? -1) - (b.mm ?? -1)) * sortDir;
         case "nzd": return (a.nzd - b.nzd) * sortDir;
         case "abq": return (a.abq - b.abq) * sortDir;
+        case "bulkDays": return ((a.bulkDays || 0) - (b.bulkDays || 0)) * sortDir;
         case "min": return (a.min - b.min) * sortDir;
         case "max": return (a.max - b.max) * sortDir;
         case "oos": return ((a.oos || 0) - (b.oos || 0)) * sortDir;
@@ -1144,12 +1130,12 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
     if (sortBy === col) setSortDir(d => d * -1);
     else { setSortBy(col); setSortDir(["sku", "name", "brand"].includes(col) ? 1 : -1); }
   };
-  const sh = (col, label, center) => {
+  const sh = (col, label, center, tip) => {
     const on = sortBy === col;
     return (
-      <th key={col} onClick={() => handleSort(col)}
+      <th key={col} onClick={() => handleSort(col)} title={tip}
         style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:on?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,
-          textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2"}}>
+          textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2",position:"sticky",top:0,zIndex:2}}>
         {label}{on ? (sortDir === -1 ? "↓" : "↑") : <span style={{color:"#ccc",fontSize:8}}>↕</span>}
       </th>
     );
@@ -1157,6 +1143,20 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   const hasFilter = query || fBrand !== "All" || fType !== "All" || fBucket !== "All" || fOOS;
   // avg ₹ per sheet of the current location's plan — used to value each frontier point's footprint
   const valuePerSheet = (() => { const t = rows.reduce((a, r) => a + r.max, 0); return t ? rows.reduce((a, r) => a + r.max * (priceData?.[r.sku] || 0), 0) / t : 0; })();
+  // network plan inventory: Σ target Min/Max levels × cost, over all DS + DC (NOT live stock) — for the Overall Network card
+  const netInv = (() => {
+    let minVal = 0, maxVal = 0, maxQty = 0;
+    for (const sku of Object.keys(ev.universe)) {
+      const pp = priceData?.[sku] || 0;
+      for (const ds of DS_LIST) {
+        const p = modePlan[sku]?.[ds]; if (!p) continue;
+        minVal += p.min * pp; maxVal += p.max * pp; maxQty += p.max;
+      }
+      const dc = dcRes?.[sku]?.dcResult;
+      if (dc) { minVal += dc.min * pp; maxVal += dc.max * pp; maxQty += dc.max; }
+    }
+    return { minVal, maxVal, maxQty };
+  })();
 
   return (
     <div>
@@ -1233,16 +1233,29 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
             const fcTag = <span style={{color:"#B45309",fontWeight:700}}>forecast</span>;
             return (
               <div style={{display:"flex",alignItems:"stretch",gap:8,marginBottom:10}}>
-                {/* summary — a STAT, not a picker: filled card, accent bar, no hover/pointer */}
-                <div style={{flex:1.05,minWidth:0,textAlign:"center",padding:"7px 10px",borderRadius:10,background:HR.surfaceLight,border:`1px solid ${HR.border}`,borderLeft:`3px solid ${HR.black}`}}>
-                  <div style={{fontSize:8.5,color:HR.muted,fontWeight:700,letterSpacing:0.4,textTransform:"uppercase"}}>Overall Network</div>
-                  <div style={{fontSize:16,fontWeight:800,color:pillColor(netSC.overall)}}>{(netSC.overall*100).toFixed(1)}%</div>
-                  <div style={{fontSize:9,color:HR.muted}}>
-                    <Hint align="left" text={liveSL
-                      ? "Regular-order service across all DSes, scored on the last 15 days against the full-window plan (reflects your in-progress edits)."
-                      : "Regular-order service across all DSes — out-of-window: fit on the first 75 days, scored on the unseen last 15."}>
-                      <span style={dotted}>{liveSL ? "live service" : "service"}</span>
-                    </Hint> · {netSC.oos}/{netSC.total} OOS
+                {/* summary — a STAT, not a picker: filled card, accent bar, no hover/pointer; service | inventory side by side */}
+                <div style={{flex:2.1,minWidth:0,padding:"7px 10px",borderRadius:10,background:HR.surfaceLight,border:`1px solid ${HR.border}`,borderLeft:`3px solid ${HR.black}`}}>
+                  <div style={{fontSize:8.5,color:HR.muted,fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",textAlign:"center"}}>Overall Network</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{flex:1,minWidth:0,textAlign:"center"}}>
+                      <div style={{fontSize:16,fontWeight:800,color:pillColor(netSC.overall)}}>{(netSC.overall*100).toFixed(1)}%</div>
+                      <div style={{fontSize:9,color:HR.muted}}>
+                        <Hint align="left" text={liveSL
+                          ? "Regular-order service across all DSes, scored on the last 15 days against the full-window plan (reflects your in-progress edits)."
+                          : "Regular-order service across all DSes — out-of-window: fit on the first 75 days, scored on the unseen last 15."}>
+                          <span style={dotted}>{liveSL ? "live service" : "service"}</span>
+                        </Hint> · {netSC.oos}/{netSC.total} OOS
+                      </div>
+                    </div>
+                    <div style={{width:1,alignSelf:"stretch",background:HR.border}}/>
+                    <div style={{flex:1,minWidth:0,textAlign:"center"}}>
+                      <div style={{fontSize:14,fontWeight:800,color:"#166534",whiteSpace:"nowrap"}}>{fmtLakh(netInv.minVal)} – {fmtLakh(netInv.maxVal)}</div>
+                      <div style={{fontSize:9,color:HR.muted}}>
+                        <Hint align="right" text="Target plan inventory across all DS + DC = Σ(Min) to Σ(Max) levels × cost price. Not live stock on hand.">
+                          <span style={dotted}>plan inv</span>
+                        </Hint> · Min–Max
+                      </div>
+                    </div>
                   </div>
                 </div>
                 {/* picker — the clickable locations, as one continuous segmented bar */}
@@ -1284,16 +1297,14 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
               onSaveConfig={onSaveConfig} tuneResult={tuneResult} setTuneResult={setTuneResult}
               dsPub={dsPublished(loc)} onPublishDS={publishDS} onRevertDS={revertDS}
               hasSaved={!!plywoodNetworkV2Config} valuePerSheet={valuePerSheet}
-              locked={locked} onUnpublish={unpublishLoc} onRelock={lockLoc}
-              liveSummary={live ? { svc: liveCheck?.serviceLevels?.regular.perDS[loc]?.service ?? 1, fp: fp.perDS[loc] } : null}/>
+              locked={locked} onUnpublish={unpublishLoc} onRelock={lockLoc}/>
           ) : (
             <DCTunePanel cfgDraft={cfgDraft} setCfgDraft={setCfgDraft}
               invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin}
               dcPub={dcPub} onPublishDC={publishDC} onRevertDC={revertDC}
               hasSaved={!!plywoodNetworkV2Config} allDSPublished={publishedCount === 5} valuePerSheet={valuePerSheet}
               dcTune={dcTune} setDcTune={setDcTune}
-              locked={locked} onUnpublish={unpublishLoc} onRelock={lockLoc}
-              liveSummary={live && liveCheck ? { bulkServed: liveCheck.serviceLevels.bulk?.total ? 1 - liveCheck.serviceLevels.bulk.oos / liveCheck.serviceLevels.bulk.total : 1, toFill: liveCheck.serviceLevels.toFill?.qtyRate ?? 1, fp: thickUsed + thinUsed } : null}/>
+              locked={locked} onUnpublish={unpublishLoc} onRelock={lockLoc}/>
           )}
 
           {/* location stat cards + capacity bars (display-only) */}
@@ -1356,15 +1367,21 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
           </div>
 
           {/* table */}
-          <div style={{overflowX:"auto",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
+          {/* bounded scroll box so the header sticks; offset adapts to the taller tuning header vs the compact published one */}
+          <div style={{overflow:"auto",maxHeight:`calc(100vh / 0.85 - ${locked ? 290 : 470}px)`,background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
               <thead><tr>
                 {sh("sku","SKU")}
                 {sh("name","Item Name")}
                 {sh("mm","Thickness",true)}
                 {sh("brand","Brand")}
-                {!isDC && sh("nzd","NZD",true)}
-                {!isDC && sh("abq","ABQ",true)}
+                {sh("nzd", isDC?"Net NZD":"NZD", true, isDC
+                  ? "Distinct days this SKU sold anywhere in the network — all orders (regular + bulk)."
+                  : "Local non-zero (selling) days at this DS — regular orders only.")}
+                {isDC && sh("bulkDays","Bulk Days", true, "Distinct days with a bulk order (line ≥ bulk threshold) for this SKU, network-wide.")}
+                {sh("abq","Qty/NZD", true, isDC
+                  ? "Avg qty on a day it sells = total qty ÷ Net NZD. Considers ALL orders (regular + bulk) — not a daily average."
+                  : "Avg qty on a day it sells = total qty ÷ NZD. Considers REGULAR orders only — not a daily average.")}
                 {sh("min", isDC?"DC Min":"Min", true)}
                 {sh("max", isDC?"DC Max":"Max", true)}
                 {!isDC && sh("oos","OOS (15d)",true)}
@@ -1405,13 +1422,16 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
                         </span>
                       </td>
                       <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555",whiteSpace:"nowrap"}}>{r.brand || "—"}</td>
-                      {!isDC && (
+                      {!isDC ? (
                         <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
                           <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,...bc.badge}}>{buckets?.labels[r.bucket] ?? r.nzd}</span>
                           <span style={{marginLeft:5,fontSize:10,color:"#555"}}>{r.nzd}</span>
                         </td>
+                      ) : (
+                        <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555"}}>{r.nzd}</td>
                       )}
-                      {!isDC && <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555"}}>{r.nzd ? fmt1(r.abq) : "—"}</td>}
+                      {isDC && <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555"}}>{r.bulkDays || "—"}</td>}
+                      <td style={{padding:"3px 6px",textAlign:"center",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555"}}>{r.nzd ? fmt1(r.abq) : "—"}</td>
                       <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:HR.blue,borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.min}</td>
                       <td style={{padding:"3px 6px",textAlign:"center",fontWeight:700,color:"#166534",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>{r.max}</td>
                       {!isDC && (
