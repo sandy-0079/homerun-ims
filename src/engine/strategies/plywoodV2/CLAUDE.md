@@ -7,7 +7,7 @@ category-team cut-list review — see Open items.**
 
 - **Branch:** `feature/plywood-network-v2` — NEVER push or PR without explicit user instruction. Local testing only.
 - **Spec:** `docs/superpowers/specs/2026-06-11-plywood-network-v2-design.md` (read for full rationale).
-- **Tests:** `npx vitest run` — 60 passing as of 2026-06-15. vitest is a devDependency; `npm test` also works.
+- **Tests:** `npx vitest run` — 63 passing as of 2026-06-17. vitest is a devDependency; `npm test` also works. `npm run build` clean; eslint 0 errors (1 pre-existing `modeOos` exhaustive-deps warning).
 - **Activation:** dormant until `categoryStrategies["Plywood, MDF & HDHMR"] === "network_design_v2"` in prod config. v1 (`network_design`) untouched and still the live strategy.
 - **Config row:** `params/plywoodNetworkV2Config` (separate Supabase row, like v1's `plywoodNetworkConfig`). 406 errors for this row are EXPECTED until first admin publish.
 
@@ -63,29 +63,48 @@ trim Max → Min+1 on the **lowest-local-NZD SKUs first** (ties: bigger slack fi
 
 ---
 
-## DC Min/Max — `sizeDCOrderBulk` + `trimDCComponents` (dc.js)
+## DC Min/Max — `sizeDCSS` + `trimDCDepth` (dc.js)  [final model, 2026-06-17]
 
 ```
-DC Min = Repl + Bulk
-DC Max = DC Min + Cycle
-  Repl  = P[dcReplPercentile=98] of rolling (leadDays+1)-day TO-DRAIN sums
-          (drain = replay the PUBLISHED DS plans with infinite DC → daily TO qty per SKU)
-  Bulk  = P[dcBulkOrderPct=90] of the SKU's per-order bulk sizes   (NOT scaled by α — see below)
-  Cycle = mean daily drain × dcCoverDays   (PO cadence: Max−Min ≈ days of supply per supplier PO)
+DC Min = P[dcServicePct=98] of rolling (leadDays)-day TO-DRAIN sums
+         (drain = replay the PUBLISHED DS plans with infinite DC → daily TO qty per SKU)
+         — the LEAN reorder point; protects DS replenishment; NEVER trimmed.
+DC Max = DC Min + max( oneBulkOrder , leadBatch )
+  oneBulkOrder = P[dcBulkServicePct=90] of the SKU's per-order bulk sizes   (NOT scaled by α)
+  leadBatch    = mean (leadDays)-day TO-drain — a reorder-batch FLOOR so non-bulky SKUs get a
+                 sane cycle (Min ≠ Max) instead of thrashing at the reorder point.
 ```
+
+**Why this shape (settled by measurement — don't re-litigate):**
+- The DC has exactly **two real jobs** (replenish DSes; serve bulk) and **one phantom** (TO qty-fill).
+- **DS regular service is ~flat (~93–97%) across DC depth** — the DC barely moves it; the lever for
+  higher DS service is the **DS plans**, not DC stock. So Min is sized lean (reorder cover only).
+- **Bulk is the only thing DC depth actually buys.** The buffer above Min = one typical bulk order, so
+  a single order is served off-shelf; clustered/bigger orders spill to supplier-direct (accepted).
+  The buffer is **one order**, which is what structurally prevents the old 24-day-cover blow-up.
+- **TO qty-fill is a misleading proxy** — it measures "restock the DS all the way to Max" and
+  double-counts re-requested shortfalls, so chasing it ≥90% nearly tripled inventory for ~1pt of real
+  customer service. **Demoted to a diagnostic** (tooltip / DC-card sub-line), not a target.
 
 **α (`bulkDcServedShare`) routes ORDERS, not sheets.** In `replay`, (1−α) of bulk orders go
-supplier-direct (deterministic order-id hash, assumed served, excluded from DC bulk metric). It must
-NOT shrink the bulk buffer — a DC-routed order needs its full quantity. (This was a bug, now fixed:
-α=0.7 lifts DC bulk service ~67→75%.) α is **user-owned** (encodes the ops SOP), never auto-swept.
+supplier-direct (deterministic order-id hash, assumed served). It does NOT shrink the buffer — a
+DC-routed order needs its full quantity. α is **user-owned** (encodes the geographic ops SOP: far
+customer + closer supplier → supplier-direct), never auto-swept. At α=0.7 the ceiling for bulk-from-DC
+is 70% of all bulk (30% is geographically supplier-bound regardless of stock).
 
-**Component-aware DC trim** (`trimDCComponents`): when DC rack over capacity, trim (1) cycle stock
-first, (2) bulk on fewest-bulk-order SKUs first, (3) **repl NEVER** (it backs the published DS service).
+**Depth trim** (`trimDCDepth`): when a DC rack class is over capacity, surrender the buffer (Max→Min)
+on the **least TO-active SKUs first** (ties: larger buffer first). The reorder floor (Min) is NEVER
+trimmed. Residual overflow (Σ Min > cap) is reported.
 
-**DC service is measured as TO FULFILMENT RATE** — % of DS replenishment requests (TO lines) the DC
-ships IN FULL, daily. This is the *only* tracked DC target (user decision). Bulk is *stocked* (its
-component is in the footprint, `dcBulkOrderPct` tunes it) but **not a tracked goal** — supplier-direct
-is the worst-case fallback. Bulk % shows in tooltip only.
+**Proportional TO rationing** (`replay`): when the DC is short, competing DS TO requests for a SKU are
+filled **proportionally** (largest-remainder rounding, bigger requester gets the leftover sheet) — not
+first-come. Removes the DS-iteration-order bias. Qty-fill is invariant to the split (total shipped =
+min(stock, Σrequests)); only the per-DS distribution (and thus DS service) changes.
+
+**Metrics:** the DC card headline is **bulk served from DC %** (the DC's distinctive output); DS
+regular service shows on the DS cards + as a flat reference line on the DC frontier; TO qty-fill is a
+small "diag" sub-line. The DC sweep frontier plots **bulk-served % (Y) vs DC rack ΣMax (X)** over the
+`dcBulkServicePct` scenarios — the only real DC choice (bulk vs inventory); click a point to apply.
 
 ---
 
@@ -97,16 +116,23 @@ is the worst-case fallback. Bulk % shows in tooltip only.
 4. **Publish** (admin) → engine refits the SAME formula on the FULL window — test-window misses self-correct by entering the fit.
 
 **Lifecycle lock (current UX):** each location (DS01–05 + DC) is independently **published (LOCKED)** or **tuning (unlocked)**:
-- Published → frozen summary strip (live service + sheets + knobs), no chart/knobs. "Unpublish & tune" to edit; "Keep published plan" re-locks unchanged.
-- Tuning → unlocked frontier chart + knobs + Publish/Revert.
-- NO Eval/Live toggle — basis is derived from lock state, shown as LIVE/TUNING badge.
+- Published → frozen summary strip (live service + sheets + inventory ₹), no chart/knobs. "Unpublish & tune" to edit; "Keep published plan" re-locks unchanged. Raw knobs are NOT shown here (or anywhere on the cards) — see "knobs are admin-only" below.
+- Tuning → unlocked frontier chart + Publish/Revert.
+- **Per-card live/forecast basis** (replaces the old single global Eval/Live flip): each card derives its own basis. A location shows **LIVE** (full-window refit, scored on last 15d) if it is published & not currently being tuned; otherwise it shows the **out-of-window forecast** (75d fit on unseen 15d, amber `forecast` tag). The tuned card reads e.g. `90.8% / forecast → ~97% live`. Network card reflects the in-progress edit. LIVE/TUNING badge derives from lock state. DC live bulk uses the `dcLive`/`dcResFull` memos (finite-DC full-window replay; the extra engine pass is gated to run only while a DS is being tuned — otherwise the live view reuses `dcRes`).
+- A **tuning banner** (tuning view only) explains: out-of-window forecast → publish refits on the full 90d; only the tuned DS moves.
 - Publishing a location auto-locks it. Per-DS publish materializes that DS's *effective* knobs into saved `dsKnobs[loc]` (other DSes untouched); DC publish saves the global `dc*` fields. Capacity edits flow through publish/compare too.
+
+**Knobs are admin-only (model picks knobs, user picks scenarios):** raw knob values are exposed ONLY in the admin "Global knobs & publish" section. The old per-card knob strings were removed (DS `override … ✕`, DC `current: knobs`, locked-summary `knobs:`). The "Selected" chips on the frontier instead carry the **inventory story** (`Selected: 673 sheets · ₹12.8L max inventory`) — service is the card headline, so it isn't repeated. Max Inv ₹ is an *estimate* = footprint × `valuePerSheet` (avg ₹/sheet of the current location's plan).
 
 **Two scorecards** (don't confuse):
 - **Evaluation** (tuning view): 75d fit scored on unseen last 15d. The HONEST forward number — use to *choose* configs.
 - **Live** (locked view): full-window fit scored on last 15d (in-sample). A health reading of what's running — always reads higher.
 
-**Top location strip** (both views): one card per DS + a DC card + overall regular-service card. DS cards show 15d regular service; **DC card shows TO-fulfilment %** (real-DC replay over the 15d window — `dcToFill` memo, not the infinite-DC number). All strip %'s use the **90/80 band** (`pillColor`: ≥90 green / ≥80 amber / <80 red — distinct from the stricter `svcColor` used on tuning charts). Selected location pill is visually distinct (tint + 2px yellow border + ● marker). Clicking a DS/DC card selects that location.
+**Top location strip** (both views): **"Overall Network"** is a separate filled, non-clickable summary card (uppercase label, black left-accent, no hover); DS01–DS05 + DC are ONE continuous segmented picker bar (hover highlight + selected top-bar). DS cards show 15d regular service; **DC card shows bulk-served-from-DC %** (headline) with **TO qty-fill % as a small "diag" sub-line** (real-DC replay over the 15d window — `dcStats` memo, not the infinite-DC number). All strip %'s use the **90/80 band** (`pillColor`: ≥90 green / ≥80 amber / <80 red — distinct from the stricter `svcColor` used on tuning charts). Selected location pill is visually distinct (tint + 2px yellow border + ● marker). Clicking a DS/DC segment selects that location. Header: one status chip (LIVE/TUNING basis; publish + "engine not switched on" folded into a hover); fit/score dates inline & labeled (`Fit: 18 Mar – 15 Jun`).
+
+**Hovers:** the `Hint` component = a dotted-underlined word whose popover drops **downward** (avoids nav-bar clipping), `cursor:default`. (The old circled-`i` / `cursor:help` read as a "?" and was removed.)
+
+**Frontier charts (DS + DC):** custom hero tooltip (service%/bulk% hero, then `sheets | ₹ max inv`, then "click to apply"). Axis titles are HTML captions BELOW the chart (not in-SVG Recharts `label` — `insideBottom` fought the tick height). Dual X-tick via `sheetTick(valuePerSheet)` = sheet count on top, ₹ value beneath. The DC chart Y = bulk-served vs rack with a flat grey DS-service reference line (DS service is ~flat in DC depth).
 
 **The tab is kept mounted** (App.jsx lazy-mounts on first open via `v2Mounted`, then never unmounts) so all draft/tuning state survives tab switches. Keep Score knobs additionally persist across reloads via `localStorage["plywoodV2KeepScore"]`.
 
@@ -127,8 +153,8 @@ service-rich while DS05 runs lean — they have very different rack pressure.
 |---|---|
 | `demand.js` | `buildUniverse`, `prepareDemand` (regular line-level + bulk order-level streams), `collectBulkOrderQty`, `medianOrderQty` |
 | `allocator.js` | `allocateUnified` (default) + `allocateEmpirical`/`allocateTiered`/`allocate`(greedy) + `maxTrim` pass; `thicknessClass` |
-| `replay.js` | deterministic day-by-day sim: TO/PO timing, order-level OOS, α-routing of bulk, TO-fill tracking, drain series |
-| `dc.js` | `sizeDCOrderBulk` (Repl+Bulk+Cycle), `trimDCComponents`; legacy `sizeDC`/`trimDCToCapacity` kept for old export |
+| `replay.js` | deterministic day-by-day sim: TO/PO timing, **proportional TO rationing**, order-level OOS, α-routing of bulk, TO-fill tracking, drain series |
+| `dc.js` | `sizeDCSS` (Min = lean reorder; Max = Min + max(one bulk order, lead batch)), `trimDCDepth`. Band-model `sizeDCOrderBulk`/`trimDCComponents` removed; legacy `sizeDC`/`trimDCToCapacity` still present (unused, old export) |
 | `keepScore.js` | `computeKeepScores` — Rent/Service ratios. Wrapped by `keepScoreAnalysis` in index.js (real-plan holding + capacity-freed); surfaced as the Assortment view. |
 | `evaluate.js` | `evaluatePlan` (75/15), `autoTune` (240-config sweep, Pareto, presets, bucket gate), `dcEvaluate`/`dcSweep`, `deriveNZDBuckets`, `planFootprint`, `fitPlan` |
 | `index.js` | `computePlywoodNetworkV2Results` (runEngine-compatible assembly), `V2_DEFAULTS`, barrel exports |
@@ -146,10 +172,10 @@ Result shape (matches v1 network bypass in runEngine ~L100–167):
 Universe/demand: `lookbackDays=90`, `bulkOrderThreshold=10`, `excludedBrands=['Merino']`, `thickBoundaryMm=9`, `leadDays=3`.
 Unified knobs (auto-tuned): `minLocalDayPercentile=90`, `minNetOrderPercentile=90` (0=off), `minDocCapDays=45` (0=off), `deadFloorMode`, `maxMode`.
 Capacity: `capacityFit='maxTrim'`, `dsCapacities` (per DS thick/thin — editable in UI), `dcCapacity` (thick/thin — editable).
-DC (auto-tuned): `dcReplPercentile=98`, `dcBulkOrderPct=90`, `dcCoverDays` (2/4/7 in sweep). User-owned: `bulkDcServedShare` (α).
+DC: `dcServicePct=98` (Min reorder-point percentile), `dcBulkServicePct=90` (the "one bulk order" buffer dial — swept 50/60/75/90/95 in `dcSweep`). User-owned: `bulkDcServedShare` (α). `dcCapacity` (thick/thin — editable; can grow per ops). DS regular service is ~flat in DC depth, so the sweep's only axis is bulk-served vs rack.
 Per-DS: `dsKnobs={}`. Keep Score: `{grossMarginPct:0.06, carryRateQuarterly:0.05, opsBuffer:1.5, serviceNZDThreshold:5}`.
 
-Note: `V2_DEFAULTS` still carries legacy `dcBulkPercentile` (rolling-window, superseded by `dcBulkOrderPct`) and greedy/tiered/empirical-mode knobs — harmless but prune if those alt allocators are dropped. (The old duplicate `deadFloorMode` key is now fixed — single `'abq'`; tiered's internal else-branch is unaffected.)
+Note: `V2_DEFAULTS` still carries legacy DC knobs (`dcReplPercentile`, `dcBulkPercentile`, `dcCoverDays`) used only by the old `sizeDC` export, plus greedy/tiered/empirical-mode knobs — harmless but prune if those alt paths are dropped.
 
 ---
 
@@ -157,9 +183,9 @@ Note: `V2_DEFAULTS` still carries legacy `dcBulkPercentile` (rolling-window, sup
 
 - Unified default (P90/P90, no per-DS leaning): regular ~92.6% OOS-svc.
 - v1 live plan on identical scoring: regular 81.1%, bulk 26.6% (333/610 combos at Min=Max=0).
-- DC (current published lean config, real DC plan): TO fulfilment ~93.6%, regular ~89.1%, DC bulk ~71%.
-- α=1.0 → no DC config fits 1000/500 (~1.65–2.4× needed); α=0.7 sheds the unpredictable share.
-- Bulk plateau ~65–75%: ~29% of test bulk orders are novel (no fit history / biggest-ever) ≈ the 30% supplier-direct SOP share. DC stocks predictable bulk; suppliers absorb novelty.
+- DC (final model `sizeDCSS`, default P90, real DC plan, α=0.7): **DS regular service ~93–97% (flat in DC depth)**, bulk-served-from-DC ~50% (of DC-routed) at ~2,550 sheets, ~40% at ~1,900. TO qty-fill (diagnostic) tracks ~the same as line-fill and is *not* a target. Key finding: pushing TO qty-fill 75→90% triples DC inventory for ~1pt of DS customer service — that's why it was dropped as a target.
+- α=1.0 (every bulk order to DC) needs far more rack than α=0.7; α caps bulk-from-DC at 70% of all bulk (the other 30% is geographically supplier-bound). DC capacity is now treated as expandable (Rampura) — the frontier reports the rack each bulk-service point needs rather than forcing a fixed cap.
+- Bulk: most single orders are servable from the one-bulk-order buffer; clustered/novel/biggest-ever orders (~29% of test bulk) spill to supplier-direct ≈ the 30% supplier SOP share. DC stocks predictable bulk; suppliers absorb novelty.
 
 ---
 
@@ -191,19 +217,25 @@ Locations table default sort = **descending NZD**; numeric sort comparators are 
 
 ## Open items / NEXT SESSION
 
-1. **Capacity decision** (parked, business): is `dcCapacity` 1000/500 real or can Rampura hold ~2000 thick? Is DS04/05 thick rack expandable? The charts price both levers; the answer picks the operating point.
-2. **Bulk SOP / α**: get the DC-vs-supplier routing rule written so α stops being an estimate.
-3. **Prod cutover**: only after sim regular ≥ target, DC TO-fill ≥ target, capacity reconciled, cut-list reviewed with category team. Then switch `categoryStrategies` to `network_design_v2`.
-4. **Cleanup**: prune legacy knobs (`dcBulkPercentile`, greedy/empirical/tiered knobs if those modes are dropped). `deadFloorMode` dedupe DONE.
+0. **Commit the branch** — the 2026-06-17 UI polish (header/strip/per-card basis/Hint hovers/frontier charts/knob-exposure removal in `PlywoodNetworkV2Tab.jsx`) is signed off but uncommitted. Commit locally; NEVER push without explicit instruction. Remaining optional polish: the per-loc `Σ Min/Max qty · inventory value` cards row, the SKU table, and the Assortment/Keep Score header for consistency.
+1. **DC capacity** (user: expandable): DC rack can grow (Rampura), so the DC frontier reports the rack each bulk-service point needs rather than forcing a fixed cap. Pick a `dcBulkServicePct` point → provision its thick/thin rack. DS04/05 thick rack expandability still open (separate DS-side capacity wall).
+2. **Bulk SOP / α**: get the DC-vs-supplier routing rule written so α stops being an estimate (it encodes the geographic far-customer→closer-supplier rule).
+3. **Prod cutover**: only after sim DS regular service ≥ target, bulk-served-from-DC at the chosen point, capacity provisioned, cut-list reviewed with category team. Then switch `categoryStrategies` to `network_design_v2`. (Note: DS "near-100%" is a DS-plan lever, NOT DC depth — the DC barely moves DS service.)
+4. **Cleanup**: prune legacy DC knobs (`dcReplPercentile`, `dcBulkPercentile`, `dcCoverDays`) + the unused `sizeDC`/`trimDCToCapacity` exports + greedy/empirical/tiered knobs if those alloc modes are dropped. `deadFloorMode` dedupe DONE.
 5. **Keep Score knobs → Supabase (shared persistence):** currently the 4 Keep Score knobs (margin, carry, ops buffer, service threshold) persist only to `localStorage["plywoodV2KeepScore"]` — per-browser, not shared across users/devices. They're a business decision driving the cut list, so they should also write to the Supabase `params/plywoodNetworkV2Config` row (e.g. fold a `keepScore` slice into a publish path or add a dedicated save) so every viewer sees the same verdict. Precedence to decide: localStorage (in-progress edits) vs saved config.
 6. **Keep Score knobs reset control:** add a small "reset to defaults" link next to the knobs (clears the localStorage key + restores `V2_DEFAULTS.keepScore`).
-7. **SKU modal in DC view:** DS rows open the `SKUModalV2` with full formula derivation (Min/Max breakdown + demand-vs-Min/Max timeline + order-size histogram). The DC view needs the equivalent — clicking a DC SKU row should open a modal showing the DC formula derivation (Repl P98 of TO-drain + Bulk P[pct] of order sizes + Cycle), the component breakdown, and the TO-drain / bulk-order charts for that SKU. (`SKUModalV2` already has an `isDC` branch for the formula text; wire DC rows to open it and add the DC-specific charts.)
+7. **DC SKU modal** ✅ DONE (2026-06-17): DC rows open `SKUModalV2` with the (final-model) formula — Min = P[dcServicePct] lead-time drain; Max = Min + max(one bulk order P[dcBulkServicePct], lead-time batch) — a Min+buffer breakdown bar (colours whichever term wins), trim note, the TO-drain timeline vs Min/Max, and an informational bulk-order-size histogram. `drainSeries` memo (tab-level, infinite-DC replay) feeds the timeline; bulk sizes via `collectBulkOrderQty`.
+
+### DC model redesign ✅ DONE (2026-06-17)
+The whole DC sizing was reworked this session (band model → lean reorder + capped bulk buffer). See the **DC Min/Max** section above for the final logic and rationale. Key arc: drop bulk from Min → discover TO qty-fill is a phantom metric (DS service is flat ~96% at any DC depth) → reframe DC as (a) lean replenishment cover + (b) a one-bulk-order buffer, with bulk-served-vs-rack as the only real choice. Proportional TO rationing added to `replay`. `scripts/measure-dc-bulk.mjs` is the read-only diagnostic that drove these decisions.
 
 ---
 
 ## Gotchas
 
 - Local dev talks to PROD Supabase. v2 is dormant in prod config, and the tune UI only writes on explicit Publish (admin). Never click Publish casually — it saves to prod `params/plywoodNetworkV2Config` and triggers a model re-run. Verify network tab shows only GETs during eyeballing.
-- The offline harness (`node scripts/validate-plywood-v2.mjs`) is read-only and caches to `.cache/` (gitignored) — safe to re-run freely.
+- The offline harnesses (`node scripts/validate-plywood-v2.mjs` and `node scripts/measure-dc-bulk.mjs` — the DC bulk-served-vs-rack diagnostic) are read-only and cache to `.cache/` — safe to re-run freely.
 - `replay` is fully deterministic (incl. α-routing hash) — same inputs → same numbers. No `Date.now()`/`Math.random()`.
-- When testing on localhost the user's published config already has per-DS `dsKnobs` for all 5 DSes + DC published — so global knob changes won't move a DS unless you clear its override (✕ chip) or unpublish it.
+- When testing on localhost the user's published config already has per-DS `dsKnobs` for all 5 DSes + DC published — so global knob changes won't move a DS unless you **unpublish it** (the per-card override "✕ chip" was removed in the 2026-06-17 polish; unpublish is now the only way to drop a DS's localized knobs).
+- **Env (macOS TCC, 2026-06-17):** dev server died with `EPERM … index.html` / `uv_cwd`. Not a code issue — `~/Documents` is macOS TCC-protected and the terminal lost access. Fix: grant the terminal **Full Disk Access** (System Settings → Privacy & Security) and fully quit/reopen it, or move the repo out of `~/Documents`. Do NOT `sudo npm run dev` (creates root-owned files).
+- **2026-06-17 UI polish is UNCOMMITTED** on `feature/plywood-network-v2` (per "commit once UI is polished"). New helpers/memos added: `Hint`, `dotted`, `fmtD`, `sheetTick`, `valuePerSheet`, `dcResFull`, `dcLive`; removed now-unused `pillBox`, `svc`, `ceiling`, `InfoHover`, `liveSvc`, `dcKnobLabel`. Commit before further edits (local only — never push without explicit instruction).

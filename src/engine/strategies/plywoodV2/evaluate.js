@@ -13,7 +13,7 @@ import { percentile } from '../../utils.js';
 import { buildUniverse, prepareDemand, collectBulkOrderQty } from './demand.js';
 import { allocateUnified } from './allocator.js';
 import { replay } from './replay.js';
-import { sizeDCOrderBulk, trimDCComponents } from './dc.js';
+import { sizeDCSS, trimDCDepth } from './dc.js';
 
 function dateAdd(dateStr, days) {
   const d = new Date(dateStr + 'T00:00:00Z');
@@ -354,27 +354,24 @@ export function dcEvaluate(inv, skuM, cfg, { testDays = 15 } = {}) {
 }
 
 /**
- * Sweep DC knobs (replPct × bulkOrderPct × coverDays) against a dcEvaluate context.
- * Each point: size DC (with component-aware trim) → replay test window with finite DC
- * → bulk service + network regular service + footprint per class.
+ * Sweep the DC bulk-service dial (dcBulkServicePct) against a dcEvaluate context.
+ * Each point: size DC (lean reorder + one-bulk-order buffer) → depth-trim → replay finite DC
+ * → bulk served from DC (headline) + DS regular service + TO qty-fill (diagnostic) + footprint.
+ * The real DC choice is bulk-served-vs-rack; DS service is ~flat (DC-insensitive).
  */
 export function dcSweep(ctx, baseCfg) {
   const GRID = [];
-  for (const replPct of [90, 95, 98]) {
-    for (const bulkPct of [75, 90, 100]) {
-      for (const coverDays of [2, 4, 7]) {   // PO cadence: cycle stock ≈ days of drain per supplier order
-        GRID.push({ dcReplPercentile: replPct, dcBulkOrderPct: bulkPct, dcCoverDays: coverDays });
-      }
-    }
+  for (const bq of [50, 60, 75, 90, 95]) {         // "one bulk order" percentile — the bulk-service dial
+    GRID.push({ dcBulkServicePct: bq });
   }
   const points = [];
   for (const knobs of GRID) {
     const cfg = { ...baseCfg, ...knobs };
-    const sized = sizeDCOrderBulk(ctx.drain, ctx.bulkOrderQty, ctx.fitDemand.windowDates, cfg);
+    const sized = sizeDCSS(ctx.drain, ctx.bulkOrderQty, ctx.fitDemand.windowDates, cfg);
     // pre-trim (desired) footprint — the config's true appetite; X-axis of the chart
     const pre = { thick: 0, thin: 0 };
     for (const sku of Object.keys(sized.dcPlan)) pre[ctx.tclass[sku]] += sized.dcPlan[sku].max;
-    const { dcPlan, trimReport } = trimDCComponents(sized.dcPlan, sized.detail, cfg.dcCapacity, (sku) => ctx.tclass[sku]);
+    const { dcPlan, trimReport } = trimDCDepth(sized.dcPlan, sized.detail, cfg.dcCapacity, (sku) => ctx.tclass[sku]);
     const sim = replay(ctx.plan, dcPlan, ctx.testDemand, ctx.tcfg);
     const post = { thick: 0, thin: 0 };
     for (const sku of Object.keys(dcPlan)) post[ctx.tclass[sku]] += dcPlan[sku].max;

@@ -5,7 +5,7 @@ import { DS_LIST } from '../../constants.js';
 import { buildUniverse, prepareDemand } from './demand.js';
 import { allocate, allocateEmpirical, allocateTiered, allocateUnified, thicknessClass } from './allocator.js';
 import { replay } from './replay.js';
-import { sizeDCOrderBulk, trimDCComponents } from './dc.js';
+import { sizeDCSS, trimDCDepth } from './dc.js';
 import { collectBulkOrderQty } from './demand.js';
 import { computeKeepScores } from './keepScore.js';
 
@@ -28,10 +28,11 @@ export const V2_DEFAULTS = {
   tierModerateNZD: 5,            // tiered: ≥ this → moderate
   tierSparseNZD: 2,              // tiered: ≥ this → sparse; below → dead (lean floor)
   minDepthStopPercentile: 99,    // greedy mode only
-  dcReplPercentile: 98,
-  dcBulkPercentile: 90,          // legacy rolling-window mode (kept for old sizeDC export)
-  dcBulkOrderPct: 90,            // DC v2: percentile of per-SKU bulk-order sizes
-  dcCoverDays: 2,
+  dcServicePct: 98,              // DC: service percentile for the reorder point (Min, lead-time cover)
+  dcBulkServicePct: 90,          // DC: percentile of bulk-order sizes for the "one bulk order" buffer
+  dcReplPercentile: 98,          // legacy (kept for old sizeDC export)
+  dcBulkPercentile: 90,          // legacy (kept for old sizeDC export)
+  dcCoverDays: 2,                // legacy (kept for old sizeDC export)
   thickBoundaryMm: 9,
   excludedBrands: ['Merino'],
   leadDays: 3,
@@ -61,11 +62,10 @@ export function computePlywoodNetworkV2Results(inv, skuM, params) {
     : allocateUnified;
   const { plan, nodeReport, floor, tclass } = allocFn(universe, demand, c);
 
-  // DC: drain pass (infinite DC) → order-size bulk sizing → component-aware trim
+  // DC: drain pass (infinite DC) → lean reorder + capped bulk buffer → depth trim to capacity
   const drainPass = replay(plan, null, demand, { ...c, infiniteDC: true });
-  const bulkOrderQty = collectBulkOrderQty(demand);
-  const sized = sizeDCOrderBulk(drainPass.toDrain, bulkOrderQty, demand.windowDates, c);
-  const { dcPlan, detail: dcDetail, trimReport } = trimDCComponents(
+  const sized = sizeDCSS(drainPass.toDrain, collectBulkOrderQty(demand), demand.windowDates, c);
+  const { dcPlan, detail: dcDetail, trimReport } = trimDCDepth(
     sized.dcPlan, sized.detail, c.dcCapacity, (sku) => tclass[sku]);
 
   // Assemble runEngine-compatible results
@@ -183,7 +183,7 @@ export function keepScoreAnalysis(inv, skuM, priceData, cfg) {
 export { buildUniverse, prepareDemand, medianOrderQty, collectBulkOrderQty } from './demand.js';
 export { allocate, allocateEmpirical, allocateTiered, allocateUnified, thicknessClass } from './allocator.js';
 export { replay } from './replay.js';
-export { sizeDC, trimDCToCapacity, sizeDCOrderBulk, trimDCComponents, rollingSums } from './dc.js';
+export { sizeDC, trimDCToCapacity, sizeDCSS, trimDCDepth, rollingSums } from './dc.js';
 export { dcEvaluate, dcSweep } from './evaluate.js';
 export { computeKeepScores } from './keepScore.js';
 export { evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint, fitPlan } from './evaluate.js';

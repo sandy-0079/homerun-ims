@@ -50,17 +50,40 @@ export function replay(plan, dcPlan, demand, cfg) {
   const opsLoad = { toLines: 0, poLines: 0 };
 
   windowDates.forEach((date, i) => {
-    // 1) Arrivals
-    for (const t of pendingTO[date] || []) {
-      const ship = infiniteDC ? t.qty : Math.min(t.qty, dcStock[t.sku]);
-      if (!infiniteDC) dcStock[t.sku] -= ship;
-      dsStock[t.sku][t.ds] += ship;
-      if (!toDrain[t.sku]) toDrain[t.sku] = {};
-      toDrain[t.sku][date] = (toDrain[t.sku][date] || 0) + t.qty;
-      toFill.lines += 1;
-      if (ship >= t.qty) toFill.fullLines += 1;
-      toFill.qtyRequested += t.qty;
-      toFill.qtyShipped += ship;
+    // 1) Arrivals — TOs raised yesterday land today. When the DC is short, ship
+    //    PROPORTIONALLY across the competing DS requests for that SKU (largest-remainder
+    //    rounding, bigger requester gets the leftover sheet) — matches ops, and removes the
+    //    first-come bias. Total shipped = min(stock, Σrequests) regardless, so qty-fill is unchanged.
+    const toBySku = {};
+    for (const t of pendingTO[date] || []) (toBySku[t.sku] ??= []).push(t);
+    for (const [sku, group] of Object.entries(toBySku)) {
+      const reqTotal = group.reduce((a, t) => a + t.qty, 0);
+      const avail = infiniteDC ? reqTotal : dcStock[sku];
+      let shipped;
+      if (avail >= reqTotal) {
+        shipped = group.map(t => t.qty);
+      } else {
+        const raw = group.map(t => (avail * t.qty) / reqTotal);
+        shipped = raw.map(Math.floor);
+        let rem = avail - shipped.reduce((a, b) => a + b, 0);
+        // hand out the remainder by largest fractional part, ties to the larger request
+        const order = group.map((_, idx) => idx).sort((x, y) =>
+          (raw[y] - shipped[y]) - (raw[x] - shipped[x]) || group[y].qty - group[x].qty);
+        for (let k = 0; k < rem; k++) shipped[order[k]] += 1;
+      }
+      let shippedTotal = 0;
+      group.forEach((t, idx) => {
+        const ship = shipped[idx];
+        dsStock[t.sku][t.ds] += ship;
+        if (!toDrain[t.sku]) toDrain[t.sku] = {};
+        toDrain[t.sku][date] = (toDrain[t.sku][date] || 0) + t.qty;
+        toFill.lines += 1;
+        if (ship >= t.qty) toFill.fullLines += 1;
+        toFill.qtyRequested += t.qty;
+        toFill.qtyShipped += ship;
+        shippedTotal += ship;
+      });
+      if (!infiniteDC) dcStock[sku] -= shippedTotal;
     }
     for (const p of pendingPO[date] || []) {
       dcStock[p.sku] += p.qty;
