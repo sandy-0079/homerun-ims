@@ -345,9 +345,28 @@ function SKUModalV2({ row, loc, ev, cfg, dcInfo, drainSeries, published, live, o
 }
 
 // ── Tune sub-tab (state lifted to parent so results survive sub-tab switches) ──
-const knobLabel = (k) => `P${k.minLocalDayPercentile}/P${k.minNetOrderPercentile||"off"}/cap${k.minDocCapDays||"off"} · dead:${k.deadFloorMode==="lean1"?"1/2":"ABQ"} · max:${k.maxMode==="minPlus1"?"Min+1":"worst day"}`;
 const KNOB_FIELDS = ["minLocalDayPercentile","minNetOrderPercentile","minDocCapDays","deadFloorMode","maxMode"];
 const DC_KNOB_FIELDS = ["dcServicePct","dcBulkServicePct","bulkDcServedShare"];
+
+// Plain-language "what the model chose" for a location — describes the sizing, not the knob values.
+function modelNarrative({ isDC, loc, eff, cfg }) {
+  if (isDC) {
+    const sp = eff.dcServicePct ?? V2_DEFAULTS.dcServicePct;
+    const bp = eff.dcBulkServicePct ?? V2_DEFAULTS.dcBulkServicePct;
+    const lead = cfg.leadDays ?? V2_DEFAULTS.leadDays;
+    const a = Math.round((cfg.bulkDcServedShare ?? 1) * 100);
+    return `DC Min is a lean reorder point — the P${sp} of rolling ${lead}-day TO-drain, sized only to protect DS replenishment (never trimmed). DC Max = Min + one typical bulk order (P${bp} of bulk sizes) or a lead-time batch, whichever is larger, so a single bulk order ships off the shelf. About ${a}% of bulk is routed through the DC; clustered or oversized orders go supplier-direct.`;
+  }
+  const lp = eff.minLocalDayPercentile ?? V2_DEFAULTS.minLocalDayPercentile;
+  const np = eff.minNetOrderPercentile ?? V2_DEFAULTS.minNetOrderPercentile;
+  const doc = eff.minDocCapDays ?? V2_DEFAULTS.minDocCapDays;
+  const deadLean = (eff.deadFloorMode ?? V2_DEFAULTS.deadFloorMode) === "lean1";
+  const maxLean = (eff.maxMode ?? V2_DEFAULTS.maxMode) === "minPlus1";
+  return `${loc} stocks every active SKU to cover a typical selling day. Min = the P${lp} local selling-day quantity`
+    + (np ? `, floored by the P${np} network order so sparse SKUs still hold one real order` : ` (no network-order floor)`)
+    + (doc ? `; slow movers are capped at ${doc} days of cover` : ``)
+    + `. Max = ${maxLean ? "Min + 1 (lean)" : "the worst recent selling day"}, then trimmed to fit the rack. SKUs that never sell at ${loc} hold ${deadLean ? "a lean half-order" : "a typical network order"}.`;
+}
 
 // DC tune panel: dual-line frontier (bulk service + induced regular service) over the
 // 27-config DC sweep. Drain derives from the current DS plans — publish DSes first.
@@ -418,11 +437,6 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
           <span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"#EFF6FF",color:HR.blue,fontWeight:700}}>Selected: {chartData[activeIdx].footprint.toLocaleString()} sheets · {fmtLakh(chartData[activeIdx].footprint*valuePerSheet)} max inventory</span>
         )}
         <span style={{fontSize:11,display:"flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
-          α (bulk share routed to DC)
-          <input type="number" step="0.05" min="0" max="1" style={{...sel,width:60,cursor:"text"}}
-            value={cfgDraft.bulkDcServedShare ?? 1} onChange={e=>setCfgDraft(d=>({...d,bulkDcServedShare:Number(e.target.value)}))}/>
-        </span>
-        <span style={{fontSize:11,display:"flex",alignItems:"center",gap:4}}>
           DC capacity — thick
           <input type="number" style={{...sel,width:64,cursor:"text"}}
             value={cfgDraft.dcCapacity?.thick ?? 0}
@@ -488,16 +502,26 @@ function DCTunePanel({ cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, d
         </>
       )}
       {open && !dcTune && !running && <div style={{fontSize:11,color:HR.muted,padding:"10px 0 2px"}}>Run the DC sweep (5 bulk-service scenarios) to see the bulk-served vs DC-rack curve.</div>}
+      {open && (
+        <div style={{borderTop:`1px solid ${HR.surfaceLight}`,marginTop:8,paddingTop:8}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:4}}>What the model chose for the DC</div>
+          <div style={{fontSize:10.5,color:"#555",lineHeight:1.65,maxWidth:920}}>
+            {modelNarrative({ isDC: true, loc: "DC", eff: cfgDraft, cfg: cfgDraft })}
+          </div>
+          <div style={{fontSize:9,color:HR.muted,marginTop:5}}>
+            The bulk level is set by the point on the graph above; α and other network-wide <b>Settings</b> live in their own tab.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // Per-DS tune panel: lives at the top of the SKU view for the selected location.
 // Clicking a point sets a per-DS knob OVERRIDE (dsKnobs[loc]); global knobs apply elsewhere.
-function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, onSaveConfig, tuneResult, setTuneResult, dsPub, onPublishDS, onRevertDS, hasSaved, valuePerSheet, locked, onUnpublish, onRelock }) {
+function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdmin, tuneResult, setTuneResult, dsPub, onPublishDS, onRevertDS, hasSaved, valuePerSheet, locked, onUnpublish, onRelock }) {
   const [tuning, setTuning] = useState(false);
   const [open, setOpen] = useState(true);
-  const [knobsOpen, setKnobsOpen] = useState(false);
 
   // Published & locked: frozen summary — the graph only returns via Unpublish & tune.
   if (locked) {
@@ -625,74 +649,16 @@ function DSTunePanel({ loc, cfgDraft, setCfgDraft, invoiceData, skuMaster, isAdm
       )}
       {open && !tuneResult && !tuning && <div style={{fontSize:11,color:HR.muted,padding:"10px 0 2px"}}>Run Auto-tune to see {loc}'s own service-vs-inventory frontier.</div>}
 
-      {/* Global knobs + publish (collapsible) */}
+      {/* What the model chose — plain-language summary of this location's sizing. Knobs are model-owned
+          (set by the frontier point above); network-wide settings live in the Settings tab. */}
       <div style={{borderTop:`1px solid ${HR.surfaceLight}`,marginTop:8,paddingTop:8}}>
-        <span style={{fontSize:11,fontWeight:700,cursor:"pointer",color:"#555"}} onClick={()=>setKnobsOpen(o=>!o)}>{knobsOpen?"▾":"▸"} Global knobs & publish</span>
-        {knobsOpen && (
-          <div style={{marginTop:8}}>
-            <div style={{display:"flex",gap:"6px 24px",flexWrap:"wrap"}}>
-              {[
-                ["minLocalDayPercentile","Local day percentile"],
-                ["minNetOrderPercentile","Network order pct (0 = off)"],
-                ["minDocCapDays","DOC cap days (0 = off)"],
-                ["lookbackDays","Lookback days"],
-                ["bulkOrderThreshold","Bulk threshold (sheets)"],
-                ["leadDays","Supplier lead days"],
-                ["thickBoundaryMm","Thick boundary (mm)"],
-                ["dcServicePct","DC reorder service pct (Min)"],
-                ["dcBulkServicePct","DC bulk service pct (one order)"],
-              ].map(([key,label]) => (
-                <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
-                  <span style={{fontSize:11}}>{label}</span>
-                  <input type="number" step="any" style={{...sel,width:70,cursor:"text"}}
-                    value={cfgDraft[key]} onChange={e=>setCfgDraft(d=>({...d,[key]:Number(e.target.value)}))}/>
-                </div>
-              ))}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
-                <span style={{fontSize:11}}>Dead-combo floor</span>
-                <select style={{...sel,width:110}} value={cfgDraft.deadFloorMode ?? "abq"}
-                  onChange={e=>setCfgDraft(d=>({...d,deadFloorMode:e.target.value}))}>
-                  <option value="abq">Network ABQ</option>
-                  <option value="lean1">Lean (1/2)</option>
-                </select>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
-                <span style={{fontSize:11}}>Active-combo Max</span>
-                <select style={{...sel,width:110}} value={cfgDraft.maxMode ?? "worstDay"}
-                  onChange={e=>setCfgDraft(d=>({...d,maxMode:e.target.value}))}>
-                  <option value="worstDay">Worst local day</option>
-                  <option value="minPlus1">Min + 1</option>
-                </select>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,minWidth:240}}>
-                <span style={{fontSize:11}}>Capacity fit (Max trim)</span>
-                <select style={{...sel,width:110}} value={cfgDraft.capacityFit ?? "maxTrim"}
-                  onChange={e=>setCfgDraft(d=>({...d,capacityFit:e.target.value}))}>
-                  <option value="maxTrim">NZD-ordered trim</option>
-                  <option value="off">Off</option>
-                </select>
-              </div>
-            </div>
-            {Object.keys(cfgDraft.dsKnobs || {}).length > 0 && (
-              <div style={{fontSize:10,color:"#6D28D9",marginTop:6}}>
-                Per-DS overrides active: {Object.entries(cfgDraft.dsKnobs).map(([d2,k]) => `${d2} (${knobLabel({...cfgDraft,...k})})`).join(" · ")}
-                <span onClick={()=>setCfgDraft(d=>({...d,dsKnobs:{}}))} style={{marginLeft:8,cursor:"pointer",fontWeight:700,border:"1px solid #C4B5FD",borderRadius:4,padding:"1px 6px"}}>clear all</span>
-              </div>
-            )}
-            <div style={{borderTop:`1px solid ${HR.border}`,marginTop:10,paddingTop:10,maxWidth:480}}>
-              {isAdmin ? (
-                <>
-                  <button style={{...btn(true),width:"100%",padding:"8px 0"}} onClick={()=>onSaveConfig && onSaveConfig(cfgDraft)}>
-                    Publish — save config & refit on FULL window
-                  </button>
-                  <div style={{fontSize:9,color:HR.muted,marginTop:5}}>
-                    Publishes global knobs + all per-DS overrides. The tab previews a 75-day fit scored on the last 15 days; publishing refits on the entire window.
-                  </div>
-                </>
-              ) : <div style={{fontSize:10,color:HR.muted}}>Read-only — admin login required to publish.</div>}
-            </div>
-          </div>
-        )}
+        <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:4}}>What the model chose for {loc}</div>
+        <div style={{fontSize:10.5,color:"#555",lineHeight:1.65,maxWidth:920}}>
+          {modelNarrative({ isDC: false, loc, eff: { ...cfgDraft, ...(cfgDraft.dsKnobs?.[loc] || {}) }, cfg: cfgDraft })}
+        </div>
+        <div style={{fontSize:9,color:HR.muted,marginTop:5}}>
+          Set by the frontier point above — pick a different point to change it. Publish this location with the buttons by the graph; network-wide <b>Settings</b> live in their own tab.
+        </div>
       </div>
     </div>
   );
@@ -855,6 +821,48 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Settings view (network-wide, set-once): assumptions + α; one global save/refit ──
+function SettingsView({ cfgDraft, setCfgDraft, isAdmin, savedCfg, onSaveConfig }) {
+  const FIELDS = ["bulkOrderThreshold", "leadDays", "thickBoundaryMm", "lookbackDays", "bulkDcServedShare"];
+  const dirty = FIELDS.some(k => (cfgDraft[k] ?? V2_DEFAULTS[k]) !== (savedCfg[k] ?? V2_DEFAULTS[k]));
+  const save = () => {
+    const newCfg = { ...savedCfg };
+    for (const f of FIELDS) newCfg[f] = cfgDraft[f] ?? V2_DEFAULTS[f];
+    if (onSaveConfig) onSaveConfig(newCfg);
+  };
+  const num = (key, label, hint, step = "any") => (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16,padding:"9px 0",borderBottom:`1px solid ${HR.surfaceLight}`}}>
+      <div>
+        <div style={{fontSize:12,fontWeight:600}}>{label}</div>
+        <div style={{fontSize:10,color:HR.muted,marginTop:1,maxWidth:520}}>{hint}</div>
+      </div>
+      <input type="number" step={step} disabled={!isAdmin} style={{...sel,width:80,cursor:isAdmin?"text":"not-allowed",flexShrink:0}}
+        value={cfgDraft[key] ?? V2_DEFAULTS[key]} onChange={e=>setCfgDraft(d=>({...d,[key]:Number(e.target.value)}))}/>
+    </div>
+  );
+  return (
+    <div style={{maxWidth:680}}>
+      <div style={{fontSize:14,fontWeight:800,marginBottom:2}}>Network settings</div>
+      <div style={{fontSize:11,color:HR.muted,marginBottom:12}}>Set-once assumptions that apply to every location — the upstream facts the model works from. The per-location sizing knobs are model-owned (set by the frontier points). Changing anything here re-fits every location on save.</div>
+      {num("bulkOrderThreshold", "Bulk threshold (sheets)", "An order with any line at or above this is a bulk order — routed from the DC, excluded from DS shelf sizing.")}
+      {num("leadDays", "Supplier lead days", "Days from raising a supplier PO to stock landing — sets the DC reorder cover.")}
+      {num("thickBoundaryMm", "Thick boundary (mm)", "Sheets thicker than this count as 'thick' for rack capacity; the rest are 'thin'.")}
+      {num("lookbackDays", "Lookback days", "Demand-history window the plan is fit on.")}
+      {num("bulkDcServedShare", "α — bulk share routed to DC", "Fraction of bulk orders served from the DC vs supplier-direct (a geography SOP). 0.7 = 70% via DC.", "0.05")}
+      <div style={{marginTop:16}}>
+        {isAdmin ? (
+          <>
+            <button style={{...btn(true),padding:"8px 18px",opacity:dirty?1:0.5,cursor:dirty?"pointer":"default"}} onClick={dirty?save:undefined} disabled={!dirty}>
+              Save &amp; refit all locations
+            </button>
+            <div style={{fontSize:10,color:HR.muted,marginTop:6}}>Saves to the published config and re-runs the engine on the full window for every location.{dirty ? "" : " No unsaved changes."}</div>
+          </>
+        ) : <div style={{fontSize:11,color:HR.muted}}>Read-only — admin login required to change network settings.</div>}
       </div>
     </div>
   );
@@ -1143,16 +1151,21 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   const hasFilter = query || fBrand !== "All" || fType !== "All" || fBucket !== "All" || fOOS;
   // avg ₹ per sheet of the current location's plan — used to value each frontier point's footprint
   const valuePerSheet = (() => { const t = rows.reduce((a, r) => a + r.max, 0); return t ? rows.reduce((a, r) => a + r.max * (priceData?.[r.sku] || 0), 0) / t : 0; })();
-  // network plan inventory: Σ target Min/Max levels × cost, over all DS + DC (NOT live stock) — for the Overall Network card
+  // network plan inventory: Σ target Min/Max levels × cost, over all DS + DC (NOT live stock) — for the
+  // Overall Network card. Always on the LIVE full-window plan (ev.fullPlan + dcResFull), NOT the
+  // current preview (modePlan/dcRes) — so tuning one DS doesn't flip the whole network's basis from
+  // full-window to the 75-day fit. Matches the network service card (also full-window via liveSL).
+  const netPlan = ev.fullPlan || modePlan;
+  const netDc = dcResFull || dcRes;
   const netInv = (() => {
     let minVal = 0, maxVal = 0, maxQty = 0;
     for (const sku of Object.keys(ev.universe)) {
       const pp = priceData?.[sku] || 0;
       for (const ds of DS_LIST) {
-        const p = modePlan[sku]?.[ds]; if (!p) continue;
+        const p = netPlan[sku]?.[ds]; if (!p) continue;
         minVal += p.min * pp; maxVal += p.max * pp; maxQty += p.max;
       }
-      const dc = dcRes?.[sku]?.dcResult;
+      const dc = netDc?.[sku]?.dcResult;
       if (dc) { minVal += dc.min * pp; maxVal += dc.max * pp; maxQty += dc.max; }
     }
     return { minVal, maxVal, maxQty };
@@ -1195,10 +1208,13 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
         <div style={{flex:1}}/>
         <button style={btn(view==="location")} onClick={()=>setView("location")}>Locations</button>
         <button style={btn(view==="assortment")} onClick={()=>setView("assortment")}>Assortment / Keep Score</button>
+        <button style={btn(view==="settings")} onClick={()=>setView("settings")}>Settings</button>
       </div>
 
       {view === "assortment" ? (
         <AssortmentView ks={ks} cfgDraft={cfgDraft} setCfgDraft={setCfgDraft} isAdmin={isAdmin}/>
+      ) : view === "settings" ? (
+        <SettingsView cfgDraft={cfgDraft} setCfgDraft={setCfgDraft} isAdmin={isAdmin} savedCfg={savedCfg} onSaveConfig={onSaveConfig}/>
       ) : (
         <div>
           {/* tuning basis banner — these numbers are an out-of-window forecast; publish refits on the full window */}
@@ -1294,7 +1310,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
           {!isDC ? (
             <DSTunePanel loc={loc} cfgDraft={cfgDraft} setCfgDraft={setCfgDraft}
               invoiceData={invoiceData} skuMaster={skuMaster} isAdmin={isAdmin}
-              onSaveConfig={onSaveConfig} tuneResult={tuneResult} setTuneResult={setTuneResult}
+              tuneResult={tuneResult} setTuneResult={setTuneResult}
               dsPub={dsPublished(loc)} onPublishDS={publishDS} onRevertDS={revertDS}
               hasSaved={!!plywoodNetworkV2Config} valuePerSheet={valuePerSheet}
               locked={locked} onUnpublish={unpublishLoc} onRelock={lockLoc}/>
