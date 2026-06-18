@@ -3405,7 +3405,7 @@ const visibleOutput = useMemo(() => {
   const movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"],priceColors=["#B91C1C","#C2410C","#A16207","#475569","#64748B"];
 
   const ADMIN_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["baskets","Baskets"],["plywood","Plywood"],["plywoodV2","Plywood v2"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
-  const PUBLIC_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["baskets","Baskets"],["plywood","Plywood"],["plywoodV2","Plywood v2"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"]];
+  const PUBLIC_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["baskets","Baskets"],["plywood","Plywood"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"]];
   const NAV_TABS=isAdmin?ADMIN_TABS:PUBLIC_TABS;
 
   // Sync status indicator
