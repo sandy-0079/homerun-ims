@@ -187,3 +187,4 @@ export { sizeDC, trimDCToCapacity, sizeDCSS, trimDCDepth, rollingSums } from './
 export { dcEvaluate, dcSweep } from './evaluate.js';
 export { computeKeepScores } from './keepScore.js';
 export { evaluatePlan, autoTune, deriveNZDBuckets, bucketOf, planFootprint, fitPlan } from './evaluate.js';
+export { simulateOOS } from './oosSim.js';

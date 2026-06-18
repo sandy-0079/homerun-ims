@@ -7,7 +7,7 @@ category-team cut-list review — see Open items.**
 
 - **Branch:** `feature/plywood-network-v2` — NEVER push or PR without explicit user instruction. Local testing only.
 - **Spec:** `docs/superpowers/specs/2026-06-11-plywood-network-v2-design.md` (read for full rationale).
-- **Tests:** `npx vitest run` — 63 passing as of 2026-06-17. vitest is a devDependency; `npm test` also works. `npm run build` clean; eslint 0 errors (1 pre-existing `modeOos` exhaustive-deps warning).
+- **Tests:** `npx vitest run` — 68 passing as of 2026-06-18. vitest is a devDependency; `npm test` also works. `npm run build` clean; eslint 0 errors (1 pre-existing `modeOos` exhaustive-deps warning).
 - **Activation:** dormant until `categoryStrategies["Plywood, MDF & HDHMR"] === "network_design_v2"` in prod config. v1 (`network_design`) untouched and still the live strategy.
 - **Config row:** `params/plywoodNetworkV2Config` (separate Supabase row, like v1's `plywoodNetworkConfig`). 406 errors for this row are EXPECTED until first admin publish.
 
@@ -142,6 +142,31 @@ small "diag" sub-line. The DC sweep frontier plots **bulk-served % (Y) vs DC rac
 
 ---
 
+## OOS Simulation view (4th tab — DONE 2026-06-18)
+
+A backtest: upload a real invoice CSV for a period **outside** the original 90-day fit window and see
+how the **published** plan would have performed. Lives as the 4th view (`Locations | Assortment | Settings
+| OOS Sim`). `OOSSimView` in the tab; `simulateOOS` in `oosSim.js`; CSV via the shared `parseInvoiceCsv`
+(utils.js — same format as Upload Data). **Spec:** `docs/superpowers/specs/2026-06-17-plywood-v2-oos-simulation-design.md`.
+
+- **Model (matches the 75/15 eval):** each location starts at the SKU's **Max**, depletes on orders, and
+  a TO refills it to Max **next day**. **DS regular OOS uses `infiniteDC:true`** (DC always replenishes —
+  the DS-shelf metric). **Bulk** (any order with a line ≥ `bulkOrderThreshold`) routes entirely to the DC
+  and is served from the **finite published DC stock** (α forced to 1). Two `replay` passes.
+- **Published plan** = `computePlywoodNetworkV2Results(originalInvoice, savedCfg)` (memoized on savedCfg).
+- **Summary strip:** `Plywood orders: N | Regular: R · Service level S% (served/R) | Bulk: B · Served from DC D% (served/B)`.
+- **5 DS + 1 DC cards** (service/served % + counts) → click to drill; default = worst location (`oosWorstLoc`).
+- **Detail = line-item table** for the selected location: `Date · Order# · SKU · Item Name · Ordered · SOH ·
+  Short · Min · Max · Serviced(✓/✗)`, **red = missed / green = served**, sorted Short desc. Rows = every line
+  of orders that missed ≥1 item there (so green order-mates show too). CSV download of the same.
+- **Unplanned bucket** = uploaded SKUs not in the universe (new/out-of-scope) — computed but not shown
+  (dropped from the strip per the all-plywood framing); still in the `simulateOOS` return.
+- **Ephemeral & prod-safe:** the upload + selection live in `PlywoodNetworkV2Tab` state (`oosUpload`/`oosSel`),
+  lifted out of `OOSSimView` so they survive v2-view + top-level tab switches (the tab is display-hidden,
+  never unmounted); **lost on reload**. No Supabase / localStorage / engine writes — pure in-memory what-if.
+
+---
+
 ## Per-DS tuning
 
 `dsKnobs[ds]` overrides global knobs for one DS (set by clicking that DS's frontier point). Network
@@ -157,7 +182,8 @@ service-rich while DS05 runs lean — they have very different rack pressure.
 |---|---|
 | `demand.js` | `buildUniverse`, `prepareDemand` (regular line-level + bulk order-level streams), `collectBulkOrderQty`, `medianOrderQty` |
 | `allocator.js` | `allocateUnified` (default) + `allocateEmpirical`/`allocateTiered`/`allocate`(greedy) + `maxTrim` pass; `thicknessClass` |
-| `replay.js` | deterministic day-by-day sim: TO/PO timing, **proportional TO rationing**, order-level OOS, α-routing of bulk, TO-fill tracking, drain series |
+| `replay.js` | deterministic day-by-day sim: TO/PO timing, **proportional TO rationing**, order-level OOS, α-routing of bulk, TO-fill tracking, drain series. `cfg.infiniteDC` → DC always honours TOs / bulk; `cfg.captureLines` → emit a `lineEvents[]` record for **every** line (served + short, with on-hand) — for the OOS-Sim table (off by default, so the eval pays nothing) |
+| `oosSim.js` | `simulateOOS(uploadedInvoice, publishedPlan, skuMaster, params)` — backtests the published plan against an uploaded out-of-window invoice. Two replays: **DS regular OOS at `infiniteDC:true`** (DS-shelf basis), **bulk at finite DC + α=1** (all bulk → DC). Returns per-DS/DC service + line-item tables (failed orders' lines, red short / green served, sorted Short desc) + unplanned bucket. Pure/testable |
 | `dc.js` | `sizeDCSS` (Min = lean reorder; Max = Min + max(one bulk order, lead batch)), `trimDCDepth`. Band-model `sizeDCOrderBulk`/`trimDCComponents` removed; legacy `sizeDC`/`trimDCToCapacity` still present (unused, old export) |
 | `keepScore.js` | `computeKeepScores` — Rent/Service ratios. Wrapped by `keepScoreAnalysis` in index.js (real-plan holding + capacity-freed); surfaced as the Assortment view. |
 | `evaluate.js` | `evaluatePlan` (75/15), `autoTune` (240-config sweep, Pareto, presets, bucket gate), `dcEvaluate`/`dcSweep`, `deriveNZDBuckets`, `planFootprint`, `fitPlan` |

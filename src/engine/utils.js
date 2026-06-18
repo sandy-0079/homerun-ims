@@ -17,6 +17,15 @@ export function parseCSV(text){
   });
 }
 
+// Parse a Zoho invoice CSV into the invoiceData row shape used by the engine.
+// Mirrors App.jsx's invoice upload mapping — shared so the OOS Simulation can parse the same format.
+export function parseInvoiceCsv(text){
+  return parseCSV(text)
+    .filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||""))
+    .map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0),shopifyOrder:r["Shopify Order"]||""}))
+    .filter(r=>r.date&&r.sku&&r.qty>0);
+}
+
 export function getPriceTag(p,tiers){const v=parseFloat(p)||0;const[t1,t2,t3,t4]=tiers||[3000,1500,400,100];if(v>=t1)return"Premium";if(v>=t2)return"High";if(v>=t3)return"Medium";if(v>=t4)return"Low";if(v>0)return"Super Low";return"No Price";}
 
 export function getMovTag(nzd,total,intervals){if(!nzd)return"Super Slow";const avg=total/nzd;const[i1,i2,i3,i4]=intervals||MOVEMENT_TIERS_DEFAULT;if(avg<=i1)return"Super Fast";if(avg<=i2)return"Fast";if(avg<=i3)return"Moderate";if(avg<=i4)return"Slow";return"Super Slow";}

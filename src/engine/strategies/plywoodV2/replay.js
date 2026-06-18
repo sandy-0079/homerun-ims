@@ -18,6 +18,7 @@ export function replay(plan, dcPlan, demand, cfg) {
   const { orders, windowDates } = demand;
   const leadDays = cfg.leadDays ?? 3;
   const infiniteDC = !!cfg.infiniteDC;
+  const captureLines = !!cfg.captureLines;   // record every line's outcome (served + short) — for the OOS sim table
   // α: share of bulk orders routed to DC; the rest go supplier-direct (assumed served)
   const dcShare = cfg.bulkDcServedShare ?? 1.0;
 
@@ -45,6 +46,7 @@ export function replay(plan, dcPlan, demand, cfg) {
   const pendingPO = {};          // arriveDate → [{sku, qty}]
   const toDrain = {};            // sku → date → requested qty (DC-side demand view)
   const oosEvents = [];
+  const lineEvents = [];         // (captureLines) every order line: served + short, with on-hand
   const counts = { regular: { total: 0, oos: 0, perDS: {} }, bulk: { total: 0, oos: 0, supplierRouted: 0 } };
   const dcStockByDate = {};      // sku → date → closing qty (tests/UI)
   const opsLoad = { toLines: 0, poLines: 0 };
@@ -104,15 +106,17 @@ export function replay(plan, dcPlan, demand, cfg) {
           const avail = dcStock[sku];
           if (avail < qty) {
             short = true;
-            oosEvents.push({ type: 'bulk', orderId: o.id, date, ds: o.ds, sku, short: qty - Math.max(0, avail) });
+            oosEvents.push({ type: 'bulk', orderId: o.id, date, ds: o.ds, sku, short: qty - Math.max(0, avail), qty, onHand: Math.max(0, avail) });
           }
+          if (captureLines) lineEvents.push({ type: 'bulk', orderId: o.id, date, ds: o.ds, sku, qty, onHand: Math.max(0, avail), short: Math.max(0, qty - avail), served: avail >= qty });
           if (!infiniteDC) dcStock[sku] = Math.max(0, avail - qty);
         } else {
           const avail = dsStock[sku][o.ds] ?? 0;
           if (avail < qty) {
             short = true;
-            oosEvents.push({ type: 'regular', orderId: o.id, date, ds: o.ds, sku, short: qty - avail });
+            oosEvents.push({ type: 'regular', orderId: o.id, date, ds: o.ds, sku, short: qty - avail, qty, onHand: avail });
           }
+          if (captureLines) lineEvents.push({ type: 'regular', orderId: o.id, date, ds: o.ds, sku, qty, onHand: avail, short: Math.max(0, qty - avail), served: avail >= qty });
           dsStock[sku][o.ds] = Math.max(0, avail - qty);
         }
       }
@@ -176,5 +180,5 @@ export function replay(plan, dcPlan, demand, cfg) {
       qtyShort: toFill.qtyRequested - toFill.qtyShipped,
     },
   };
-  return { toDrain, oosEvents, serviceLevels, opsLoad, dcStockByDate };
+  return { toDrain, oosEvents, lineEvents, serviceLevels, opsLoad, dcStockByDate };
 }

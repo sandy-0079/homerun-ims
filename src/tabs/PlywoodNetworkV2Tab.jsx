@@ -11,8 +11,9 @@ import {
 import {
   V2_DEFAULTS, evaluatePlan, autoTune, deriveNZDBuckets, bucketOf,
   computePlywoodNetworkV2Results, dcEvaluate, dcSweep, replay, keepScoreAnalysis,
+  simulateOOS,
 } from "../engine/strategies/plywoodV2/index.js";
-import { percentile, inferThickness } from "../engine/utils.js";
+import { percentile, inferThickness, parseInvoiceCsv } from "../engine/utils.js";
 import { DS_LIST } from "../engine/constants.js";
 
 const HR = {
@@ -868,6 +869,167 @@ function SettingsView({ cfgDraft, setCfgDraft, isAdmin, savedCfg, onSaveConfig }
   );
 }
 
+// One compact, clickable location card in the OOS Simulation view (service/served % + order counts).
+function OOSCard({ label, rate, served, total, selected, color, onClick }) {
+  return (
+    <div onClick={onClick} title="Click to see this location's missed orders"
+      style={{flex:1,minWidth:96,cursor:"pointer",textAlign:"center",padding:"7px 8px",borderRadius:8,
+        border:selected?`2px solid ${HR.yellow}`:`1px solid ${HR.border}`,background:selected?"#FEFCE8":HR.surface}}>
+      <div style={{fontSize:10,fontWeight:700,color:selected?"#000":HR.muted}}>{label}{selected?" ●":""}</div>
+      <div style={{fontSize:16,fontWeight:800,color}}>{(rate * 100).toFixed(1)}%</div>
+      <div style={{fontSize:9,color:HR.muted}}>({served}/{total})</div>
+    </div>
+  );
+}
+
+// Default drill-down on a fresh result: the location with the most missed orders.
+function oosWorstLoc(r) {
+  let best = "DS01", worst = -1;
+  for (const ds of DS_LIST) { const m = r.perDS[ds].oos; if (m > worst) { worst = m; best = ds; } }
+  if ((r.dc.total - r.dc.served) > worst) best = "DC";
+  return best;
+}
+
+// ── OOS Simulation view: backtest the PUBLISHED plan against an uploaded out-of-window invoice ──
+function OOSSimView({ invoiceData, skuMaster, savedCfg, hasPublished, uploaded, setUploaded, selDetail, setSelDetail }) {
+  // uploaded ({ rows, fileName }) + selDetail are lifted to the parent so they survive tab switches.
+  const [error, setError] = useState(null);
+
+  // Published plan, fit on the ORIGINAL data (memoized — recomputes only on publish or data change).
+  const publishedPlan = useMemo(() => {
+    if (!hasPublished) return null;
+    try { return computePlywoodNetworkV2Results(invoiceData, skuMaster, { plywoodNetworkV2Config: savedCfg }); }
+    catch (e) { console.error("OOS published-plan error:", e); return null; }
+  }, [hasPublished, invoiceData, skuMaster, savedCfg]);
+
+  const result = useMemo(() => {
+    if (!uploaded?.rows?.length || !publishedPlan) return null;
+    try { return simulateOOS(uploaded.rows, publishedPlan, skuMaster, savedCfg); }
+    catch (e) { console.error("OOS sim error:", e); return null; }
+  }, [uploaded, publishedPlan, skuMaster, savedCfg]);
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setError(null);
+    try {
+      const rows = parseInvoiceCsv(await file.text());
+      if (!rows.length) { setUploaded(null); setError("No usable invoice rows — need Closed/Overdue invoices with a SKU and Quantity."); }
+      else setUploaded({ rows, fileName: file.name });
+    } catch (err) { console.error(err); setUploaded(null); setError("Couldn't parse that file — expected the Zoho invoice CSV (same format as Upload Data)."); }
+    if (e.target) e.target.value = "";
+  };
+
+  const downloadCsv = () => {
+    if (!result) return;
+    const lines = [["Location", "Date", "Order #", "SKU", "Item Name", "Ordered", "SOH", "Short", "Min", "Max", "Serviced"].join(",")];
+    const emit = (loc, rows) => { for (const r of rows) lines.push([loc, r.date, r.ref, r.sku, r.itemName, r.qty, r.soh, r.short, r.min, r.max, r.served ? "Yes" : "No"].map(v => `"${v}"`).join(",")); };
+    for (const ds of DS_LIST) emit(ds, result.perDS[ds].rows);
+    emit("DC (bulk)", result.dc.rows);
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "oos-simulation.csv"; a.click(); URL.revokeObjectURL(a.href);
+  };
+
+  if (!hasPublished) {
+    return <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:13}}>Publish a plan first — there's no published v2 plan to backtest against.</div>;
+  }
+
+  const pct = (v) => `${(v * 100).toFixed(1)}%`;
+
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10,flexWrap:"wrap"}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:800}}>OOS Simulation</div>
+          <div style={{fontSize:11,color:HR.muted,maxWidth:640}}>Backtest the <b>published</b> plan against an invoice upload for dates outside the fit window. The file is <b>not saved</b> — it never touches the live model.</div>
+        </div>
+        <div style={{flex:1}}/>
+        <label style={{...btn(true),cursor:"pointer"}}>
+          {uploaded ? "Replace CSV" : "Upload invoice CSV"}
+          <input type="file" accept=".csv" onChange={onFile} style={{display:"none"}}/>
+        </label>
+        {uploaded && <button style={btn(false)} onClick={() => { setUploaded(null); setError(null); }}>Clear</button>}
+        {result && <button style={btn(false)} onClick={downloadCsv}>⬇ Download CSV</button>}
+      </div>
+      {error && <div style={{fontSize:11,color:HR.red,background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"8px 12px",marginBottom:10}}>{error}</div>}
+      {!uploaded && !error && (
+        <div style={{padding:40,textAlign:"center",color:HR.muted,fontSize:12,border:`1px dashed ${HR.border}`,borderRadius:8}}>
+          Upload a Zoho invoice CSV (same format as Upload Data) for an out-of-window period to simulate.
+        </div>
+      )}
+      {result && (
+        <>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",background:HR.surfaceLight,border:`1px solid ${HR.border}`,borderRadius:8,padding:"8px 14px",marginBottom:10,fontSize:11}}>
+            <span style={{fontWeight:700}}>{uploaded.fileName}</span>
+            <span style={{color:HR.muted}}>Window {result.window.from} → {result.window.to} ({result.window.days}d)</span>
+            <span style={{color:HR.border}}>|</span>
+            <span><b>Plywood orders: {result.orderCounts.total.toLocaleString()}</b></span>
+            <span style={{color:HR.border}}>|</span>
+            <span>Regular: {result.orderCounts.regular} · Service level <b style={{color:pillColor(1 - result.network.dsOosPct)}}>{pct(1 - result.network.dsOosPct)}</b> <span style={{color:HR.muted}}>({result.orderCounts.regular - result.network.dsOos}/{result.orderCounts.regular})</span></span>
+            <span style={{color:HR.border}}>|</span>
+            <span>Bulk: {result.orderCounts.bulk} · Served from DC <b style={{color:pillColor(result.network.bulkServedPct)}}>{pct(result.network.bulkServedPct)}</b> <span style={{color:HR.muted}}>({result.dc.served}/{result.orderCounts.bulk})</span></span>
+          </div>
+          {(() => {
+            const selectedLoc = selDetail || oosWorstLoc(result);
+            const detail = selectedLoc === "DC"
+              ? { label: "DC (bulk) — line items from missed orders", rows: result.dc.rows }
+              : { label: `${selectedLoc} — line items from missed orders`, rows: result.perDS[selectedLoc].rows };
+            return (
+              <>
+                {/* 5 DS + 1 DC cards — click to drill into a location */}
+                <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+                  {DS_LIST.map(ds => {
+                    const d = result.perDS[ds], svc = 1 - d.oosPct;
+                    return <OOSCard key={ds} label={ds} rate={svc} served={d.total - d.oos} total={d.total}
+                      selected={selectedLoc === ds} color={pillColor(svc)} onClick={() => setSelDetail(ds)}/>;
+                  })}
+                  <OOSCard label="DC (bulk)" rate={result.dc.servedPct} served={result.dc.served} total={result.dc.total}
+                    selected={selectedLoc === "DC"} color={pillColor(result.dc.servedPct)} onClick={() => setSelDetail("DC")}/>
+                </div>
+                {/* detail panel for the selected location — line-item table, red = missed, green = served */}
+                <div style={{border:`1px solid ${HR.border}`,borderRadius:8,background:HR.surface,overflow:"hidden"}}>
+                  <div style={{padding:"8px 12px",borderBottom:`1px solid ${HR.surfaceLight}`,fontSize:12,fontWeight:700}}>
+                    {detail.label} <span style={{color:HR.muted,fontWeight:400}}>· {detail.rows.length} line item{detail.rows.length === 1 ? "" : "s"}</span>
+                  </div>
+                  {detail.rows.length === 0 ? (
+                    <div style={{color:HR.green,padding:"16px 12px",fontSize:11}}>No missed orders at this location — all served.</div>
+                  ) : (
+                    <div style={{maxHeight:420,overflowY:"auto"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:10.5}}>
+                        <thead><tr>
+                          {[["Date","left"],["Order #","left"],["SKU","left"],["Item Name","left"],["Ordered","center"],["SOH","center"],["Short","center"],["Min","center"],["Max","center"],["Serviced","center"]].map(([h, al]) => (
+                            <th key={h} style={{padding:"5px 8px",textAlign:al,fontWeight:700,fontSize:9.5,color:"#666",background:"#F8F8F2",borderBottom:`1px solid ${HR.border}`,position:"sticky",top:0,zIndex:1,whiteSpace:"nowrap"}}>{h}</th>
+                          ))}
+                        </tr></thead>
+                        <tbody>
+                          {detail.rows.map((r, i) => (
+                            <tr key={i} style={{background:r.served ? "#F0FDF4" : "#FEF2F2"}}>
+                              <td style={{padding:"3px 8px",whiteSpace:"nowrap"}}>{r.date}</td>
+                              <td style={{padding:"3px 8px",fontFamily:"monospace",fontSize:10,whiteSpace:"nowrap"}}>{r.ref}</td>
+                              <td style={{padding:"3px 8px",fontFamily:"monospace",fontSize:10,whiteSpace:"nowrap"}}>{r.sku}</td>
+                              <td style={{padding:"3px 8px",maxWidth:240,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.itemName}>{r.itemName || "—"}</td>
+                              <td style={{padding:"3px 8px",textAlign:"center"}}>{r.qty}</td>
+                              <td style={{padding:"3px 8px",textAlign:"center"}}>{r.soh}</td>
+                              <td style={{padding:"3px 8px",textAlign:"center",color:r.short > 0 ? HR.red : HR.muted,fontWeight:r.short > 0 ? 700 : 400}}>{r.short || "—"}</td>
+                              <td style={{padding:"3px 8px",textAlign:"center",color:"#555"}}>{r.min}</td>
+                              <td style={{padding:"3px 8px",textAlign:"center",color:"#555"}}>{r.max}</td>
+                              <td style={{padding:"3px 8px",textAlign:"center",fontWeight:700,color:r.served ? HR.green : HR.red}}>{r.served ? "✓" : "✗"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData, isAdmin, plywoodNetworkV2Config, onSaveConfig, isActive, engineResults }) {
   const [loc, setLoc] = useState("DS01");
   const [cfgDraft, setCfgDraft] = useState(() => {
@@ -886,7 +1048,11 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   }, [cfgDraft.keepScore]);
   const [tuneResult, setTuneResult] = useState(null);   // lifted: survives sub-tab switches
   const [selected, setSelected] = useState(null);
-  const [view, setView] = useState("location");          // 'location' | 'assortment'
+  const [view, setView] = useState("location");          // 'location' | 'assortment' | 'settings' | 'oossim'
+  // OOS Sim upload state lives here (not in OOSSimView) so it survives v2-view + top-level tab switches
+  // (the v2 tab is display-hidden, never unmounted). Lost only on full reload. Purely in-memory.
+  const [oosUpload, setOosUpload] = useState(null);
+  const [oosSel, setOosSel] = useState(null);
   const [copiedSku, setCopiedSku] = useState(null);
   const copySku = (sku, e) => {
     e.stopPropagation();
@@ -1209,12 +1375,16 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
         <button style={btn(view==="location")} onClick={()=>setView("location")}>Locations</button>
         <button style={btn(view==="assortment")} onClick={()=>setView("assortment")}>Assortment / Keep Score</button>
         <button style={btn(view==="settings")} onClick={()=>setView("settings")}>Settings</button>
+        <button style={btn(view==="oossim")} onClick={()=>setView("oossim")}>OOS Sim</button>
       </div>
 
       {view === "assortment" ? (
         <AssortmentView ks={ks} cfgDraft={cfgDraft} setCfgDraft={setCfgDraft} isAdmin={isAdmin}/>
       ) : view === "settings" ? (
         <SettingsView cfgDraft={cfgDraft} setCfgDraft={setCfgDraft} isAdmin={isAdmin} savedCfg={savedCfg} onSaveConfig={onSaveConfig}/>
+      ) : view === "oossim" ? (
+        <OOSSimView invoiceData={invoiceData} skuMaster={skuMaster} savedCfg={savedCfg} hasPublished={!!plywoodNetworkV2Config}
+          uploaded={oosUpload} setUploaded={setOosUpload} selDetail={oosSel} setSelDetail={setOosSel}/>
       ) : (
         <div>
           {/* tuning basis banner — these numbers are an out-of-window forecast; publish refits on the full window */}
