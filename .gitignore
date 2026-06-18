@@ -27,3 +27,5 @@ dist-ssr
 
 .cache/
 validation-out/
+.playwright-mcp/
+supabase/.temp/
