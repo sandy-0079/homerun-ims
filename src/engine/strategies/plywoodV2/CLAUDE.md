@@ -96,6 +96,14 @@ is 70% of all bulk (30% is geographically supplier-bound regardless of stock).
 on the **least TO-active SKUs first** (ties: larger buffer first). The reorder floor (Min) is NEVER
 trimmed. Residual overflow (Σ Min > cap) is reported.
 
+**Zero-drain SKUs (no DS stocks them — policy A, confirmed 2026-06-18):** Min = P98(zero drain) = **0**
+(no DS replenishment to protect, so no reorder floor). If the SKU has **bulk** orders, Max = **one-bulk-order
+buffer** (`bulkUnit`) — the DC still serves a single bulk order off-shelf. With **no** bulk either, it's not
+in `dcPlan` at all → **0/0** (the `|| {min:0,max:0}` default in index.js — correct, no DC demand). Under
+capacity pressure these are trimmed **first** (drain-NZD = 0 = least-active), so a bulk-only SKU's buffer is
+the first to drop to 0 (its bulk then spills supplier-direct). Deliberate priority — DC rack favours SKUs
+that serve both DS replenishment *and* bulk; not changed.
+
 **Proportional TO rationing** (`replay`): when the DC is short, competing DS TO requests for a SKU are
 filled **proportionally** (largest-remainder rounding, bigger requester gets the leftover sheet) — not
 first-come. Removes the DS-iteration-order bias. Qty-fill is invariant to the split (total shipped =

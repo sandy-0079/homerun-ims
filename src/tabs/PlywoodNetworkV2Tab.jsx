@@ -699,8 +699,8 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
       return (va - vb) * sortDir;
     });
   const hSort = (col) => { if (sortBy === col) setSortDir(d => -d); else { setSortBy(col); setSortDir(col === "keepScore" ? 1 : -1); } };
-  const th = (col, label, center) => (
-    <th key={col} onClick={() => hSort(col)} style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:sortBy===col?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2",position:"sticky",top:0,zIndex:2}}>
+  const th = (col, label, center, width) => (
+    <th key={col} onClick={() => hSort(col)} style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:sortBy===col?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2",position:"sticky",top:0,zIndex:2,width}}>
       {label}{sortBy===col?(sortDir===-1?"↓":"↑"):<span style={{color:"#ccc",fontSize:8}}>↕</span>}</th>
   );
 
@@ -785,7 +785,7 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
       <div style={{overflow:"auto",maxHeight:"calc(100vh / 0.85 - 290px)",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
           <thead><tr>
-            {th("sku","SKU")}{th("name","Item Name")}{th("brand","Brand")}{th("tclass","Class")}
+            {th("sku","SKU",false,"1%")}{th("name","Item Name")}{th("brand","Brand")}{th("tclass","Class")}
             {th("networkNZD","Net NZD",true)}{th("maxHoldQty","Max Hol Qty",true)}{th("windowQty","Sold Qty",true)}
             {th("holdingValue","Holding ₹",true)}{th("salesValue","Sales ₹",true)}
             {th("rentRatio","Rent Ratio",true)}{th("serviceRatio","Service Ratio",true)}{th("keepScore","Keep Score",true)}{th("flag","Flag",true)}
@@ -793,7 +793,7 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
           <tbody>
             {filtered.map(r => (
               <tr key={r.sku} style={{background:r.flag==="Cut"?"#FEF2F2":r.flag==="Watch"?"#FFFBEB":"#fff"}}>
-                <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap"}}>
+                <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap",width:"1%"}}>
                   <span style={{display:"flex",alignItems:"center",gap:4}}>
                     <span style={{fontFamily:"monospace",fontSize:10,color:"#555"}}>{r.sku}</span>
                     <span onClick={e=>copySku(r.sku,e)} title="Copy SKU"
@@ -804,7 +804,7 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
                     </span>
                   </span>
                 </td>
-                <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.name}>{r.name}</td>
+                <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",maxWidth:420,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.name}>{r.name}</td>
                 <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",color:"#555",whiteSpace:"nowrap"}}>{r.brand}</td>
                 <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)"}}>
                   <span style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:r.tclass==="thick"?"#FEF3C7":"#DBEAFE",color:r.tclass==="thick"?"#92400E":HR.blue}}>{r.tclass==="thick"?"Thick":"Thin"}</span>
@@ -998,7 +998,7 @@ function OOSSimView({ invoiceData, skuMaster, savedCfg, hasPublished, uploaded, 
                       <table style={{width:"100%",borderCollapse:"collapse",fontSize:10.5}}>
                         <thead><tr>
                           {[["Date","left"],["Order #","left"],["SKU","left"],["Item Name","left"],["Ordered","center"],["SOH","center"],["Short","center"],["Min","center"],["Max","center"],["Serviced","center"]].map(([h, al]) => (
-                            <th key={h} style={{padding:"5px 8px",textAlign:al,fontWeight:700,fontSize:9.5,color:"#666",background:"#F8F8F2",borderBottom:`1px solid ${HR.border}`,position:"sticky",top:0,zIndex:1,whiteSpace:"nowrap"}}>{h}</th>
+                            <th key={h} style={{padding:"5px 8px",textAlign:al,fontWeight:700,fontSize:9.5,color:"#666",background:"#F8F8F2",borderBottom:`1px solid ${HR.border}`,position:"sticky",top:0,zIndex:1,whiteSpace:"nowrap",width:h === "SKU" ? "1%" : undefined}}>{h}</th>
                           ))}
                         </tr></thead>
                         <tbody>
@@ -1006,8 +1006,8 @@ function OOSSimView({ invoiceData, skuMaster, savedCfg, hasPublished, uploaded, 
                             <tr key={i} style={{background:r.served ? "#F0FDF4" : "#FEF2F2"}}>
                               <td style={{padding:"3px 8px",whiteSpace:"nowrap"}}>{r.date}</td>
                               <td style={{padding:"3px 8px",fontFamily:"monospace",fontSize:10,whiteSpace:"nowrap"}}>{r.ref}</td>
-                              <td style={{padding:"3px 8px",fontFamily:"monospace",fontSize:10,whiteSpace:"nowrap"}}>{r.sku}</td>
-                              <td style={{padding:"3px 8px",maxWidth:240,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.itemName}>{r.itemName || "—"}</td>
+                              <td style={{padding:"3px 8px",fontFamily:"monospace",fontSize:10,whiteSpace:"nowrap",width:"1%"}}>{r.sku}</td>
+                              <td style={{padding:"3px 8px",maxWidth:420,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.itemName}>{r.itemName || "—"}</td>
                               <td style={{padding:"3px 8px",textAlign:"center"}}>{r.qty}</td>
                               <td style={{padding:"3px 8px",textAlign:"center"}}>{r.soh}</td>
                               <td style={{padding:"3px 8px",textAlign:"center",color:r.short > 0 ? HR.red : HR.muted,fontWeight:r.short > 0 ? 700 : 400}}>{r.short || "—"}</td>
@@ -1304,12 +1304,12 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
     if (sortBy === col) setSortDir(d => d * -1);
     else { setSortBy(col); setSortDir(["sku", "name", "brand"].includes(col) ? 1 : -1); }
   };
-  const sh = (col, label, center, tip) => {
+  const sh = (col, label, center, tip, width) => {
     const on = sortBy === col;
     return (
       <th key={col} onClick={() => handleSort(col)} title={tip}
         style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:on?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,
-          textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2",position:"sticky",top:0,zIndex:2}}>
+          textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2",position:"sticky",top:0,zIndex:2,width}}>
         {label}{on ? (sortDir === -1 ? "↓" : "↑") : <span style={{color:"#ccc",fontSize:8}}>↕</span>}
       </th>
     );
@@ -1557,7 +1557,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
           <div style={{overflow:"auto",maxHeight:`calc(100vh / 0.85 - ${locked ? 290 : 470}px)`,background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
               <thead><tr>
-                {sh("sku","SKU")}
+                {sh("sku","SKU",false,undefined,"1%")}
                 {sh("name","Item Name")}
                 {sh("mm","Thickness",true)}
                 {sh("brand","Brand")}
@@ -1579,7 +1579,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
                   const bc = BUCKET_COLORS[Math.min(r.bucket ?? 0, BUCKET_COLORS.length-1)];
                   return (
                     <tr key={r.sku} onClick={()=>setSelected(r)} style={{background:isDC?"#fff":bc.bg,cursor:"pointer"}}>
-                      <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap"}} onClick={e=>e.stopPropagation()}>
+                      <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap",width:"1%"}} onClick={e=>e.stopPropagation()}>
                         <span style={{display:"flex",alignItems:"center",gap:4}}>
                           <span style={{fontFamily:"monospace",fontSize:10,color:"#555"}}>{r.sku}</span>
                           <span onClick={e=>copySku(r.sku,e)} title="Copy SKU"
@@ -1590,7 +1590,7 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
                           </span>
                         </span>
                       </td>
-                      <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",maxWidth:420,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                         {r.name}
                         {r.floored && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#EDE9FE",color:"#6D28D9",border:"1px solid #C4B5FD"}}>Floor</span>}
                         {r.maxTrimmed > 0 && <span style={{marginLeft:5,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,background:"#FEF3C7",color:"#B45309",border:"1px solid #FDE68A"}} title={`Max reduced by ${r.maxTrimmed} to fit ${loc} rack (NZD-ordered trim)`}>Max −{r.maxTrimmed}</span>}
