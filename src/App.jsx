@@ -12,6 +12,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
 import BasketAnalysisTab from "./tabs/BasketAnalysisTab";
 import PlywoodNetworkTab from "./tabs/PlywoodNetworkTab";
+import PlywoodNetworkV2Tab from "./tabs/PlywoodNetworkV2Tab";
 import StockHealthTab from "./tabs/StockHealthTab";
 
 const HR = {
@@ -2854,6 +2855,9 @@ function copyText(text) {
 
 export default function App(){
   const [tab,setTab]=useState("overview"),[pendingTab,setPending]=useState(null);
+  // Plywood v2: lazy-mount on first open, then keep mounted so its tuning/knob draft survives tab switches
+  const [v2Mounted,setV2Mounted]=useState(false);
+  useEffect(()=>{ if(tab==="plywoodV2") setV2Mounted(true); },[tab]);
   const [toastMsg, setToastMsg] = useState("");
   _setToastMsg = setToastMsg;
   const [invoiceData,setInv]=useState([]),[skuMaster,setSKU]=useState({});
@@ -2949,6 +2953,13 @@ export default function App(){
         setParams(prev => ({ ...prev, plywoodNetworkConfig: sbPnc }));
         setSaved(prev => ({ ...prev, plywoodNetworkConfig: sbPnc }));
       }
+
+      // Load plywoodNetworkV2Config (v2 capacity-first allocation) — same pattern
+      const sbPnc2 = await loadFromSupabase("params", "plywoodNetworkV2Config");
+      if (sbPnc2) {
+        setParams(prev => ({ ...prev, plywoodNetworkV2Config: sbPnc2 }));
+        setSaved(prev => ({ ...prev, plywoodNetworkV2Config: sbPnc2 }));
+      }
     })();
   },[]);
 
@@ -3018,6 +3029,38 @@ export default function App(){
     }
   };
 
+  // ── handleSavePlywoodNetworkV2Config: saves v2 capacity-first config ─────────
+  // Same pattern as v1 handler: explicit user action only, re-runs engine on save.
+  const handleSavePlywoodNetworkV2Config = async (cfg) => {
+    const newParams = { ...params, plywoodNetworkV2Config: cfg };
+    setParams(newParams);
+    setSaved(newParams);
+    addChange("Plywood Network v2 config updated");
+    await saveToSupabase("params", "plywoodNetworkV2Config", cfg);
+    if (invoiceData?.length > 0 && Object.keys(skuMaster || {}).length > 0) {
+      setLoading(true);
+      setTimeout(() => {
+        try {
+          const dsCapacities = buildDSCapacities(networkConfigs);
+          const runParams = dsCapacities ? { ...newParams, dsCapacities } : newParams;
+          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, runParams);
+          const merged = { ...raw };
+          Object.entries(coreOverrides || {}).forEach(([skuId, dsList]) => {
+            if (!merged[skuId]) return;
+            const ns = { ...merged[skuId].stores };
+            Object.entries(dsList).forEach(([dsId, ov]) => {
+              if (!ns[dsId]) return;
+              ns[dsId] = { ...ns[dsId], min: Math.max(ns[dsId].min, ov.min), max: Math.max(ns[dsId].max, ov.max) };
+            });
+            merged[skuId] = { ...merged[skuId], stores: ns };
+          });
+          setResults(merged);
+        } catch(err) { console.error("Plywood v2 config re-run error:", err); }
+        setLoading(false);
+      }, 100);
+    }
+  };
+
   // ── saveCoreOverrides: writes to both Supabase + localStorage ───────────────
   const saveCoreOverrides = useCallback(async(ov)=>{
     setCoreOverrides(ov);
@@ -3062,6 +3105,8 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
   const sbPncAuto = await loadFromSupabase("params", "plywoodNetworkConfig");
   if (sbPncAuto) activeParams.plywoodNetworkConfig = sbPncAuto;
+  const sbPnc2Auto = await loadFromSupabase("params", "plywoodNetworkV2Config");
+  if (sbPnc2Auto) activeParams.plywoodNetworkV2Config = sbPnc2Auto;
   const sbNetCfgAuto = await loadFromSupabase("params", "networkConfigs");
   if (sbNetCfgAuto) { setNetworkConfigs(sbNetCfgAuto); activeParams.dsCapacities = Object.fromEntries(DS_LIST.map(ds=>[ds,{thick:sbNetCfgAuto[ds]?.thick?.capacity||0,thin:sbNetCfgAuto[ds]?.thin?.capacity||0}])); }
   else setNetworkConfigs({});
@@ -3093,6 +3138,8 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
       const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
       const sbPncBundle = await loadFromSupabase("params", "plywoodNetworkConfig");
       if (sbPncBundle) activeParams.plywoodNetworkConfig = sbPncBundle;
+      const sbPnc2Bundle = await loadFromSupabase("params", "plywoodNetworkV2Config");
+      if (sbPnc2Bundle) activeParams.plywoodNetworkV2Config = sbPnc2Bundle;
       const sbNetCfgBundle = await loadFromSupabase("params", "networkConfigs");
       if (sbNetCfgBundle) { setNetworkConfigs(sbNetCfgBundle); activeParams.dsCapacities = Object.fromEntries(DS_LIST.map(ds=>[ds,{thick:sbNetCfgBundle[ds]?.thick?.capacity||0,thin:sbNetCfgBundle[ds]?.thin?.capacity||0}])); }
       else setNetworkConfigs({});
@@ -3269,8 +3316,8 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     setParams(np);
     setSaved(np);
     // Save params to Supabase + localStorage
-    // Strip plywoodNetworkConfig — it lives in params/plywoodNetworkConfig, not params/global
-    const { plywoodNetworkConfig: _pnc, ...saveableParams } = np;
+    // Strip plywoodNetworkConfig + v2 — they live in their own params rows, not params/global
+    const { plywoodNetworkConfig: _pnc, plywoodNetworkV2Config: _pnc2, ...saveableParams } = np;
     LS.set("params", JSON.stringify(saveableParams));
     setSyncStatus("saving");
     const ok = await saveToSupabase("params","global",saveableParams);
@@ -3357,7 +3404,7 @@ const visibleOutput = useMemo(() => {
   const rw2=params.recencyWt||RECENCY_WT_DEFAULT;
   const movColors=["#16a34a","#2D7A3A","#B8860B","#C05A00","#C0392B"],priceColors=["#B91C1C","#C2410C","#A16207","#475569","#64748B"];
 
-  const ADMIN_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["baskets","Baskets"],["plywood","Plywood"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
+  const ADMIN_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["baskets","Baskets"],["plywood","Plywood"],["plywoodV2","Plywood v2"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"],["upload","Upload Data"],["logic","Logic Tweaker"],["overrides","Manual Overrides"]];
   const PUBLIC_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["baskets","Baskets"],["plywood","Plywood"],["stockHealth","Stock Health"],["simulation","OOS Simulation"],["output","Tool Output Download"]];
   const NAV_TABS=isAdmin?ADMIN_TABS:PUBLIC_TABS;
 
@@ -3799,6 +3846,21 @@ const visibleOutput = useMemo(() => {
             engineResults={results}
           />
         </div>
+        <div style={{display:tab==="plywoodV2"?"block":"none"}}>
+          {/* kept mounted (no tab=== guard) so tuning/knob draft state survives tab switches */}
+          {(tab==="plywoodV2" || v2Mounted) && (
+            <PlywoodNetworkV2Tab
+              invoiceData={invoiceData}
+              skuMaster={skuMaster}
+              priceData={priceData}
+              isAdmin={isAdmin}
+              plywoodNetworkV2Config={params.plywoodNetworkV2Config || null}
+              onSaveConfig={handleSavePlywoodNetworkV2Config}
+              isActive={params.categoryStrategies?.["Plywood, MDF & HDHMR"] === "network_design_v2"}
+              engineResults={results}
+            />
+          )}
+        </div>
 
         {/* Old dashboard tab removed — replaced by OverviewTab */}
         {tab==="output"&&(
@@ -4113,10 +4175,13 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                             {cat === "Plywood, MDF & HDHMR" && (
                               <option value="network_design">Network Design</option>
                             )}
+                            {cat === "Plywood, MDF & HDHMR" && (
+                              <option value="network_design_v2">Network Design v2</option>
+                            )}
                           </select>
                         </td>
                       </tr>
-                      {cat === "Plywood, MDF & HDHMR" && csC[cat] === "network_design" && (
+                      {cat === "Plywood, MDF & HDHMR" && (csC[cat] === "network_design" || csC[cat] === "network_design_v2") && (
                         <tr style={{background:"#F5F0FF"}}>
                           <td style={{...S.td,fontSize:10,color:HR.muted,paddingLeft:24}}>↳ Non-network brands (e.g. Merino)</td>
                           <td style={{...S.td,textAlign:"center"}}>

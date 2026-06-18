@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 .env
 .worktrees
+
+.cache/
+validation-out/
+.playwright-mcp/
+supabase/.temp/
