@@ -253,6 +253,16 @@ DS04/DS05 thick (those need deeper cuts or racking — consistent with the capac
 Locations table default sort = **descending NZD**; numeric sort comparators are `(a−b)×sortDir`
 (arrow ↓ = descending) — same convention as the Assortment table.
 
+**Locations ↔ Assortment parity (2026-06-18):** the two tabs are kept visually consistent. Both header
+helpers (`sh` Locations / `th` Assortment) render a muted **ⓘ** on any column with a `tip`, hover →
+the shared `Hint` popover (same as the publish ⓘ; native `title` removed). SKU column hugs content
+(`width:1%`), Item Name cap 420. Assortment summary is **one full-width strip** (filled + black accent,
+`minHeight:40` matching the config strip) with inline sections: Verdict (`N Keep · N Watch · N Cut`),
+Sales-at-risk, Holding-freed, **Capacity = `Σ freed sheets reduced overall across the network`** (per-node
+detail on a ⓘ); the old description paragraph moved onto column ⓘ tooltips; admin config (Keep-Score knobs)
+sits above the search/filter row. Row tint matches Locations' NZD palette: **Keep `#F0FDF4` (green) /
+Watch `#FFFBEB` / Cut `#FEF2F2`**.
+
 ## Open items / NEXT SESSION
 
 0. **Commit the branch** — the 2026-06-17 UI polish (header/strip/per-card basis/Hint hovers/frontier charts/knob-exposure removal in `PlywoodNetworkV2Tab.jsx`) is signed off but uncommitted. Commit locally; NEVER push without explicit instruction. Remaining optional polish: the per-loc `Σ Min/Max qty · inventory value` cards row, the SKU table, and the Assortment/Keep Score header for consistency.

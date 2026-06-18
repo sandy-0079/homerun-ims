@@ -699,9 +699,9 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
       return (va - vb) * sortDir;
     });
   const hSort = (col) => { if (sortBy === col) setSortDir(d => -d); else { setSortBy(col); setSortDir(col === "keepScore" ? 1 : -1); } };
-  const th = (col, label, center, width) => (
+  const th = (col, label, center, tip, width) => (
     <th key={col} onClick={() => hSort(col)} style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:sortBy===col?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2",position:"sticky",top:0,zIndex:2,width}}>
-      {label}{sortBy===col?(sortDir===-1?"↓":"↑"):<span style={{color:"#ccc",fontSize:8}}>↕</span>}</th>
+      {label}{tip && <Hint text={tip} align={center?"right":"left"}><span onClick={e=>e.stopPropagation()} style={{marginLeft:3,fontWeight:700,opacity:0.55}}>ⓘ</span></Hint>}{sortBy===col?(sortDir===-1?"↓":"↑"):<span style={{color:"#ccc",fontSize:8}}>↕</span>}</th>
   );
 
   const exportCsv = () => {
@@ -713,49 +713,47 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
   };
   const fmtL = v => v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : `₹${Math.round(v/1000)}K`;
   const overNodes = nodes.filter(n => n.cap != null && n.before > n.cap);
+  const totalFreed = nodes.reduce((a, n) => a + Math.max(0, n.freed || 0), 0); // total shelf sheets removed by the cut, network-wide
+
+  // Column descriptions (moved off the old paragraph onto the header ⓘ tooltips)
+  const m = Math.round((ksCfg.grossMarginPct ?? 0.06) * 100);
+  const cr = Math.round((ksCfg.carryRateQuarterly ?? 0.05) * 100);
+  const ob = ksCfg.opsBuffer ?? 1.5;
+  const svcTh = ksCfg.serviceNZDThreshold ?? 5;
+  const RENT_TIP = `Does it earn enough to pay for the stock it ties up?  (Sales ₹ × ${m}%) ÷ (Holding ₹ × ${cr}%/qtr × ${ob} buffer). ≥1 = gross profit covers the carrying cost of the inventory it holds.`;
+  const SVC_TIP = `Does it sell often enough that customers would miss it?  network selling-days ÷ ${svcTh}. ≥1 = sold on ≥${svcTh} days in the 90-day window (≈ once a fortnight or more) — a staple worth keeping regardless of economics.`;
+  const KEEP_TIP = `max(Rent, Service). Keep ≥1.3 · Watch 1.0–1.3 · Cut <1. A SKU survives if it clears EITHER ratio; Cut = fails both. Totals include bulk.`;
+  const FLAG_TIP = `Keep / Watch / Cut verdict. Cut = fails both ratios → candidate for discontinuation (cut via the SKU master; the plan then re-runs on survivors). Recommend-only.`;
+  const lbl = { fontSize: 8.5, color: HR.muted, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase" };
 
   return (
     <div>
-      {/* summary cards */}
-      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-        <div style={{padding:"8px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8}}>
-          <div style={{fontSize:9,color:HR.muted}}>Verdict (network-level, per SKU)</div>
-          <div style={{fontSize:15,fontWeight:800}}>
-            <span style={{color:HR.green}}>{summary.keep} Keep</span> · <span style={{color:HR.amber}}>{summary.watch} Watch</span> · <span style={{color:HR.red}}>{summary.cut} Cut</span>
-          </div>
-          <div style={{fontSize:9,color:HR.muted}}>of {summary.total} SKUs</div>
-        </div>
-        <div style={{padding:"8px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8}}>
-          <div style={{fontSize:9,color:HR.muted}}>Sales at risk (cutting all Cut)</div>
-          <div style={{fontSize:15,fontWeight:800,color:HR.red}}>{fmtL(summary.salesAtRisk)}</div>
-          <div style={{fontSize:9,color:HR.muted}}>{(summary.salesAtRisk/Math.max(summary.totalSales,1)*100).toFixed(1)}% of ₹{(summary.totalSales/10000000).toFixed(2)}Cr</div>
-        </div>
-        <div style={{padding:"8px 14px",background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8}}>
-          <div style={{fontSize:9,color:HR.muted}}>Holding freed</div>
-          <div style={{fontSize:15,fontWeight:800,color:HR.green}}>{fmtL(summary.holdingFreed)}</div>
-          <div style={{fontSize:9,color:HR.muted}}>{(summary.holdingFreed/Math.max(summary.totalHolding,1)*100).toFixed(0)}% of plan capital</div>
-        </div>
-        <div style={{padding:"8px 14px",background:summary.flipsGreen.length?"#F0FDF4":HR.surface,border:`1px solid ${summary.flipsGreen.length?"#BBF7D0":HR.border}`,borderRadius:8,flex:1,minWidth:220}}>
-          <div style={{fontSize:9,color:HR.muted}}>Capacity impact of the cut</div>
-          {summary.flipsGreen.length
-            ? <div style={{fontSize:12,fontWeight:700,color:HR.green}}>↳ flips green: {summary.flipsGreen.join(", ")}</div>
-            : <div style={{fontSize:12,fontWeight:700,color:HR.muted}}>no over-capacity node flips on cuts alone</div>}
-          {overNodes.length > 0 && (
-            <div style={{fontSize:9,color:HR.muted,marginTop:2}}>
-              {overNodes.map(n => `${n.node} ${n.tclass} ${n.before}→${n.after}/${n.cap}${n.flips?" ✓":n.stillOver?" (still over)":""}`).join(" · ")}
+      {/* summary — one full-width strip (Locations-style fill + accent), inline sections, no wrap */}
+      <div style={{display:"flex",alignItems:"center",minHeight:40,gap:14,marginBottom:10,padding:"6px 14px",borderRadius:10,background:HR.surfaceLight,border:`1px solid ${HR.border}`,borderLeft:`3px solid ${HR.black}`,fontSize:12,overflowX:"auto"}}>
+        <span style={{whiteSpace:"nowrap"}}><span style={{...lbl,marginRight:6}}>Verdict</span><b style={{color:HR.green}}>{summary.keep} Keep</b> · <b style={{color:HR.amber}}>{summary.watch} Watch</b> · <b style={{color:HR.red}}>{summary.cut} Cut</b> <span style={{color:HR.muted,fontSize:10}}>of {summary.total}</span></span>
+        <span style={{color:HR.border}}>|</span>
+        <span style={{whiteSpace:"nowrap"}}><span style={{...lbl,marginRight:6}}>Sales at risk</span><b style={{color:HR.red}}>{fmtL(summary.salesAtRisk)}</b> <span style={{color:HR.muted,fontSize:10}}>({(summary.salesAtRisk/Math.max(summary.totalSales,1)*100).toFixed(1)}% of ₹{(summary.totalSales/10000000).toFixed(2)}Cr)</span></span>
+        <span style={{color:HR.border}}>|</span>
+        <span style={{whiteSpace:"nowrap"}}><span style={{...lbl,marginRight:6}}>Holding freed</span><b style={{color:HR.green}}>{fmtL(summary.holdingFreed)}</b> <span style={{color:HR.muted,fontSize:10}}>({(summary.holdingFreed/Math.max(summary.totalHolding,1)*100).toFixed(0)}% of capital)</span></span>
+        <span style={{color:HR.border}}>|</span>
+        <span style={{whiteSpace:"nowrap"}}><span style={{...lbl,marginRight:6}}>Capacity</span><b style={{color:totalFreed>0?HR.green:HR.muted}}>{totalFreed.toLocaleString()} sheets</b> <span style={{color:HR.muted,fontSize:10}}>reduced overall across the network</span>
+          {overNodes.length > 0 && <Hint text={overNodes.map(n => `${n.node} ${n.tclass}: ${n.before}→${n.after}/${n.cap}${n.flips?" ✓ flips":n.stillOver?" (still over)":""}`).join("  ·  ")}><span style={{marginLeft:4,fontWeight:700,opacity:0.55}}>ⓘ</span></Hint>}</span>
+      </div>
+
+      {/* config (admin knobs) — above the search/filter strip */}
+      {isAdmin && (
+        <div style={{display:"flex",alignItems:"center",minHeight:40,gap:"6px 20px",flexWrap:"wrap",marginBottom:8,padding:"6px 14px",background:"#FAFAF8",border:`1px solid ${HR.border}`,borderRadius:10}}>
+          {[["grossMarginPct","Gross margin",0.06,"×100%"],["carryRateQuarterly","Carry /qtr",0.05,"×100%"],["opsBuffer","Ops buffer",1.5,""],["serviceNZDThreshold","Service NZD threshold",5,""]].map(([k,label,def]) => (
+            <div key={k} style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:11}}>{label}</span>
+              <input type="number" step="any" style={{...sel,width:64,cursor:"text"}} value={ksCfg[k] ?? def} onChange={e=>setKs(k, Number(e.target.value))}/>
             </div>
-          )}
+          ))}
+          <span style={{fontSize:9,color:HR.muted,alignSelf:"center"}}>edits recompute the verdict live; saved on next Publish</span>
         </div>
-      </div>
+      )}
 
-      <div style={{fontSize:10,color:HR.muted,marginBottom:8,lineHeight:1.7}}>
-        Recommend-only · Keep Score = max(Rent, Service) · Keep ≥1.3 · Watch 1.0–1.3 · Cut &lt;1. A SKU survives if it clears <b>either</b> ratio; Cut = fails both. Totals include bulk.<br/>
-        <b>Rent Ratio</b> — does it earn enough to pay for the stock it ties up? ≈ (Sold Qty × Margin) ÷ (Avg Holding Qty × Carry Cost). Exactly: (Sales ₹ × {Math.round((ksCfg.grossMarginPct ?? 0.06)*100)}%) ÷ (Holding ₹ × {Math.round((ksCfg.carryRateQuarterly ?? 0.05)*100)}%/qtr × {ksCfg.opsBuffer ?? 1.5} buffer). ≥1 = its gross profit covers the carrying cost of the inventory it holds.<br/>
-        <b>Service Ratio</b> — does it sell often enough that customers would miss it? = network selling-days ÷ {ksCfg.serviceNZDThreshold ?? 5}. ≥1 means it sold on ≥{ksCfg.serviceNZDThreshold ?? 5} days in the 90-day window (≈ once a fortnight or more) — a staple worth keeping on demand grounds alone, regardless of economics.<br/>
-        Cutting happens via discontinuation → SKU master; the plan then re-runs on survivors.
-      </div>
-
-      {/* filters + knobs + export */}
+      {/* search + filters + export */}
       <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
         <input type="text" placeholder="Search SKU or name…" value={q} onChange={e=>setQ(e.target.value)} style={{...sel,width:200,cursor:"text"}}/>
         {["All","Keep","Watch","Cut"].map(f => (
@@ -768,31 +766,18 @@ function AssortmentView({ ks, cfgDraft, setCfgDraft, isAdmin }) {
         <button style={btn(false)} onClick={exportCsv}>⬇ Export CSV</button>
       </div>
 
-      {/* knobs (admin) */}
-      {isAdmin && (
-        <div style={{display:"flex",gap:"6px 20px",flexWrap:"wrap",marginBottom:8,padding:"8px 12px",background:"#FAFAF8",border:`1px solid ${HR.border}`,borderRadius:8}}>
-          {[["grossMarginPct","Gross margin",0.06,"×100%"],["carryRateQuarterly","Carry /qtr",0.05,"×100%"],["opsBuffer","Ops buffer",1.5,""],["serviceNZDThreshold","Service NZD threshold",5,""]].map(([k,label,def]) => (
-            <div key={k} style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:11}}>{label}</span>
-              <input type="number" step="any" style={{...sel,width:64,cursor:"text"}} value={ksCfg[k] ?? def} onChange={e=>setKs(k, Number(e.target.value))}/>
-            </div>
-          ))}
-          <span style={{fontSize:9,color:HR.muted,alignSelf:"center"}}>edits recompute the verdict live; saved on next Publish</span>
-        </div>
-      )}
-
       {/* table */}
-      <div style={{overflow:"auto",maxHeight:"calc(100vh / 0.85 - 290px)",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
+      <div style={{overflow:"auto",maxHeight:"calc(100vh / 0.85 - 230px)",background:HR.surface,borderRadius:8,border:`1px solid ${HR.border}`}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
           <thead><tr>
-            {th("sku","SKU",false,"1%")}{th("name","Item Name")}{th("brand","Brand")}{th("tclass","Class")}
-            {th("networkNZD","Net NZD",true)}{th("maxHoldQty","Max Hol Qty",true)}{th("windowQty","Sold Qty",true)}
-            {th("holdingValue","Holding ₹",true)}{th("salesValue","Sales ₹",true)}
-            {th("rentRatio","Rent Ratio",true)}{th("serviceRatio","Service Ratio",true)}{th("keepScore","Keep Score",true)}{th("flag","Flag",true)}
+            {th("sku","SKU",false,undefined,"1%")}{th("name","Item Name")}{th("brand","Brand")}{th("tclass","Class",false,"Thick (>9mm) or thin — drives rack capacity.")}
+            {th("networkNZD","Net NZD",true,"Distinct days this SKU sold anywhere in the network (regular + bulk) in the 90-day window.")}{th("maxHoldQty","Max Hol Qty",true,"Peak shelf footprint = Σ Max across all 5 DS + DC.")}{th("windowQty","Sold Qty",true,"Total units sold (regular + bulk) in the window.")}
+            {th("holdingValue","Holding ₹",true,"Avg inventory value held = avg((Min+Max)/2) × cost price, summed across DS + DC.")}{th("salesValue","Sales ₹",true,"True revenue = Sold Qty × price ÷ (1 − margin).")}
+            {th("rentRatio","Rent Ratio",true,RENT_TIP)}{th("serviceRatio","Service Ratio",true,SVC_TIP)}{th("keepScore","Keep Score",true,KEEP_TIP)}{th("flag","Flag",true,FLAG_TIP)}
           </tr></thead>
           <tbody>
             {filtered.map(r => (
-              <tr key={r.sku} style={{background:r.flag==="Cut"?"#FEF2F2":r.flag==="Watch"?"#FFFBEB":"#fff"}}>
+              <tr key={r.sku} style={{background:r.flag==="Cut"?"#FEF2F2":r.flag==="Watch"?"#FFFBEB":"#F0FDF4"}}>
                 <td style={{padding:"3px 6px",borderBottom:"1px solid rgba(0,0,0,0.05)",whiteSpace:"nowrap",width:"1%"}}>
                   <span style={{display:"flex",alignItems:"center",gap:4}}>
                     <span style={{fontFamily:"monospace",fontSize:10,color:"#555"}}>{r.sku}</span>
@@ -1307,10 +1292,10 @@ export default function PlywoodNetworkV2Tab({ invoiceData, skuMaster, priceData,
   const sh = (col, label, center, tip, width) => {
     const on = sortBy === col;
     return (
-      <th key={col} onClick={() => handleSort(col)} title={tip}
+      <th key={col} onClick={() => handleSort(col)}
         style={{padding:"4px 6px",fontWeight:700,fontSize:10,color:on?HR.purple:"#666",borderBottom:`1px solid ${HR.border}`,
           textAlign:center?"center":"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",background:"#F8F8F2",position:"sticky",top:0,zIndex:2,width}}>
-        {label}{on ? (sortDir === -1 ? "↓" : "↑") : <span style={{color:"#ccc",fontSize:8}}>↕</span>}
+        {label}{tip && <Hint text={tip} align={center?"right":"left"}><span onClick={e=>e.stopPropagation()} style={{marginLeft:3,fontWeight:700,opacity:0.55}}>ⓘ</span></Hint>}{on ? (sortDir === -1 ? "↓" : "↑") : <span style={{color:"#ccc",fontSize:8}}>↕</span>}
       </th>
     );
   };
