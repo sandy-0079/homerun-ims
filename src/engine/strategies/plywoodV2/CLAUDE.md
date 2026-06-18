@@ -1,11 +1,12 @@
 # CLAUDE.md — Plywood Network v2
 
 Capacity-aware plywood Min/Max engine. Replaces v1 Network Design (`../plywoodNetwork.js`,
-brand-node stocking). **Status: feature-complete on engine + tune UI + Keep Score/Assortment view;
-not yet activated in prod. Remaining before cutover is the capacity/SOP business decisions and the
-category-team cut-list review — see Open items.**
+brand-node stocking). **Status: MERGED TO PROD (dormant) 2026-06-18 via PR #11 — admin-only "Plywood v2"
+tab, engine still on v1; the deploy changed NO live Min/Max or any Supabase params/team_data state.
+Activation (the cutover) is still pending the capacity/SOP business decisions + category-team cut-list
+review — see Open items.**
 
-- **Branch:** `feature/plywood-network-v2` — NEVER push or PR without explicit user instruction. Local testing only.
+- **Merged:** squash-merged to `main` (PR #11, commit `053cd85`, 2026-06-18); `feature/plywood-network-v2` deleted. Further work: branch off `main` — never push/PR without explicit user instruction.
 - **Spec:** `docs/superpowers/specs/2026-06-11-plywood-network-v2-design.md` (read for full rationale).
 - **Tests:** `npx vitest run` — 68 passing as of 2026-06-18. vitest is a devDependency; `npm test` also works. `npm run build` clean; eslint 0 errors (1 pre-existing `modeOos` exhaustive-deps warning).
 - **Activation:** dormant until `categoryStrategies["Plywood, MDF & HDHMR"] === "network_design_v2"` in prod config. v1 (`network_design`) untouched and still the live strategy.
