@@ -57,10 +57,35 @@ function getHealthTag(ecs, min, max, ros) {
   return "okay";
 }
 
+// DC-only reclassification: a Critical/Low-Stock DC SKU needs no supplier PO when any of:
+//   A) no DS is short, B) DC stock covers all short-DS reorder needs, or
+//   C) network DS excess + DC stock covers DC's own Min floor.
+// SHARED by dsSummary (tab-bar badges) and allSkuRows (KPI cards + table) so the two
+// never diverge — the override must live in exactly one place.
+function applyDCReqCovered(tag, { sku, ecs, min, res, activeStockData }) {
+  if (tag !== "ec" && tag !== "critical") return tag;
+  let dsExcessSum = 0, dsReorderSum = 0, hasShortDS = false;
+  for (const ds of DS_LIST) {
+    const dsLive = activeStockData[sku]?.[ds];
+    if (!dsLive) continue;
+    const dsMax = res.stores?.[ds]?.max || 0;
+    const dsMin = res.stores?.[ds]?.min || 0;
+    const dsEcs = Math.max(0, dsLive.stock_on_hand ?? 0);  // SoH basis — matches ECS (see getLive)
+    if (dsEcs > dsMax) dsExcessSum += dsEcs - dsMax;
+    if (dsEcs <= dsMin) { hasShortDS = true; dsReorderSum += Math.max(0, dsMax - dsEcs); }
+  }
+  const condA = !hasShortDS;
+  const condB = hasShortDS && ecs >= dsReorderSum;
+  const condC = dsExcessSum + ecs >= min;
+  return (condA || condB || condC) ? "dsReqCovered" : tag;
+}
+
 function getLive(live) {
   const stockOnHand = live.stock_on_hand ?? 0;
   const afs         = live.available_for_sale ?? 0;
-  return { stockOnHand, afs, ecs: Math.max(0, afs) };
+  // ECS (effective current stock) tags on Stock-on-Hand, not AFS: stale historical
+  // Sales Orders depress AFS even when the stock is physically present at the location.
+  return { stockOnHand, afs, ecs: Math.max(0, stockOnHand) };
 }
 
 function pct(n, total) { return total > 0 ? Math.round((n / total) * 100) : 0; }
@@ -198,7 +223,9 @@ export default function StockHealthTab({
           if (!live) continue;
           const { ecs } = getLive(live);
           const dcRos = DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0);
-          s["DC"][getHealthTag(ecs, dc.min || 0, dc.max || 0, dcRos)]++;
+          let dcTag = getHealthTag(ecs, dc.min || 0, dc.max || 0, dcRos);
+          dcTag = applyDCReqCovered(dcTag, { sku, ecs, min: dc.min || 0, res, activeStockData });
+          s["DC"][dcTag]++;
         }
       }
     }
@@ -230,28 +257,8 @@ export default function StockHealthTab({
         ? DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0)
         : (res.stores?.[selectedDS]?.dailyAvg || 0);
       let tag = getHealthTag(ecs, min, max, ros);
-      // DC tab only: no PO needed when any of:
-      // A) No DS is short — DSes don't need anything from DC
-      // B) Some DSes are short but DC stock fully covers their replenishment needs
-      // C) Network DS excess + DC stock covers DC's minimum floor
-      if (isDC && (tag === "ec" || tag === "critical")) {
-        let dsExcessSum = 0;
-        let dsReorderSum = 0;
-        let hasShortDS = false;
-        for (const ds of DS_LIST) {
-          const dsLive = activeStockData[sku]?.[ds];
-          const dsMax  = res.stores?.[ds]?.max || 0;
-          const dsMin  = res.stores?.[ds]?.min || 0;
-          if (!dsLive) continue;
-          const dsEcs = Math.max(0, dsLive.available_for_sale ?? 0);
-          if (dsEcs > dsMax) dsExcessSum += dsEcs - dsMax;
-          if (dsEcs <= dsMin) { hasShortDS = true; dsReorderSum += Math.max(0, dsMax - dsEcs); }
-        }
-        const condA = !hasShortDS;
-        const condB = hasShortDS && ecs >= dsReorderSum;
-        const condC = dsExcessSum + ecs >= min;
-        if (condA || condB || condC) tag = "dsReqCovered";
-      }
+      // DC tab only: reclassify Critical/Low-Stock to "DS Req Covered" when no supplier PO is needed.
+      if (isDC) tag = applyDCReqCovered(tag, { sku, ecs, min, res, activeStockData });
       const reorderQty = (tag === "ec" || tag === "critical") ? Math.max(0, max - ecs) : 0;
       return [{
         sku,
@@ -767,7 +774,7 @@ export default function StockHealthTab({
             </select>
           )}
           <Tooltip text={
-            <><div style={{ fontWeight: 700, marginBottom: 4 }}>ECS (Effective Current Stock) = AFS</div>
+            <><div style={{ fontWeight: 700, marginBottom: 4 }}>ECS (Effective Current Stock) = SoH</div>
             <div>Critical — ECS ≤ Min and daily sales ≥ 1 unit</div>
             <div>Low Stock — ECS ≤ Min (slow mover, not urgent)</div>
             {selectedDS === "DC" && <div>DS Req Covered — DC below Min but DS excess covers network gap or DC stock covers all short DS needs (no PO needed)</div>}
@@ -819,7 +826,7 @@ export default function StockHealthTab({
                     ? (to ? (TO_STATUS_BADGE[to.status] ?? to.status) : "")
                     : (po ? (PO_STATUS_LABEL[getPoDisplayStatus(po)] ?? po.status) : "");
                   const dcStockVal = !isDCTab && isDCInv
-                    ? (() => { const dcLive = activeStockData[r.sku]?.["DC"]; return dcLive != null ? Math.max(0, getLive(dcLive).afs) : ""; })()
+                    ? (() => { const dcLive = activeStockData[r.sku]?.["DC"]; return dcLive != null ? Math.max(0, getLive(dcLive).stockOnHand) : ""; })()
                     : "";
                   return [
                     r.sku,
@@ -897,8 +904,8 @@ export default function StockHealthTab({
                     ["Item Name",      "left",   "4px 6px", false, "name"      ],
                     ["Brand",          "left",   "4px 6px", false, "brand"     ],
                     ["Stock Health",   "center", "4px 4px", false, null        ],
-                    ["SoH",            "center", "4px 4px", false, null        ],
-                    ["AFS",            "center", "4px 4px", false, "ecs"       ],
+                    ["SoH",            "center", "4px 4px", false, "ecs"       ],
+                    ["AFS",            "center", "4px 4px", false, null        ],
                     ["Min",            "center", "4px 4px", false, null        ],
                     ["Max",            "center", "4px 4px", false, null        ],
                     ["ROS",            "center", "4px 4px", false, null        ],
@@ -998,13 +1005,13 @@ export default function StockHealthTab({
                         </span>
                       </td>
 
-                      {/* Stock on Hand */}
-                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.textSoft, fontVariantNumeric: "tabular-nums" }}>
+                      {/* Stock on Hand — health tag highlight (ECS basis) */}
+                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontWeight: 600, color: cfg.textColor, background: cfg.ecsBg, fontVariantNumeric: "tabular-nums" }}>
                         {Math.max(0, row.stockOnHand)}
                       </td>
 
-                      {/* Available for Sale — health tag highlight */}
-                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontWeight: 600, color: cfg.textColor, background: cfg.ecsBg, fontVariantNumeric: "tabular-nums" }}>
+                      {/* Available for Sale — reference only */}
+                      <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.textSoft, fontVariantNumeric: "tabular-nums" }}>
                         {Math.max(0, row.afs)}
                       </td>
 
@@ -1024,17 +1031,17 @@ export default function StockHealthTab({
                         {row.reorderQty > 0 ? row.reorderQty : "—"}
                       </td>
 
-                      {/* DC Stock — DS tabs only, meaningful for DC-inv SKUs */}
+                      {/* DC Stock — DS tabs only, meaningful for DC-inv SKUs. SoH basis (matches ECS). */}
                       {selectedDS !== "DC" && (() => {
                         const dcLive = activeStockData[row.sku]?.["DC"];
-                        const dcAfs  = dcLive != null ? Math.max(0, getLive(dcLive).afs) : null;
+                        const dcSoh  = dcLive != null ? Math.max(0, getLive(dcLive).stockOnHand) : null;
                         const show   = row.invAt === "dc";
                         return (
                           <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontVariantNumeric: "tabular-nums",
-                            fontWeight: show && dcAfs > 0 ? 600 : 400,
-                            color: !show ? HR.muted : dcAfs == null ? HR.muted : dcAfs > 0 ? "#16A34A" : "#DC2626",
+                            fontWeight: show && dcSoh > 0 ? 600 : 400,
+                            color: !show ? HR.muted : dcSoh == null ? HR.muted : dcSoh > 0 ? "#16A34A" : "#DC2626",
                           }}>
-                            {show ? (dcAfs != null ? dcAfs : "—") : "—"}
+                            {show ? (dcSoh != null ? dcSoh : "—") : "—"}
                           </td>
                         );
                       })()}

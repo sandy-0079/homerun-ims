@@ -53,7 +53,19 @@ PCT key decisions: percentile by price (Premium=75, High=80, Medium=85, Low/Supe
 - **Floored SKUs:** `Σ DS Mins × 0.2` / `Σ DS Maxes × 0.3`
 - **Dead Stock:** Min=Max=0 at all DS and DC locations (overrides all floors)
 
-Post-blend order (strict): New DS Floor → SKU Floor Override → Dead Stock cap → Rounding
+Post-blend order (strict): New DS Floor → SKU Floor Override → Dead Stock cap → Rounding → **Inventorised-At normalization**
+
+### Inventorised-At normalization (final engine override)
+Applied as a last pass over `res` in `runEngine` (after all strategies, floors, Dead Stock), keyed on `meta.inventorisedAt`. Same character as Dead Stock — a structural location constraint. Zeroes `min`/`max`, leaves `preFloor*` intact for audit, tags `dc.dcDetails.zeroedReason`.
+- **Supplier** — never stocked in our network → Min=Max=0 at every DS **and** DC. (Was previously getting real targets; this removes their phantom value from Overview/SKU Detail/Tool Output/Overrides — Stock Health already filtered them.)
+- **DS-inventorised** — replenished directly to the DS, bypasses the DC → DC Min=Max=0, DS values kept.
+- **DC-inventorised** — flows through the DC → untouched.
+
+> Engine output is **recomputed client-side on every load** (`runEngine` in App.jsx load effects) — there is no stored-results blob. So engine changes go live for all users on the next page load after deploy; no "Apply & Re-run Model" needed (that button only re-pushes params/overrides).
+
+**Downstream of Supplier exclusion:**
+- **OOS Simulation** (`simWorker.js` `runSim` + `runActualStockSim`) explicitly skips Supplier SKUs via `inventorisedAt==='supplier'` — independent of the engine zeroing (holds even if a floor pushed Max>0; the actual-stock sim doesn't read Max at all). The dead inline `runSim`/`median` in App.jsx were removed (2026-06-30).
+- **Overview tab** store selector "All" = **All Locations (incl. DC)** — `getInv` sums DS01–DS05 **+ DC** so the category/brand/SKU table rollups tie out to the KPI "Inv Value" cards (which always include DC). Coverage figures in "All" mode include DC stock vs DS-only sales by design.
 
 ---
 
@@ -137,9 +149,9 @@ DS_excess per DS = max(0, DS_ECS − DS_Max). No PO needed at DC when this tag f
 - Cond A: all DSes have ECS ≥ Min — no demand pressure on DC
 - Cond B: some DSes are short but DC stock fully covers their replenishment needs
 - Cond C: network DS excess + DC stock covers DC's minimum floor (network-long, no supplier PO needed)
-`dsTotals` must derive from `allSkuRows` (not `dsSummary`) to capture this override — `dsSummary` calls `getHealthTag()` directly and misses it.
+The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCovered(tag, …)`** called by BOTH `dsSummary` (tab-bar badges) and `allSkuRows` (KPI cards + table). Previously the logic was inline in `allSkuRows` only, so `dsSummary` (which calls `getHealthTag()` directly) missed it — the DC tab-bar badge over-counted Critical vs the KPI card. Keep both readers routed through the helper so they can't diverge.
 
-`ECS = max(0, AFS)` — Available for Sale only. In-transit not included (stock not yet physically at DS). ROS = `dailyAvg` from engine. For DC: ROS = sum of dailyAvg across all 5 DSes.
+`ECS = max(0, SoH)` — **Stock-on-Hand**, not AFS. Stale historical Sales Orders depress AFS even when stock is physically present at the location, producing false shortage tags; SoH reflects actual stock. Switched 2026-06-30. (AFS still shown as a reference column.) `applyDCReqCovered`'s per-DS short/excess also uses SoH. ROS = `dailyAvg` from engine. For DC: ROS = sum of dailyAvg across all 5 DSes.
 
 **KPI card pills:** Each card has two pill rows on DS tabs — TO pills (No TO / Picking / In Transit, DC-inv SKUs) above PO pills (No PO / Delayed / Issued / Pending, DS-inv SKUs). PO/TO filters are mutually exclusive — activating one excludes the other's SKU type.
 
@@ -196,12 +208,12 @@ DS_excess per DS = max(0, DS_ECS − DS_Max). No PO needed at DC when this tag f
 Now a real **backtest** inside the Plywood v2 tab (OOS Sim view): upload an invoice CSV for dates *outside* the original 90-day window → replay the **published** v2 plan → per-DS service-level + bulk-served-from-DC + a line-item table (red missed / green served). Upload is **ephemeral** (in-memory; never saved to Supabase). Engine: `simulateOOS` in `plywoodV2/oosSim.js` (two replays: DS at infinite-DC, bulk at finite DC, α=1). See `plywoodV2/CLAUDE.md`.
 
 ### 3. Stock Health Tab ✅ Shipped (2026-05-14), updated (2026-05-21)
-Columns: SoH, AFS, DC Stock, Min, Max, ROS, Req Qty, Rep. Qty, Rec Qty, Date, Est. Delivery, Ref #, Status. ECS = AFS only. DC-inv SKUs show TO data on DS tabs (Picking/In Transit/Transferred); DS-inv SKUs show PO data. KPI cards have dual pill rows (TO above PO, TO pills include Transferred). TO/PO filters mutually exclusive. Transferred TOs show "Transferred" status with Rec Qty populated. ⓘ tooltip, 85% zoom, item name hover.
-- DC Stock column: DS tabs only, between Req Qty and Rep. Qty. Shows DC AFS for DC-inv SKUs (green = stock available, red = zero). Follows Accounting/Physical toggle. DS-inv SKUs show —.
+Columns: SoH, AFS, DC Stock, Min, Max, ROS, Req Qty, Rep. Qty, Rec Qty, Date, Est. Delivery, Ref #, Status. ECS = SoH (SoH is the tag-coloured/sortable cell; AFS is a plain reference column). DC-inv SKUs show TO data on DS tabs (Picking/In Transit/Transferred); DS-inv SKUs show PO data. KPI cards have dual pill rows (TO above PO, TO pills include Transferred). TO/PO filters mutually exclusive. Transferred TOs show "Transferred" status with Rec Qty populated. ⓘ tooltip, 85% zoom, item name hover.
+- DC Stock column: DS tabs only, between Req Qty and Rep. Qty. Shows DC SoH for DC-inv SKUs (green = stock available, red = zero). Follows Accounting/Physical toggle. DS-inv SKUs show —.
 - Picking pill: yellow (matching Pending Approval colour).
 
 ### 9. DC Stock indicator in DS tabs ✅ Shipped (2026-05-21)
-DC Stock column added between Req Qty and Rep. Qty on DS tabs. Shows DC AFS for DC-inv SKUs, follows mode toggle, hidden on DC tab.
+DC Stock column added between Req Qty and Rep. Qty on DS tabs. Shows DC SoH for DC-inv SKUs, follows mode toggle, hidden on DC tab.
 
 ### 4. Rethink Tool Output Tab — fold buttons into Upload Data tab or keep separate?
 

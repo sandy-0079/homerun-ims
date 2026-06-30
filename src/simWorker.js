@@ -17,6 +17,8 @@ function runSim(invoiceData, results, overrides, simDates) {
   });
   const out = [];
   Object.entries(results).forEach(([skuId, res]) => {
+    // Supplier-inventorised SKUs are never stocked in our network — don't simulate OOS for them.
+    if ((res.meta?.inventorisedAt || "DS").toLowerCase() === "supplier") return;
     DS_LIST.forEach(dsId => {
       const toolMin = res.stores[dsId]?.min || 0;
       const toolMax = res.stores[dsId]?.max || 0;
@@ -87,6 +89,8 @@ function runActualStockSim(invoiceData, results, openingStock, singleDate) {
   });
   const out = [];
   Object.entries(results).forEach(([skuId, res]) => {
+    // Supplier-inventorised SKUs are never stocked in our network — don't simulate OOS for them.
+    if ((res.meta?.inventorisedAt || "DS").toLowerCase() === "supplier") return;
     DS_LIST.forEach(dsId => {
       const toolMin = res.stores[dsId]?.min || 0;
       const toolMax = res.stores[dsId]?.max || 0;

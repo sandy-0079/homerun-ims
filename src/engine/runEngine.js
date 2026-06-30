@@ -377,5 +377,24 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     };
   });
 
+  // ── Inventorised-At normalization (final override, after all strategies & floors) ──
+  // Structural location constraints — same character as the Dead Stock rule, applied last.
+  // Matches the Dead Stock convention: zero min/max, leave preFloor* intact for audit.
+  //  • Supplier — never stocked in our network → Min=Max=0 at every DS and the DC.
+  //  • DS-inv   — replenished directly to the DS, bypasses the DC → DC Min=Max=0 (DS kept).
+  //  • DC-inv   — flows through the DC → untouched.
+  Object.values(res).forEach(r => {
+    const invAt = (r.meta?.inventorisedAt || "DS").toLowerCase();
+    if (invAt === "supplier") {
+      DS_LIST.forEach(ds => {
+        if (!r.stores[ds]) return;
+        r.stores[ds].min = 0; r.stores[ds].max = 0; r.stores[ds].logicTag = "Supplier";
+      });
+      if (r.dc) { r.dc.min = 0; r.dc.max = 0; if (r.dc.dcDetails) r.dc.dcDetails.zeroedReason = "Supplier (not stocked in network)"; }
+    } else if (invAt === "ds") {
+      if (r.dc) { r.dc.min = 0; r.dc.max = 0; if (r.dc.dcDetails) r.dc.dcDetails.zeroedReason = "DS-inventorised (bypasses DC)"; }
+    }
+  });
+
   return res;
 }
