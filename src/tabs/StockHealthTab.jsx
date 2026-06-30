@@ -20,7 +20,7 @@ const DS_AND_DC = [...DS_LIST, "DC"];
 const TC = {
   ec:          { label: "Critical",     short: "Critical",     cardBg: "#FEE2E2", cardText: "#B91C1C", cardBorder: "#FECACA", rowBg: "rgba(254,226,226,0.45)", ecsBg: "#FECACA", borderColor: "#EF4444", textColor: "#B91C1C" },
   critical:    { label: "Low Stock",    short: "Low Stock",    cardBg: "#FEF3C7", cardText: "#92400E", cardBorder: "#FDE68A", rowBg: "rgba(254,243,199,0.45)", ecsBg: "#FDE68A", borderColor: "#F59E0B", textColor: "#92400E" },
-  dsReqCovered: { label: "DS Req Covered", short: "DS Req Covered", cardBg: "#EDE9FE", cardText: "#5B21B6", cardBorder: "#DDD6FE", rowBg: "rgba(237,233,254,0.45)", ecsBg: "#DDD6FE", borderColor: "#7C3AED", textColor: "#5B21B6" },
+  dsReqCovered: { label: "DS Req Covered", short: "Covered", cardBg: "#EDE9FE", cardText: "#5B21B6", cardBorder: "#DDD6FE", rowBg: "rgba(237,233,254,0.45)", ecsBg: "#DDD6FE", borderColor: "#7C3AED", textColor: "#5B21B6" },
   okay:        { label: "Okay",         short: "Okay",         cardBg: "#D1FAE5", cardText: "#065F46", cardBorder: "#A7F3D0", rowBg: "rgba(209,250,229,0.35)", ecsBg: "#A7F3D0", borderColor: "#10B981", textColor: "#065F46" },
   excess:      { label: "Excess",       short: "Excess",       cardBg: "#DBEAFE", cardText: "#1E40AF", cardBorder: "#BFDBFE", rowBg: "rgba(219,234,254,0.35)", ecsBg: "#BFDBFE", borderColor: "#3B82F6", textColor: "#1E40AF" },
 };
@@ -1001,7 +1001,7 @@ export default function StockHealthTab({
                       {/* Stock Health badge */}
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center" }}>
                         <span style={{ display: "inline-block", padding: "1px 5px", borderRadius: 7, fontSize: 8.5, fontWeight: 700, whiteSpace: "nowrap", background: cfg.cardBg, color: cfg.textColor }}>
-                          {cfg.label}
+                          {cfg.short}
                         </span>
                       </td>
 
