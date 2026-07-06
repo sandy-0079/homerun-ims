@@ -26,6 +26,7 @@ const DS_COLORS = [
   {bg:"#FFF4EC",header:"#C05A00",text:"#7A3800"},
   {bg:"#F5EEFF",header:"#7A3DBF",text:"#4A1A8A"},
   {bg:"#FFF0F6",header:"#B5006A",text:"#7A0040"},
+  {bg:"#E8FFFA",header:"#0F766E",text:"#0A4A44"},
 ];
 const DC_COLOR = {bg:"#EAF9FF",header:"#0077A8",text:"#004D70"};
 const MOV_COLORS = {"Super Fast":"#16a34a","Fast":"#2D7A3A","Moderate":"#B8860B","Slow":"#C05A00","Super Slow":"#C0392B"};
@@ -3008,7 +3009,7 @@ export default function App(){
   const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);};
 
   const hasChanges=JSON.stringify(params)!==JSON.stringify(savedParams);
-  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays),params.plywoodNonNetworkStrategy!==savedParams.plywoodNonNetworkStrategy].filter(Boolean).length;
+  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays),params.plywoodNonNetworkStrategy!==savedParams.plywoodNonNetworkStrategy,JSON.stringify(params.dsSeed||{})!==JSON.stringify(savedParams.dsSeed||{})].filter(Boolean).length;
 
   // ── Load team data (invoice, SKU master etc.) ───────────────────────────────
   useEffect(()=>{
@@ -3972,6 +3973,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
   if(JSON.stringify(c.movIntervals)!==JSON.stringify(s.movIntervals)) logicChangelog.push(`Movement tag boundaries changed`);
   if(JSON.stringify(c.priceTiers)!==JSON.stringify(s.priceTiers)) logicChangelog.push(`Price tag boundaries changed`);
   if(JSON.stringify(c.newDSList)!==JSON.stringify(s.newDSList)) logicChangelog.push(`New DS list changed`);
+  if(JSON.stringify(c.dsSeed||{})!==JSON.stringify(s.dsSeed||{})) logicChangelog.push(`DS Seed config changed`);
   if(c.newDSFloorTopN!==s.newDSFloorTopN) logicChangelog.push(`New DS floor top N: ${s.newDSFloorTopN} → ${c.newDSFloorTopN}`);
   const blt={...DEFAULT_PARAMS.brandLeadTimeDays,...(c.brandLeadTimeDays||{})};
   const sblt=s.brandLeadTimeDays||{};
@@ -4441,6 +4443,23 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                     <button onClick={()=>{const sel=document.getElementById("newDSSelect").value;if(sel&&!(params.newDSList||[]).includes(sel))saveParams({...params,newDSList:[...(params.newDSList||[]),sel]});}}
                       style={{background:HR.green,color:HR.white,border:"none",padding:"7px 14px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12}}>+ Add</button>
                   </div>
+                </div>
+              </Section>
+              <Section title="DS Seed — New Store Bootstrap" icon="" accent={HR.yellowDark}
+                summary={Object.keys(params.dsSeed||{}).length?Object.entries(params.dsSeed).map(([t,s])=>`${t} ← avg(${(s||[]).join(", ")})`).join(" · "):"Inactive"}>
+                <div style={{...S.card,padding:"12px 14px"}}>
+                  <div style={{fontSize:12,color:HR.text,marginBottom:8,lineHeight:1.5}}>
+                    Seeds DS06's Min/Max with the <b>average of DS02 and DS04</b> (50% of each store's
+                    orders migrate to Kogilu). Per field, whichever is higher wins: seed, organic history,
+                    or New DS Floor. DC targets are re-derived treating DS06 as a sixth store.
+                    Remove the seed once DS06 has ~45 days of its own history.
+                  </div>
+                  <label style={{display:"flex",alignItems:"center",gap:8,cursor:isAdmin?"pointer":"default",fontSize:13,fontWeight:600,color:HR.text}}>
+                    <input type="checkbox" disabled={!isAdmin}
+                      checked={!!(params.dsSeed&&params.dsSeed.DS06)}
+                      onChange={e=>saveParams({...params,dsSeed:e.target.checked?{DS06:["DS02","DS04"]}:{}})}/>
+                    Seed DS06 from DS02 + DS04
+                  </label>
                 </div>
               </Section>
               <Section title="Dead Stock DC Multiplier" icon="" accent="#0077A8"

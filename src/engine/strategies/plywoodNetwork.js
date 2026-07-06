@@ -406,6 +406,7 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
       brand,
       storeResults,
       dcResult: { min: dcMin, max: dcMax },
+      dcMultMin, dcMultMax,
     };
   }
 

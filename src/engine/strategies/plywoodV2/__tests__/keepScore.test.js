@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computeKeepScores } from '../keepScore.js';
+import { DS_LIST } from '../../../constants.js';
 
 describe('computeKeepScores', () => {
   const plan = { A: { DS01: { min: 2, max: 4 } } };       // avg position 3
@@ -56,6 +57,6 @@ describe('keepScoreAnalysis (network-level wrapper)', () => {
     expect(dud.networkNZD).toBe(1);
     expect(r.summary.cut).toBe(1);
     expect(Array.isArray(r.summary.flipsGreen)).toBe(true);
-    expect(r.nodes.length).toBe(12);           // (5 DS + DC) × 2 classes
+    expect(r.nodes.length).toBe((DS_LIST.length + 1) * 2);   // (all DS + DC) × 2 classes
   });
 });

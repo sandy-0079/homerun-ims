@@ -2,7 +2,7 @@
 // UI constants (HR colors, DS_COLORS, MOV_COLORS, etc.) remain in App.jsx
 
 export const ROLLING_DAYS = 90;
-export const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
+export const DS_LIST = ["DS01","DS02","DS03","DS04","DS05","DS06"];
 
 export const MOVEMENT_TIERS_DEFAULT = [2,4,7,10];
 
@@ -94,4 +94,7 @@ export const DEFAULT_PARAMS = {
   skuFloorDCMultMin:0.2,
   skuFloorDCMultMax:0.3,
   plywoodNonNetworkStrategy:"percentile_cover",
+  // DS Seed: { targetDS: [sourceDS, ...] } — target Min/Max seeded from the
+  // equal-weight average of sources (see dsSeed.js). Empty = inactive.
+  dsSeed:{},
 };

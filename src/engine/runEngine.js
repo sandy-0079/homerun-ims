@@ -8,6 +8,7 @@ import {
 
 import { getPriceTag, getMovTag, getSpikeTag, computeStats } from "./utils.js";
 import { standardStrategy } from "./strategies/standard.js";
+import { applyDSSeed } from "./dsSeed.js";
 import { percentileCoverStrategy } from "./strategies/percentileCover.js";
 import { fixedUnitFloorStrategy } from "./strategies/fixedUnitFloor.js";
 import { computePlywoodNetworkResults } from "./strategies/plywoodNetwork.js";
@@ -165,7 +166,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
           min: _dcMin, max: _dcMax,
           preFloorMin: _dc.min, preFloorMax: _dc.max,
           mvTag: 'N/A', nonZeroDays: 0,
-          dcDetails: { strategy: 'network_design', brand: networkResult.brand, isDead: _isDead, isFlooredSKU: _isFlooredSKU, ..._floorDcDetails },
+          dcDetails: { strategy: 'network_design', brand: networkResult.brand, isDead: _isDead, isFlooredSKU: _isFlooredSKU, dcMultMin: networkResult.dcMultMin, dcMultMax: networkResult.dcMultMax, ..._floorDcDetails },
         },
       };
       return;
@@ -287,12 +288,13 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       const postBlendSteps = [];
       let logicTag = "Base Logic";
 
-      // 1. New DS floor — only wins if floor actually exceeds the blend
+      // 1. New DS floor — per-field max: floor lifts Min when it exceeds the
+      // blend; Max keeps the strategy's demand-informed headroom when higher.
       if (isNewDS && isEligible) {
         const floor = mrq[skuId] || 0;
         if (floor > minQty) {
           postBlendSteps.push({ rule: "New DS Floor", floor, beforeMin: minQty, beforeMax: maxQty });
-          minQty = floor; maxQty = floor; logicTag = "New DS Floor";
+          minQty = floor; maxQty = Math.max(maxQty, floor); logicTag = "New DS Floor";
         }
         else maxQty = Math.max(maxQty, minQty);
       }
@@ -376,6 +378,10 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
       dc: { min: dcMin, max: dcMax, preFloorMin: preFloorDcMin, preFloorMax: preFloorDcMax, mvTag: dcStats.mvTag, nonZeroDays: dcStats.nonZeroDays, dcDetails },
     };
   });
+
+  // ── DS Seed pass (e.g. DS06 = avg of DS02/DS04) — before normalization so
+  // Supplier/DS-inv zeroing below still wins over seeded values ──────────────
+  applyDSSeed(res, p);
 
   // ── Inventorised-At normalization (final override, after all strategies & floors) ──
   // Structural location constraints — same character as the Dead Stock rule, applied last.

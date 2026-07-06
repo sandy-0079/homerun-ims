@@ -53,7 +53,16 @@ PCT key decisions: percentile by price (Premium=75, High=80, Medium=85, Low/Supe
 - **Floored SKUs:** `Σ DS Mins × 0.2` / `Σ DS Maxes × 0.3`
 - **Dead Stock:** Min=Max=0 at all DS and DC locations (overrides all floors)
 
-Post-blend order (strict): New DS Floor → SKU Floor Override → Dead Stock cap → Rounding → **Inventorised-At normalization**
+Post-blend order (strict): New DS Floor → SKU Floor Override → Dead Stock cap → Rounding → **DS Seed** → **Inventorised-At normalization**
+
+**New DS Floor blend is per-field max (changed 2026-07-06):** when the floor beats the strategy Min, Min = floor but Max keeps the strategy's value when higher (`max(strategyMax, floor)`). Previously the floor clobbered both (Min=Max=floor), discarding demand-informed Max headroom. Applies to every DS in `newDSList`.
+
+### DS Seed — new store bootstrap (`src/engine/dsSeed.js`)
+Seeds a new DS's Min/Max from the **equal-weight average of source DSes** — built for DS06 Kogilu, whose catchment carves ~50% of orders each from DS02 and DS04. Config: `params.dsSeed = { DS06: ["DS02","DS04"] }` (Logic Tweaker → "DS Seed — New Store Bootstrap" checkbox; empty object = inactive; removing the entry is the sunset switch once DS06 has ~45 days of organic history).
+- Per SKU, per field: `DS06 = max(organic/floor value, ceil(avg(sources)))` — "whichever wins". `ceil` ⇒ union assortment. logicTag `DS Seed`, audit entry in `postBlendSteps`, `preFloor*` untouched.
+- Runs after all strategies/floors, **before Inventorised-At normalization** — Supplier/DS-inv zeroing still wins; Dead Stock propagates (0+0→0).
+- **DC re-derived treating the seeded DS as a real sixth store** (deliberate transition overstock — sources are never reduced; both self-correct as carved-out demand leaves source history ~45 days post-go-live): rate-based SKUs add a synthetic rate `max(0, avg(source rates) − organic DS06 rate)` into `sumDailyAvg`; floored SKUs add the seed deltas into Σ DS sums; Network Design adds `ceil(ΔMin × brand dcMult)`. DC never decreases. Audit: `dcDetails.dsSeedAug`.
+- Tests: `src/engine/__tests__/dsSeed.test.js` (18).
 
 ### Inventorised-At normalization (final engine override)
 Applied as a last pass over `res` in `runEngine` (after all strategies, floors, Dead Stock), keyed on `meta.inventorisedAt`. Same character as Dead Stock — a structural location constraint. Zeroes `min`/`max`, leaves `preFloor*` intact for audit, tags `dc.dcDetails.zeroedReason`.
@@ -77,10 +86,10 @@ Applied as a last pass over `res` in `runEngine` (after all strategies, floors, 
 
 **Concept:** Brand-level assignments — each brand is stocked at specific DS nodes which aggregate demand from multiple DSes. Non-stocking DSes get Min=Max=0 (fulfilled from stocking node or DC).
 
-**Current brand assignments:**
-- Action Tesa, CenturyPly: stocked at DS01 (covers DS01+DS05) + DS03 (covers DS03+DS04+DS05). DC directly serves DS02+DS04.
-- ArchidPly, GreenPly: stocked at DS02 (DS02+DS01) + DS04 (DS04+DS03) + DS05 (DS05+DS01+DS03). DC replenishment only.
+**Current brand assignments (live Supabase config, verified 2026-07-06 — code defaults in constants.js are stale):**
+- All four brands (Action Tesa, CenturyPly, ArchidPly, GreenPly) stocked at **every DS, each node covering only itself** (no cross-DS coverage, no DC direct-serve nodes). Per-brand dcMultMin/dcMultMax = 0.75/1.0.
 - Merino: excluded from this tab, uses PCT.
+- DS06 is not in any brand matrix — v1 gives it Min=Max=0; the DS Seed pass fills it (valid because self-covering node values ≈ local demand).
 
 **3-zone stocking per SKU (NZD = non-zero demand days in lookback):**
 - **Rare** (NZD < minNZD=2): Min=Max=0, not stocked
@@ -124,7 +133,7 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 **Zoho Inventory location IDs (org 60075214606, confirmed 2026-07-06):**
 `DC=3915979000000118466`, `DS01=3915979000000054002`, `DS02=3915979000000054017`, `DS03=3915979000000054032`, `DS04=3915979000000054047`, `DS05=3915979000000054062`, `DS06=3915979000000118484`
 
-**DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase) but the UI still models DS01–DS05. Phase 2 on go-live day: add `"DS06"` to `DS_LIST` in `src/engine/constants.js` (Stock Health tab/KPIs/DC ROS/DS Req Covered all follow automatically) + add DS06 to `newDSList` in Logic Tweaker for New DS Floor Min/Max. Review later: local `DS_LIST` copies in `simWorker.js`/`BasketAnalysisTab.jsx`, cluster assignment, plywood brand matrices.
+**DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase). **Phase 2 built on `feature/ds06-seed` (2026-07-06, unmerged):** `DS_LIST` includes DS06 (Stock Health tab/KPIs/DC ROS/DS Req Covered follow automatically; 6th `DS_COLORS` entry added) + engine **DS Seed pass** gives DS06 Min/Max = avg(DS02, DS04) — see the DS Seed section. On activation, admin ticks "Seed DS06" in Logic Tweaker (and optionally adds DS06 to `newDSList` for the floor) + Apply. Review later: local `DS_LIST` copies in `simWorker.js`/`BasketAnalysisTab.jsx`, cluster assignment, plywood brand matrices.
 
 **SKU filtering rules:**
 - Only `status = Active` SKUs (from SKU Master)
