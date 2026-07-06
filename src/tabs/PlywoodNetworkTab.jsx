@@ -21,7 +21,7 @@ const S = {
 };
 
 const PLYWOOD_CATEGORIES = ["Plywood, MDF & HDHMR"];
-const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
+const DS_LIST = ["DS01","DS02","DS03","DS04","DS05","DS06"];
 
 const DS_DEFAULTS = {
   DS01: {
@@ -45,6 +45,11 @@ const DS_DEFAULTS = {
     shared: { laminateThreshold:1 }, fallbackLabel:"DC",
   },
   DS05: {
+    thick: { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:150 },
+    thin:  { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:60 },
+    shared: { laminateThreshold:1 }, fallbackLabel:"DC",
+  },
+  DS06: {
     thick: { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:150 },
     thin:  { tier1NZD:6, tier2NZD:2, minCoverDays:1.5, coverDays:3, bufferPct:20, thresholdPctl:75, capacity:60 },
     shared: { laminateThreshold:1 }, fallbackLabel:"DC",
