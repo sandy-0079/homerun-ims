@@ -187,6 +187,7 @@ export default function StockHealthTab({
       ]);
       await supabase.functions.invoke('sync-stock', { body: { branches: ['DS02', 'DS03'] } });
       await supabase.functions.invoke('sync-stock', { body: { branches: ['DS04', 'DS05'] } });
+      await supabase.functions.invoke('sync-stock', { body: { branches: ['DS06'] } });
       // Reload fresh data directly — don't rely on Realtime being configured
       await onSyncComplete?.();
     } catch (err) {

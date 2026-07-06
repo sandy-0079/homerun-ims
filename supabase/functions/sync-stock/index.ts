@@ -1,13 +1,14 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// ─── Branch ID → DS mapping ───────────────────────────────────────────────────
+// ─── Branch ID → DS mapping (Zoho Inventory org 60075214606) ─────────────────
 const BRANCHES: Record<string, string> = {
-  DC:   '2753232000017648109',
-  DS01: '2753232000000037051',
-  DS02: '2753232000000037081',
-  DS03: '2753232000000037109',
-  DS04: '2753232000007867440',
-  DS05: '2753232000017634267',
+  DC:   '3915979000000118466',
+  DS01: '3915979000000054002',
+  DS02: '3915979000000054017',
+  DS03: '3915979000000054032',
+  DS04: '3915979000000054047',
+  DS05: '3915979000000054062',
+  DS06: '3915979000000118484',
 }
 
 const COOLDOWN_MINS = 15
@@ -50,7 +51,7 @@ async function fetchBranchStock(token: string, branchId: string, showActualStock
     criteria_string: '1',
   })
   const base =
-    `https://www.zohoapis.in/books/v3/reports/inventorysummary` +
+    `https://www.zohoapis.in/inventory/v1/reports/inventorysummary` +
     `?organization_id=${Deno.env.get('ZOHO_ORG_ID')}` +
     `&filter_by=TransactionDate.Today` +
     `&per_page=200` +

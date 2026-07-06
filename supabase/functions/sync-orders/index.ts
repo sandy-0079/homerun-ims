@@ -1,19 +1,20 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// PO location_name → DS code (as set in Zoho Books)
+// PO location_name → DS code (as set in Zoho Inventory)
 const LOCATION_TO_DS: Record<string, string> = {
   'DS01 Sarjapur':       'DS01',
   'DS02 Bileshivale':    'DS02',
   'DS03 Kengeri':        'DS03',
   'DS04 Chikkabanavara': 'DS04',
   'DS05 Basavanapura':   'DS05',
+  'DS06 Kogilu':         'DS06',
   'DC01 Rampura':        'DC',
 }
 
 const COOLDOWN_MINS    = 15
 const PO_LOOKBACK_DAYS = 12
 const TO_LOOKBACK_DAYS = 3
-const DC_BRANCH_ID     = '2753232000017648109'
+const DC_BRANCH_ID     = '3915979000000118466'
 
 // ─── Zoho OAuth ───────────────────────────────────────────────────────────────
 async function getZohoToken(): Promise<string> {
@@ -40,7 +41,7 @@ async function fetchActiveTOList(token: string, cutoff: string): Promise<Record<
     let page = 1
     while (true) {
       const res = await fetch(
-        `https://www.zohoapis.in/books/v3/transferorders?organization_id=${org}&status=${status}&per_page=200&sort_column=date&sort_order=D&page=${page}`,
+        `https://www.zohoapis.in/inventory/v1/transferorders?organization_id=${org}&status=${status}&per_page=200&sort_column=date&sort_order=D&page=${page}`,
         { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
       )
       const data = await res.json()
@@ -62,7 +63,7 @@ async function fetchActiveTOList(token: string, cutoff: string): Promise<Record<
 // ─── TO: fetch detail for one TO ─────────────────────────────────────────────
 async function fetchTODetail(token: string, toId: string): Promise<any> {
   const res = await fetch(
-    `https://www.zohoapis.in/books/v3/transferorders/${toId}?organization_id=${Deno.env.get('ZOHO_ORG_ID')}`,
+    `https://www.zohoapis.in/inventory/v1/transferorders/${toId}?organization_id=${Deno.env.get('ZOHO_ORG_ID')}`,
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
   )
   const data = await res.json()
@@ -78,7 +79,7 @@ async function fetchActivePOList(token: string, cutoff: string): Promise<Record<
     let page = 1
     while (true) {
       const res = await fetch(
-        `https://www.zohoapis.in/books/v3/purchaseorders?organization_id=${org}&status=${status}&per_page=200&sort_column=date&sort_order=D&page=${page}`,
+        `https://www.zohoapis.in/inventory/v1/purchaseorders?organization_id=${org}&status=${status}&per_page=200&sort_column=date&sort_order=D&page=${page}`,
         { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
       )
       const data = await res.json()
@@ -100,7 +101,7 @@ async function fetchActivePOList(token: string, cutoff: string): Promise<Record<
 // ─── PO: fetch detail for one PO ─────────────────────────────────────────────
 async function fetchPODetail(token: string, poId: string): Promise<any> {
   const res = await fetch(
-    `https://www.zohoapis.in/books/v3/purchaseorders/${poId}?organization_id=${Deno.env.get('ZOHO_ORG_ID')}`,
+    `https://www.zohoapis.in/inventory/v1/purchaseorders/${poId}?organization_id=${Deno.env.get('ZOHO_ORG_ID')}`,
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
   )
   const data = await res.json()

@@ -110,7 +110,10 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 **Component:** `src/tabs/StockHealthTab.jsx`
 
 **Data sources (synced hourly via `sync-stock` + `sync-orders` Edge Functions — see sync architecture in Data Model section):**
-- **Stock:** Zoho Books Inventory Summary report per branch (6 branches × ~10 pages). Stored as `stockData[sku][ds] = { stock_on_hand, available_for_sale, in_transit }`. Zoho field mapping: `stock_on_hand` ← `quantity_available`, `available_for_sale` ← `quantity_available_for_sale`, `in_transit` ← `quantity_in_transit`.
+
+> **Zoho migration 2026-07-06:** all sync now hits the **Zoho Inventory API** (`/inventory/v1/`, org `60075214606`) — the old Zoho Books org (60044091518) is retired. Same response shapes, same `rule` filter, same custom fields. Credentials live in Supabase secrets (`ZOHO_CLIENT_ID/SECRET/REFRESH_TOKEN/ORG_ID`, scope `ZohoInventory.fullaccess.all`).
+
+- **Stock:** Zoho Inventory Summary report per branch (7 branches × ~10 pages). Stored as `stockData[sku][ds] = { stock_on_hand, available_for_sale, in_transit }`. Zoho field mapping: `stock_on_hand` ← `quantity_available`, `available_for_sale` ← `quantity_available_for_sale`, `in_transit` ← `quantity_in_transit`.
 - **PO:** Replenishment POs (open + pending_approval + partially_billed, last 12 days). Incremental via `_poCache`. Stored as `poData[ds][sku] = { qty, received, po_date, status, delivery, po_number, po_id }`.
 - **TO:** Transfer Orders from DC. Two fetches per sync:
   - Active (draft + in_transit, last 3 days): incremental via `_toCache`. Priority: in_transit > draft; latest date/last_modified wins within same status. 3 days = 3× buffer over the 24h TO lifecycle (draft ~midnight, transferred ~noon next day).
@@ -118,8 +121,10 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
   - Stored as `toData[ds][sku] = { qty, rec_qty, to_date, status, to_number, to_id }` keyed by destination DS. `rec_qty` = null for all entries (always draft/in_transit). Priority: in_transit > draft.
   - Only draft and in_transit TOs are stored. Transferred TOs are not shown: once received, stock appears in AFS. Zoho's `last_modified_time` is unreliable as a transfer-date signal — any edit to a TO in Zoho updates it, causing stale transferred TOs to re-appear as "today".
 
-**Zoho Books branch IDs (confirmed):**
-`DC=2753232000017648109`, `DS01=2753232000000037051`, `DS02=2753232000000037081`, `DS03=2753232000000037109`, `DS04=2753232000007867440`, `DS05=2753232000017634267`
+**Zoho Inventory location IDs (org 60075214606, confirmed 2026-07-06):**
+`DC=3915979000000118466`, `DS01=3915979000000054002`, `DS02=3915979000000054017`, `DS03=3915979000000054032`, `DS04=3915979000000054047`, `DS05=3915979000000054062`, `DS06=3915979000000118484`
+
+**DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase) but the UI still models DS01–DS05. Phase 2 on go-live day: add `"DS06"` to `DS_LIST` in `src/engine/constants.js` (Stock Health tab/KPIs/DC ROS/DS Req Covered all follow automatically) + add DS06 to `newDSList` in Logic Tweaker for New DS Floor Min/Max. Review later: local `DS_LIST` copies in `simWorker.js`/`BasketAnalysisTab.jsx`, cluster assignment, plywood brand matrices.
 
 **SKU filtering rules:**
 - Only `status = Active` SKUs (from SKU Master)
@@ -157,7 +162,7 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 
 **PO data notes:**
 - `cf_purchase_type` must be "Replenishment" to be included. Ops mandate started 2026-05-13 — older POs may lack this field.
-- `delivery` = `cf_confirmed_delivery_time` from `custom_fields[]` array (NOT top-level field). Format: `YYYY-MM-DD`.
+- `delivery` = `cf_confirmed_delivery_time` from `custom_fields[]` array (NOT top-level field). New-org format: `YYYY-MM-DD HH:mm` — sync-orders strips the time via `split(' ')[0]`.
 - 15-min cooldown enforced server-side (both cron and manual Sync Now).
 - **PO display rule:** `dsPoData` filters out any entry where `received > 0` before the frontend sees it. Latest PO per SKU already wins (sort by date DESC, first-assignment wins in sync-orders). If the latest PO has received > 0, stock already arrived — no PO shown regardless of older stale POs. Frontend-only change, no edge function impact.
 
@@ -171,11 +176,12 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 
 **Sync performance constraints (150s Supabase Edge Function wall time):**
 - `inventorysummary` report: ~18–56s/call depending on Zoho health — dominant cost.
-- **Zoho inventorysummary rate limit: ~8 calls/minute** (confirmed 2026-05-22). 4 concurrent (2 branches × 2 modes) → 429 after 2 groups; 6 concurrent (3 branches) → 429 after 1 group. Safe: max 4 calls per invocation.
-- **Architecture:** 3 staggered cron jobs each handle 1 branch pair (4 concurrent calls, never overlaps):
+- **Zoho inventorysummary rate limit: ~8 calls/minute** (confirmed 2026-05-22; re-confirmed on the Inventory API 2026-07-06 — 10 calls in ~2 min → 429). 4 concurrent (2 branches × 2 modes) → 429 after 2 groups; 6 concurrent (3 branches) → 429 after 1 group. Safe: max 4 calls per invocation.
+- **Architecture:** 4 staggered cron jobs (3 branch pairs + DS06; ≤4 concurrent calls, never overlaps):
   - `stock-sync-1` at `:35 UTC` (:05 IST) → DC + DS01
   - `stock-sync-2` at `:38 UTC` (:08 IST) → DS02 + DS03
   - `stock-sync-3` at `:41 UTC` (:11 IST) → DS04 + DS05
+  - `stock-sync-4` at `:44 UTC` (:14 IST) → DS06 (2 calls)
   - `orders-sync-hourly` at `:35 UTC` (:05 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket)
 - **Supabase statement timeout:** Concurrent reads/writes from multiple functions on the same large global row cause Postgres to cancel statements. Fix: 3-min stagger ensures each function's write completes before the next function's read starts (2-min stagger still collided when Zoho took ~100s/function).
 - **Supabase Disk IO budget:** Nano instance has 30-min daily burst (43 Mbps baseline). The 3-function architecture makes 12 Supabase ops/hour — with a 7MB payload (including invoiceData) this exhausted the Nano burst within hours. Fix: (1) upgrade to Pro + Micro compute (87 Mbps baseline, 60-min burst), (2) separate invoiceData into its own row reducing global payload to ~1-2MB. Together these make daily IO sustainable on Micro.
@@ -184,7 +190,7 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 - **Branch-level merge:** sync-stock merges `stockData[sku][ds]` at branch level on write — never replaces the full stockData object (would wipe sibling functions' branch data).
 - **Status codes:** 546 = Supabase killed the function (wall clock timeout); 500 = function caught an error and returned cleanly.
 - **Rate limit recovery:** after 429 abuse, recovery takes 60+ min. Never rapid-deploy or trigger repeated manual syncs.
-- **Manual Sync Now:** calls DC+DS01 + sync-orders in parallel, then DS02+DS03, then DS04+DS05 sequentially — stays under rate limit.
+- **Manual Sync Now:** calls DC+DS01 + sync-orders in parallel, then DS02+DS03, then DS04+DS05, then DS06 sequentially — stays under rate limit.
 - **Cold-cache deadlock:** prevented by 50-call cap on transferred-today detail calls + read-merge-write in `saveTeamData` (App.jsx).
 - OPTIONS preflight: handler checks `req.method === 'OPTIONS'` and returns immediately — prevents browser CORS preflight from running the full sync.
 
