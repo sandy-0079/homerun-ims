@@ -12,7 +12,7 @@ const HR = {
 };
 const DS_COLORS = [
   { header: "#B8860B" }, { header: "#1D6B30" }, { header: "#C05A00" },
-  { header: "#7A3DBF" }, { header: "#B5006A" },
+  { header: "#7A3DBF" }, { header: "#B5006A" }, { header: "#0F766E" },
 ];
 const DC_COLOR = { header: "#0077A8" };
 const DS_AND_DC = [...DS_LIST, "DC"];
