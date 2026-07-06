@@ -3009,7 +3009,7 @@ export default function App(){
   const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);};
 
   const hasChanges=JSON.stringify(params)!==JSON.stringify(savedParams);
-  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays),params.plywoodNonNetworkStrategy!==savedParams.plywoodNonNetworkStrategy,JSON.stringify(params.dsSeed||{})!==JSON.stringify(savedParams.dsSeed||{})].filter(Boolean).length;
+  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays),params.plywoodNonNetworkStrategy!==savedParams.plywoodNonNetworkStrategy,JSON.stringify(params.dsSeed||{})!==JSON.stringify(savedParams.dsSeed||{}),JSON.stringify(params.dsSeedCategoryMult||{})!==JSON.stringify(savedParams.dsSeedCategoryMult||{})].filter(Boolean).length;
 
   // ── Load team data (invoice, SKU master etc.) ───────────────────────────────
   useEffect(()=>{
@@ -3974,6 +3974,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
   if(JSON.stringify(c.priceTiers)!==JSON.stringify(s.priceTiers)) logicChangelog.push(`Price tag boundaries changed`);
   if(JSON.stringify(c.newDSList)!==JSON.stringify(s.newDSList)) logicChangelog.push(`New DS list changed`);
   if(JSON.stringify(c.dsSeed||{})!==JSON.stringify(s.dsSeed||{})) logicChangelog.push(`DS Seed config changed`);
+  if(JSON.stringify(c.dsSeedCategoryMult||{})!==JSON.stringify(s.dsSeedCategoryMult||{})) logicChangelog.push(`DS Seed category multiplier changed`);
   if(c.newDSFloorTopN!==s.newDSFloorTopN) logicChangelog.push(`New DS floor top N: ${s.newDSFloorTopN} → ${c.newDSFloorTopN}`);
   const blt={...DEFAULT_PARAMS.brandLeadTimeDays,...(c.brandLeadTimeDays||{})};
   const sblt=s.brandLeadTimeDays||{};
@@ -4460,6 +4461,14 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                       onChange={e=>saveParams({...params,dsSeed:e.target.checked?{DS06:["DS02","DS04"]}:{}})}/>
                     Seed DS06 from DS02 + DS04
                   </label>
+                  {!!(params.dsSeed&&params.dsSeed.DS06)&&(
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${HR.border}`}}>
+                      <span style={{fontSize:12,color:HR.text,fontWeight:600}}>Plywood seed multiplier</span>
+                      <NumInput value={(params.dsSeedCategoryMult||{})["Plywood, MDF & HDHMR"]??0.6} min={0} max={1} step={0.05}
+                        onChange={v=>saveParams({...params,dsSeedCategoryMult:{...(params.dsSeedCategoryMult||{}),"Plywood, MDF & HDHMR":v}})}/>
+                      <span style={{fontSize:11,color:HR.muted}}>Damps plywood depth to fit racking (0.6 ≈ sibling-store thick rack); other categories seed at full average.</span>
+                    </div>
+                  )}
                 </div>
               </Section>
               <Section title="Dead Stock DC Multiplier" icon="" accent="#0077A8"

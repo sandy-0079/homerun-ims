@@ -97,4 +97,7 @@ export const DEFAULT_PARAMS = {
   // DS Seed: { targetDS: [sourceDS, ...] } — target Min/Max seeded from the
   // equal-weight average of sources (see dsSeed.js). Empty = inactive.
   dsSeed:{},
+  // Per-category seed damping: seed = ceil(mult × avg). Plywood 0.6 keeps the
+  // full assortment but lean depth — sized so DS06 thick fits a sibling rack.
+  dsSeedCategoryMult:{"Plywood, MDF & HDHMR":0.6},
 };

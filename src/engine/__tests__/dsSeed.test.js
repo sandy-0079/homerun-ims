@@ -100,6 +100,36 @@ describe("applyDSSeed — store seeding", () => {
   });
 });
 
+describe("applyDSSeed — per-category multiplier", () => {
+  const PLY = "Plywood, MDF & HDHMR";
+  const MULT_P = { ...SEED_P, dsSeedCategoryMult: { [PLY]: 0.6 } };
+
+  it("damps the seed for the configured category (ceil after scaling)", () => {
+    const res = { "SKU-A": mkSku({ ds02: mkStore(5, 6), ds04: mkStore(3, 4), meta: { category: PLY } }) };
+    applyDSSeed(res, MULT_P);
+    const t = res["SKU-A"].stores.DS06;
+    expect(t.min).toBe(3);  // ceil(0.6 × (5+3)/2) = ceil(2.4)
+    expect(t.max).toBe(3);  // ceil(0.6 × (6+4)/2) = ceil(3.0)
+  });
+
+  it("leaves other categories at full average", () => {
+    const res = { "SKU-A": mkSku({ ds02: mkStore(5, 6), ds04: mkStore(3, 4) }) };  // General Hardware
+    applyDSSeed(res, MULT_P);
+    expect(res["SKU-A"].stores.DS06.min).toBe(4);
+    expect(res["SKU-A"].stores.DS06.max).toBe(5);
+  });
+
+  it("damped seed flows into the network DC augmentation via the delta", () => {
+    const res = { "SKU-A": mkSku({
+      ds02: mkStore(5, 6), ds04: mkStore(3, 4), meta: { category: PLY },
+      dc: { min: 10, max: 15, dcDetails: { strategy: "network_design", brand: "GreenPly", isDead: false, dcMultMin: 0.8, dcMultMax: 1.5 } },
+    }) };
+    applyDSSeed(res, MULT_P);
+    expect(res["SKU-A"].dc.min).toBe(13);  // 10 + ceil(3 × 0.8) = 10 + 3
+    expect(res["SKU-A"].dc.max).toBe(20);  // 15 + ceil(3 × 1.5) = 15 + 5
+  });
+});
+
 describe("applyDSSeed — DC re-derivation", () => {
   it("rate-based DC recomputed with synthetic DS06 rate = avg of source rates", () => {
     // sources: dailyAvg 1 and 3 → synth 2; organic DS06 rate 0

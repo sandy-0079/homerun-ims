@@ -22,8 +22,11 @@ export function applyDSSeed(res, p) {
       const stores = r.stores;
       if (!stores) continue;
 
-      const seedMin = Math.ceil(sources.reduce((s, ds) => s + (stores[ds]?.min || 0), 0) / sources.length);
-      const seedMax = Math.ceil(sources.reduce((s, ds) => s + (stores[ds]?.max || 0), 0) / sources.length);
+      // Per-category damping (e.g. plywood ×0.6 — capacity-driven: sheets are
+      // shelf-expensive and v1 has no DS capacity trim). 1 = full average.
+      const mult = p.dsSeedCategoryMult?.[r.meta?.category] ?? 1;
+      const seedMin = Math.ceil(mult * sources.reduce((s, ds) => s + (stores[ds]?.min || 0), 0) / sources.length);
+      const seedMax = Math.max(Math.ceil(mult * sources.reduce((s, ds) => s + (stores[ds]?.max || 0), 0) / sources.length), seedMin);
       const synthAvg = sources.reduce((s, ds) => s + (stores[ds]?.dailyAvg || 0), 0) / sources.length;
 
       const tgt = stores[targetDS];
