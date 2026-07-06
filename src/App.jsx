@@ -3563,7 +3563,7 @@ const visibleOutput = useMemo(() => {
           skuMaster:  {file:"SKU_Master_Template.csv",  headers:["Name","Inventorised At","SKU","Category","Status","Brand"],rows:[["Product Name A","DS","SKU001","Paints","Active","Asian Paints"],["Product Name B","DS","SKU002","Adhesives","Active","MYK Laticrete"]]},
           priceData:{file:"Avg_Price_Template.csv",headers:["item_id","item_name","unit","is_combo_product","quantity_purchased","amount","average_price","location_name","sku"],rows:[["ITEM001","Product Name A","PCS","No",100,25000,250,"DS01 Warehouse","SKU001"],["ITEM002","Product Name B","PCS","No",10,18000,1800,"DS02 Warehouse","SKU002"]]},
           minReqQty:  {file:"New_DS_Floor_Template.csv",headers:["SKU","Qty"],rows:[["SKU001",10],["SKU002",5]]},
-          newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU","DS01 Min","DS01 Max","DS02 Min","DS02 Max","DS03 Min","DS03 Max","DS04 Min","DS04 Max","DS05 Min","DS05 Max"],rows:[["SKU001",3,5,2,3,0,0,5,7,0,0],["SKU002",0,0,1,2,2,3,0,0,3,4]]},
+          newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU",...DS_LIST.flatMap(ds=>[`${ds} Min`,`${ds} Max`])],rows:[["SKU001",3,5,2,3,0,0,5,7,0,0,0,0],["SKU002",0,0,1,2,2,3,0,0,3,4,1,2]]},
           deadStock:  {file:"Dead_Stock_Template.csv",  headers:["Dead Stock"],rows:[["SKU001"],["SKU002"]]},
         };
         const csvOnlyCards=[
