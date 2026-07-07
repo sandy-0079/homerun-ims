@@ -894,24 +894,30 @@ export default function StockHealthTab({
         {results && hasStock && (
           <div style={{ flex: 1, overflowY: "auto", overflowX: "auto", borderTop: `1px solid ${HR.border}` }}>
             <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+              {/* Column widths — order matches the <thead> array below:
+                  SKU · Item Name(flex) · Brand · Stock Health · SoH · AFS · Min ·
+                  Max · ROS · Req Qty · [DC Stock, DS tabs only] · Ordered Qty ·
+                  Received Qty · PO Date · Est. Delivery · PO Number · PO Status.
+                  Bare <col>s only — inline comments/whitespace here trip React's
+                  "whitespace text node in <colgroup>" hydration warning. */}
               <colgroup>
-                <col style={{ width: 248 }} />  {/* SKU */}
-                <col />                          {/* Item Name — flex */}
-                <col style={{ width: 58 }} />   {/* Brand */}
-                <col style={{ width: 64 }} />   {/* Stock Health */}
-                <col style={{ width: 54 }} />   {/* Stock on Hand */}
-                <col style={{ width: 54 }} />   {/* Avail. for Sale */}
-                <col style={{ width: 32 }} />   {/* Min */}
-                <col style={{ width: 32 }} />   {/* Max */}
-                <col style={{ width: 34 }} />   {/* ROS */}
-                <col style={{ width: 52 }} />   {/* Req Qty */}
-                {selectedDS !== "DC" && <col style={{ width: 44 }} />}  {/* DC Stock */}
-                <col style={{ width: 54 }} />   {/* Ordered Qty */}
-                <col style={{ width: 58 }} />   {/* Received Qty */}
-                <col style={{ width: 60 }} />   {/* PO Date */}
-                <col style={{ width: 64 }} />   {/* Est. Delivery */}
-                <col style={{ width: 86 }} />   {/* PO Number */}
-                <col style={{ width: 78 }} />   {/* PO Status */}
+                <col style={{ width: 248 }} />
+                <col />
+                <col style={{ width: 58 }} />
+                <col style={{ width: 64 }} />
+                <col style={{ width: 54 }} />
+                <col style={{ width: 54 }} />
+                <col style={{ width: 32 }} />
+                <col style={{ width: 32 }} />
+                <col style={{ width: 34 }} />
+                <col style={{ width: 52 }} />
+                {selectedDS !== "DC" && <col style={{ width: 44 }} />}
+                <col style={{ width: 54 }} />
+                <col style={{ width: 58 }} />
+                <col style={{ width: 60 }} />
+                <col style={{ width: 64 }} />
+                <col style={{ width: 86 }} />
+                <col style={{ width: 78 }} />
               </colgroup>
               <thead>
                 <tr>
