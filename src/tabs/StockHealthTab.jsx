@@ -17,6 +17,9 @@ const DS_COLORS = [
 const DC_COLOR = { header: "#0077A8" };
 const DS_AND_DC = [...DS_LIST, "DC"];
 
+// Zoho Inventory deep-link base (org migrated from Books → Inventory 2026-07-06).
+const ZOHO_INV_URL = "https://inventory.zoho.in/app/60075214606#";
+
 const TC = {
   ec:          { label: "Critical",     short: "Critical",     cardBg: "#FEE2E2", cardText: "#B91C1C", cardBorder: "#FECACA", rowBg: "rgba(254,226,226,0.45)", ecsBg: "#FECACA", borderColor: "#EF4444", textColor: "#B91C1C" },
   critical:    { label: "Low Stock",    short: "Low Stock",    cardBg: "#FEF3C7", cardText: "#92400E", cardBorder: "#FDE68A", rowBg: "rgba(254,243,199,0.45)", ecsBg: "#FDE68A", borderColor: "#F59E0B", textColor: "#92400E" },
@@ -107,29 +110,41 @@ const TO_STATUS_STYLE = {
   transferred: { bg: '#D1FAE5', color: '#065F46' },
 }
 
+// Zoho Inventory PO status vocabulary (migrated from Books 2026-07-06). Books
+// keys (open/partially_billed) kept for any stale cached POs during transition.
 const PO_STATUS_LABEL = {
-  open:              'Issued',
-  pending_approval:  'Pending Approval',
-  partially_billed:  'Issued',
-  delayed:           'Delayed',
+  issued:             'Issued',
+  partially_received: 'Partially Received',
+  received:           'Received',
+  pending_approval:   'Pending Approval',
+  delayed:            'Delayed',
+  open:               'Issued',
+  partially_billed:   'Issued',
 };
 const PO_STATUS_BADGE = {
-  open:              'Issued',
-  pending_approval:  'Pend. Appr.',
-  partially_billed:  'Issued',
-  delayed:           'Delayed',
+  issued:             'Issued',
+  partially_received: 'Partial',
+  received:           'Received',
+  pending_approval:   'Pend. Appr.',
+  delayed:            'Delayed',
+  open:               'Issued',
+  partially_billed:   'Issued',
 };
 const PO_STATUS_STYLE = {
-  open:              { bg: '#D1FAE5', color: '#065F46' },
-  pending_approval:  { bg: '#FEF3C7', color: '#92400E' },
-  partially_billed:  { bg: '#D1FAE5', color: '#065F46' },
-  delayed:           { bg: '#FEE2E2', color: '#B91C1C' },
+  issued:             { bg: '#D1FAE5', color: '#065F46' },
+  partially_received: { bg: '#DBEAFE', color: '#1E40AF' },
+  received:           { bg: '#E5E7EB', color: '#374151' },
+  pending_approval:   { bg: '#FEF3C7', color: '#92400E' },
+  delayed:            { bg: '#FEE2E2', color: '#B91C1C' },
+  open:               { bg: '#D1FAE5', color: '#065F46' },
+  partially_billed:   { bg: '#D1FAE5', color: '#065F46' },
 };
 
-// Derives display status — adds Delayed for overdue issued POs with partial/no receipt
+// Derives display status — adds Delayed for overdue issued POs with no receipt.
 function getPoDisplayStatus(po) {
   if (!po) return null;
-  if ((po.status === 'open' || po.status === 'partially_billed') && po.delivery) {
+  if ((po.status === 'issued' || po.status === 'partially_received' ||
+       po.status === 'open'   || po.status === 'partially_billed') && po.delivery) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const due   = new Date(po.delivery); due.setHours(0, 0, 0, 0);
     if (today > due && (po.received ?? 0) === 0) return 'delayed';
@@ -440,7 +455,7 @@ export default function StockHealthTab({
           if (filterPoStatus === "No PO") { if (po) return false; }
           else {
             const displayStatus = getPoDisplayStatus(po);
-            if (filterPoStatus === "Issued" && displayStatus !== "open" && displayStatus !== "partially_billed") return false;
+            if (filterPoStatus === "Issued" && displayStatus !== "issued" && displayStatus !== "partially_received" && displayStatus !== "open" && displayStatus !== "partially_billed") return false;
             if (filterPoStatus === "Pending Approval" && displayStatus !== "pending_approval") return false;
             if (filterPoStatus === "Delayed" && displayStatus !== "delayed") return false;
           }
@@ -489,7 +504,7 @@ export default function StockHealthTab({
             break;
           }
           case "status": {
-            const PO_RANK = { delayed: 0, open: 1, partially_billed: 2, pending_approval: 3 };
+            const PO_RANK = { delayed: 0, issued: 1, partially_received: 2, pending_approval: 3, open: 1, partially_billed: 2 };
             const TO_RANK = { transferred: 0, in_transit: 1, draft: 2 };
             const aOrd = isDCInvA ? dsToData[a.sku] : dsPoData[a.sku];
             const bOrd = isDCInvB ? dsToData[b.sku] : dsPoData[b.sku];
@@ -1076,7 +1091,7 @@ export default function StockHealthTab({
                               {/* Ref # — TO number, links to Zoho Books */}
                               <td style={{ padding: "2px 6px", borderTop: topBorder, fontSize: FS, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {to?.to_number ? (
-                                  <a href={`https://books.zoho.in/app/60044091518#/inventory/transferorders/${to.to_id}`}
+                                  <a href={`${ZOHO_INV_URL}/transferorders/${to.to_id}`}
                                      target="_blank" rel="noopener noreferrer"
                                      style={{ color: "#1D4ED8", textDecoration: "underline", fontWeight: 500 }}>
                                     {to.to_number}
@@ -1115,11 +1130,11 @@ export default function StockHealthTab({
                             <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: po?.delivery ? HR.textSoft : HR.muted }}>
                               {po?.delivery ? fmtDate(po.delivery) : "—"}
                             </td>
-                            {/* Ref # — PO number, links to Zoho Books */}
+                            {/* Ref # — PO number, links to Zoho Inventory */}
                             <td style={{ padding: "2px 6px", borderTop: topBorder, fontSize: FS, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {po?.po_number ? (
                                 po.po_id ? (
-                                  <a href={`https://books.zoho.in/app/60044091518#/purchaseorders/${po.po_id}`}
+                                  <a href={`${ZOHO_INV_URL}/purchaseorders/${po.po_id}`}
                                      target="_blank" rel="noopener noreferrer"
                                      style={{ color: "#1D4ED8", textDecoration: "underline", fontWeight: 500 }}>
                                     {po.po_number}
