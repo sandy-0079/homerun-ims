@@ -12,6 +12,29 @@ const BRANCHES: Record<string, string> = {
 }
 
 const COOLDOWN_MINS = 15
+const LOCK_STALE_MINS = 5
+
+// ─── Sync lock — prevents concurrent team_data/global writers ────────────────
+// An on-demand pull (TO tool) and a cron firing together caused statement
+// timeouts on the big upsert (observed 2026-07-08: DC+DS01 74m stale). The lock
+// lives on the params table (never touched by the sync hot path). A lock older
+// than LOCK_STALE_MINS is treated as leaked (crashed run) and taken over.
+async function acquireSyncLock(supabase: any, holder: string, nowIso: string): Promise<boolean> {
+  const { data } = await supabase.from('params').select('payload').eq('id', 'syncLock').maybeSingle()
+  const lockedAt = data?.payload?.lockedAt
+  if (lockedAt && Date.now() - new Date(lockedAt).getTime() < LOCK_STALE_MINS * 60_000) return false
+  const { error } = await supabase
+    .from('params').upsert({ id: 'syncLock', payload: { lockedAt: nowIso, holder }, updated_at: nowIso })
+  if (error) console.error('syncLock acquire write failed:', error.message)
+  return !error
+}
+
+async function releaseSyncLock(supabase: any): Promise<void> {
+  const nowIso = new Date().toISOString()
+  const { error } = await supabase
+    .from('params').upsert({ id: 'syncLock', payload: { lockedAt: null, holder: null }, updated_at: nowIso })
+  if (error) console.error('syncLock release failed:', error.message)
+}
 
 // ─── Zoho OAuth ───────────────────────────────────────────────────────────────
 async function getZohoToken(): Promise<string> {
@@ -97,6 +120,7 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   )
 
+  let lockHeld = false
   try {
     const now    = new Date()
     const nowIso = now.toISOString()
@@ -132,7 +156,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 3. Get Zoho access token
+    // 3. Sync lock — a caller getting `busy` should retry shortly (the TO tool does)
+    lockHeld = await acquireSyncLock(supabase, branchesToSync.join(','), nowIso)
+    if (!lockHeld) {
+      return new Response(JSON.stringify({
+        ok: true, busy: true, reason: 'another stock sync is in progress',
+      }), { headers: { 'Content-Type': 'application/json' } })
+    }
+
+    // 4. Get Zoho access token
     const token = await getZohoToken()
 
     // ── Fetch both modes for each requested branch, 2 branches in parallel ────
@@ -213,5 +245,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ ok: false, error: String(err) }), {
       status: 500, headers: { 'Content-Type': 'application/json' },
     })
+  } finally {
+    if (lockHeld) await releaseSyncLock(supabase)
   }
 })
