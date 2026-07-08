@@ -193,7 +193,8 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
   - `stock-sync-2` at `:38 UTC` (:08 IST) → DS02 + DS03
   - `stock-sync-3` at `:41 UTC` (:11 IST) → DS04 + DS05
   - `stock-sync-4` at `:44 UTC` (:14 IST) → DS06 (2 calls)
-  - `orders-sync-hourly` at `:35 UTC` (:05 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket)
+  - `orders-sync-hourly` at `:50 UTC` (:20 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket). Moved from :35 on 2026-07-08 (migration `20260708000001`) — at :35 it collided with stock-sync-1's `team_data/global` write (statement timeout left DC+DS01 74m stale).
+- **syncLock (2026-07-08, deployed):** `sync-stock` acquires `params/syncLock` before pulling (released in `finally`; locks older than 5 min treated as leaked and taken over). A concurrent invocation gets `{ok:true, busy:true}` — callers (TO tool's on-demand pull) retry after ~30s. Prod-verified: concurrent calls → second returned busy, lock released cleanly after.
 - **Supabase statement timeout:** Concurrent reads/writes from multiple functions on the same large global row cause Postgres to cancel statements. Fix: 3-min stagger ensures each function's write completes before the next function's read starts (2-min stagger still collided when Zoho took ~100s/function).
 - **Supabase Disk IO budget:** Nano instance has 30-min daily burst (43 Mbps baseline). The 3-function architecture makes 12 Supabase ops/hour — with a 7MB payload (including invoiceData) this exhausted the Nano burst within hours. Fix: (1) upgrade to Pro + Micro compute (87 Mbps baseline, 60-min burst), (2) separate invoiceData into its own row reducing global payload to ~1-2MB. Together these make daily IO sustainable on Micro.
 - **Migration safety:** Never run `supabase db push` after manually executing a migration SQL in the SQL editor. The CLI doesn't know it already ran and will execute it again. Use `supabase migration repair --status applied <version>` to mark it as done without re-running.
@@ -229,11 +230,12 @@ every "Apply & Re-run Model" — non-blocking, its own row (sync functions never
 impact). The TO tool reads that + `team_data/global` stock (CS DS = accounting SoH, CS DC = physical SoH,
 In Transit = Zoho `quantity_in_transit` from the **stock** sync — not orders-sync).
 
-**Open sync-timing decisions + Task 5 (freshness/readiness pull + `syncInProgress` lock) / Task 6 (summary
-heatmap + Phase 2 Zoho write-back): see `homerun-to/CLAUDE.md`.** Note the **`:35` cron collision**:
-`stock-sync-1` (DC+DS01) and `orders-sync` both run at :35 UTC and both write `team_data/global` →
-statement-timeout can cancel one (left DC+DS01 74m stale on 2026-07-08). Proposed fix: move `orders-sync`
-→ :50 (safe; orders data unused by the TO tool).
+**Task 5 (freshness/readiness) shipped 2026-07-08:** the TO tool has an on-demand "Pull fresh stock"
+button that invokes this project's `sync-stock` sequentially per cron group (DC+DS01 → DS02+DS03 →
+DS04+DS05 → DS06) with the anon key — a pull updates the same `team_data/global` rows Stock Health
+reads. Supporting changes in this repo (deployed): `syncLock` in `sync-stock` + `orders-sync` moved
+:35→:50 (see sync architecture above). Task 6 (summary heatmap + Phase 2 Zoho write-back):
+see `homerun-to/CLAUDE.md`.
 
 ## To-Do (Active)
 
