@@ -3291,7 +3291,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
                 const s = r.stores?.[ds];
                 if (s) perDS[ds] = { min: s.min, max: s.max };
               });
-              toTargets[sku] = { name: m.name || sku, category: m.category || "", perDS };
+              toTargets[sku] = { name: m.name || sku, category: m.category || "", brand: m.brand || "", perDS };
             });
             saveToSupabase("params", "toTargets", { targets: toTargets, refreshedAt: new Date().toISOString() })
               .catch(e => console.error("toTargets write failed (non-fatal):", e));
