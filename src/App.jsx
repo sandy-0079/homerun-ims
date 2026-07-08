@@ -3277,6 +3277,25 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
             merged[sku] = { ...merged[sku], stores: newStores };
           });
           setResults(merged);
+          // Persist a compact DC-inventorised-active target slice for the standalone TO tool.
+          // Own row (params/toTargets) — never touched by the sync functions (which only write
+          // team_data/global), written only here on Apply. Non-blocking: a failure never affects Apply.
+          try {
+            const toTargets = {};
+            Object.entries(merged).forEach(([sku, r]) => {
+              const m = r.meta || {};
+              if ((m.inventorisedAt || "DS").toLowerCase() !== "dc") return;
+              if ((m.status || "Active").toLowerCase() !== "active") return;
+              const perDS = {};
+              DS_LIST.forEach(ds => {
+                const s = r.stores?.[ds];
+                if (s) perDS[ds] = { min: s.min, max: s.max };
+              });
+              toTargets[sku] = { name: m.name || sku, category: m.category || "", perDS };
+            });
+            saveToSupabase("params", "toTargets", { targets: toTargets, refreshedAt: new Date().toISOString() })
+              .catch(e => console.error("toTargets write failed (non-fatal):", e));
+          } catch (e) { console.error("toTargets build failed (non-fatal):", e); }
           setModelSnapshot({
             dateMin: invoiceDateRange.min, dateMax: invoiceDateRange.max,
             rowCount: invoiceData.length,
