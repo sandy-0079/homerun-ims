@@ -216,6 +216,25 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 
 ---
 
+## Transfer Orders (TO) Tool — separate app
+
+DC-team tool to generate DC→DS Transfer Orders (replaces 7 manual sheets). **Separate repo/build/deploy:**
+`~/Documents/GitHub/homerun-to` — **authoritative doc: `homerun-to/CLAUDE.md`.** Reads Min/Max + live stock
+from this project's Supabase (read-only); writes nothing. Phase 1 (calculator + CSV) built 2026-07-08,
+local only, not deployed.
+
+**Hook in this repo (branch `feature/to-tool`):** `applyAndRun` in `App.jsx` serializes the DC-inv Active
+slice of engine results (`{name, category, brand, perDS:{ds:{min,max}}}`) to **`params/toTargets`** after
+every "Apply & Re-run Model" — non-blocking, its own row (sync functions never touch `params`, so no IO
+impact). The TO tool reads that + `team_data/global` stock (CS DS = accounting SoH, CS DC = physical SoH,
+In Transit = Zoho `quantity_in_transit` from the **stock** sync — not orders-sync).
+
+**Open sync-timing decisions + Task 5 (freshness/readiness pull + `syncInProgress` lock) / Task 6 (summary
+heatmap + Phase 2 Zoho write-back): see `homerun-to/CLAUDE.md`.** Note the **`:35` cron collision**:
+`stock-sync-1` (DC+DS01) and `orders-sync` both run at :35 UTC and both write `team_data/global` →
+statement-timeout can cancel one (left DC+DS01 74m stale on 2026-07-08). Proposed fix: move `orders-sync`
+→ :50 (safe; orders data unused by the TO tool).
+
 ## To-Do (Active)
 
 ### 1. Category Network Analysis ✅ Shipped (2026-04-18)
