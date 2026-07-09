@@ -13,27 +13,67 @@ const BRANCHES: Record<string, string> = {
 
 const COOLDOWN_MINS = 15
 const LOCK_STALE_MINS = 5
+const SESSION_TTL_MINS = 12
 
-// ─── Sync lock — prevents concurrent team_data/global writers ────────────────
-// An on-demand pull (TO tool) and a cron firing together caused statement
-// timeouts on the big upsert (observed 2026-07-08: DC+DS01 74m stale). The lock
-// lives on the params table (never touched by the sync hot path). A lock older
-// than LOCK_STALE_MINS is treated as leaked (crashed run) and taken over.
-async function acquireSyncLock(supabase: any, holder: string, nowIso: string): Promise<boolean> {
+// Every response needs CORS headers — browser callers (TO tool pull, Stock Health
+// Sync Now) must be able to READ them. Before 2026-07-09 only the OPTIONS preflight
+// had them, so browsers saw every response (even success 200s) as a network error.
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+function json(body: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  })
+}
+
+// ─── Sync lock + session lease (params/syncLock) ─────────────────────────────
+// Two layers on one row, independent fields:
+//  - lockedAt/holder: per-INVOCATION lock — prevents concurrent team_data/global
+//    writers (statement timeouts; observed 2026-07-08: DC+DS01 74m stale). Older
+//    than LOCK_STALE_MINS = leaked (crashed run), taken over.
+//  - session: a SEQUENCE lease — one tool (TO pull / IMS Sync Now) owns the sync
+//    path for its whole multi-group run incl. the 90s gaps between groups, so
+//    crons and the other tool skip (busy) instead of stacking Zoho calls on top
+//    (429 storm observed 2026-07-09). Expires after SESSION_TTL_MINS so a killed
+//    browser tab can never wedge the crons.
+
+type Session = { id: string; source: string; startedAt: string; expiresAt: string }
+
+async function readLockRow(supabase: any): Promise<Record<string, any>> {
   const { data } = await supabase.from('params').select('payload').eq('id', 'syncLock').maybeSingle()
-  const lockedAt = data?.payload?.lockedAt
-  if (lockedAt && Date.now() - new Date(lockedAt).getTime() < LOCK_STALE_MINS * 60_000) return false
-  const { error } = await supabase
-    .from('params').upsert({ id: 'syncLock', payload: { lockedAt: nowIso, holder }, updated_at: nowIso })
-  if (error) console.error('syncLock acquire write failed:', error.message)
+  return data?.payload ?? {}
+}
+
+async function writeLockRow(supabase: any, payload: Record<string, unknown>): Promise<boolean> {
+  const { error } = await supabase.from('params')
+    .upsert({ id: 'syncLock', payload, updated_at: new Date().toISOString() })
+  if (error) console.error('syncLock write failed:', error.message)
   return !error
 }
 
+const sessionActive = (s: Session | null | undefined): boolean =>
+  !!s?.expiresAt && Date.now() < new Date(s.expiresAt).getTime()
+
+async function acquireSyncLock(
+  supabase: any, holder: string, nowIso: string, sessionId: string | null,
+): Promise<{ ok: boolean; reason: string }> {
+  const cur = await readLockRow(supabase)
+  if (sessionActive(cur.session) && cur.session.id !== sessionId) {
+    return { ok: false, reason: `sync session held by ${cur.session.source}` }
+  }
+  const lockedAt = cur.lockedAt
+  if (lockedAt && Date.now() - new Date(lockedAt).getTime() < LOCK_STALE_MINS * 60_000) {
+    return { ok: false, reason: 'another stock sync is in progress' }
+  }
+  const ok = await writeLockRow(supabase, { ...cur, lockedAt: nowIso, holder })
+  return { ok, reason: ok ? '' : 'lock write failed' }
+}
+
 async function releaseSyncLock(supabase: any): Promise<void> {
-  const nowIso = new Date().toISOString()
-  const { error } = await supabase
-    .from('params').upsert({ id: 'syncLock', payload: { lockedAt: null, holder: null }, updated_at: nowIso })
-  if (error) console.error('syncLock release failed:', error.message)
+  const cur = await readLockRow(supabase)
+  await writeLockRow(supabase, { ...cur, lockedAt: null, holder: null })
 }
 
 // ─── Zoho OAuth ───────────────────────────────────────────────────────────────
@@ -109,10 +149,7 @@ async function fetchBranchStock(token: string, branchId: string, showActualStock
 // ─── Main handler ─────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-    }})
+    return new Response('ok', { headers: CORS_HEADERS })
   }
 
   const supabase = createClient(
@@ -125,17 +162,39 @@ Deno.serve(async (req) => {
     const now    = new Date()
     const nowIso = now.toISOString()
 
-    // Parse which branches to sync from request body (defaults to all)
-    let branchesToSync: string[]
-    try {
-      const body = await req.json()
-      const requested = Array.isArray(body?.branches) ? body.branches : []
-      branchesToSync = requested.length > 0
-        ? requested.filter((ds: string) => BRANCHES[ds])
-        : Object.keys(BRANCHES)
-    } catch {
-      branchesToSync = Object.keys(BRANCHES)
+    // Parse body once: a session action, or a branch sync (defaults to all — the
+    // crons send {branches:[…]} and behave exactly as before)
+    let body: Record<string, any> = {}
+    try { body = (await req.json()) ?? {} } catch { /* empty body = full sync */ }
+
+    // ── Session lease: a tool claims the sync path for one multi-group sequence ──
+    if (body.sessionStart) {
+      const cur = await readLockRow(supabase)
+      if (sessionActive(cur.session)) {
+        return json({ ok: true, busy: true, session: cur.session })
+      }
+      const session: Session = {
+        id: crypto.randomUUID(),
+        source: typeof body.source === 'string' ? body.source : 'unknown',
+        startedAt: nowIso,
+        expiresAt: new Date(now.getTime() + SESSION_TTL_MINS * 60_000).toISOString(),
+      }
+      if (!(await writeLockRow(supabase, { ...cur, session }))) throw new Error('session write failed')
+      return json({ ok: true, session })
     }
+    if (body.sessionEnd) {
+      const cur = await readLockRow(supabase)
+      if (cur.session?.id === body.sessionId) {
+        await writeLockRow(supabase, { ...cur, session: null })
+      }
+      return json({ ok: true })
+    }
+
+    const requested = Array.isArray(body.branches) ? body.branches : []
+    const branchesToSync = requested.length > 0
+      ? requested.filter((ds: string) => BRANCHES[ds])
+      : Object.keys(BRANCHES)
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId : null
 
     // 1. Read current payload (cooldown check + base for merge)
     const { data: row, error: readErr } = await supabase
@@ -149,20 +208,19 @@ Deno.serve(async (req) => {
     if (branchTimestamps.length === branchesToSync.length) {
       const oldestMins = (now.getTime() - Math.min(...branchTimestamps)) / 60_000
       if (oldestMins < COOLDOWN_MINS) {
-        return new Response(JSON.stringify({
+        return json({
           ok: true, skipped: true,
           reason: `Branches [${branchesToSync.join(',')}] synced ${Math.floor(oldestMins)}m ago — cooldown active`,
-        }), { headers: { 'Content-Type': 'application/json' } })
+        })
       }
     }
 
-    // 3. Sync lock — a caller getting `busy` should retry shortly (the TO tool does)
-    lockHeld = await acquireSyncLock(supabase, branchesToSync.join(','), nowIso)
-    if (!lockHeld) {
-      return new Response(JSON.stringify({
-        ok: true, busy: true, reason: 'another stock sync is in progress',
-      }), { headers: { 'Content-Type': 'application/json' } })
+    // 3. Sync lock — foreign sessions and in-flight invocations get `busy`
+    const lock = await acquireSyncLock(supabase, branchesToSync.join(','), nowIso, sessionId)
+    if (!lock.ok) {
+      return json({ ok: true, busy: true, reason: lock.reason })
     }
+    lockHeld = true
 
     // 4. Get Zoho access token
     const token = await getZohoToken()
@@ -238,13 +296,11 @@ Deno.serve(async (req) => {
       stock_modes: 2,
     }
     console.log('sync-stock complete:', JSON.stringify(summary))
-    return new Response(JSON.stringify(summary), { headers: { 'Content-Type': 'application/json' } })
+    return json(summary)
 
   } catch (err) {
     console.error('sync-stock error:', err)
-    return new Response(JSON.stringify({ ok: false, error: String(err) }), {
-      status: 500, headers: { 'Content-Type': 'application/json' },
-    })
+    return json({ ok: false, error: String(err) }, 500)
   } finally {
     if (lockHeld) await releaseSyncLock(supabase)
   }
