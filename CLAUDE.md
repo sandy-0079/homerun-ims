@@ -29,9 +29,10 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
   - Sync functions only read/write `team_data/global`. They never touch `team_data/invoice_data`.
 - **team_data row separation:** `invoiceData` lives in `team_data/invoice_data` (written once on CSV upload). All other app data + sync data lives in `team_data/global`. This keeps the global payload ~1-2MB vs ~7MB, preventing Supabase Disk IO budget exhaustion from hourly syncs.
 - **CSV upload → model re-run is safe:** `saveTeamData` only writes `invoiceData` to the `invoice_data` row when it changes; global row always uses read-merge-write (`...existing` spread) so PO/TO caches and stock data are never wiped by an upload.
-- **Edge Function deploy:** Always use `--no-verify-jwt` for both sync functions — cron calls via `pg_net` with no auth header; omitting the flag causes silent 401s:
-  `supabase functions deploy sync-stock --no-verify-jwt`
-  `supabase functions deploy sync-orders --no-verify-jwt`
+- **Edge Function deploy:** plain `supabase functions deploy sync-stock` / `sync-orders` is fine.
+  (An older note here required `--no-verify-jwt` — obsolete since the cron jobs started sending the
+  anon Bearer header in their `pg_net` calls; verified 2026-07-08/09: two plain deploys, every cron
+  cycle executed. All callers — crons, IMS, TO tool — send Authorization headers.)
 
 ---
 
