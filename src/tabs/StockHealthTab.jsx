@@ -4,6 +4,13 @@ import { supabase } from "../supabase.js";
 
 const SYNC_COOLDOWN_MINS = 15;
 
+// Same groups + order as the crons (stock-sync-1..4). 90s minimum gap between
+// group STARTS: back-to-back groups on a fast-Zoho day put 12 calls in ~15s and
+// tripped Zoho's ~8/min inventorysummary limit (2026-07-09 — 60+ min penalty
+// that also killed a cron cycle). Mirrors homerun-to/src/sync.js.
+const SYNC_GROUPS = [["DC", "DS01"], ["DS02", "DS03"], ["DS04", "DS05"], ["DS06"]];
+const SYNC_MIN_GAP_MS = 90_000;
+
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const HR = {
   yellow: "#F5C400", black: "#1A1A1A", white: "#FFFFFF",
@@ -173,6 +180,8 @@ export default function StockHealthTab({
   const [search,         setSearch]         = useState("");
   const [copiedSku,   setCopiedSku]   = useState(null);
   const [syncing,     setSyncing]     = useState(false);
+  const [syncMsg,     setSyncMsg]     = useState("");
+  const [syncLockRow, setSyncLockRow] = useState(null); // params/syncLock payload (shared session lease)
   const [stockMode,   setStockMode]   = useState("accounting"); // "physical" | "accounting"
 
   const allSkuRowsRef = useRef([]);
@@ -189,28 +198,92 @@ export default function StockHealthTab({
     setTimeout(() => setCopiedSku(s => s === sku ? null : s), 1500);
   }, []);
 
-  // ── CSV Upload ──────────────────────────────────────────────────────────────
+  // ── Sync Now ────────────────────────────────────────────────────────────────
+  // Shares one session lease (params/syncLock) with the TO tool's "Pull fresh
+  // stock" so the two can never run multi-group sequences on top of each other;
+  // crons skip (busy) while a session is active.
+  const readSyncLock = useCallback(async () => {
+    const { data } = await supabase.from('params').select('payload').eq('id', 'syncLock').maybeSingle();
+    return data?.payload ?? null;
+  }, []);
+
+  // Poll the tiny lock row so the button greys out while the TO tool is pulling.
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try { const p = await readSyncLock(); if (alive) setSyncLockRow(p); } catch { /* keep last */ }
+    };
+    check();
+    const t = setInterval(check, 20_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [readSyncLock]);
+
+  const foreignSync = (() => {
+    const s = syncLockRow?.session;
+    return !syncing && s?.expiresAt && Date.now() < new Date(s.expiresAt).getTime() ? s : null;
+  })();
+  const sourceLabel = (src) => (src === 'to-tool' ? 'the TO tool' : src === 'ims' ? 'IMS' : 'another tool');
+
   const handleSyncNow = useCallback(async () => {
     if (syncing) return;
     setSyncing(true);
+    setSyncMsg("");
+    const invokeSync = async (body) => {
+      const { data, error } = await supabase.functions.invoke('sync-stock', { body });
+      if (error) throw new Error(error.message || 'sync-stock failed');
+      return data;
+    };
+    let session = null;
     try {
-      // Stock: sequential branch pairs to stay under Zoho's inventorysummary rate limit.
-      // Orders runs in parallel with the first batch (different endpoints, no conflict).
-      await Promise.all([
-        supabase.functions.invoke('sync-stock', { body: { branches: ['DC', 'DS01'] } }),
-        supabase.functions.invoke('sync-orders'),
-      ]);
-      await supabase.functions.invoke('sync-stock', { body: { branches: ['DS02', 'DS03'] } });
-      await supabase.functions.invoke('sync-stock', { body: { branches: ['DS04', 'DS05'] } });
-      await supabase.functions.invoke('sync-stock', { body: { branches: ['DS06'] } });
+      try {
+        const res = await invokeSync({ sessionStart: true, source: 'ims' });
+        if (res?.busy) {
+          setSyncMsg(`Sync already running from ${sourceLabel(res.session?.source)} — try again in a few minutes`);
+          return;
+        }
+        session = res?.session ?? null;
+      } catch { /* lease unavailable — degrade to a session-less but still-paced sync */ }
+
+      // Orders alongside the first stock group (different Zoho endpoints/rate bucket).
+      const orders = supabase.functions.invoke('sync-orders').catch(() => {});
+
+      // Stock: cron groups with a 90s minimum gap between group starts; cooldown
+      // skips advance immediately. Failed groups get one paced retry at the end.
+      let lastCallStart = -Infinity;
+      let failed = [];
+      const runGroup = async (branches) => {
+        const gap = SYNC_MIN_GAP_MS - (Date.now() - lastCallStart);
+        if (gap > 0) await new Promise(r => setTimeout(r, gap));
+        const startedAt = Date.now();
+        try {
+          const res = await invokeSync({ branches, ...(session ? { sessionId: session.id } : {}) });
+          if (res?.busy) failed.push(branches);
+          else if (!res?.skipped) lastCallStart = startedAt;
+        } catch {
+          lastCallStart = startedAt; // an errored group (429s) still spent Zoho budget
+          failed.push(branches);
+        }
+      };
+      for (const g of SYNC_GROUPS) await runGroup(g);
+      const retry = failed; failed = [];
+      for (const g of retry) await runGroup(g);
+      if (failed.length) setSyncMsg(`${failed.map(g => g.join('+')).join(', ')} failed — kept last snapshot`);
+
+      await orders;
       // Reload fresh data directly — don't rely on Realtime being configured
       await onSyncComplete?.();
     } catch (err) {
       console.error('Sync Now failed:', err);
+      setSyncMsg('Sync failed — see console');
     } finally {
+      if (session) {
+        try { await invokeSync({ sessionEnd: true, sessionId: session.id }); }
+        catch { /* lease self-expires in 12 min */ }
+      }
+      try { setSyncLockRow(await readSyncLock()); } catch { /* next poll corrects */ }
       setSyncing(false);
     }
-  }, [syncing, onSyncComplete]);
+  }, [syncing, onSyncComplete, readSyncLock]);
 
   // ── DS-level summary (tab EC badges) ───────────────────────────────────────
   const dsSummary = useMemo(() => {
@@ -650,21 +723,28 @@ export default function StockHealthTab({
                 <> · Last synced: <span style={{ fontWeight: 600, color: HR.textSoft }}>{lastSyncedLabel}</span></>
               )}
             </span>
+            {syncMsg && (
+              <span style={{ fontSize: 10, color: "#B45309", whiteSpace: "nowrap" }}>{syncMsg}</span>
+            )}
             <button
               onClick={handleSyncNow}
-              disabled={syncing || inCooldown}
-              title={inCooldown ? `Synced ${minsAgo}m ago — available again in ${SYNC_COOLDOWN_MINS - minsAgo}m` : "Sync all locations from Zoho now"}
+              disabled={syncing || inCooldown || !!foreignSync}
+              title={foreignSync
+                ? `Sync in progress from ${sourceLabel(foreignSync.source)} (started ${new Date(foreignSync.startedAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })}) — unlocks when it finishes`
+                : inCooldown ? `Synced ${minsAgo}m ago — available again in ${SYNC_COOLDOWN_MINS - minsAgo}m`
+                : "Sync all locations from Zoho now (90s-paced groups, ~5 min cold)"}
               style={{
                 display: "flex", alignItems: "center", gap: 4,
                 border: `1px solid #E8D48A`, borderRadius: 5, padding: "3px 9px",
-                background: (syncing || inCooldown) ? HR.surfaceLight : "#FFFBEA",
-                color: (syncing || inCooldown) ? HR.muted : "#92740A",
-                fontSize: 10, fontWeight: 600, cursor: (syncing || inCooldown) ? "not-allowed" : "pointer",
+                background: (syncing || inCooldown || foreignSync) ? HR.surfaceLight : "#FFFBEA",
+                color: (syncing || inCooldown || foreignSync) ? HR.muted : "#92740A",
+                fontSize: 10, fontWeight: 600, cursor: (syncing || inCooldown || foreignSync) ? "not-allowed" : "pointer",
                 whiteSpace: "nowrap", fontFamily: "inherit", flexShrink: 0,
-                opacity: (syncing || inCooldown) ? 0.65 : 1,
+                opacity: (syncing || inCooldown || foreignSync) ? 0.65 : 1,
               }}
             >
-              {syncing ? "Syncing…" : inCooldown ? `Synced ${minsAgo}m ago` : "↻ Sync Now"}
+              {syncing ? "Syncing…" : foreignSync ? `⏳ ${sourceLabel(foreignSync.source)} syncing…`
+                : inCooldown ? `Synced ${minsAgo}m ago` : "↻ Sync Now"}
             </button>
           </div>
         </div>
