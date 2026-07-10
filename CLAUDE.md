@@ -223,9 +223,10 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 ## Transfer Orders (TO) Tool — separate app
 
 DC-team tool to generate DC→DS Transfer Orders (replaces 7 manual sheets). **Separate repo/build/deploy:**
-`~/Documents/GitHub/homerun-to` — **authoritative doc: `homerun-to/CLAUDE.md`.** Reads Min/Max + live stock
-from this project's Supabase (read-only); writes nothing. Phase 1 (calculator + CSV) built 2026-07-08,
-local only, not deployed.
+`~/Documents/GitHub/homerun-to` (private repo `sandy-0079/homerun-to`) — **authoritative doc:
+`homerun-to/CLAUDE.md`.** Reads Min/Max + live stock from this project's Supabase (read-only); writes
+nothing. **LIVE since 2026-07-10: <https://homerun-to.vercel.app>** (own Vercel project; end-to-end
+number check vs live Zoho exports passed — 12,369 comparisons, 0 plumbing mismatches).
 
 **Hook in this repo (branch `feature/to-tool`):** `applyAndRun` in `App.jsx` serializes the DC-inv Active
 slice of engine results (`{name, category, brand, perDS:{ds:{min,max}}}`) to **`params/toTargets`** after
