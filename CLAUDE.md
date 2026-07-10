@@ -228,6 +228,12 @@ DC-team tool to generate DC→DS Transfer Orders (replaces 7 manual sheets). **S
 nothing. **LIVE since 2026-07-10: <https://homerun-to.vercel.app>** (own Vercel project; end-to-end
 number check vs live Zoho exports passed — 12,369 comparisons, 0 plumbing mismatches).
 
+**`create-to` edge function (this repo, deployed 2026-07-10):** creates **draft-only** Zoho TOs for
+the TO tool. ⚠ Zoho trap: `is_intransit_order:false` = instant full transfer (NOT draft) — the real
+draft mechanism is the undocumented `status:'draft'` body field (captured from the UI's own network
+trace). Non-draft responses are auto-deleted in the same invocation. SKU→item_id map cached in
+`params/zohoItemIds`; audit in `params/toAudit`. Details: homerun-to spec 2026-07-10-task6b.
+
 **Hook in this repo (branch `feature/to-tool`):** `applyAndRun` in `App.jsx` serializes the DC-inv Active
 slice of engine results (`{name, category, brand, perDS:{ds:{min,max}}}`) to **`params/toTargets`** after
 every "Apply & Re-run Model" — non-blocking, its own row (sync functions never touch `params`, so no IO
