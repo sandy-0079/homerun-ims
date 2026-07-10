@@ -150,6 +150,11 @@ Deno.serve(async (req) => {
     }
 
     // ── Create the DRAFT transfer order ───────────────────────────────────────
+    // status:'draft' is the undocumented field the Zoho UI's own "Save as Draft"
+    // sends (captured from the web app's network trace, 2026-07-10). NOTE:
+    // is_intransit_order is NOT a draft toggle — false means "direct transfer",
+    // which executes the full stock movement instantly (learned the hard way,
+    // TO-00539 incident 2026-07-10).
     const org = Deno.env.get('ZOHO_ORG_ID')
     const res = await fetch(
       `https://www.zohoapis.in/inventory/v1/transferorders?organization_id=${org}`,
@@ -160,8 +165,8 @@ Deno.serve(async (req) => {
           date,
           from_location_id: BRANCHES.DC,
           to_location_id: BRANCHES[toDsId],
-          line_items: resolved.map(({ item_id, quantity_transfer }) => ({ item_id, quantity_transfer })),
-          is_intransit_order: false, // DRAFT — the only mode this function supports
+          line_items: resolved.map(({ item_id, name, quantity_transfer }) => ({ item_id, name, quantity_transfer })),
+          status: 'draft', // DRAFT — the only mode this function supports
           description,
         }),
       },
@@ -171,6 +176,22 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: `Zoho create failed (${res.status}): ${data.message ?? JSON.stringify(data)}` }, 502)
     }
     const to = data.transfer_order
+
+    // ── Hard guard: anything but a draft is reversed IMMEDIATELY ──────────────
+    // If Zoho ignored/changed the draft semantics, delete the TO in the same
+    // invocation (deletion reverses any stock effect) and fail loudly.
+    if (to.status !== 'draft') {
+      const del = await fetch(
+        `https://www.zohoapis.in/inventory/v1/transferorders/${to.transfer_order_id}?organization_id=${org}`,
+        { method: 'DELETE', headers: { Authorization: `Zoho-oauthtoken ${token}` } },
+      )
+      return json({
+        ok: false,
+        error: `Zoho returned status='${to.status}' instead of 'draft' — ${to.transfer_order_number} was ` +
+          (del.ok ? 'deleted immediately; no changes persisted.' :
+            `NOT deletable (HTTP ${del.status}) — DELETE IT MANUALLY IN ZOHO NOW: ${to.transfer_order_number}`),
+      }, 502)
+    }
 
     // ── Audit (additive params row; best-effort) ──────────────────────────────
     try {
