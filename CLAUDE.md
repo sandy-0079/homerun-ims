@@ -44,10 +44,16 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 |---|---|---|
 | **Standard** | Cement, General Hardware, Painting, Fevicol, Water Proofing | Daily avg × base min days, long/recent blend |
 | **Percentile Cover (PCT)** | Furniture & Arch HW, Tiling, CPVC, Plywood/MDF, Switches, Conduits, Lighting, Sanitary & Bath | Pxx of non-zero daily qty × cover days |
-| **Fixed Unit Floor** | Wires/MCB, Overhead Tanks | P90 of individual order quantities |
+| **Fixed Unit Floor** | Wires/MCB, Overhead Tanks | P90 of individual order quantities (spike-capped); Premium/High single-order-day → Standard fallback — see guardrails below |
 | **Network Design** | Plywood/MDF (opt-in) | Brand-level stocking — see below |
 
 PCT key decisions: percentile by price (Premium=75, High=80, Medium=85, Low/Super Low/No Price=95); cover days by movement (Super Fast/Fast=2, others=1); DOC cap guards (pctDocCap=30D Premium/High, pctDocCapLow=60D others).
+
+**Fixed Unit Floor guardrails (2026-07-14, PR #12) — mirror PCT's spirit so a single contractor bulk-buy can't dictate DS stocking of premium items:**
+- **Order-days gate** (`fixedUnitFloor.minNZD`, default 2): Premium/High SKUs need ≥ minNZD distinct order-days, else fall back to **Standard** (floored at ≥1 for demand-bearing SKUs; the null-orders fallback stays 0). Cheap tags (Medium/Low/Super Low/No Price) keep threshold 1 — stay aggressive. `minNZD=1` = gate off. Mirrors PCT's `pctMinNZD` gate; gate lives in `runEngine.js` (needs `s90.nonZeroDays` + `prTag`), fallback tagged `strategyTag="standard"` + `strategyDetails.fufFallback`.
+- **Spike cap / winsorise** (`fixedUnitFloor.spikeCapMult`, default 5): before the P90, clip any order qty > `median × spikeCapMult` — kills a contractor spike buried among ≥3 normal orders (needs ≥3 orders; median unstable below that). `spikeCapMult=0` = off. Lives inside `fixedUnitFloorStrategy` (`strategies/fixedUnitFloor.js`); audit in `strategyDetails.winsor`.
+- **No DC impact** — non-manual-floored Fixed Unit Floor SKUs already use the rate-based DC (`sumDailyAvg × (leadTime+1)`), strategy-independent; gating only changes DS Min/Max.
+- **Known accepted gap:** the 2-order spike (e.g. `[1,20]` on 2 days) slips through both — too many orders for the gate, median too high for the winsor. Consciously accepted (raising minNZD would over-gate genuine repeat demand). Both knobs in Logic Tweaker → Fixed Unit Floor Params. Tests: `src/engine/__tests__/fixedUnitFloor.test.js` (10).
 
 ### DC Calculation (non-Network-Design)
 - **Standard:** `DC Min = ceil(sumDailyAvg × (leadTime+1))` · `DC Max = DC Min + ceil(sumDailyAvg × 2)`
@@ -312,4 +318,4 @@ Dead stock SKUs now get Min=Max=0 at all DS and DC locations, overriding all flo
 
 Full backup auto-saved to `params/paramsBackup` on every "Apply & Re-run Model" click. Restore from there if `params/global` is corrupted.
 
-Key non-defaults: `overallPeriod=45`, `newDSFloorTopN=250`, `newDSList=["DS04","DS05","DS03"]`, `brandLeadTimeDays={_default:3,AsianPaints:4}`, `pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`. Category strategies: 8 PCT + 2 Fixed Unit Floor + Plywood=NetworkDesign (see Supabase).
+Key non-defaults: `overallPeriod=45`, `newDSFloorTopN=250`, `newDSList=["DS04","DS05","DS03"]`, `brandLeadTimeDays={_default:3,AsianPaints:4}`, `pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`. Category strategies: 8 PCT + 2 Fixed Unit Floor + Plywood=NetworkDesign (see Supabase). `fixedUnitFloor` defaults `{orderQtyPercentile:90, maxMultiplier:1.5, maxAdditive:1, minNZD:2, spikeCapMult:5}` — note prod Supabase `params/global.fixedUnitFloor` predates minNZD/spikeCapMult, so the engine reads them via inline `?? 2`/`?? 5` (shallow param-merge drops keys prod lacks).
