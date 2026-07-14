@@ -4019,6 +4019,8 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
   if(fu.orderQtyPercentile!==sfu.orderQtyPercentile)logicChangelog.push(`Fixed floor percentile: ${sfu.orderQtyPercentile} → ${fu.orderQtyPercentile}`);
   if(fu.maxMultiplier!==sfu.maxMultiplier)logicChangelog.push(`Fixed floor max multiplier: ${sfu.maxMultiplier} → ${fu.maxMultiplier}`);
   if(fu.maxAdditive!==sfu.maxAdditive)logicChangelog.push(`Fixed floor max additive: ${sfu.maxAdditive} → ${fu.maxAdditive}`);
+  if((fu.minNZD??2)!==(sfu.minNZD??2))logicChangelog.push(`Fixed floor min order-days: ${sfu.minNZD??2} → ${fu.minNZD??2}`);
+  if((fu.spikeCapMult??5)!==(sfu.spikeCapMult??5))logicChangelog.push(`Fixed floor spike cap: ${sfu.spikeCapMult??5}× → ${fu.spikeCapMult??5}×`);
 
   // ── Shared locals ──
   const pc=params.percentileCover||DEFAULT_PARAMS.percentileCover;
@@ -4290,7 +4292,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
           </Section>
 
           <Section title="Fixed Unit Floor Params" icon="📐" accent="#7C3AED"
-            summary={`P${fuC.orderQtyPercentile||90} · ${fuC.maxMultiplier||1.5}× + ${fuC.maxAdditive||1}`}>
+            summary={`P${fuC.orderQtyPercentile||90} · ${fuC.maxMultiplier||1.5}× + ${fuC.maxAdditive||1} · ≥${fuC.minNZD??2}d · cap ${fuC.spikeCapMult??5}×`}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
               <div style={S.card}>
                 <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Order Qty Percentile</div>
@@ -4309,6 +4311,20 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                 <NumInput value={fuC.maxAdditive||1} min={0} max={5} step={1}
                   onChange={v=>saveParams({...params,fixedUnitFloor:{...fuC,maxAdditive:v}})}
                   style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+              </div>
+              <div style={S.card}>
+                <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Min Order-Days (Premium/High)</div>
+                <NumInput value={fuC.minNZD??2} min={1} max={5} step={1}
+                  onChange={v=>saveParams({...params,fixedUnitFloor:{...fuC,minNZD:v}})}
+                  style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+                <div style={{fontSize:10,color:HR.muted,marginTop:4}}>Below → falls back to Standard. 1 = off.</div>
+              </div>
+              <div style={S.card}>
+                <div style={{fontSize:11,color:HR.muted,marginBottom:6,fontWeight:600}}>Spike Cap (× median)</div>
+                <NumInput value={fuC.spikeCapMult??5} min={0} max={20} step={1}
+                  onChange={v=>saveParams({...params,fixedUnitFloor:{...fuC,spikeCapMult:v}})}
+                  style={{width:"100%",fontWeight:700,color:"#7C3AED"}}/>
+                <div style={{fontSize:10,color:HR.muted,marginTop:4}}>Clips outlier orders before P90. 0 = off.</div>
               </div>
             </div>
           </Section>

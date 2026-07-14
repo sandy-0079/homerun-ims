@@ -264,16 +264,31 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
         strategyDetails.pctFallback = { reason: "NZD", nzd: s90.nonZeroDays, threshold: nzdThreshold };
         strategyTag = "standard";
       } else if (strategy === "fixed_unit_floor") {
-        const result = fixedUnitFloorStrategy({ orderQtys: collectOrderQtys(invSliced, skuId, dsId), params: p });
-        if (result) {
-          ({ minQty, maxQty } = result);
-          strategyDetails = result.details || {};
-        } else {
-          // Null — fall back to standard
+        // Order-days gate (mirrors PCT's NZD gate): Premium/High need >= fufMinNZD distinct
+        // order-days before a single-order size percentile is trusted — one contractor
+        // bulk-buy can't establish a size distribution. Below threshold → fall back to
+        // Standard. Cheap tags keep threshold 1 (stock aggressively). fufMinNZD=1 = gate off.
+        const fufMinNZD = HIGH_PCT_TAGS.includes(prTag) ? (p.fixedUnitFloor?.minNZD ?? 2) : 1;
+        if (s90.nonZeroDays < fufMinNZD) {
           const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
           ({ minQty, maxQty } = r);
+          minQty = Math.max(1, minQty); // demand-bearing SKU (HAS DATA path) → stock at least 1
+          maxQty = Math.max(maxQty, minQty);
           strategyDetails = r.details || {};
+          strategyDetails.fufFallback = { reason: "NZD", nzd: s90.nonZeroDays, threshold: fufMinNZD };
           strategyTag = "standard";
+        } else {
+          const result = fixedUnitFloorStrategy({ orderQtys: collectOrderQtys(invSliced, skuId, dsId), params: p });
+          if (result) {
+            ({ minQty, maxQty } = result);
+            strategyDetails = result.details || {};
+          } else {
+            // Null — fall back to standard
+            const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
+            ({ minQty, maxQty } = r);
+            strategyDetails = r.details || {};
+            strategyTag = "standard";
+          }
         }
       } else {
         // "standard", "manual", or unknown — use standard blend

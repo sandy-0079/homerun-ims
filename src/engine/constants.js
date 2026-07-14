@@ -86,7 +86,7 @@ export const DEFAULT_PARAMS = {
     percentileByPrice:{"Low":95,"Super Low":95,"No Price":95,"Medium":85,"High":80,"Premium":75},
     coverDaysByMovement:{"Super Fast":2,"Fast":2,"Moderate":1,"Slow":1,"Super Slow":1},
   },
-  fixedUnitFloor:{orderQtyPercentile:90, maxMultiplier:1.5, maxAdditive:1},
+  fixedUnitFloor:{orderQtyPercentile:90, maxMultiplier:1.5, maxAdditive:1, minNZD:2, spikeCapMult:5},
   brandLeadTimeDays:{_default:3},
   pctDocCap:30,
   pctDocCapLow:60,
