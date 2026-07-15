@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { getZohoToken } from '../_shared/zohoToken.ts'
+import { zohoFetchWithRetry } from '../_shared/zohoClient.ts'
 
 // ─── Branch ID → DS mapping (Zoho Inventory org 60075214606) ─────────────────
 const BRANCHES: Record<string, string> = {
@@ -80,23 +81,18 @@ async function releaseSyncLock(supabase: any): Promise<void> {
 // ─── Zoho OAuth ───────────────────────────────────────────────────────────────
 // getZohoToken now lives in ../_shared/zohoToken.ts (service-role-cached).
 
-// ─── Retry helper — waits and retries on Zoho 429 ────────────────────────────
-async function zohoFetch(url: string, token: string): Promise<Response> {
-  const opts = { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const res = await fetch(url, opts)
-    if (res.status !== 429) return res
-    if (attempt < 3) {
-      const wait = attempt * 10_000
-      console.warn(`Zoho 429 (attempt ${attempt}/3), retrying in ${wait / 1000}s...`)
-      await new Promise(r => setTimeout(r, wait))
-    }
-  }
-  throw new Error('Zoho API 429 after 3 attempts')
+// ─── Zoho GET with shared retry (429 back-off + 401 self-heal) ───────────────
+// Delegates to ../_shared/zohoClient.ts: identical 429 behaviour to before
+// (3 attempts, 10s/20s back-off, throws on exhaustion) PLUS force-refresh-and-
+// retry on a 401 (a stale cached token Zoho revoked early — 2026-07-15 incident).
+// Token is read from the shared cache per call (cache hit — the handler warms it).
+async function zohoFetch(supabase: any, url: string): Promise<Response> {
+  return zohoFetchWithRetry(supabase, (token) =>
+    fetch(url, { headers: { Authorization: `Zoho-oauthtoken ${token}` } }))
 }
 
 // ─── Stock: fetch all pages for one branch ────────────────────────────────────
-async function fetchBranchStock(token: string, branchId: string, showActualStock: boolean): Promise<Record<string, any>> {
+async function fetchBranchStock(supabase: any, branchId: string, showActualStock: boolean): Promise<Record<string, any>> {
   const rule = JSON.stringify({
     columns: [{ index: 1, field: 'location_name', value: [branchId], comparator: 'in', group: 'branch' }],
     criteria_string: '1',
@@ -113,7 +109,7 @@ async function fetchBranchStock(token: string, branchId: string, showActualStock
   const allItems: any[] = []
   let page = 1
   while (true) {
-    const res = await zohoFetch(`${base}&page=${page}`, token)
+    const res = await zohoFetch(supabase, `${base}&page=${page}`)
     if (!res.ok) throw new Error(`Zoho API ${res.status} on page ${page}`)
     const data = await res.json()
     allItems.push(...(data.inventory?.[0]?.item_details ?? []))
@@ -210,8 +206,10 @@ Deno.serve(async (req) => {
     }
     lockHeld = true
 
-    // 4. Get Zoho access token
-    const token = await getZohoToken(supabase)
+    // 4. Warm the shared token cache once, so the parallel branch fetches below
+    //    all cache-hit (no mint stampede). Each fetch re-reads the cache and
+    //    self-heals on a 401 via zohoFetchWithRetry.
+    await getZohoToken(supabase)
 
     // ── Fetch both modes for each requested branch, 2 branches in parallel ────
     // 4 concurrent Zoho calls at a time — stays under Zoho's inventorysummary
@@ -228,8 +226,8 @@ Deno.serve(async (req) => {
       const results = await Promise.all(
         group.map(([ds, branchId]) =>
           Promise.all([
-            fetchBranchStock(token, branchId, true),
-            fetchBranchStock(token, branchId, false),
+            fetchBranchStock(supabase, branchId, true),
+            fetchBranchStock(supabase, branchId, false),
           ]).then(([physical, accounting]) => ({ ds, physical, accounting }))
         )
       )

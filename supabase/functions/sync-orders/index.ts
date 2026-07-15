@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { getZohoToken } from '../_shared/zohoToken.ts'
+import { zohoFetchWithRetry } from '../_shared/zohoClient.ts'
 
 // PO location_name → DS code (as set in Zoho Inventory)
 const LOCATION_TO_DS: Record<string, string> = {
@@ -21,17 +22,17 @@ const DC_BRANCH_ID     = '3915979000000118466'
 // getZohoToken now lives in ../_shared/zohoToken.ts (service-role-cached).
 
 // ─── TO: fetch active Transfer Orders from DC (last N days) ──────────────────
-async function fetchActiveTOList(token: string, cutoff: string): Promise<Record<string, any>> {
+async function fetchActiveTOList(supabase: any, cutoff: string): Promise<Record<string, any>> {
   const org    = Deno.env.get('ZOHO_ORG_ID')
   const active: Record<string, any> = {}
 
   for (const status of ['draft', 'in_transit']) {
     let page = 1
     while (true) {
-      const res = await fetch(
+      const res = await zohoFetchWithRetry(supabase, (token) => fetch(
         `https://www.zohoapis.in/inventory/v1/transferorders?organization_id=${org}&status=${status}&per_page=200&sort_column=date&sort_order=D&page=${page}`,
         { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-      )
+      ))
       const data = await res.json()
       const tos: any[] = data.transfer_orders ?? []
 
@@ -49,27 +50,27 @@ async function fetchActiveTOList(token: string, cutoff: string): Promise<Record<
 }
 
 // ─── TO: fetch detail for one TO ─────────────────────────────────────────────
-async function fetchTODetail(token: string, toId: string): Promise<any> {
-  const res = await fetch(
+async function fetchTODetail(supabase: any, toId: string): Promise<any> {
+  const res = await zohoFetchWithRetry(supabase, (token) => fetch(
     `https://www.zohoapis.in/inventory/v1/transferorders/${toId}?organization_id=${Deno.env.get('ZOHO_ORG_ID')}`,
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-  )
+  ))
   const data = await res.json()
   return data.transfer_order ?? null
 }
 
 // ─── PO: fetch active Replenishment PO list (last N days) ────────────────────
-async function fetchActivePOList(token: string, cutoff: string): Promise<Record<string, any>> {
+async function fetchActivePOList(supabase: any, cutoff: string): Promise<Record<string, any>> {
   const org   = Deno.env.get('ZOHO_ORG_ID')
   const active: Record<string, any> = {}
 
   for (const status of ['open', 'pending_approval', 'partially_billed']) {
     let page = 1
     while (true) {
-      const res = await fetch(
+      const res = await zohoFetchWithRetry(supabase, (token) => fetch(
         `https://www.zohoapis.in/inventory/v1/purchaseorders?organization_id=${org}&status=${status}&per_page=200&sort_column=date&sort_order=D&page=${page}`,
         { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-      )
+      ))
       const data = await res.json()
       const pos: any[] = data.purchaseorders ?? []
 
@@ -87,11 +88,11 @@ async function fetchActivePOList(token: string, cutoff: string): Promise<Record<
 }
 
 // ─── PO: fetch detail for one PO ─────────────────────────────────────────────
-async function fetchPODetail(token: string, poId: string): Promise<any> {
-  const res = await fetch(
+async function fetchPODetail(supabase: any, poId: string): Promise<any> {
+  const res = await zohoFetchWithRetry(supabase, (token) => fetch(
     `https://www.zohoapis.in/inventory/v1/purchaseorders/${poId}?organization_id=${Deno.env.get('ZOHO_ORG_ID')}`,
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-  )
+  ))
   const data = await res.json()
   return data.purchaseorder ?? null
 }
@@ -131,15 +132,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 3. Get Zoho access token
-    const token = await getZohoToken(supabase)
+    // 3. Warm the shared token cache once; each Zoho call below re-reads it and
+    //    self-heals on a 401 via zohoFetchWithRetry.
+    await getZohoToken(supabase)
 
     // ── Phase A: PO sync (Replenishment, last 12 days, incremental) ──────────
     const cutoff = new Date(now.getTime() - PO_LOOKBACK_DAYS * 24 * 60 * 60 * 1000)
       .toISOString().split('T')[0]
 
     console.log(`Fetching PO list (last ${PO_LOOKBACK_DAYS} days, Replenishment)...`)
-    const activePOs = await fetchActivePOList(token, cutoff)
+    const activePOs = await fetchActivePOList(supabase, cutoff)
 
     const currentPoCache: Record<string, any> = row?.payload?._poCache ?? {}
     const updatedPoCache: Record<string, any> = {}
@@ -151,7 +153,7 @@ Deno.serve(async (req) => {
         updatedPoCache[poId] = cached
       } else {
         console.log(`Fetching PO detail: ${po.purchaseorder_number}`)
-        const detail = await fetchPODetail(token, poId)
+        const detail = await fetchPODetail(supabase, poId)
         if (!detail) continue
         const ds = LOCATION_TO_DS[detail.location_name ?? '']
         if (!ds) continue
@@ -210,7 +212,7 @@ Deno.serve(async (req) => {
       .toISOString().split('T')[0]
 
     console.log(`Fetching TO list (last ${TO_LOOKBACK_DAYS} days, draft+in_transit from DC)...`)
-    const activeTOs = await fetchActiveTOList(token, toCutoff)
+    const activeTOs = await fetchActiveTOList(supabase, toCutoff)
 
     const currentToCache: Record<string, any> = row?.payload?._toCache ?? {}
     const updatedToCache: Record<string, any> = {}
@@ -222,7 +224,7 @@ Deno.serve(async (req) => {
         updatedToCache[toId] = cached
       } else {
         console.log(`Fetching TO detail: ${to.transfer_order_number}`)
-        const detail = await fetchTODetail(token, toId)
+        const detail = await fetchTODetail(supabase, toId)
         if (!detail) continue
         const ds = LOCATION_TO_DS[detail.to_location_name ?? '']
         if (!ds) continue

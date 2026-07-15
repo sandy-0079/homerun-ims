@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { getZohoToken } from '../_shared/zohoToken.ts'
+import { zohoFetchWithRetry } from '../_shared/zohoClient.ts'
 
 // ─── create-to — creates Zoho Transfer Orders as DRAFTS, and nothing else ─────
 // Spec: homerun-to/docs/superpowers/specs/2026-07-10-task6b-draft-to-design.md
@@ -42,23 +42,26 @@ function json(body: Record<string, unknown>, status = 200): Response {
   })
 }
 
-// getZohoToken now lives in ../_shared/zohoToken.ts (service-role-cached).
+// Every Zoho call goes through zohoFetchWithRetry (../_shared/zohoClient.ts):
+// token from the shared cache, self-heal on a 401 (force-refresh + retry once),
+// 429 back-off. Writes (POST/DELETE) pass { retry429: false } so a create is
+// never auto-repeated. (Root cause of the 2026-07-15 TO 401 incident.)
 
 // ─── SKU → {id, name, rate} map, cached in params/zohoItemIds ────────────────
 type ItemInfo = { id: string; name: string; rate: number }
 
 // Two Zoho items sharing one SKU code would bind a TO line to whichever the map
 // saw last — collect duplicates so validation can refuse those SKUs instead.
-async function fetchItemMap(token: string): Promise<{ map: Record<string, ItemInfo>; dups: string[] }> {
+async function fetchItemMap(supabase: any): Promise<{ map: Record<string, ItemInfo>; dups: string[] }> {
   const org = Deno.env.get('ZOHO_ORG_ID')
   const map: Record<string, ItemInfo> = {}
   const dupSet = new Set<string>()
   let page = 1
   while (true) {
-    const res = await fetch(
+    const res = await zohoFetchWithRetry(supabase, (token) => fetch(
       `https://www.zohoapis.in/inventory/v1/items?organization_id=${org}&per_page=200&page=${page}`,
       { headers: { Authorization: `Zoho-oauthtoken ${token}` } },
-    )
+    ))
     if (!res.ok) throw new Error(`Zoho items API ${res.status} on page ${page}`)
     const data = await res.json()
     for (const it of data.items ?? []) {
@@ -74,7 +77,7 @@ async function fetchItemMap(token: string): Promise<{ map: Record<string, ItemIn
 }
 
 async function getItemMap(
-  supabase: any, token: string, requiredSkus: string[],
+  supabase: any, requiredSkus: string[],
 ): Promise<{ map: Record<string, ItemInfo>; dups: string[] }> {
   const { data } = await supabase.from('params').select('payload').eq('id', 'zohoItemIds').maybeSingle()
   const cached = data?.payload
@@ -86,7 +89,7 @@ async function getItemMap(
     return { map: cached.map, dups: cached.dups }
   }
 
-  const { map, dups } = await fetchItemMap(token)
+  const { map, dups } = await fetchItemMap(supabase)
   await supabase.from('params').upsert({
     id: 'zohoItemIds',
     payload: { refreshedAt: new Date().toISOString(), map, dups },
@@ -135,8 +138,7 @@ Deno.serve(async (req) => {
     const skus = lines.map((l: any) => l.sku.trim())
     if (new Set(skus).size !== skus.length) return json({ ok: false, error: 'duplicate SKUs in lines' }, 400)
 
-    const token = await getZohoToken(supabase)
-    const { map: itemMap, dups } = await getItemMap(supabase, token, skus)
+    const { map: itemMap, dups } = await getItemMap(supabase, skus)
     const badSkus = skus.filter((s: string) => !itemMap[s])
     if (badSkus.length > 0) {
       return json({ ok: false, error: 'SKUs not found in Zoho items', badSkus }, 400)
@@ -183,7 +185,7 @@ Deno.serve(async (req) => {
     // is_intransit_order is NOT a draft toggle — false means "direct transfer",
     // which executes the full stock movement instantly (learned the hard way,
     // TO-00539 incident 2026-07-10).
-    const res = await fetch(
+    const res = await zohoFetchWithRetry(supabase, (token) => fetch(
       `https://www.zohoapis.in/inventory/v1/transferorders?organization_id=${org}`,
       {
         method: 'POST',
@@ -197,7 +199,7 @@ Deno.serve(async (req) => {
           description,
         }),
       },
-    )
+    ), { retry429: false })
     const data = await res.json()
     if (!res.ok || !data.transfer_order) {
       return json({ ok: false, error: `Zoho create failed (${res.status}): ${data.message ?? JSON.stringify(data)}` }, 502)
@@ -208,10 +210,10 @@ Deno.serve(async (req) => {
     // If Zoho ignored/changed the draft semantics, delete the TO in the same
     // invocation (deletion reverses any stock effect) and fail loudly.
     if (to.status !== 'draft') {
-      const del = await fetch(
+      const del = await zohoFetchWithRetry(supabase, (token) => fetch(
         `https://www.zohoapis.in/inventory/v1/transferorders/${to.transfer_order_id}?organization_id=${org}`,
         { method: 'DELETE', headers: { Authorization: `Zoho-oauthtoken ${token}` } },
-      )
+      ), { retry429: false })
       return json({
         ok: false,
         error: `Zoho returned status='${to.status}' instead of 'draft' — ${to.transfer_order_number} was ` +
