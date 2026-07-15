@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { getZohoToken } from '../_shared/zohoToken.ts'
 
 // ─── Branch ID → DS mapping (Zoho Inventory org 60075214606) ─────────────────
 const BRANCHES: Record<string, string> = {
@@ -77,20 +78,7 @@ async function releaseSyncLock(supabase: any): Promise<void> {
 }
 
 // ─── Zoho OAuth ───────────────────────────────────────────────────────────────
-async function getZohoToken(): Promise<string> {
-  const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
-    method: 'POST',
-    body: new URLSearchParams({
-      client_id:     Deno.env.get('ZOHO_CLIENT_ID')!,
-      client_secret: Deno.env.get('ZOHO_CLIENT_SECRET')!,
-      refresh_token: Deno.env.get('ZOHO_REFRESH_TOKEN')!,
-      grant_type:    'refresh_token',
-    }),
-  })
-  const data = await res.json()
-  if (!data.access_token) throw new Error(`Zoho auth failed: ${JSON.stringify(data)}`)
-  return data.access_token
-}
+// getZohoToken now lives in ../_shared/zohoToken.ts (service-role-cached).
 
 // ─── Retry helper — waits and retries on Zoho 429 ────────────────────────────
 async function zohoFetch(url: string, token: string): Promise<Response> {
@@ -223,7 +211,7 @@ Deno.serve(async (req) => {
     lockHeld = true
 
     // 4. Get Zoho access token
-    const token = await getZohoToken()
+    const token = await getZohoToken(supabase)
 
     // ── Fetch both modes for each requested branch, 2 branches in parallel ────
     // 4 concurrent Zoho calls at a time — stays under Zoho's inventorysummary

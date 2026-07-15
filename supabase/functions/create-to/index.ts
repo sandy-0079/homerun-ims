@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { getZohoToken } from '../_shared/zohoToken.ts'
 
 // ─── create-to — creates Zoho Transfer Orders as DRAFTS, and nothing else ─────
 // Spec: homerun-to/docs/superpowers/specs/2026-07-10-task6b-draft-to-design.md
@@ -41,20 +42,7 @@ function json(body: Record<string, unknown>, status = 200): Response {
   })
 }
 
-async function getZohoToken(): Promise<string> {
-  const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
-    method: 'POST',
-    body: new URLSearchParams({
-      client_id:     Deno.env.get('ZOHO_CLIENT_ID')!,
-      client_secret: Deno.env.get('ZOHO_CLIENT_SECRET')!,
-      refresh_token: Deno.env.get('ZOHO_REFRESH_TOKEN')!,
-      grant_type:    'refresh_token',
-    }),
-  })
-  const data = await res.json()
-  if (!data.access_token) throw new Error(`Zoho auth failed: ${JSON.stringify(data)}`)
-  return data.access_token
-}
+// getZohoToken now lives in ../_shared/zohoToken.ts (service-role-cached).
 
 // ─── SKU → {id, name, rate} map, cached in params/zohoItemIds ────────────────
 type ItemInfo = { id: string; name: string; rate: number }
@@ -147,7 +135,7 @@ Deno.serve(async (req) => {
     const skus = lines.map((l: any) => l.sku.trim())
     if (new Set(skus).size !== skus.length) return json({ ok: false, error: 'duplicate SKUs in lines' }, 400)
 
-    const token = await getZohoToken()
+    const token = await getZohoToken(supabase)
     const { map: itemMap, dups } = await getItemMap(supabase, token, skus)
     const badSkus = skus.filter((s: string) => !itemMap[s])
     if (badSkus.length > 0) {

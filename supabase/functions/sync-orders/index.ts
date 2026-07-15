@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { getZohoToken } from '../_shared/zohoToken.ts'
 
 // PO location_name → DS code (as set in Zoho Inventory)
 const LOCATION_TO_DS: Record<string, string> = {
@@ -17,20 +18,7 @@ const TO_LOOKBACK_DAYS = 3
 const DC_BRANCH_ID     = '3915979000000118466'
 
 // ─── Zoho OAuth ───────────────────────────────────────────────────────────────
-async function getZohoToken(): Promise<string> {
-  const res = await fetch('https://accounts.zoho.in/oauth/v2/token', {
-    method: 'POST',
-    body: new URLSearchParams({
-      client_id:     Deno.env.get('ZOHO_CLIENT_ID')!,
-      client_secret: Deno.env.get('ZOHO_CLIENT_SECRET')!,
-      refresh_token: Deno.env.get('ZOHO_REFRESH_TOKEN')!,
-      grant_type:    'refresh_token',
-    }),
-  })
-  const data = await res.json()
-  if (!data.access_token) throw new Error(`Zoho auth failed: ${JSON.stringify(data)}`)
-  return data.access_token
-}
+// getZohoToken now lives in ../_shared/zohoToken.ts (service-role-cached).
 
 // ─── TO: fetch active Transfer Orders from DC (last N days) ──────────────────
 async function fetchActiveTOList(token: string, cutoff: string): Promise<Record<string, any>> {
@@ -144,7 +132,7 @@ Deno.serve(async (req) => {
     }
 
     // 3. Get Zoho access token
-    const token = await getZohoToken()
+    const token = await getZohoToken(supabase)
 
     // ── Phase A: PO sync (Replenishment, last 12 days, incremental) ──────────
     const cutoff = new Date(now.getTime() - PO_LOOKBACK_DAYS * 24 * 60 * 60 * 1000)
