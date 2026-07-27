@@ -5,5 +5,6 @@ export { percentileCoverStrategy } from "./strategies/percentileCover.js";
 export { fixedUnitFloorStrategy } from "./strategies/fixedUnitFloor.js";
 export { computePlywoodNetworkResults, computeNetworkNodeStats } from "./strategies/plywoodNetwork.js";
 export { computePlywoodNetworkV2Results, V2_DEFAULTS } from "./strategies/plywoodV2/index.js";
-export { parseCSV, getPriceTag, getMovTag, getSpikeTag, computeStats, percentile, getInvSlice, aggStats } from "./utils.js";
+export { applyAttribution, parsePincodeMapCsv } from "./attribution.js";
+export { parseCSV, parseInvoiceCsv, getPriceTag, getMovTag, getSpikeTag, computeStats, percentile, getInvSlice, aggStats } from "./utils.js";
 export * from "./constants.js";
