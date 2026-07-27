@@ -6,7 +6,7 @@ import {
   DC_DEAD_MULT_DEFAULT, RECENCY_WT_DEFAULT,
   BASE_MIN_DAYS_DEFAULT, DEFAULT_PARAMS,
   runEngine,
-  parseCSV, parseInvoiceCsv, parsePincodeMapCsv, getPriceTag,
+  parseCSV, parseInvoiceCsv, parsePincodeMapCsv, summariseCoverage, getPriceTag,
 } from "./engine/index.js";
 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
@@ -4536,15 +4536,8 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                 const on=pc.mode==="shippingCode";
                 // Coverage against the invoice data actually loaded, so the number
                 // reflects what a re-run would really do — not the sheet in isolation.
-                let withPin=0,covered=0;const missing={};
-                for(const r of invoiceData){
-                  if(!r.pin)continue;
-                  withPin++;
-                  if(map[r.pin])covered++; else missing[r.pin]=(missing[r.pin]||0)+1;
-                }
-                const pctPin=invoiceData.length?Math.round(withPin/invoiceData.length*100):0;
-                const pctCov=withPin?(covered/withPin*100):0;
-                const topMissing=Object.entries(missing).sort((a,b)=>b[1]-a[1]).slice(0,6);
+                const cov=summariseCoverage(invoiceData,map);
+                const topMissing=cov.unmapped.slice(0,6);
                 return (
               <Section title="Demand Attribution — which DS gets credited" icon="" accent="#7C3AED"
                 summary={on?`Customer pincode · ${mapCount} pincodes mapped`:"Fulfilling location (default)"}>
@@ -4577,9 +4570,12 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                   </div>
                   {mapCount>0&&(
                     <div style={{marginTop:8,fontSize:11,color:HR.muted,lineHeight:1.6}}>
-                      Invoice rows carrying a shipping code: <b style={{color:HR.text}}>{pctPin}%</b>
-                      {" · "}of those, mapped to a DS: <b style={{color:pctCov>=99?HR.green:pctCov>=95?HR.yellowDark:HR.red}}>{pctCov.toFixed(1)}%</b>
-                      {pctPin<100&&<div style={{color:HR.yellowDark,marginTop:4}}>
+                      Invoice rows carrying a shipping code: <b style={{color:HR.text}}>{cov.pinPct}%</b>
+                      {" · "}of those, mapped to a DS:{" "}
+                      {cov.coveragePct===null
+                        ? <b style={{color:HR.muted}}>—</b>
+                        : <b style={{color:cov.coveragePct>=99?HR.green:cov.coveragePct>=95?HR.yellowDark:HR.red}}>{cov.coveragePct.toFixed(1)}%</b>}
+                      {cov.pinPct<100&&<div style={{color:HR.yellowDark,marginTop:4}}>
                         Rows without a shipping code keep their fulfilling location. Re-upload the invoice CSV with a Shipping Code column to attribute them.
                       </div>}
                       {topMissing.length>0&&<div style={{marginTop:4}}>

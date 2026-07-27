@@ -8,6 +8,28 @@
 //                    invoiced from a different store, which inflates that store's
 //                    demand and hides the real need at the customer's own DS.
 
+// How much of the loaded invoice data the mapping can actually attribute.
+// `coveragePct` is null — not 0 — when no row carries a pincode, because a
+// percentage of nothing is not a measurement, and rendering it as 0% reads as
+// "the mapping is broken" when the real answer is "there is nothing to map yet".
+export function summariseCoverage(inv, map) {
+  const m = map || {};
+  let withPin = 0, covered = 0;
+  const missing = new Map();
+  for (const r of inv) {
+    if (!r.pin) continue;
+    withPin++;
+    if (m[r.pin]) covered++;
+    else missing.set(r.pin, (missing.get(r.pin) || 0) + 1);
+  }
+  return {
+    withPin,
+    pinPct: inv.length ? Math.round((withPin / inv.length) * 100) : 0,
+    coveragePct: withPin ? (covered / withPin) * 100 : null,
+    unmapped: [...missing.entries()].sort((a, b) => b[1] - a[1]),
+  };
+}
+
 const PIN = /^\d{6}$/;
 const DS_LABEL = /^(DS\d{2})\b/i;
 
