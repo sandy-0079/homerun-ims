@@ -9,6 +9,7 @@ import {
 import { getPriceTag, getMovTag, getSpikeTag, computeStats } from "./utils.js";
 import { standardStrategy } from "./strategies/standard.js";
 import { applyDSSeed } from "./dsSeed.js";
+import { applyAttribution } from "./attribution.js";
 import { percentileCoverStrategy } from "./strategies/percentileCover.js";
 import { fixedUnitFloorStrategy } from "./strategies/fixedUnitFloor.js";
 import { computePlywoodNetworkResults } from "./strategies/plywoodNetwork.js";
@@ -45,6 +46,12 @@ function collectOrderQtys(inv, skuId, dsId) {
 /* ── Main engine ─────────────────────────────────────────────────────────── */
 
 export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
+  // Resolve which DS each sale is credited to BEFORE anything reads `inv`.
+  // Doing it here rather than at CSV-parse time keeps the raw pincode in the
+  // stored rows, so switching attribution is a re-run, not a re-upload.
+  // Returns `inv` itself unless shippingCode mode is on — the off-path is a no-op.
+  inv = applyAttribution(inv, p.pincodeConfig);
+
   const op = p.overallPeriod || 90,
     rw = Math.min(p.recencyWindow || 15, op - 1),
     recencyWt = p.recencyWt || RECENCY_WT_DEFAULT;

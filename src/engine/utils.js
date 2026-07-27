@@ -22,7 +22,7 @@ export function parseCSV(text){
 export function parseInvoiceCsv(text){
   return parseCSV(text)
     .filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||""))
-    .map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0),shopifyOrder:r["Shopify Order"]||""}))
+    .map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0),shopifyOrder:r["Shopify Order"]||"",pin:(r["Shipping Code"]||"").trim()}))
     .filter(r=>r.date&&r.sku&&r.qty>0);
 }
 

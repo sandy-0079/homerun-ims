@@ -6,7 +6,7 @@ import {
   DC_DEAD_MULT_DEFAULT, RECENCY_WT_DEFAULT,
   BASE_MIN_DAYS_DEFAULT, DEFAULT_PARAMS,
   runEngine,
-  parseCSV, getPriceTag,
+  parseCSV, parseInvoiceCsv, parsePincodeMapCsv, summariseCoverage, getPriceTag,
 } from "./engine/index.js";
 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
@@ -2895,6 +2895,16 @@ export default function App(){
         setParams(prev => ({ ...prev, plywoodNetworkV2Config: sbPnc2 }));
         setSaved(prev => ({ ...prev, plywoodNetworkV2Config: sbPnc2 }));
       }
+
+      // Load pincodeMap (demand attribution) — own row, same pattern. Kept OUT of
+      // params/global deliberately: that row is written wholesale on every Apply
+      // and shallow-merged on load, so a new key there is the fixedUnitFloor trap.
+      // Absent row => runEngine sees no pincodeConfig => location mode, unchanged.
+      const sbPin = await loadFromSupabase("params", "pincodeMap");
+      if (sbPin) {
+        setParams(prev => ({ ...prev, pincodeConfig: sbPin }));
+        setSaved(prev => ({ ...prev, pincodeConfig: sbPin }));
+      }
     })();
   },[]);
 
@@ -3181,9 +3191,9 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   const handleInvoice=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;
     setUploading("invoiceData");
-    const rows=parseCSV(await file.text());
     // Replace entirely — no merge, no rolling cap. Store all data Admin provides.
-    const filtered=rows.filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||"")).map(r=>({date:r["Invoice Date"]||"",sku:r["SKU"]||"",ds:(r["Line Item Location Name"]||"").trim().split(/\s+/)[0].toUpperCase(),qty:parseFloat(r["Quantity"]||0),shopifyOrder:r["Shopify Order"]||""})).filter(r=>r.date&&r.sku&&r.qty>0);
+    // Shared with the OOS Simulation via parseInvoiceCsv so the two can't drift.
+    const filtered=parseInvoiceCsv(await file.text());
     setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
     await saveTeamData({invoiceData:filtered});
     setModelDirty(true);
@@ -3229,6 +3239,29 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   const handleDead=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;setUploading("deadStock");const rows=parseCSV(await file.text());const ds=new Set(rows.map(r=>r["Dead Stock"]||r["SKU"]||"").filter(Boolean));setDead(ds);LS.set("deadStock",JSON.stringify([...ds]));await saveTeamData({deadStock:ds});setModelDirty(true);setUploadedFiles(prev=>({...prev,deadStock:file.name}));addChange(`Dead Stock uploaded: ${ds.size} SKUs`);setUploading(null);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
   const handlePrice=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;setUploading("priceData");const rows=parseCSV(await file.text());const pd={};rows.forEach(r=>{const s=(r["sku"]||"").trim();const v=parseFloat(r["average_price"]||0);if(s&&v>0)pd[s]=v;});setPrice(pd);LS.set("priceData",JSON.stringify(pd));await saveTeamData({priceData:pd});setModelDirty(true);setUploadedFiles(prev=>({...prev,priceData:file.name}));addChange(`Purchase Prices uploaded: ${Object.keys(pd).length} SKUs`);setUploading(null);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
 
+  // Pincode → DS mapping upload. Accepts either the plain two-column sheet or
+  // the ops working sheet with per-DS delivery-time blocks (see parsePincodeMapCsv).
+  // Only updates local params; persisted to params/pincodeMap on Apply & Re-run.
+  const handlePincodeMap=useCallback(async(e)=>{
+    const file=e.target.files[0];if(!file)return;
+    setUploading("pincodeMap");
+    try{
+      const {map,conflicts}=parsePincodeMapCsv(await file.text());
+      const n=Object.keys(map).length;
+      if(!n){alert("No pincodes found in that file. Expected either a 'Pincode,DS' sheet or the ops sheet with DS column blocks.");return;}
+      if(conflicts.length){
+        const detail=conflicts.slice(0,5).map(c=>`  ${c.pin} → ${c.dses.join(" and ")}`).join("\n");
+        // A pincode owned by two DSes is an ops data error — refuse rather than
+        // silently pick one, which would quietly misattribute that catchment.
+        alert(`${conflicts.length} pincode(s) are assigned to more than one DS:\n\n${detail}\n\nFix the sheet and re-upload.`);
+        return;
+      }
+      setParams(prev=>({...prev,pincodeConfig:{...(prev.pincodeConfig||{mode:"location"}),map}}));
+      setModelDirty(true);
+      addChange(`Pincode mapping uploaded: ${n} pincodes`);
+    } finally { setUploading(null); e.target.value=""; }
+  },[setModelDirty,addChange]);
+
   const clearData=useCallback(async(key)=>{
     setModelDirty(true);
     setUploadedFiles(prev=>({...prev,[key]:null}));
@@ -3251,13 +3284,21 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     setParams(np);
     setSaved(np);
     // Save params to Supabase + localStorage
-    // Strip plywoodNetworkConfig + v2 — they live in their own params rows, not params/global
-    const { plywoodNetworkConfig: _pnc, plywoodNetworkV2Config: _pnc2, ...saveableParams } = np;
+    // Strip plywoodNetworkConfig + v2 + pincodeConfig — they live in their own
+    // params rows, not params/global (which is replaced wholesale by this write).
+    const { plywoodNetworkConfig: _pnc, plywoodNetworkV2Config: _pnc2, pincodeConfig: _pin, ...saveableParams } = np;
     LS.set("params", JSON.stringify(saveableParams));
     setSyncStatus("saving");
     const ok = await saveToSupabase("params","global",saveableParams);
     // Always keep a timestamped backup — restore from params/paramsBackup if params/global is corrupted
     saveToSupabase("params","paramsBackup",{ ...saveableParams, _backedUpAt: new Date().toISOString() });
+    // Attribution config lives in params/pincodeMap (its own row — see load site).
+    // Persisted on Apply like every other Logic Tweaker change, so flipping the
+    // mode goes through the same review-and-rerun flow. Non-blocking.
+    if (np.pincodeConfig) {
+      saveToSupabase("params","pincodeMap", np.pincodeConfig)
+        .catch(e => console.error("pincodeMap write failed (non-fatal):", e));
+    }
     setSyncStatus(ok?"saved":"error");
     setTimeout(()=>setSyncStatus("idle"),3000);
     if (invoiceData.length > 0 && Object.keys(skuMaster).length > 0) {
@@ -3534,8 +3575,8 @@ const visibleOutput = useMemo(() => {
         const buildDataCSV=(key)=>{
           if(key==="invoiceData"){
             if(!invoiceData.length) return null;
-            const h=["Invoice Date","Invoice Number","Invoice Status","Shopify Order","Item Name","SKU","Category Name","Quantity","Line Item Location Name"];
-            const rows=invoiceData.map(r=>[r.date,r.invoiceNumber||"",r.status||"",r.shopifyOrder||"",r.itemName||"",r.sku,r.category||"",r.qty,r.locationName||r.ds||""].map(v=>`"${v}"`).join(","));
+            const h=["Invoice Date","Invoice Number","Invoice Status","Shopify Order","Item Name","SKU","Category Name","Quantity","Line Item Location Name","Shipping Code"];
+            const rows=invoiceData.map(r=>[r.date,r.invoiceNumber||"",r.status||"",r.shopifyOrder||"",r.itemName||"",r.sku,r.category||"",r.qty,r.locationName||r.ds||"",r.pin||""].map(v=>`"${v}"`).join(","));
             return h.join(",")+"\n"+rows.join("\n");
           }
           if(key==="skuMaster"){
@@ -3578,7 +3619,7 @@ const visibleOutput = useMemo(() => {
           return null;
         };
         const templates={
-          invoiceData:{file:"Invoice_Dump_Template.csv",headers:["Invoice Date","Invoice Number","Invoice Status","PurchaseOrder","Item Name","SKU","Category Name","Quantity","Line Item Location Name"],rows:[["2026-01-01","INV001","Confirmed","PO001","Product Name A","SKU001","Paints",5,"DS01 Warehouse"],["2026-01-02","INV002","Confirmed","PO002","Product Name B","SKU002","Adhesives",3,"DS02 Warehouse"]]},
+          invoiceData:{file:"Invoice_Dump_Template.csv",headers:["Invoice Date","Invoice Number","Invoice Status","Shopify Order","Item Name","SKU","Category Name","Quantity","Line Item Location Name","Shipping Code"],rows:[["2026-01-01","INV001","Closed","HR/26/0001","Product Name A","SKU001","Paints",5,"DS01 Sarjapur","560035"],["2026-01-02","INV002","Closed","HR/26/0002","Product Name B","SKU002","Adhesives",3,"DS02 Bileshivale","560016"]]},
           skuMaster:  {file:"SKU_Master_Template.csv",  headers:["Name","Inventorised At","SKU","Category","Status","Brand"],rows:[["Product Name A","DS","SKU001","Paints","Active","Asian Paints"],["Product Name B","DS","SKU002","Adhesives","Active","MYK Laticrete"]]},
           priceData:{file:"Avg_Price_Template.csv",headers:["item_id","item_name","unit","is_combo_product","quantity_purchased","amount","average_price","location_name","sku"],rows:[["ITEM001","Product Name A","PCS","No",100,25000,250,"DS01 Warehouse","SKU001"],["ITEM002","Product Name B","PCS","No",10,18000,1800,"DS02 Warehouse","SKU002"]]},
           minReqQty:  {file:"New_DS_Floor_Template.csv",headers:["SKU","Qty"],rows:[["SKU001",10],["SKU002",5]]},
@@ -3608,7 +3649,7 @@ const visibleOutput = useMemo(() => {
                   <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>
                   <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
                     <span onMouseEnter={()=>setInfoCard("invoiceData")} onMouseLeave={()=>setInfoCard(null)} style={{cursor:"help",color:HR.muted,fontSize:11,userSelect:"none"}}>ⓘ</span>
-                    {infoCard==="invoiceData"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>Invoice Date, Invoice Number, Invoice Status, PurchaseOrder, Item Name, SKU, Category Name, Quantity, Line Item Location Name</div>}
+                    {infoCard==="invoiceData"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>Invoice Date, Invoice Number, Invoice Status, Shopify Order, Item Name, SKU, Category Name, Quantity, Line Item Location Name, Shipping Code</div>}
                   </div>
                 </div>
                 <div style={{fontSize:11,color:HR.green,fontWeight:600,whiteSpace:"nowrap"}}>{invoiceData.length.toLocaleString()} rows</div>
@@ -3983,6 +4024,13 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
   if(c.pctDocCapLow!==s.pctDocCapLow) logicChangelog.push(`PCT DOC cap (Medium/Low): ${s.pctDocCapLow??60}D → ${c.pctDocCapLow}D`);
   if(c.pctMinNZD!==s.pctMinNZD) logicChangelog.push(`PCT min NZD: ${s.pctMinNZD} → ${c.pctMinNZD}`);
   if(c.plywoodNonNetworkStrategy!==s.plywoodNonNetworkStrategy) logicChangelog.push(`Plywood non-network strategy: ${s.plywoodNonNetworkStrategy||"percentile_cover"} → ${c.plywoodNonNetworkStrategy||"percentile_cover"}`);
+  {
+    const cm=(c.pincodeConfig||{}).mode||"location", sm=(s.pincodeConfig||{}).mode||"location";
+    const label=m=>m==="shippingCode"?"customer pincode":"fulfilling location";
+    if(cm!==sm) logicChangelog.push(`Demand attribution: ${label(sm)} → ${label(cm)}`);
+    const cn=Object.keys((c.pincodeConfig||{}).map||{}).length, sn=Object.keys((s.pincodeConfig||{}).map||{}).length;
+    if(cn!==sn) logicChangelog.push(`Pincode mapping: ${sn} → ${cn} pincodes`);
+  }
   if(c.spikeMultiplier!==s.spikeMultiplier) logicChangelog.push(`Spike multiplier: ${s.spikeMultiplier}× → ${c.spikeMultiplier}×`);
   if(c.spikePctFrequent!==s.spikePctFrequent) logicChangelog.push(`Spike frequent: ${s.spikePctFrequent}% → ${c.spikePctFrequent}%`);
   if(c.spikePctOnce!==s.spikePctOnce) logicChangelog.push(`Spike once: ${s.spikePctOnce}% → ${c.spikePctOnce}%`);
@@ -4481,6 +4529,71 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
                   </div>
                 </div>
               </Section>
+              {(()=>{
+                const pc=params.pincodeConfig||{mode:"location",map:{}};
+                const map=pc.map||{};
+                const mapCount=Object.keys(map).length;
+                const on=pc.mode==="shippingCode";
+                // Coverage against the invoice data actually loaded, so the number
+                // reflects what a re-run would really do — not the sheet in isolation.
+                const cov=summariseCoverage(invoiceData,map);
+                const topMissing=cov.unmapped.slice(0,6);
+                return (
+              <Section title="Demand Attribution — which DS gets credited" icon="" accent="#7C3AED"
+                summary={on?`Customer pincode · ${mapCount} pincodes mapped`:"Fulfilling location (default)"}>
+                <div style={{...S.card,padding:"12px 14px"}}>
+                  <div style={{fontSize:12,color:HR.text,marginBottom:10,lineHeight:1.5}}>
+                    When a DS is out of stock the order is invoiced from another store. Crediting the{" "}
+                    <b>fulfilling location</b> inflates that store's demand and hides the real need at the
+                    customer's own DS. Crediting the <b>customer's pincode</b> attributes demand to the
+                    catchment that actually generated it.
+                    <br/>
+                    Pincodes are resolved at model-run time from the stored shipping code, so switching
+                    mode is a re-run — no CSV re-upload needed.
+                  </div>
+                  {["location","shippingCode"].map(m=>(
+                    <label key={m} style={{display:"flex",alignItems:"center",gap:8,cursor:isAdmin?"pointer":"default",fontSize:13,fontWeight:600,color:HR.text,marginBottom:6}}>
+                      <input type="radio" name="attributionMode" disabled={!isAdmin} checked={pc.mode===m||(m==="location"&&!pc.mode)}
+                        onChange={()=>saveParams({...params,pincodeConfig:{...pc,mode:m}})}/>
+                      {m==="location"?"Fulfilling location (Line Item Location Name)":"Customer pincode (Shipping Code)"}
+                    </label>
+                  ))}
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10,paddingTop:10,borderTop:`1px solid ${HR.border}`}}>
+                    <span style={{fontSize:12,fontWeight:600,color:HR.text}}>Pincode → DS mapping</span>
+                    <span style={{fontSize:12,color:mapCount?HR.text:HR.muted}}>{mapCount?`${mapCount} pincodes`:"not uploaded"}</span>
+                    {isAdmin&&(
+                      <label style={{background:HR.white,border:`1px solid ${HR.border}`,padding:"5px 12px",borderRadius:5,cursor:"pointer",fontWeight:600,fontSize:12,color:HR.text}}>
+                        {uploading==="pincodeMap"?"Reading…":"Upload CSV"}
+                        <input type="file" accept=".csv" style={{display:"none"}} onChange={handlePincodeMap}/>
+                      </label>
+                    )}
+                  </div>
+                  {mapCount>0&&(
+                    <div style={{marginTop:8,fontSize:11,color:HR.muted,lineHeight:1.6}}>
+                      Invoice rows carrying a shipping code: <b style={{color:HR.text}}>{cov.pinPct}%</b>
+                      {" · "}of those, mapped to a DS:{" "}
+                      {cov.coveragePct===null
+                        ? <b style={{color:HR.muted}}>—</b>
+                        : <b style={{color:cov.coveragePct>=99?HR.green:cov.coveragePct>=95?HR.yellowDark:HR.red}}>{cov.coveragePct.toFixed(1)}%</b>}
+                      {cov.pinPct<100&&<div style={{color:HR.yellowDark,marginTop:4}}>
+                        Rows without a shipping code keep their fulfilling location. Re-upload the invoice CSV with a Shipping Code column to attribute them.
+                      </div>}
+                      {topMissing.length>0&&<div style={{marginTop:4}}>
+                        Unmapped pincodes: {topMissing.map(([p,c])=>`${p} (${c})`).join(", ")}
+                        {Object.keys(missing).length>topMissing.length?` +${Object.keys(missing).length-topMissing.length} more`:""}
+                        {" — these fall back to the fulfilling location."}
+                      </div>}
+                    </div>
+                  )}
+                  {on&&mapCount===0&&(
+                    <div style={{marginTop:8,fontSize:11,color:HR.red,fontWeight:600}}>
+                      Pincode mode is selected but no mapping is loaded — every row will fall back to its fulfilling location.
+                    </div>
+                  )}
+                </div>
+              </Section>
+                );
+              })()}
               <Section title="DS Seed — New Store Bootstrap" icon="" accent={HR.yellowDark}
                 summary={Object.keys(params.dsSeed||{}).length?Object.entries(params.dsSeed).map(([t,s])=>`${t} ← avg(${(s||[]).join(", ")})`).join(" · "):"Inactive"}>
                 <div style={{...S.card,padding:"12px 14px"}}>
