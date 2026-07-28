@@ -15,11 +15,29 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 | Supabase Anon Key | eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJneXVwbnJvZ2tidWdzYWR3bHllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3NzgzMzgsImV4cCI6MjA4ODM1NDMzOH0.sbZh8CbmW7hhpiUCg5OoS7hQzHaNqExkaAlACEqJ9sc |
 | Admin Password | IMSAdmin123 |
 
+> ⚠ **There is no staging.** `.env` `VITE_SUPABASE_URL` points at the production project, so
+> `npm run dev` on localhost **reads and writes prod**. Safe locally: browsing, uploading the pincode
+> map, changing any Logic Tweaker value (all local React state). Writes prod: **any Upload Data CSV**
+> (replaces entirely — an accidental short invoice file truncates everyone's history), **Apply & Re-run
+> Model** (`params/global`, `paramsBackup`, `pincodeMap`, `toTargets`), Plywood/Overrides Save, Sync Now.
+> The tab-switch "unsaved changes" modal's first button is `▶ Apply & Continue` — that writes prod.
+
 ---
 
 ## Data Model & Key Decisions
 
 - Invoice CSV (Zoho export) replaces entirely on upload — no merge. Engine uses whatever period admin sets.
+- **⚠ Invoice exports MUST resolve line items to the item's CURRENT SKU code.** Zoho re-coded the
+  catalogue ~2026-07-01 (`WHI-BIR-CEM-50K` → `UVJQ9`). An export that preserves the code *as at invoice
+  time* splits ~1,090 products across two identities; the pre-July half lands on codes absent from
+  `skuMaster` (measured: 39.6% of window rows unknown, network Max ₹7.81Cr → ₹6.73Cr). Splitting also
+  halves each code's active-days, dropping it a movement tier, so the loss compounds.
+  **Symptom signature: window volume UP but inventory value DOWN.** Sanity check after every upload:
+  share of window rows whose SKU is missing from `skuMaster` should be <1% (healthy runs: 0.08–0.1%).
+- Purchase Prices are **not display-only** — price drives `getPriceTag`, which selects the PCT
+  percentile, the Fixed Unit Floor order-days gate, and the DOC caps. A price refresh moves Min/Max on
+  SKUs whose demand never changed. When reporting an Inv-Value delta, separate the *target* effect from
+  the *revaluation* effect (2026-07-27: +₹13.4L was +₹14.1L revaluation, −₹0.7L targets, +0.5% units).
 - All uploads auto-save to Supabase `team_data` immediately.
 - Model refresh: upload → Apply & Re-run Model → results pushed to Supabase → all users see new Min/Max.
 - Stock Health: synced hourly via two separate Edge Functions:
@@ -64,8 +82,40 @@ Post-blend order (strict): New DS Floor → SKU Floor Override → Dead Stock ca
 
 **New DS Floor blend is per-field max (changed 2026-07-06):** when the floor beats the strategy Min, Min = floor but Max keeps the strategy's value when higher (`max(strategyMax, floor)`). Previously the floor clobbered both (Min=Max=floor), discarding demand-informed Max headroom. Applies to every DS in `newDSList`.
 
+### Demand Attribution — which DS gets credited (`src/engine/attribution.js`)
+**LIVE since 2026-07-27 (PR #13).** When a DS is out of stock the whole order is invoiced from another
+store, inflating that store's demand and hiding the real need at the customer's own DS. Measured: **~11%
+of demand lines misattributed** in steady state (20.2% including DS06 launch effects).
+
+- Two modes in `params/pincodeMap` (**its own row** — see the params-row rule below): `mode:
+  "location"` (fulfilling store, historical default) or `"shippingCode"` (customer pincode → DS).
+  Currently **`shippingCode`**, 127 pincodes.
+- **Resolved in `runEngine` (first line), NOT at CSV-parse time.** `parseInvoiceCsv` carries the raw
+  `pin` (Shipping Code = `shipping_address.zip`) into the stored rows, so switching mode is a **re-run,
+  not a CSV re-upload**. `applyAttribution` returns `inv` unchanged unless `shippingCode` is on.
+- **Static current mapping applied to all history is deliberate** — it asks "what would demand be if
+  today's catchment had always existed", the right counterfactual for future Min/Max. No date-versioning
+  even though ops reassign pincodes over time.
+- Unmapped pincodes **fall back to the fulfilling location**, never dropped. A pincode claimed by two
+  DSes is **rejected on upload** rather than silently resolved.
+- `parsePincodeMapCsv` accepts the ops working sheet (per-DS 60/90/120-min column blocks) as well as a
+  plain `Pincode,DS` sheet — no manual reformatting.
+- Measured impact of the flip on live data: network Max **₹7.81Cr → ₹7.68Cr (−1.7%)**; DS02 −₹16.4L and
+  DS05 −₹6.2L shed inflated demand, DS03 +₹5.1L / DS04 +₹5.9L / DS06 +₹3.9L / DC −₹6.6L; 1,120 SKUs moved.
+- Tests: `attribution.test.js`, `pincodeMap.test.js`, `coverage.test.js`, `parseInvoiceCsv.test.js`.
+- **Ops dependency:** DS02 is now stocked for ~16L less. If routing doesn't actually follow the pincode
+  mapping, DS02 keeps receiving those orders while stocked for fewer. Known gap: pincode 560111 (193
+  rows, 86% served by DS03) is not in the mapping.
+
+**Params-row rule (learned the hard way):** new config belongs in **its own `params` row**, never
+`params/global`. That row is written wholesale on every Apply and loaded with a *shallow* merge
+(`{...DEFAULT_PARAMS, ...sbParams}`), so a new **nested** key is silently dropped — the
+`fixedUnitFloor.minNZD` trap. Top-level keys are safe; nested ones need inline `??` defaults.
+Own-row pattern: load into `params.<x>` at the `plywoodNetworkConfig` load site, strip it in
+`applyAndRun` before writing `params/global`.
+
 ### DS Seed — new store bootstrap (`src/engine/dsSeed.js`)
-Seeds a new DS's Min/Max from the **equal-weight average of source DSes** — built for DS06 Kogilu, whose catchment carves ~50% of orders each from DS02 and DS04. Config: `params.dsSeed = { DS06: ["DS02","DS04"] }` (Logic Tweaker → "DS Seed — New Store Bootstrap" checkbox; empty object = inactive; removing the entry is the sunset switch once DS06 has ~45 days of organic history).
+Seeds a new DS's Min/Max from the **equal-weight average of source DSes** — built for DS06 Kogilu, whose catchment carves ~50% of orders each from DS02 and DS04. Config: `params.dsSeed = { DS06: ["DS02","DS04"] }` (Logic Tweaker → "DS Seed — New Store Bootstrap" checkbox; empty object = inactive). **Do NOT sunset yet — measured 2026-07-27:** removing the seed drops DS06 from 2,374 stocked SKUs to 1,482 (892 → zero, ₹23.0L) and network Max to ₹6.13Cr. Pincode attribution gives DS06 real catchment history, but 16 pincodes over a mostly pre-launch window is too thin for assortment breadth — the seed solves 'not enough data', not 'no data'. Re-evaluate at ~90 days post-launch as its own diff.
 - Per SKU, per field: `DS06 = max(organic/floor value, ceil(avg(sources)))` — "whichever wins". `ceil` ⇒ union assortment. logicTag `DS Seed`, audit entry in `postBlendSteps`, `preFloor*` untouched.
 - Runs after all strategies/floors, **before Inventorised-At normalization** — Supplier/DS-inv zeroing still wins; Dead Stock propagates (0+0→0).
 - **DC re-derived treating the seeded DS as a real sixth store** (deliberate transition overstock — sources are never reduced; both self-correct as carved-out demand leaves source history ~45 days post-go-live): rate-based SKUs add a synthetic rate `max(0, avg(source rates) − organic DS06 rate)` into `sumDailyAvg`; floored SKUs add the seed deltas into Σ DS sums; Network Design adds `ceil(ΔMin × brand dcMult)`. DC never decreases. Audit: `dcDetails.dsSeedAug`.
@@ -137,10 +187,28 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
   - Stored as `toData[ds][sku] = { qty, rec_qty, to_date, status, to_number, to_id }` keyed by destination DS. `rec_qty` = null for all entries (always draft/in_transit). Priority: in_transit > draft.
   - Only draft and in_transit TOs are stored. Transferred TOs are not shown: once received, stock appears in AFS. Zoho's `last_modified_time` is unreliable as a transfer-date signal — any edit to a TO in Zoho updates it, causing stale transferred TOs to re-appear as "today".
 
+**Zoho INVOICES API — measured 2026-07-27 (probe, 327 read-only calls). Read before building any
+invoice sync:**
+- **Line items require a per-invoice DETAIL call.** `GET /invoices` is header-level; `?include=line_items`
+  is silently ignored; bulk `?accept=csv` is header-only (no SKU/quantity). Budget 1 call per invoice.
+- `shipping_address` is exposed as a **key** on the list endpoint but **never populated** (0 of 3,624
+  rows). The zip only appears on the detail call. Don't build on the list carrying it.
+- **⚠ Status vocabulary differs from the CSV export** (same shape as the PO trap): API returns
+  `paid`/`overdue`/`void`/`draft`; the CSV says `Closed`/`Overdue` and `parseInvoiceCsv` filters
+  `["Closed","Overdue"]`. **`paid` IS the API's `Closed`.** Port that filter naively and you drop ~97%
+  of rows. `filter_by=Status.Closed` → HTTP 400; filter client-side.
+- Timing: avg detail call **289 ms** (p95 434 ms). At 4-concurrent, 1,000 invoices = **72 s** — fits one
+  150 s invocation. No queue/chaining needed.
+- Quota: `x-rate-limit-limit: 57500` per window (~8.4 h reset). A 1,000-call nightly pull is ~2%.
+- `date_start`/`date_end` and `last_modified_time` filters are both honoured. `page_context` has **no
+  `total_count`** — paginate to count.
+- Volume: 511–579 invoices/day, 2.76 line items each. ~22% of exported CSV rows are unnamed charge
+  lines (blank SKU, qty 1) that the engine correctly drops.
+
 **Zoho Inventory location IDs (org 60075214606, confirmed 2026-07-06):**
 `DC=3915979000000118466`, `DS01=3915979000000054002`, `DS02=3915979000000054017`, `DS03=3915979000000054032`, `DS04=3915979000000054047`, `DS05=3915979000000054062`, `DS06=3915979000000118484`
 
-**DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase). **Phase 2 built on `feature/ds06-seed` (2026-07-06, unmerged):** `DS_LIST` includes DS06 (Stock Health tab/KPIs/DC ROS/DS Req Covered follow automatically; 6th `DS_COLORS` entry added) + engine **DS Seed pass** gives DS06 Min/Max = avg(DS02, DS04) — see the DS Seed section. On activation, admin ticks "Seed DS06" in Logic Tweaker (and optionally adds DS06 to `newDSList` for the floor) + Apply. Plywood tab (v1) is DS06-aware (filter button, matrix editor column, DS_DEFAULTS entry) — **at go-live, also add DS06 to each brand's matrix (self-covers) via the tab's config editor**: nodes compute 0 until Kogilu demand exists, the seed wins meanwhile, and organic node values take over as demand builds — this is what lets the plywood seed sunset (network strategy ignores DSes not in the matrix). Review later: local `DS_LIST` copies in `simWorker.js`/`BasketAnalysisTab.jsx`, cluster assignment.
+**DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase). **Phase 2 (2026-07-06, now in `main`):** `DS_LIST` includes DS06 (Stock Health tab/KPIs/DC ROS/DS Req Covered follow automatically; 6th `DS_COLORS` entry added) + engine **DS Seed pass** gives DS06 Min/Max = avg(DS02, DS04) — see the DS Seed section. On activation, admin ticks "Seed DS06" in Logic Tweaker (and optionally adds DS06 to `newDSList` for the floor) + Apply. Plywood tab (v1) is DS06-aware (filter button, matrix editor column, DS_DEFAULTS entry) — **at go-live, also add DS06 to each brand's matrix (self-covers) via the tab's config editor**: nodes compute 0 until Kogilu demand exists, the seed wins meanwhile, and organic node values take over as demand builds — this is what lets the plywood seed sunset (network strategy ignores DSes not in the matrix). Review later: local `DS_LIST` copies in `simWorker.js`/`BasketAnalysisTab.jsx`, cluster assignment.
 
 **SKU filtering rules:**
 - Only `status = Active` SKUs (from SKU Master)
@@ -241,7 +309,7 @@ draft mechanism is the undocumented `status:'draft'` body field (captured from t
 trace). Non-draft responses are auto-deleted in the same invocation. SKU→item_id map cached in
 `params/zohoItemIds`; audit in `params/toAudit`. Details: homerun-to spec 2026-07-10-task6b.
 
-**Hook in this repo (branch `feature/to-tool`):** `applyAndRun` in `App.jsx` serializes the DC-inv Active
+**Hook in this repo (in `main`):** `applyAndRun` in `App.jsx` serializes the DC-inv Active
 slice of engine results (`{name, category, brand, perDS:{ds:{min,max}}}`) to **`params/toTargets`** after
 every "Apply & Re-run Model" — non-blocking, its own row (sync functions never touch `params`, so no IO
 impact). The TO tool reads that + `team_data/global` stock (CS DS = accounting SoH, CS DC = physical SoH,
@@ -269,6 +337,24 @@ Columns: SoH, AFS, DC Stock, Min, Max, ROS, Req Qty, Rep. Qty, Rec Qty, Date, Es
 
 ### 9. DC Stock indicator in DS tabs ✅ Shipped (2026-05-21)
 DC Stock column added between Req Qty and Rep. Qty on DS tabs. Shows DC SoH for DC-inv SKUs, follows mode toggle, hidden on DC tab.
+
+### 15. Pincode demand attribution ✅ Shipped & LIVE (2026-07-27, PR #13)
+`src/engine/attribution.js` — see the Demand Attribution section. Flag flipped to `shippingCode` on
+2026-07-27; network Max ₹7.81Cr → ₹7.68Cr. Follow-ups: add pincode 560111 → DS03; confirm ops routing
+follows the mapping (DS02 is stocked ₹16.4L lighter).
+
+### 16. Nightly model refresh from Zoho — Stages 4-7 (in progress)
+Automate the whole input chain so the model refreshes ~20:30 IST without a manual CSV.
+- **Stage 4 (next):** `sync-invoices` edge fn → shadow row `team_data/invoice_data_shadow`, cron 15:00
+  UTC (20:30 IST — clear of the :35–:50 stock/orders window, different row so no write contention).
+  Nothing reads it; compare against the manual CSV ~5 days. **Must resolve SKUs to current codes** and
+  map API `paid` → `Closed` (see the two ⚠ notes above).
+- **Stage 5:** cut over to the live row — append + trim to retention, re-pull a 3-day trailing window on
+  `last_modified_time` for edits/voids. CSV upload stays as manual override.
+- **Stage 6:** headless engine run → `params/toTargets` (~21:00 IST). Today that row is written *only*
+  by a browser pressing Apply, so the TO tool raises midnight TOs against whatever was last applied.
+- **Stage 7:** SKU Master (`/items`) + Purchase Prices from Zoho. Floors and Dead Stock stay manual —
+  ops judgement, not Zoho data.
 
 ### 4. Rethink Tool Output Tab — fold buttons into Upload Data tab or keep separate?
 
