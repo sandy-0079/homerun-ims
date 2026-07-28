@@ -111,8 +111,15 @@ of demand lines misattributed** in steady state (20.2% including DS06 launch eff
 `params/global`. That row is written wholesale on every Apply and loaded with a *shallow* merge
 (`{...DEFAULT_PARAMS, ...sbParams}`), so a new **nested** key is silently dropped — the
 `fixedUnitFloor.minNZD` trap. Top-level keys are safe; nested ones need inline `??` defaults.
-Own-row pattern: load into `params.<x>` at the `plywoodNetworkConfig` load site, strip it in
-`applyAndRun` before writing `params/global`.
+**Own-row pattern — use `src/paramConfigRows.js`, do not hand-roll it.** `loadParamConfigRows()` is
+the single list of which configs live in their own row; all three load sites call it, and
+`applyAndRun` strips them before writing `params/global`. ⚠ It exists because three separate places
+rebuilt `activeParams` and re-attached these rows by hand — **two of them re-attached the plywood
+rows but missed `pincodeConfig`.** Both then call `setParams(activeParams)` (wholesale replace) and
+`runEngine(activeParams)`, and the team_data effect awaits ~12MB so it resolves last and wins. Net
+effect: every page load silently reverted attribution to "location" (₹7.95Cr vs ₹7.81Cr), while
+`toTargets` — written from in-memory params at Apply — stayed correct. Symptom was "the radio resets
+on reload"; cause was the engine reverting too. Adding a config row is now a one-line change there.
 
 ### DS Seed — new store bootstrap (`src/engine/dsSeed.js`)
 Seeds a new DS's Min/Max from the **equal-weight average of source DSes** — built for DS06 Kogilu, whose catchment carves ~50% of orders each from DS02 and DS04. Config: `params.dsSeed = { DS06: ["DS02","DS04"] }` (Logic Tweaker → "DS Seed — New Store Bootstrap" checkbox; empty object = inactive). **Do NOT sunset yet — measured 2026-07-27:** removing the seed drops DS06 from 2,374 stocked SKUs to 1,482 (892 → zero, ₹23.0L) and network Max to ₹6.13Cr. Pincode attribution gives DS06 real catchment history, but 16 pincodes over a mostly pre-launch window is too thin for assortment breadth — the seed solves 'not enough data', not 'no data'. Re-evaluate at ~90 days post-launch as its own diff.
@@ -191,6 +198,31 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
   - Transferred today IST: incremental via `_transferredTodayCache` (same pattern as `_poCache`/`_toCache`). 2-day date window fetches list; detail calls only for new/modified TOs. Filtered to `last_modified_time >= midnight IST` using Date comparison (not string compare — timezone formats differ). Capped at 50 new detail calls per run — prevents cold-cache timeout deadlock (cache warms over 1-2 runs).
   - Stored as `toData[ds][sku] = { qty, rec_qty, to_date, status, to_number, to_id }` keyed by destination DS. `rec_qty` = null for all entries (always draft/in_transit). Priority: in_transit > draft.
   - Only draft and in_transit TOs are stored. Transferred TOs are not shown: once received, stock appears in AFS. Zoho's `last_modified_time` is unreliable as a transfer-date signal — any edit to a TO in Zoho updates it, causing stale transferred TOs to re-appear as "today".
+
+**Zoho ITEMS + PRICES API — measured 2026-07-28. Read before touching `sync-catalogue`:**
+- **⚠ Item custom fields arrive as TOP-LEVEL `cf_*` keys on the `/items` LIST response** — verified:
+  `cf_dc01_rampura`, `cf_ds01_sarjapur` … `cf_ds06_kogilu`, with **no** `custom_fields` array and
+  **no** `custom_field_hash` at all. Reading only those two shapes means a field is never found and
+  the code silently falls back — indistinguishable from "not populated yet". `_shared/catalogueMap.ts`
+  `customField()` checks all three shapes. (`diag-items` reported "no custom fields" for exactly this
+  reason — don't trust it.) Good news: because they DO come back on the list, `cf_inventorised_at`
+  will cost ~11 calls, not 2,074 detail calls.
+- `/items` list returns `sku`, `name`, `category_name`, `brand`, `status` — the Books-era field names
+  still hold post-migration. 2,083 items over ~11 pages, ~15s.
+- `reports/purchasesbyitem` **does** exist on `/inventory/v1/`. `average_price` is Zoho-computed over
+  the requested window — not something we derive.
+- **⚠ PRICES MUST MERGE, NEVER REPLACE.** That report only sees purchases made in *this* org, i.e.
+  since 2026-07-01 — not the 12-month window requested. Measured: **1,477 priced from Zoho vs 1,822
+  stored.** A replace would push 345 SKUs to "No Price", which PCT reads as the 95th percentile, so
+  they'd be stocked MORE aggressively. `mergePrices` keeps the stored value where Zoho is silent
+  (verified live: 1,822 → 1,834, 357 retained, 0 lost). Coverage self-heals as the org ages.
+- **⚠ `Inventorised At` DOES NOT EXIST IN ZOHO** (as of 2026-07-28) — it is hand-set in the CSV, and
+  it's the highest-consequence field in the master (Supplier ⇒ 0 everywhere; DS ⇒ DC 0). The CSV path
+  defaults a missing value to **"DS"**, and live is 2,004 DC / 58 Supplier / 12 DS — so treating Zoho
+  as authoritative today would reclassify ~2,000 SKUs DC→DS and zero the whole DC plan. Hence: Zoho
+  wins only where it has a value, else the stored value stands, else default DC (96% of the master)
+  with the SKU reported. `assessMasterChange` fails closed on a >5% shift in the mix, a sharp shrink,
+  or an empty pull.
 
 **Zoho INVOICES API — measured 2026-07-27 (probe, 327 read-only calls). Read before building any
 invoice sync:**
@@ -281,6 +313,8 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 - **Supabase statement timeout:** Concurrent reads/writes from multiple functions on the same large global row cause Postgres to cancel statements. Fix: 3-min stagger ensures each function's write completes before the next function's read starts (2-min stagger still collided when Zoho took ~100s/function).
 - **Supabase Disk IO budget:** Nano instance has 30-min daily burst (43 Mbps baseline). The 3-function architecture makes 12 Supabase ops/hour — with a 7MB payload (including invoiceData) this exhausted the Nano burst within hours. Fix: (1) upgrade to Pro + Micro compute (87 Mbps baseline, 60-min burst), (2) separate invoiceData into its own row reducing global payload to ~1-2MB. Together these make daily IO sustainable on Micro.
 - **Migration safety:** Never run `supabase db push` after manually executing a migration SQL in the SQL editor. The CLI doesn't know it already ran and will execute it again. Use `supabase migration repair --status applied <version>` to mark it as done without re-running.
+  - This had actually happened: `20260715000001` (zoho_auth_cache) was applied by hand, so the table existed while the ledger said "pending". Repaired 2026-07-28. **Fix the ledger, never delete the migration file** — the files are the replayable schema definition; a fresh project or DR restore would otherwise have no way to create the table, and the token helper is fail-safe so it would degrade silently into per-call minting.
+  - Check `supabase migration list` before any `db push`: unapplied-but-already-run migrations couple unrelated changes into one aborting transaction.
 - Each stock cron passes `{"branches":["DC","DS01"]}` in pg_net body; sync-stock reads this and fetches only those branches.
 - **Branch-level merge:** sync-stock merges `stockData[sku][ds]` at branch level on write — never replaces the full stockData object (would wipe sibling functions' branch data).
 - **Status codes:** 546 = Supabase killed the function (wall clock timeout); 500 = function caught an error and returned cleanly.
@@ -350,9 +384,10 @@ follows the mapping (DS02 is stocked ₹16.4L lighter).
 
 ### 16. Nightly model refresh from Zoho — Stages 4-7 (in progress)
 Automate the whole input chain so the model refreshes ~20:30 IST without a manual CSV.
-- **Stage 4 (BUILT; cron written, NOT applied):** `sync-invoices` → `team_data/invoice_data_shadow`.
-  Nothing reads it. Migration `20260728000001` schedules **16:00 UTC (21:30 IST)** + resumes at :06/:12
-  — after the 20:30 IST TO run, clear of the :35–:50 stock/orders window, different row so no contention.
+- **Stage 4 (CRON LIVE 2026-07-28 — shadow only):** `sync-invoices` → `team_data/invoice_data_shadow`.
+  Nothing reads it. Migration `20260728000001` **applied**: **16:00 UTC (21:30 IST)** + resumes at
+  :06/:12 — after the 20:30 IST TO run, clear of the :35–:50 stock/orders window, different row so no
+  contention.
   - **One date per invocation.** A day can be ~1,000 invoices and Zoho's speed varies ~3.5×
     (289ms/call quiet, ~1s/call loaded), so a 2-day window can blow the 150s wall clock. Pass 1 takes
     the first date and leaves the rest in `params/invoiceSyncCursor`; :06/:12 drain it.
@@ -368,8 +403,11 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
     rows, same qty, **0 SKU×DS differences** — 0% unknown SKUs, 100% pin coverage. `reference_number`
     confirmed as the `Shopify Order` field.
   - Exit criteria: `node scripts/compare-invoice-shadow.mjs` clean ~5 consecutive days.
-- **Stage 5:** point the sync at the live row — a one-line change, by which time the merge path will
-  have run nightly for days. CSV upload stays as a manual override.
+- **Stage 5 (pending decision):** point the sync at the live row — a one-line change of `SHADOW_ROW`.
+  CSV upload stays as a manual override.
+  - **Backup before any cutover:** `team_data/invoice_data_backup_20260728` — 73,178 rows, 90 dates,
+    byte-identical row set verified. Restore = copy that payload back into `invoice_data`. Take a fresh
+    dated backup before any future cutover; it turns a one-way door into an undo.
   - **⚠ APPEND-ONLY IS A DATA-SAFETY RULE, NOT AN OPTIMISATION.** The current Zoho org has no invoices
     before **2026-07-01** (org migrated; the old Books org is retired and we are not wiring it up).
     Everything earlier exists ONLY in the Supabase payload, hand-uploaded from CSV — the API cannot
@@ -377,11 +415,33 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
     `mergeInvoiceRows`, not merely intended.
   - Self-sufficiency arrives once the retention window starts on/after 2026-07-01: **~14 Aug 2026** at
     45-day retention, **~28 Sep 2026** at 90-day.
-- **Stage 6:** headless engine run → `params/toTargets` at **~22:00 IST**, after the invoice sync.
-  Today that row is written *only* by a browser pressing Apply, so the TO tool runs against whatever an
-  admin last applied. Target the next day's 2:30 PM run — there is no midnight run any more.
-- **Stage 7:** SKU Master (`/items`) + Purchase Prices from Zoho. Floors and Dead Stock stay manual —
-  ops judgement, not Zoho data.
+- **Stage 6 (design agreed 2026-07-28, NOT built):** headless engine run → `params/toTargets`.
+  `App.jsx:3312` is the ONLY writer of that row, inside `applyAndRun` — so the TO tool runs against
+  whatever an admin last clicked Apply on, while IMS recomputes client-side on every page load.
+  **Two paths to the same number, and they diverged on 2026-07-28.**
+  - **EVENT-DRIVEN, NOT A CRON** (Sandy's call, and the better design): the syncs chain into the engine
+    run so `toTargets` is never stale relative to its inputs. Inputs that move Min/Max: `invoiceData`,
+    `skuMaster`/`priceData`, `params`, `overrides`, engine code.
+  - **The TO tool must keep only *mirroring*, never computing.** The engine is ~2,900 lines with 200+
+    tests in this repo; a second implementation in `homerun-to` would drift, and the drift surfaces as
+    wrong transfer quantities found by ops.
+  - Write to **`params/toTargets_shadow`** first and diff against a browser Apply (per-SKU deep
+    equality) before flipping. The first real write must not land unattended before a 14:30/20:30 run.
+  - **Stamp the engine commit SHA into `toTargets`.** Vercel and Supabase deploy separately, so a
+    frontend deploy can update the browser engine while the edge function still runs an older copy —
+    silent drift. IMS can compare and warn.
+  - End state worth aiming at: IMS reads the canonical stored result too, making divergence
+    structurally impossible and page loads much faster. Costs the "engine changes go live on next page
+    load" property, and Impact Preview still needs client-side compute. Not urgent.
+- **Stage 7 (BUILT + DEPLOYED 2026-07-28; cron NOT scheduled):** `sync-catalogue` → SKU Master +
+  Purchase Prices into `team_data/global` (read-merge-write, fresh read immediately before writing).
+  ~30 calls, 15s. Suggested slot **15:20 UTC (20:50 IST)** — deliberately *before* sync-invoices so the
+  invoice coverage guard checks a fresh master. See the Zoho ITEMS + PRICES section for the three ⚠s.
+  - Dry run vs live: 2,083 items, 9 new SKUs (defaulted DC and reported), prices 1,822 → 1,834,
+    `inventorisedAt` mix preserved exactly. Can only add or update — never remove.
+  - Blocked on ops for full value: create `cf_inventorised_at` in Zoho and populate it. Verify with ONE
+    SKU + a `sync-catalogue` dry run (`invAtFromZoho` should go 0 → 1) **before** populating all 2,083.
+  - Floors (`minReqQty`, `newSKUQty`) and Dead Stock stay manual — ops judgement, not Zoho data.
 
 ### 4. Rethink Tool Output Tab — fold buttons into Upload Data tab or keep separate?
 
