@@ -355,6 +355,14 @@ export default function StockHealthTab({
         category: meta.category || "Uncategorized",
         brand:    meta.brand    || "—",
         invAt,
+        // CSV-only extras (not rendered). movTag is the movement tier AT THIS
+        // LOCATION — minMax is res.dc on the DC tab and res.stores[ds] on DS
+        // tabs, and both carry mvTag, so this is genuinely per-location rather
+        // than a SKU-wide average. Used to build reverse TOs: excess stock is
+        // sent back to the DC, except for Fast/Super Fast SKUs which should
+        // stay put even when they look long.
+        movTag:      minMax.mvTag || "",
+        invAtLabel:  meta.inventorisedAt || "DS",
         stockOnHand, afs, ecs, min, max, ros, tag, reorderQty,
       }];
     });
@@ -906,9 +914,12 @@ export default function StockHealthTab({
             <button
               onClick={() => {
                 const isDCTab = selectedDS === "DC";
+                // Movement Tag + Inventorised At appended at the END so existing
+                // sheets/macros that reference column positions keep working.
                 const headers = ["SKU", "Item Name", "Brand", "Stock Health", "SoH", "AFS", "Min", "Max", "ROS", "Req Qty",
                   ...(!isDCTab ? ["DC Stock"] : []),
-                  "Rep. Qty", "Rec Qty", "Date", "Est. Delivery", "Ref #", "Status"];
+                  "Rep. Qty", "Rec Qty", "Date", "Est. Delivery", "Ref #", "Status",
+                  "Movement Tag", "Inventorised At"];
                 const rows = filteredRows.map(r => {
                   const isDCInv = !isDCTab && r.invAt === "dc";
                   const po = isDCInv ? null : dsPoData[r.sku];
@@ -935,6 +946,7 @@ export default function StockHealthTab({
                     r.reorderQty > 0 ? r.reorderQty : "",
                     ...(!isDCTab ? [dcStockVal] : []),
                     repQty, recQty, date, delivery, refNum, status,
+                    r.movTag, r.invAtLabel,
                   ];
                 });
                 const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
