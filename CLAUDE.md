@@ -165,8 +165,13 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 
 ## Replenishment Logic
 
-- Trading: 8 AM–8 PM. End of day: closing stock ≤ Min → restock to Max overnight from DC.
-- ~Midnight: TOs raised DC→DS. ~Noon next day: TOs arrive at DS.
+- Trading: 8 AM–8 PM IST. End of day: closing stock ≤ Min → restock to Max overnight from DC.
+- **TOs are raised DC→DS at ~2:30 PM and ~8:30 PM IST** (changed 2026-07-27; the old ~midnight run is
+  retired). Both are manual, by the DC team, via the TO tool. ~Noon next day: TOs arrive at DS.
+- **Scheduling consequence:** the 8:30 PM run can never use same-day targets — same-day invoices aren't
+  complete until 8:30 PM. So the model refresh runs *after* it (21:30 IST sync → ~22:00 engine) and
+  **both** of the next day's runs use targets built on complete data through the previous evening.
+  Don't design against a midnight deadline; it no longer exists.
 - Clusters: DS01+DS05 (C1), DS02+DC/Rampura (C2), DS03+DS04 (C3).
 
 ---
@@ -345,14 +350,36 @@ follows the mapping (DS02 is stocked ₹16.4L lighter).
 
 ### 16. Nightly model refresh from Zoho — Stages 4-7 (in progress)
 Automate the whole input chain so the model refreshes ~20:30 IST without a manual CSV.
-- **Stage 4 (next):** `sync-invoices` edge fn → shadow row `team_data/invoice_data_shadow`, cron 15:00
-  UTC (20:30 IST — clear of the :35–:50 stock/orders window, different row so no write contention).
-  Nothing reads it; compare against the manual CSV ~5 days. **Must resolve SKUs to current codes** and
-  map API `paid` → `Closed` (see the two ⚠ notes above).
-- **Stage 5:** cut over to the live row — append + trim to retention, re-pull a 3-day trailing window on
-  `last_modified_time` for edits/voids. CSV upload stays as manual override.
-- **Stage 6:** headless engine run → `params/toTargets` (~21:00 IST). Today that row is written *only*
-  by a browser pressing Apply, so the TO tool raises midnight TOs against whatever was last applied.
+- **Stage 4 (BUILT; cron written, NOT applied):** `sync-invoices` → `team_data/invoice_data_shadow`.
+  Nothing reads it. Migration `20260728000001` schedules **16:00 UTC (21:30 IST)** + resumes at :06/:12
+  — after the 20:30 IST TO run, clear of the :35–:50 stock/orders window, different row so no contention.
+  - **One date per invocation.** A day can be ~1,000 invoices and Zoho's speed varies ~3.5×
+    (289ms/call quiet, ~1s/call loaded), so a 2-day window can blow the 150s wall clock. Pass 1 takes
+    the first date and leaves the rest in `params/invoiceSyncCursor`; :06/:12 drain it.
+  - **CONCURRENCY 8, not 4.** `/invoices` sustains 4+ calls/sec — nothing like `inventorysummary`'s
+    ~8-per-MINUTE ceiling. 4 → 8 took a 336-invoice day from 85s to 14s.
+  - **15-min cooldown** (`_shared/syncCooldown.ts`) that deliberately does NOT block cursor drains.
+    ⚠ Added because repeated manual testing on 2026-07-27 pushed ~1,900 calls through the org in
+    15 min, collapsed throughput 24 → <4 calls/sec, and made `stock-sync-3` miss its 13:41 UTC cycle.
+    One nightly run of ~1,000 calls is fine; four runs in fifteen minutes is not.
+  - **Two write guards, both fail closed:** `assessCoverage` (unknown-SKU rate >1% ⇒ refuse) and
+    `mergeInvoiceRows.report.safe` (any date loss the retention trim doesn't explain ⇒ refuse).
+  - Verified against a real day (2026-07-26): 336 invoices → 648 rows, **identical to the CSV** — same
+    rows, same qty, **0 SKU×DS differences** — 0% unknown SKUs, 100% pin coverage. `reference_number`
+    confirmed as the `Shopify Order` field.
+  - Exit criteria: `node scripts/compare-invoice-shadow.mjs` clean ~5 consecutive days.
+- **Stage 5:** point the sync at the live row — a one-line change, by which time the merge path will
+  have run nightly for days. CSV upload stays as a manual override.
+  - **⚠ APPEND-ONLY IS A DATA-SAFETY RULE, NOT AN OPTIMISATION.** The current Zoho org has no invoices
+    before **2026-07-01** (org migrated; the old Books org is retired and we are not wiring it up).
+    Everything earlier exists ONLY in the Supabase payload, hand-uploaded from CSV — the API cannot
+    reproduce it, so a full-window rebuild would destroy it permanently. Enforced by
+    `mergeInvoiceRows`, not merely intended.
+  - Self-sufficiency arrives once the retention window starts on/after 2026-07-01: **~14 Aug 2026** at
+    45-day retention, **~28 Sep 2026** at 90-day.
+- **Stage 6:** headless engine run → `params/toTargets` at **~22:00 IST**, after the invoice sync.
+  Today that row is written *only* by a browser pressing Apply, so the TO tool runs against whatever an
+  admin last applied. Target the next day's 2:30 PM run — there is no midnight run any more.
 - **Stage 7:** SKU Master (`/items`) + Purchase Prices from Zoho. Floors and Dead Stock stay manual —
   ops judgement, not Zoho data.
 
