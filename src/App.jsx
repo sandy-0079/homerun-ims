@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase, loadFromSupabase, saveToSupabase } from "./supabase";
+import { loadParamConfigRows } from "./paramConfigRows";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
@@ -2878,32 +2879,14 @@ export default function App(){
         try{const v=localStorage.getItem("coreOverrides");if(v)setCoreOverrides(JSON.parse(v));}catch{}
       }
 
-      // Load networkConfigs from Supabase
-      const sbNetCfg = await loadFromSupabase("params", "networkConfigs");
-      setNetworkConfigs(sbNetCfg || {});
-
-      // Load plywoodNetworkConfig and embed into params so all runEngine calls get it automatically
-      const sbPnc = await loadFromSupabase("params", "plywoodNetworkConfig");
-      if (sbPnc) {
-        setParams(prev => ({ ...prev, plywoodNetworkConfig: sbPnc }));
-        setSaved(prev => ({ ...prev, plywoodNetworkConfig: sbPnc }));
-      }
-
-      // Load plywoodNetworkV2Config (v2 capacity-first allocation) — same pattern
-      const sbPnc2 = await loadFromSupabase("params", "plywoodNetworkV2Config");
-      if (sbPnc2) {
-        setParams(prev => ({ ...prev, plywoodNetworkV2Config: sbPnc2 }));
-        setSaved(prev => ({ ...prev, plywoodNetworkV2Config: sbPnc2 }));
-      }
-
-      // Load pincodeMap (demand attribution) — own row, same pattern. Kept OUT of
-      // params/global deliberately: that row is written wholesale on every Apply
-      // and shallow-merged on load, so a new key there is the fixedUnitFloor trap.
-      // Absent row => runEngine sees no pincodeConfig => location mode, unchanged.
-      const sbPin = await loadFromSupabase("params", "pincodeMap");
-      if (sbPin) {
-        setParams(prev => ({ ...prev, pincodeConfig: sbPin }));
-        setSaved(prev => ({ ...prev, pincodeConfig: sbPin }));
+      // Own-row configs (plywood v1/v2, pincode attribution, DS capacities).
+      // Single source of truth — see src/paramConfigRows.js for why.
+      const { extra: cfgExtra, networkConfigs: cfgNet } = await loadParamConfigRows(
+        (id) => loadFromSupabase("params", id), DS_LIST);
+      setNetworkConfigs(cfgNet);
+      if (Object.keys(cfgExtra).length) {
+        setParams(prev => ({ ...prev, ...cfgExtra }));
+        setSaved(prev => ({ ...prev, ...cfgExtra }));
       }
     })();
   },[]);
@@ -3048,13 +3031,9 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   // Load params first, then run engine with correct params
   const sbParams = await loadFromSupabase("params","global");
   const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
-  const sbPncAuto = await loadFromSupabase("params", "plywoodNetworkConfig");
-  if (sbPncAuto) activeParams.plywoodNetworkConfig = sbPncAuto;
-  const sbPnc2Auto = await loadFromSupabase("params", "plywoodNetworkV2Config");
-  if (sbPnc2Auto) activeParams.plywoodNetworkV2Config = sbPnc2Auto;
-  const sbNetCfgAuto = await loadFromSupabase("params", "networkConfigs");
-  if (sbNetCfgAuto) { setNetworkConfigs(sbNetCfgAuto); activeParams.dsCapacities = Object.fromEntries(DS_LIST.map(ds=>[ds,{thick:sbNetCfgAuto[ds]?.thick?.capacity||0,thin:sbNetCfgAuto[ds]?.thin?.capacity||0}])); }
-  else setNetworkConfigs({});
+  const cfgAuto = await loadParamConfigRows((id) => loadFromSupabase("params", id), DS_LIST);
+  Object.assign(activeParams, cfgAuto.extra);
+  setNetworkConfigs(cfgAuto.networkConfigs);
   setParams(activeParams);setSaved(activeParams);
 
   setTimeout(()=>{
@@ -3081,13 +3060,9 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
       // Load params first, then run engine with correct params
       const sbParams = await loadFromSupabase("params","global");
       const activeParams = sbParams ? {...DEFAULT_PARAMS,...sbParams} : DEFAULT_PARAMS;
-      const sbPncBundle = await loadFromSupabase("params", "plywoodNetworkConfig");
-      if (sbPncBundle) activeParams.plywoodNetworkConfig = sbPncBundle;
-      const sbPnc2Bundle = await loadFromSupabase("params", "plywoodNetworkV2Config");
-      if (sbPnc2Bundle) activeParams.plywoodNetworkV2Config = sbPnc2Bundle;
-      const sbNetCfgBundle = await loadFromSupabase("params", "networkConfigs");
-      if (sbNetCfgBundle) { setNetworkConfigs(sbNetCfgBundle); activeParams.dsCapacities = Object.fromEntries(DS_LIST.map(ds=>[ds,{thick:sbNetCfgBundle[ds]?.thick?.capacity||0,thin:sbNetCfgBundle[ds]?.thin?.capacity||0}])); }
-      else setNetworkConfigs({});
+      const cfgBundle = await loadParamConfigRows((id) => loadFromSupabase("params", id), DS_LIST);
+      Object.assign(activeParams, cfgBundle.extra);
+      setNetworkConfigs(cfgBundle.networkConfigs);
       setParams(activeParams);setSaved(activeParams);
 
       setTimeout(()=>{
