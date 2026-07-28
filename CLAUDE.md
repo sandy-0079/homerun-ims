@@ -1,5 +1,11 @@
 # CLAUDE.md — HomeRun IMS
 
+> 🚧 **IN-FLIGHT WORK — read [`docs/HANDOFF-2026-07-28.md`](docs/HANDOFF-2026-07-28.md) first** if you
+> are touching the nightly model refresh (Stages 4–7), the invoice/catalogue syncs, or pincode
+> attribution. It records what is deployed-but-not-switched-on, tonight's expected events, verification
+> commands, rollback steps, and the open decisions. **Delete that file and this block once Stages 5–7
+> land** — this file is for durable knowledge, that one is for transient state.
+
 HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold.
 
 ---
@@ -46,6 +52,13 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
   - Both functions do a **fresh read immediately before writing** to prevent race condition from parallel runs.
   - Sync functions only read/write `team_data/global`. They never touch `team_data/invoice_data`.
 - **team_data row separation:** `invoiceData` lives in `team_data/invoice_data` (written once on CSV upload). All other app data + sync data lives in `team_data/global`. This keeps the global payload ~1-2MB vs ~7MB, preventing Supabase Disk IO budget exhaustion from hourly syncs.
+- **Row inventory (2026-07-28).** `team_data`: `global`, `invoice_data`,
+  `invoice_data_shadow` (Stage 4 target — **nothing reads it**),
+  `invoice_data_backup_20260728` (pre-Stage-5 safety net; the API cannot re-serve anything before
+  2026-07-01, so this is the only copy of Apr–Jun history). `params`: `global`, `paramsBackup`,
+  `plywoodNetworkConfig`, `plywoodNetworkV2Config`, `networkConfigs`, `pincodeMap` (attribution),
+  `toTargets`, `toAudit`, `toSnapshots`, `zohoItemIds`, `binLocations`, `syncLock`,
+  `invoiceSyncStatus`, `invoiceSyncCursor`, `catalogueSyncStatus`.
 - **CSV upload → model re-run is safe:** `saveTeamData` only writes `invoiceData` to the `invoice_data` row when it changes; global row always uses read-merge-write (`...existing` spread) so PO/TO caches and stock data are never wiped by an upload.
 - **Edge Function deploy:** plain `supabase functions deploy sync-stock` / `sync-orders` is fine.
   (An older note here required `--no-verify-jwt` — obsolete since the cron jobs started sending the
@@ -319,6 +332,17 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 - **Branch-level merge:** sync-stock merges `stockData[sku][ds]` at branch level on write — never replaces the full stockData object (would wipe sibling functions' branch data).
 - **Status codes:** 546 = Supabase killed the function (wall clock timeout); 500 = function caught an error and returned cleanly.
 - **Rate limit recovery:** after 429 abuse, recovery takes 60+ min. Never rapid-deploy or trigger repeated manual syncs.
+- **⚠ Incident 2026-07-28 (self-inflicted, worth not repeating):** testing `sync-invoices` by hand pushed
+  **~1,900 Zoho calls through the org in 15 minutes**. Throughput collapsed from 24 to under 4 calls/sec
+  (the 429 backoff in `zohoClient` compounding) and **`stock-sync-3` missed its 13:41 UTC cycle** —
+  DS04/DS05 went an hour stale. It self-healed the next cycle. Lesson: `/invoices` tolerating 4 calls/sec
+  says nothing about total pressure on the org while five other crons share it. One run, then wait.
+  `_shared/syncCooldown.ts` now enforces a 15-min minimum between fresh runs (`force: true` bypasses it —
+  don't).
+- **⚠ `diag-items` (deployed 2026-07-15, still live) is labelled TEMPORARY and should be deleted.** It
+  also gives a **misleading** answer about item custom fields: it inspects `custom_fields[]` and
+  `custom_field_hash`, neither of which `/items` uses, and reports "no custom fields" while seven arrive
+  as top-level `cf_*` keys. See the Zoho ITEMS + PRICES section.
 - **Manual Sync Now (reworked 2026-07-09, ships with next frontend deploy):** claims the shared sync session (source `ims`), runs the 4 cron groups with a 90s min gap between starts (+ sync-orders parallel with the first), one paced retry for failed groups, releases in `finally`. Button greys out while the TO tool holds the session (20s poll of `params/syncLock`) or during the 15-min cooldown; per-group failures surface next to the button.
 - **Cold-cache deadlock:** prevented by 50-call cap on transferred-today detail calls + read-merge-write in `saveTeamData` (App.jsx).
 - OPTIONS preflight: handler checks `req.method === 'OPTIONS'` and returns immediately — prevents browser CORS preflight from running the full sync.
@@ -372,6 +396,16 @@ Now a real **backtest** inside the Plywood v2 tab (OOS Sim view): upload an invo
 ### 3. Stock Health Tab ✅ Shipped (2026-05-14), updated (2026-05-21)
 Columns: SoH, AFS, DC Stock, Min, Max, ROS, Req Qty, Rep. Qty, Rec Qty, Date, Est. Delivery, Ref #, Status. ECS = SoH (SoH is the tag-coloured/sortable cell; AFS is a plain reference column). DC-inv SKUs show TO data on DS tabs (Picking/In Transit/Transferred); DS-inv SKUs show PO data. KPI cards have dual pill rows (TO above PO, TO pills include Transferred). TO/PO filters mutually exclusive. Transferred TOs show "Transferred" status with Rec Qty populated. ⓘ tooltip, 85% zoom, item name hover.
 - DC Stock column: DS tabs only, between Req Qty and Rep. Qty. Shows DC SoH for DC-inv SKUs (green = stock available, red = zero). Follows Accounting/Physical toggle. DS-inv SKUs show —.
+- **CSV download carries two extra columns the table does not render (added 2026-07-28):**
+  **Movement Tag** and **Inventorised At**, appended at the END so existing sheets/macros keyed on
+  column position keep working. For building **reverse TOs** — send excess back to the DC, but leave
+  Fast/Super Fast SKUs in place. Movement Tag is **per-location** (`res.stores[ds].mvTag`, or
+  `res.dc.mvTag` on the DC tab), which matters: **33% of SKUs stocked at 2+ DSes carry a different tag
+  by location** (e.g. `K825K` is Fast at DS01 and Super Slow at DS05), so a SKU-wide tag would keep
+  dead stock exactly where you least want it. `N/A` = no sales at that location in the window — the
+  best reverse-TO candidates, and better than "Super Slow" which at least sold something.
+  Caveat: on the **DC tab** the DC-level movement calc collapses Fast into Super Fast, so a bare "Fast"
+  never appears there.
 - Picking pill: yellow (matching Pending Approval colour).
 
 ### 9. DC Stock indicator in DS tabs ✅ Shipped (2026-05-21)
