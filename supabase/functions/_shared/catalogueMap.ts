@@ -12,14 +12,16 @@
 // everything for Supplier ones — and Zoho now owns it, so the stored value is no
 // longer a safety net. Watch invAtChanged.toSupplier in catalogueSyncStatus.
 //
-// Live distribution is 2,004 DC / 58 Supplier / 12 DS, and the CSV upload path
-// defaults a missing value to "DS". So a sync that treated Zoho as authoritative
-// today would reclassify ~2,000 SKUs DC -> DS and zero the entire DC plan.
+// HISTORY, for why the logic is shaped this way: before the field existed, live was
+// 2,004 DC / 58 Supplier / 12 DS while the CSV upload path defaulted a missing value
+// to "DS" — so a sync that had treated Zoho as authoritative then would have
+// reclassified ~2,000 SKUs DC -> DS and zeroed the entire DC plan.
 //
-// Therefore: Zoho wins ONLY where it actually has a value. Otherwise the stored
-// value stands. As the field gets populated, Zoho progressively takes over with
-// no cutover moment — and `report` makes that migration observable rather than
-// invisible.
+// Hence the rule, which still holds: Zoho wins ONLY where it actually has a value,
+// otherwise the stored value stands, otherwise DEFAULT_INV_AT with the SKU reported.
+// That let Zoho take over progressively with no cutover moment, and it is exactly why
+// the handover on 2026-07-29 was a non-event — 2,092 values arrived and every one
+// matched what was already stored.
 
 // ── STATUS OWNERSHIP (decided 2026-07-29)
 //
