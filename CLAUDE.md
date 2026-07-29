@@ -424,10 +424,18 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
   (`security find-generic-password -s "Supabase CLI" -w`, `go-keyring-base64:` prefixed). **Send a browser
   `User-Agent`** or Cloudflare answers `403 error code: 1010`. Cap queries at 1000 rows — split by time
   window to attribute logs per invocation.
-- **⚠ `diag-items` (deployed 2026-07-15, still live) is labelled TEMPORARY and should be deleted.** It
-  also gives a **misleading** answer about item custom fields: it inspects `custom_fields[]` and
-  `custom_field_hash`, neither of which `/items` uses, and reports "no custom fields" while seven arrive
-  as top-level `cf_*` keys. See the Zoho ITEMS + PRICES section.
+- **Deployed function inventory (2026-07-29).** Live and load-bearing: `sync-stock`, `sync-orders`,
+  `create-to`, `sync-invoices`, `sync-catalogue`. **Dead but still deployed:** `zoho-invoices`,
+  `zoho-prices`, `zoho-skumaster` — Books-era importers pointing at the retired org (60044091518),
+  superseded by `sync-invoices`/`sync-catalogue`. Verified 2026-07-29 to have **zero** code references
+  in this repo or `homerun-to` and to be called by no cron; the only hit is a comment. Safe to delete
+  whenever; source stays committed.
+  - `diag-items` was **deleted 2026-07-29** (verified unreferenced first). It had been labelled
+    TEMPORARY since 2026-07-15 and, worse, gave a *misleading* answer: it inspected `custom_fields[]`
+    and `custom_field_hash`, neither of which `/items` uses, reporting "no custom fields" while seven
+    arrive as top-level `cf_*` keys. **A diagnostic that checks the wrong shape is worse than none** —
+    it produced a confident negative that stalled the `cf_inventorised_at` work. Its lesson lives on in
+    the Zoho ITEMS + PRICES section; don't rebuild it.
 - **Manual Sync Now (reworked 2026-07-09, ships with next frontend deploy):** claims the shared sync session (source `ims`), runs the 4 cron groups with a 90s min gap between starts (+ sync-orders parallel with the first), one paced retry for failed groups, releases in `finally`. Button greys out while the TO tool holds the session (20s poll of `params/syncLock`) or during the 15-min cooldown; per-group failures surface next to the button.
 - **Cold-cache deadlock:** prevented by 50-call cap on transferred-today detail calls + read-merge-write in `saveTeamData` (App.jsx).
 - OPTIONS preflight: handler checks `req.method === 'OPTIONS'` and returns immediately — prevents browser CORS preflight from running the full sync.
