@@ -900,7 +900,14 @@ function OOSSimView({ invoiceData, skuMaster, savedCfg, hasPublished, uploaded, 
       const rows = parseInvoiceCsv(await file.text());
       if (!rows.length) { setUploaded(null); setError("No usable invoice rows — need Closed/Overdue invoices with a SKU and Quantity."); }
       else setUploaded({ rows, fileName: file.name });
-    } catch (err) { console.error(err); setUploaded(null); setError("Couldn't parse that file — expected the Zoho invoice CSV (same format as Upload Data)."); }
+    } catch (err) {
+      console.error(err);
+      setUploaded(null);
+      // Surface the parser's own message when it has one — parseInvoiceCsv rejects a
+      // bad date format with an actionable explanation, and replacing that with a
+      // generic string is what makes a clear failure look mysterious.
+      setError(err?.message || "Couldn't parse that file — expected the Zoho invoice CSV (same format as Upload Data).");
+    }
     if (e.target) e.target.value = "";
   };
 

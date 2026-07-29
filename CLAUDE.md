@@ -33,6 +33,28 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 ## Data Model & Key Decisions
 
 - Invoice CSV (Zoho export) replaces entirely on upload — no merge. Engine uses whatever period admin sets.
+- **⚠⚠ INVOICE DATES MUST BE `YYYY-MM-DD`. A locale-formatted export took prod down on 2026-07-29.**
+  An export wrote the two newest days as `DD/MM/YYYY` (27/07/2026, 28/07/2026 — 2,458 rows) while the
+  older 88 days were ISO. `parseInvoiceCsv` stored `Invoice Date` verbatim with no validation, so the
+  mixed set reached Supabase. Then:
+  1. String-sorting puts `28/07/2026` **after** `2026-07-26` (`'0' < '8'` at index 1), so the malformed
+     value becomes `allDates[allDates.length-1]` — "the latest date".
+  2. `plywoodNetwork.js:250` does `new Date(latest)` → **Invalid Date**, then `.toISOString()` throws
+     `RangeError: Invalid time value`.
+  3. That threw inside `runEngine` during App.jsx's load effect → React unmounted → **blank white page
+     for EVERY user on EVERY page load**, because the engine recomputes client-side each load. Not one
+     bad session.
+  4. **The UI could not fix it** — the app crashed before rendering the Upload tab. Recovery required
+     restoring `team_data/invoice_data` from a backup outside the app.
+  - **Guarded since (`utils.js parseInvoiceCsv`): a non-ISO or impossible date now THROWS**, naming the
+    offending values and row count, before anything is stored. Callers must catch — `handleInvoice`
+    (App.jsx) alerts and `PlywoodNetworkV2Tab` surfaces the message; an uncaught throw would leave the
+    upload spinner stuck forever. Deliberately **rejects rather than auto-corrects**: DD/MM vs MM/DD is
+    ambiguous for days ≤12, and guessing wrong shifts demand by weeks with no visible symptom.
+  - **Generalisable:** `plywoodV2/demand.js:52` and `PlywoodNetworkTab.jsx:461,1223` share the same
+    `new Date(latest).toISOString()` pattern. Any single malformed row in a shared `team_data` row can
+    take the whole app down for everyone, and lock you out of the tool that would fix it. **Validate at
+    the boundary, before the write.**
 - **⚠ Invoice exports MUST resolve line items to the item's CURRENT SKU code.** Zoho re-coded the
   catalogue ~2026-07-01 (`WHI-BIR-CEM-50K` → `UVJQ9`). An export that preserves the code *as at invoice
   time* splits ~1,090 products across two identities; the pre-July half lands on codes absent from

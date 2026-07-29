@@ -3168,15 +3168,25 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     setUploading("invoiceData");
     // Replace entirely — no merge, no rolling cap. Store all data Admin provides.
     // Shared with the OOS Simulation via parseInvoiceCsv so the two can't drift.
-    const filtered=parseInvoiceCsv(await file.text());
-    setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
-    await saveTeamData({invoiceData:filtered});
-    setModelDirty(true);
-    setLoaded(true);
-    setUploadedFiles(prev=>({...prev,invoiceData:file.name}));
-    addChange(`Invoice data uploaded: ${filtered.length.toLocaleString()} rows`);
-    setUploading(null);
-    e.target.value="";
+    //
+    // parseInvoiceCsv THROWS on a bad date format, and that must be caught here.
+    // On 2026-07-29 an export with DD/MM/YYYY dates was stored unvalidated; the
+    // malformed date sorted last, plywoodNetwork.js called
+    // new Date(latest).toISOString() on it, and the RangeError inside runEngine
+    // blanked the app for every user on every page load — including this Upload
+    // tab, so it could not be fixed from the UI. Refuse the file instead.
+    try{
+      const filtered=parseInvoiceCsv(await file.text());
+      setInv(filtered);LS.set("invoiceData",JSON.stringify(filtered));
+      await saveTeamData({invoiceData:filtered});
+      setModelDirty(true);
+      setLoaded(true);
+      setUploadedFiles(prev=>({...prev,invoiceData:file.name}));
+      addChange(`Invoice data uploaded: ${filtered.length.toLocaleString()} rows`);
+    }catch(err){
+      // Nothing has been written: the throw happens before setInv/saveTeamData.
+      alert(`Invoice upload rejected.\n\n${err.message}`);
+    }finally{ setUploading(null); e.target.value=""; }
   },[invoiceData,skuMaster,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
 
   const handleSKU=useCallback(async(e)=>{
