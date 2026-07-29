@@ -15,6 +15,26 @@
 // no cutover moment — and `report` makes that migration observable rather than
 // invisible.
 
+// ── STATUS OWNERSHIP (decided 2026-07-29)
+//
+// "We need Min and Max only for the active SKUs on Zoho. SKUs with any other status
+// — Inactive, Confirmation Pending — are immaterial to us."
+//
+// So Zoho is authoritative and there is no local vocabulary to preserve: a stored
+// `Confirmation Pending` deliberately loses to Zoho's `active`. Every downstream
+// filter is `(status || "Active").toLowerCase() === "active"`, so this single field
+// decides whether a SKU is stocked at all — which drives the two rules below.
+//
+//   1. A MISSING status is NOT active. Absent data is not evidence, and defaulting
+//      to active would stock a SKU on no information. (Same reasoning as
+//      isSellableStatus rejecting an empty invoice status.)
+//   2. A SKU absent from the Zoho pull is RETAINED and marked not-active, never
+//      dropped. A partial /items response is indistinguishable from a deletion, and
+//      dropping the SKU would also make its invoice rows unknown to assessCoverage —
+//      the guard that refuses to write invoice data at all. Retaining gets the
+//      no-Min/Max outcome while keeping category (which drives strategy dispatch).
+const NOT_ACTIVE = "Inactive"; // matches the live master's spelling
+
 const CF_INVENTORISED_AT = "cf_inventorised_at";
 const DEFAULT_INV_AT = "DC"; // 96% of the live master
 
@@ -66,14 +86,27 @@ export function mapItemsToMaster(items: any[], currentMaster: Record<string, any
       name: it.name ?? "",
       category: it.category_name ?? it.category ?? "",
       brand: it.brand ?? "",
-      status: it.status ?? "active",
+      // Zoho verbatim, but a missing status is not active — see STATUS OWNERSHIP.
+      status: (it.status ?? "").toString().trim() || NOT_ACTIVE,
       inventorisedAt,
     };
   }
 
+  // Carry forward anything Zoho did not return, marked not-active. Never drop.
+  const absentFromZoho: string[] = [];
+  for (const [sku, entry] of Object.entries(currentMaster || {})) {
+    if (master[sku]) continue;
+    absentFromZoho.push(sku);
+    master[sku] = { ...(entry as MasterEntry), sku, status: NOT_ACTIVE };
+  }
+
   return {
     master,
-    report: { items: Object.keys(master).length, invAtFromZoho, invAtFromStored, newSkusDefaulted },
+    report: {
+      items: Object.keys(master).length,
+      invAtFromZoho, invAtFromStored, newSkusDefaulted,
+      absentFromZoho,
+    },
   };
 }
 
@@ -120,6 +153,25 @@ export function assessMasterChange(
 
   if (after < before * (1 - thresholdPct / 100)) {
     return { safe: false, reason: "master_shrank", before, after, dBefore, dAfter };
+  }
+
+  // Status guard, added 2026-07-29 with the "Zoho owns status" decision.
+  //
+  // Until now this function watched only the inventorisedAt mix and the row count. A
+  // pull that flipped SKUs to inactive changes NEITHER, so it passed every check and
+  // silently zeroed their Min/Max. With 2,084 of 2,092 currently active, that is
+  // most of the catalogue riding on an unguarded field. Compared case-insensitively
+  // because the CSV path writes "Active" and Zoho writes "active".
+  const activePct = (m: Record<string, any>, n: number) =>
+    n === 0 ? 0 : Object.values(m || {})
+      .filter((v: any) => (v?.status || "").toString().trim().toLowerCase() === "active").length / n * 100;
+  const aBefore = activePct(oldMaster, before), aAfter = activePct(newMaster, after);
+  if (Math.abs(aAfter - aBefore) > thresholdPct) {
+    return {
+      safe: false, reason: "active_share_shift",
+      activePctBefore: +aBefore.toFixed(2), activePctAfter: +aAfter.toFixed(2),
+      before, after, dBefore, dAfter,
+    };
   }
   // Compare each bucket as a share of the whole, so growth doesn't trip it.
   for (const k of new Set([...Object.keys(dBefore), ...Object.keys(dAfter)])) {

@@ -230,7 +230,29 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
   reason — don't trust it.) Good news: because they DO come back on the list, `cf_inventorised_at`
   will cost ~11 calls, not 2,074 detail calls.
 - `/items` list returns `sku`, `name`, `category_name`, `brand`, `status` — the Books-era field names
-  still hold post-migration. 2,083 items over ~11 pages, ~15s.
+  still hold post-migration. 2,093 items over ~11 pages, ~16s (2,083 on 2026-07-28 — it grows).
+- **⚠ Item `status` vocabulary is NOT just `active`/`inactive` — `confirmation_pending` exists too**
+  (measured 2026-07-29; an earlier note here claimed otherwise and led to the wrong conclusion). Values
+  are **lowercase**; the CSV master writes `Active`/`Confirmation Pending`. Every downstream filter is
+  `(status || "Active").toLowerCase() === "active"`, so case is harmless — but **compare
+  case-insensitively in any diagnostic**, or a status diff reports all ~2,092 SKUs as changed and buries
+  the few that matter.
+  - Consequence: the master's `Confirmation Pending` values were **mirroring Zoho**, not a hand-made
+    local override. Zoho has since confirmed 4 of the 5, so the CSV master was simply **stale**.
+- **Status ownership (decided 2026-07-29): only SKUs `active` IN ZOHO get Min/Max.** Any other status is
+  immaterial — Zoho wins, no local vocabulary is preserved. Two safety rules follow, because this single
+  field decides whether a SKU is stocked at all:
+  - **A missing status is NOT active** (`catalogueMap.ts`). Absent data is not evidence; defaulting to
+    active would stock a SKU on no information.
+  - **A SKU absent from the Zoho pull is RETAINED and marked `Inactive`, never dropped.** A partial
+    `/items` response is indistinguishable from a deletion. Dropping also makes the SKU's invoice rows
+    unknown to `assessCoverage` — the guard that refuses to write invoice data — silently coupling the
+    two syncs. Retaining gives the no-Min/Max outcome while keeping `category`, which drives strategy
+    dispatch. Reported as `report.absentFromZoho`.
+  - **`assessMasterChange` now guards the active share too** (`reason: "active_share_shift"`). It
+    previously watched only the `inventorisedAt` mix and the row count — and a pull that flipped SKUs to
+    inactive changes *neither*, so it passed every check while zeroing their Min/Max. With ~99.8% of the
+    catalogue active, that was most of the master riding on an unguarded field.
 - `reports/purchasesbyitem` **does** exist on `/inventory/v1/`. `average_price` is Zoho-computed over
   the requested window — not something we derive.
 - **⚠ PRICES MUST MERGE, NEVER REPLACE.** That report only sees purchases made in *this* org, i.e.

@@ -51,6 +51,67 @@ describe("mapItemsToMaster", () => {
     expect(report.newSkusDefaulted).toEqual(["NEW"]);
   });
 
+  // ── Status ownership, decided 2026-07-29: "we need Min and Max only for the active
+  //    SKUs on Zoho. SKUs with any other status are immaterial to us."
+  //
+  //    So Zoho is authoritative for status and there is no local vocabulary to
+  //    preserve — `Confirmation Pending` deliberately loses to Zoho. But that makes
+  //    status the field that decides whether a SKU is stocked AT ALL, so absence must
+  //    fail safe and disappearance must not be silent.
+  describe("status ownership (Zoho authoritative)", () => {
+    it("takes Zoho's status verbatim, including inactive", () => {
+      const { master } = mapItemsToMaster([item({ status: "inactive" })], {});
+      expect(master.A.status).toBe("inactive");
+    });
+
+    it("lets Zoho's active override a stored Confirmation Pending", () => {
+      // The 5 live SKUs (29ZVW, E3MPF, TENX4, WUTDS, XP5EV). Sandy's call: Zoho wins.
+      const { master } = mapItemsToMaster([item({ status: "active" })], {
+        A: { sku: "A", status: "Confirmation Pending", inventorisedAt: "DC" },
+      });
+      expect(master.A.status).toBe("active");
+    });
+
+    it("treats a MISSING status as not-active rather than defaulting it in", () => {
+      // Same principle as isSellableStatus rejecting an empty status: absent data is
+      // not evidence. Defaulting to active would stock a SKU on no information, and
+      // under the new rule that default decides whether it gets Min/Max at all.
+      const { master } = mapItemsToMaster([item({ status: undefined })], {});
+      expect(master.A.status.toLowerCase()).not.toBe("active");
+    });
+  });
+
+  describe("SKUs absent from the Zoho pull", () => {
+    const stored = {
+      A: { sku: "A", name: "Item A", category: "Cement", brand: "ACC", status: "Active", inventorisedAt: "DC" },
+      GONE: { sku: "GONE", name: "Old Item", category: "Tiling", brand: "MYK", status: "Active", inventorisedAt: "DC" },
+    };
+
+    it("retains a stored SKU that Zoho did not return", () => {
+      // A partial /items response is indistinguishable from a deletion. Dropping the
+      // SKU would also make its invoice rows unknown to assessCoverage, which is the
+      // guard that refuses to write invoice data at all.
+      const { master } = mapItemsToMaster([item()], stored);
+      expect(master.GONE).toBeDefined();
+      expect(master.GONE.category).toBe("Tiling");
+    });
+
+    it("marks the retained SKU not-active so it gets no Min/Max", () => {
+      const { master } = mapItemsToMaster([item()], stored);
+      expect(master.GONE.status.toLowerCase()).not.toBe("active");
+    });
+
+    it("names them in the report so a real deletion is visible", () => {
+      const { report } = mapItemsToMaster([item()], stored);
+      expect(report.absentFromZoho).toEqual(["GONE"]);
+    });
+
+    it("does not invent absences when Zoho returns everything", () => {
+      const { report } = mapItemsToMaster([item(), item({ sku: "GONE" })], stored);
+      expect(report.absentFromZoho).toEqual([]);
+    });
+  });
+
   it("reports where inventorisedAt came from, so the Zoho migration is observable", () => {
     const current = { A: { sku: "A", inventorisedAt: "DC" }, B: { sku: "B", inventorisedAt: "DC" } };
     const items = [
@@ -109,6 +170,35 @@ describe("assessMasterChange", () => {
 
   it("fails on an empty result — a pull returning nothing is not a valid catalogue", () => {
     expect(assessMasterChange(m(100, "DC"), {}, 5).safe).toBe(false);
+  });
+
+  // Added 2026-07-29. Once Zoho owns `status`, it decides whether a SKU is stocked at
+  // all — but this guard only ever watched the inventorisedAt mix and the row count.
+  // A pull that flipped SKUs to inactive changes NEITHER, so it passed every check
+  // and silently zeroed their Min/Max. 2,084 of 2,092 are active, so the exposure is
+  // most of the catalogue.
+  it("FAILS a mass flip of active SKUs to inactive", () => {
+    const many = (n: number, status: string, from = 0) =>
+      Object.fromEntries(Array.from({ length: n }, (_, i) => [`S${i + from}`, { status, inventorisedAt: "DC" }]));
+    const before = many(100, "Active");
+    const after = { ...many(80, "Active"), ...many(20, "Inactive", 80) };
+    expect(assessMasterChange(before, after, 5).safe).toBe(false);
+  });
+
+  it("allows a small, ordinary status change", () => {
+    const many = (n: number, status: string, from = 0) =>
+      Object.fromEntries(Array.from({ length: n }, (_, i) => [`S${i + from}`, { status, inventorisedAt: "DC" }]));
+    const before = many(100, "Active");
+    const after = { ...many(98, "Active"), ...many(2, "Inactive", 98) };
+    expect(assessMasterChange(before, after, 5).safe).toBe(true);
+  });
+
+  it("treats Active and active as the same status when measuring the shift", () => {
+    // The CSV path writes "Active"; Zoho writes "active". A case difference must not
+    // read as the entire catalogue being deactivated.
+    const before = { A: { status: "Active", inventorisedAt: "DC" }, B: { status: "Active", inventorisedAt: "DC" } };
+    const after = { A: { status: "active", inventorisedAt: "DC" }, B: { status: "active", inventorisedAt: "DC" } };
+    expect(assessMasterChange(before, after, 5).safe).toBe(true);
   });
 
   it("passes on first run when there is no prior master to compare against", () => {

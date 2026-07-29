@@ -108,10 +108,29 @@ Deno.serve(async (req) => {
     const { prices, report: mergeReport } = mergePrices(currentPrices, zohoPrices);
     const change = assessMasterChange(currentMaster, master, CHANGE_LIMIT_PCT);
 
+    // Status is now the field that decides whether a SKU is stocked at all (Zoho owns
+    // it, 2026-07-29), so make every status move visible rather than inferable. This
+    // is what tells you whether Zoho calls the 5 parked SKUs active.
+    const statusMix = (m: Record<string, any>) =>
+      Object.values(m || {}).reduce((d: Record<string, number>, v: any) => {
+        const k = (v?.status ?? "").toString().trim() || "(blank)";
+        d[k] = (d[k] || 0) + 1;
+        return d;
+      }, {});
+    // Case-insensitive: the CSV path writes "Active" and Zoho writes "active", so a
+    // literal comparison reports all ~2,092 SKUs as changed and buries the handful
+    // that MEANINGFULLY changed. Downstream filters all lowercase anyway.
+    const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
+    const statusChanged = Object.keys(master)
+      .filter((s) => currentMaster[s] && norm(currentMaster[s].status) !== norm(master[s].status))
+      .map((s) => ({ sku: s, from: currentMaster[s].status, to: master[s].status }));
+
     const stats = {
       itemsFetched: items.length,
       itemFieldSample,
       master: itemReport,
+      statusMix: { before: statusMix(currentMaster), after: statusMix(master) },
+      statusChanged: { count: statusChanged.length, sample: statusChanged.slice(0, 25) },
       prices: { fromZoho: priceReport, merged: mergeReport, window: { fromDate, toDate }, error: priceError },
       change,
       currentCounts: { master: Object.keys(currentMaster).length, prices: Object.keys(currentPrices).length },
