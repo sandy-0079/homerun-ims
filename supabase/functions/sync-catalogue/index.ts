@@ -152,6 +152,27 @@ Deno.serve(async (req) => {
       // moves Min/Max on unchanged demand. This counts the SKUs that actually re-tier.
       priceTags: assessPriceTagChanges(currentPrices, prices, priceTiers),
       statusChanged: { count: statusChanged.length, sample: statusChanged.slice(0, 25) },
+      // inventorisedAt is the highest-consequence field in the master: Supplier zeroes
+      // Min/Max at EVERY location, DS zeroes the DC. The distribution alone can hide a
+      // swap (58 SKUs leaving Supplier while 58 others join it nets to zero), so report
+      // the actual per-SKU transitions.
+      invAtChanged: (() => {
+        const ch = Object.keys(master)
+          .filter((sku) => currentMaster[sku] &&
+            norm(currentMaster[sku].inventorisedAt) !== norm(master[sku].inventorisedAt))
+          .map((sku) => ({ sku, from: currentMaster[sku].inventorisedAt, to: master[sku].inventorisedAt }));
+        return {
+          count: ch.length,
+          byTransition: ch.reduce((d: Record<string, number>, c) => {
+            const k = `${c.from} -> ${c.to}`;
+            d[k] = (d[k] || 0) + 1;
+            return d;
+          }, {}),
+          // Anything becoming Supplier stops being stocked anywhere — list those in full.
+          toSupplier: ch.filter((c) => norm(c.to) === "supplier").map((c) => c.sku),
+          sample: ch.slice(0, 25),
+        };
+      })(),
       prices: { fromZoho: priceReport, merged: mergeReport, window: { fromDate, toDate }, error: priceError },
       change,
       currentCounts: { master: Object.keys(currentMaster).length, prices: Object.keys(currentPrices).length },

@@ -1,10 +1,16 @@
 // Pure mapping for the two non-invoice model inputs: SKU Master and Purchase
 // Prices. Kept free of fetch/Deno so it is unit-tested with the rest of the suite.
 //
-// ⚠ INVENTORISED AT DOES NOT EXIST IN ZOHO YET (2026-07-28). It is currently set
-// by hand in the SKU Master CSV, and it is the highest-consequence field in the
-// master: the engine's final normalization pass zeroes DC targets for
-// DS-inventorised SKUs and zeroes everything for Supplier ones.
+// ✅ cf_inventorised_at NOW EXISTS AND IS POPULATED (verified 2026-07-29 by dry run:
+// invAtFromZoho 2,092, invAtFromStored 0, and ZERO per-SKU reclassification — Zoho
+// matched the hand-maintained master exactly). The fallback below is therefore no
+// longer load-bearing for the migration it was written for, but is kept: it still
+// covers a SKU whose field is blank, and it is what made the handover a non-event.
+//
+// It remains the highest-consequence field in the master — the engine's final
+// normalization pass zeroes DC targets for DS-inventorised SKUs and zeroes
+// everything for Supplier ones — and Zoho now owns it, so the stored value is no
+// longer a safety net. Watch invAtChanged.toSupplier in catalogueSyncStatus.
 //
 // Live distribution is 2,004 DC / 58 Supplier / 12 DS, and the CSV upload path
 // defaults a missing value to "DS". So a sync that treated Zoho as authoritative

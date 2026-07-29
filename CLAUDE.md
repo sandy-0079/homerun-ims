@@ -282,13 +282,21 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
   stored.** A replace would push 345 SKUs to "No Price", which PCT reads as the 95th percentile, so
   they'd be stocked MORE aggressively. `mergePrices` keeps the stored value where Zoho is silent
   (verified live: 1,822 → 1,834, 357 retained, 0 lost). Coverage self-heals as the org ages.
-- **⚠ `Inventorised At` DOES NOT EXIST IN ZOHO** (as of 2026-07-28) — it is hand-set in the CSV, and
-  it's the highest-consequence field in the master (Supplier ⇒ 0 everywhere; DS ⇒ DC 0). The CSV path
-  defaults a missing value to **"DS"**, and live is 2,004 DC / 58 Supplier / 12 DS — so treating Zoho
-  as authoritative today would reclassify ~2,000 SKUs DC→DS and zero the whole DC plan. Hence: Zoho
-  wins only where it has a value, else the stored value stands, else default DC (96% of the master)
-  with the SKU reported. `assessMasterChange` fails closed on a >5% shift in the mix, a sharp shrink,
-  or an empty pull.
+- **✅ `cf_inventorised_at` NOW EXISTS AND IS POPULATED IN ZOHO (verified 2026-07-29).** Superseding the
+  earlier warning that it did not exist. Dry-run measured: **`invAtFromZoho` 2,092, `invAtFromStored` 0,
+  and ZERO per-SKU reclassification** — Zoho's values match the hand-maintained master exactly
+  (DC 2,021 / Supplier 58 / DS 13). The migration the fallback logic was built for turned out to be a
+  no-op, which is the ideal outcome.
+  - Only `HQ2B4` (newest SKU) lacks a value and defaults to DC — reported as
+    `master.newSkusDefaulted`. Set it in Zoho.
+  - **⚠ NEW EXPOSURE: Zoho now owns the highest-consequence field in the master** (Supplier ⇒ Min=Max=0
+    at every location; DS ⇒ DC zeroed). The stored value is no longer a safety net. `assessMasterChange`
+    guards a >5% shift in the mix — which catches a mass change but **not a handful**: setting ~20 SKUs
+    to Supplier in Zoho is ~1%, passes the guard, and silently zeroes those SKUs everywhere.
+  - So the nightly check is `invAtChanged` in `params/catalogueSyncStatus` — it reports per-SKU
+    transitions and lists **every** SKU becoming Supplier in full (`invAtChanged.toSupplier`). The
+    distribution alone can hide a swap: 58 SKUs leaving Supplier while 58 others join nets to zero.
+  - Still true: a missing value falls back to the stored one, then to DC, with the SKU reported.
 
 **Zoho INVOICES API — measured 2026-07-27 (probe, 327 read-only calls). Read before building any
 invoice sync:**
