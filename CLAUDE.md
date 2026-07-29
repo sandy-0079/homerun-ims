@@ -424,12 +424,22 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
   (`security find-generic-password -s "Supabase CLI" -w`, `go-keyring-base64:` prefixed). **Send a browser
   `User-Agent`** or Cloudflare answers `403 error code: 1010`. Cap queries at 1000 rows — split by time
   window to attribute logs per invocation.
-- **Deployed function inventory (2026-07-29).** Live and load-bearing: `sync-stock`, `sync-orders`,
-  `create-to`, `sync-invoices`, `sync-catalogue`. **Dead but still deployed:** `zoho-invoices`,
-  `zoho-prices`, `zoho-skumaster` — Books-era importers pointing at the retired org (60044091518),
-  superseded by `sync-invoices`/`sync-catalogue`. Verified 2026-07-29 to have **zero** code references
-  in this repo or `homerun-to` and to be called by no cron; the only hit is a comment. Safe to delete
-  whenever; source stays committed.
+- **Deployed function inventory (2026-07-29).** Exactly five, all load-bearing: `sync-stock`,
+  `sync-orders`, `create-to`, `sync-invoices`, `sync-catalogue`. Anything else you find deployed is
+  drift — check before assuming it is wanted.
+  - **Deleted 2026-07-29:** `zoho-invoices`, `zoho-prices`, `zoho-skumaster` (Books-era importers,
+    superseded by `sync-invoices`/`sync-catalogue`). ⚠ They were **not** broken by the org migration —
+    `_shared/zoho.ts` points at `/inventory/v1` and reads the current `ZOHO_ORG_ID`, so they would have
+    worked if called. Removed for being unused, verified three ways: zero code references in this repo
+    or `homerun-to`, no cron, and **zero invocations** in `function_edge_logs`. Source is committed
+    (`zoho-invoices` was recovered via `supabase functions download` — its directory had been empty, so
+    the deployment was the only copy).
+  - ⚠ **`supabase functions download <name>` overwrites `_shared/*` with the deployed copy.** It
+    silently reverted `_shared/zoho.ts` to an older version. Always `git status` after a download.
+  - ⚠ **`_shared/zoho.ts` is now orphaned and is a trap — never import it in new code.** Its
+    `getAccessToken()` mints a token per cold start with only in-memory caching: the exact pattern
+    behind the 2026-07-14 throttle incident that failed stock-sync-1/-2 at the auth step. Use
+    `zohoClient.ts` → `zohoToken.ts` (shared cache in `public.zoho_auth_cache`).
   - `diag-items` was **deleted 2026-07-29** (verified unreferenced first). It had been labelled
     TEMPORARY since 2026-07-15 and, worse, gave a *misleading* answer: it inspected `custom_fields[]`
     and `custom_field_hash`, neither of which `/items` uses, reporting "no custom fields" while seven
