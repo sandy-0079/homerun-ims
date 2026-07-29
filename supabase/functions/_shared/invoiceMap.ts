@@ -6,11 +6,33 @@
 // always filtered ["Closed","Overdue"]; the API returns paid/overdue/void/draft.
 // `paid` IS the API's spelling of Closed — measured 2026-07-27: 3,533 paid vs
 // 58 overdue vs 32 void over 7 days. Filtering on the CSV words drops ~97% of rows.
+//
+// ⚠⚠ THAT MEASUREMENT WAS TAKEN OVER SETTLED DAYS, AND GENERALISED TOO FAR.
+// A historical window contains only terminal statuses, so it structurally cannot
+// observe the states a live invoice passes through. Measured 2026-07-29 at ~12:00
+// IST over 224 in-flight invoices:
+//
+//     paid 112 (50%)     partially_paid 86 (38%)     sent 26 (12%)
+//
+// The old allowlist {paid, overdue} discarded half of that. The 2026-07-28 nightly
+// run lost 312 rows / 2,081 units — 27.7% of the day's quantity — entirely this way,
+// while reporting ok:true, because assessCoverage only measures the unknown-SKU rate
+// among rows that arrived and a dropped invoice contributes none.
+//
+// So this is now a BLOCKLIST, deliberately. The model measures DEMAND: if the goods
+// left the shelf, that is demand regardless of whether the customer has paid. Only
+// `void` (cancelled) and `draft` (not yet a sale) are not demand. An allowlist fails
+// closed on demand — expensive and silent. A blocklist fails open — a future Zoho
+// status is counted rather than vanishing, and over-counting is visible and
+// correctable, which under-counting is not.
+//
+// A missing status is still rejected: absent data is not evidence of a sale.
 
-const SELLABLE = new Set(["paid", "overdue"]);
+const NOT_DEMAND = new Set(["void", "draft"]);
 
 export function isSellableStatus(status: string): boolean {
-  return SELLABLE.has((status || "").trim().toLowerCase());
+  const s = (status || "").trim().toLowerCase();
+  return s !== "" && !NOT_DEMAND.has(s);
 }
 
 export type InvoiceRow = {
@@ -80,11 +102,18 @@ export function assessCoverage(
   };
 }
 
-// Inclusive Zoho date_start/date_end covering the last `days` IST calendar days,
-// ending on the IST day that `nowMs` falls in. Shifting by +5:30 and then reading
-// UTC parts gives the IST calendar date without pulling in a timezone library.
-export function istDateRange(nowMs: number, days: number) {
+// Inclusive Zoho date_start/date_end covering `days` IST calendar days, ending
+// `endOffsetDays` before the IST day that `nowMs` falls in. Shifting by +5:30 and
+// then reading UTC parts gives the IST calendar date without a timezone library.
+//
+// endOffsetDays=1 is what the overnight schedule uses: the crons fire 19:05-22:20
+// UTC, which is 00:35-03:50 IST the NEXT IST day, so the day worth pulling is
+// "yesterday IST". Asking for today would return a day that has barely begun, and
+// assessCoverage correctly refuses an empty pull — but the refusal path in
+// sync-invoices returns before clearing the cursor, so every slot would retry that
+// empty date all night. The offset avoids the situation rather than special-casing it.
+export function istDateRange(nowMs: number, days: number, endOffsetDays = 0) {
   const istDay = (offsetDays: number) =>
     new Date(nowMs + 5.5 * 3600_000 - offsetDays * 86_400_000).toISOString().slice(0, 10);
-  return { from: istDay(days - 1), to: istDay(0) };
+  return { from: istDay(days - 1 + endOffsetDays), to: istDay(endOffsetDays) };
 }

@@ -1,6 +1,6 @@
 # CLAUDE.md — HomeRun IMS
 
-> 🚧 **IN-FLIGHT WORK — read [`docs/HANDOFF-2026-07-28.md`](docs/HANDOFF-2026-07-28.md) first** if you
+> 🚧 **IN-FLIGHT WORK — read [`docs/HANDOFF-2026-07-29.md`](docs/HANDOFF-2026-07-29.md) first** if you
 > are touching the nightly model refresh (Stages 4–7), the invoice/catalogue syncs, or pincode
 > attribution. It records what is deployed-but-not-switched-on, tonight's expected events, verification
 > commands, rollback steps, and the open decisions. **Delete that file and this block once Stages 5–7
@@ -52,7 +52,9 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
   - Both functions do a **fresh read immediately before writing** to prevent race condition from parallel runs.
   - Sync functions only read/write `team_data/global`. They never touch `team_data/invoice_data`.
 - **team_data row separation:** `invoiceData` lives in `team_data/invoice_data` (written once on CSV upload). All other app data + sync data lives in `team_data/global`. This keeps the global payload ~1-2MB vs ~7MB, preventing Supabase Disk IO budget exhaustion from hourly syncs.
-- **Row inventory (2026-07-28).** `team_data`: `global`, `invoice_data`,
+- **Row inventory (2026-07-29).** `team_data`: `global`, `invoice_data`,
+  `invoice_sync_buffer` (in-flight chunks for the 1–2 dates being pulled, keyed
+  `date|round|offset` so a re-run of a chunk is idempotent; **nothing else reads it**),
   `invoice_data_shadow` (Stage 4 target — **nothing reads it**),
   `invoice_data_backup_20260728` (pre-Stage-5 safety net; the API cannot re-serve anything before
   2026-07-01, so this is the only copy of Apr–Jun history). `params`: `global`, `paramsBackup`,
@@ -188,10 +190,17 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
 - Trading: 8 AM–8 PM IST. End of day: closing stock ≤ Min → restock to Max overnight from DC.
 - **TOs are raised DC→DS at ~2:30 PM and ~8:30 PM IST** (changed 2026-07-27; the old ~midnight run is
   retired). Both are manual, by the DC team, via the TO tool. ~Noon next day: TOs arrive at DS.
-- **Scheduling consequence:** the 8:30 PM run can never use same-day targets — same-day invoices aren't
-  complete until 8:30 PM. So the model refresh runs *after* it (21:30 IST sync → ~22:00 engine) and
-  **both** of the next day's runs use targets built on complete data through the previous evening.
-  Don't design against a midnight deadline; it no longer exists.
+- **⚠ Invoices are RAISED by ~20:30 IST but not SETTLED until hours later** (corrected 2026-07-29; the
+  old note here claimed "complete until 8:30 PM" and a 21:30 IST refresh was built on it). Zoho's
+  `status` only reaches `paid` when payment is recorded, so a 21:30 pull sees a large
+  `partially_paid`/`sent` fraction — see the Zoho INVOICES API section. **The finish line for invoice
+  data is settlement, not the trading close.**
+- **Scheduling consequence:** the nightly refresh runs in the idle **00:35–04:00 IST** window, against
+  the last *complete* IST day. Trading ends 20:00 IST and ops POs start ~06:00 IST, so the night is
+  free, and TOs are occasionally raised as late as ~02:00 IST — which is why the invoice write is
+  **atomic** rather than merely late-scheduled (see Stage 4). This costs no freshness versus the old
+  21:30 slot: both produce targets before the next day's 14:30 TO run, but only this one uses a whole
+  day. Don't design against a midnight deadline; it no longer exists.
 - Clusters: DS01+DS05 (C1), DS02+DC/Rampura (C2), DS03+DS04 (C3).
 
 ---
@@ -247,6 +256,30 @@ invoice sync:**
   `paid`/`overdue`/`void`/`draft`; the CSV says `Closed`/`Overdue` and `parseInvoiceCsv` filters
   `["Closed","Overdue"]`. **`paid` IS the API's `Closed`.** Port that filter naively and you drop ~97%
   of rows. `filter_by=Status.Closed` → HTTP 400; filter client-side.
+- **⚠⚠ THE ALLOWLIST `{paid, overdue}` WAS WRONG, AND THE MEASUREMENT THAT PRODUCED IT COULD NOT HAVE
+  SHOWN IT.** A live invoice passes through `partially_paid` and `sent` before settling. Measured
+  2026-07-29 at ~12:00 IST over 224 in-flight invoices: **paid 112 (50%), partially_paid 86 (38%),
+  sent 26 (12%)**. Direct proof on 40 of that day's invoices: **30 `partially_paid` + 10 `sent`, 0
+  `paid`** — 83 real rows that the allowlist produced *zero* of.
+  - The 2026-07-27 probe measured 7 days of **settled** history, which by construction contains only
+    terminal statuses (`paid`/`overdue`/`void`). **No amount of historical sampling can observe an
+    intermediate state.** Generalise a filter from settled days and it silently deletes live demand.
+  - Cost: the 2026-07-28 nightly run lost **312 rows / 2,081 units — 27.7% of the day's quantity** —
+    and reported `ok: true`. Neither guard could catch it: `assessCoverage` measures the unknown-SKU
+    rate *among rows that arrived*, so a dropped invoice contributes none (it actually **improves** the
+    metric); `mergeInvoiceRows.report.safe` checks *date* loss, and the date was present, just short.
+  - **Now a BLOCKLIST — `{void, draft}` (`invoiceMap.ts`).** The model measures DEMAND: if the goods
+    left the shelf that is demand, whatever the payment state. An allowlist fails closed on demand
+    (expensive, silent); a blocklist fails open (over-count, visible, correctable). A missing status is
+    still rejected — absent data is not evidence of a sale.
+  - On a **settled** day the widening is a verified no-op (07-28 re-listed: `paid` 29, `overdue` 1 of a
+    30-invoice sample; zero `partially_paid`/`sent`), so it cannot move historical numbers.
+  - Residual: an invoice counted while `sent` can later be **voided** (~0.9%, 5 of 564 on 07-28), always
+    an over-count. Handled by re-fetching D-3 nightly — see Stage 4 below.
+- **⚠ A settled day is not re-fetch-proof either — count the LIST first.** 07-28 listed exactly **564**
+  invoices from both the API and the CSV. When shadow and CSV disagree, compare *distinct invoices
+  listed* before theorising: equal counts prove the loss happened after listing (status filter or
+  detail-call failure), unequal counts point at the window or pagination.
 - Timing: avg detail call **289 ms** (p95 434 ms). At 4-concurrent, 1,000 invoices = **72 s** — fits one
   150 s invocation. No queue/chaining needed.
 - Quota: `x-rate-limit-limit: 57500` per window (~8.4 h reset). A 1,000-call nightly pull is ~2%.
@@ -339,6 +372,36 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
   says nothing about total pressure on the org while five other crons share it. One run, then wait.
   `_shared/syncCooldown.ts` now enforces a 15-min minimum between fresh runs (`force: true` bypasses it —
   don't).
+- **⚠ THE 429 CASCADE — a per-call backoff makes a concurrency problem worse, not better** (measured from
+  edge logs, 2026-07-28). `sync-invoices` at `CONCURRENCY 8`:
+
+  | run | Zoho calls | 429 retry #1 | 429 retry #2 | **exhausted** | elapsed | HTTP |
+  |---|---|---|---|---|---|---|
+  | 07-27 date | 560 | 37 | 13 | **7** | 113s | 200 |
+  | 07-28 date | 501 | 44 | 26 | **15** | **172s** | **504** |
+
+  `Error: Zoho API: 429 after 3 attempts` — those invoices' rows were dropped silently. The **7** on
+  07-27 matches exactly the 7 missing orders / 8 missing rows measured against the CSV, so on a settled
+  day 429-exhaustion is the *only* leak.
+  - **The retry cost is the timeout.** 44×10s + 26×20s = **~960 worker-seconds of sleeping** across 8
+    workers ≈ 120s of wall clock — the entire gap between the ~50s the run should take and the 172s it
+    did. `zohoClient` backs off *one call*; the other seven keep the limit tripped. **Fix concurrency and
+    pacing, not the backoff.**
+  - **`CONCURRENCY 8` was validated on the wrong day** — a 336-invoice quiet probe ("4 → 8 took it from
+    85s to 14s"). A 560-invoice day at the real hour behaves nothing like it. Now **4**, an hour between
+    chunks, no deadline.
+- **⚠ A 504 DOES NOT MEAN NOTHING WAS WRITTEN.** On 07-28 the gateway returned 504 at exactly 150s while
+  the Deno isolate kept running and completed its Supabase writes at 172s. So data landed while the
+  caller saw failure — and `invoiceSyncStatus` said `ok: true` over a day missing 27.7% of its quantity.
+  **`504` + `ok:true` is the signature of a silently truncated run.** Status codes: 546 = Supabase killed
+  it, 500 = the function caught an error and returned, 504 = gateway gave up (function may still finish).
+- **Edge function logs are reachable without the dashboard** — the CLI (v2.75.0) has no `functions logs`,
+  but the Management API does: `POST /v1/projects/{ref}/database/query` for SQL, and
+  `GET /v1/projects/{ref}/analytics/endpoints/logs.all?sql=…&iso_timestamp_start=…` for
+  `function_logs` / `function_edge_logs`. Token lives in the macOS keychain
+  (`security find-generic-password -s "Supabase CLI" -w`, `go-keyring-base64:` prefixed). **Send a browser
+  `User-Agent`** or Cloudflare answers `403 error code: 1010`. Cap queries at 1000 rows — split by time
+  window to attribute logs per invocation.
 - **⚠ `diag-items` (deployed 2026-07-15, still live) is labelled TEMPORARY and should be deleted.** It
   also gives a **misleading** answer about item custom fields: it inspects `custom_fields[]` and
   `custom_field_hash`, neither of which `/items` uses, and reports "no custom fields" while seven arrive
@@ -418,15 +481,32 @@ follows the mapping (DS02 is stocked ₹16.4L lighter).
 
 ### 16. Nightly model refresh from Zoho — Stages 4-7 (in progress)
 Automate the whole input chain so the model refreshes ~20:30 IST without a manual CSV.
-- **Stage 4 (CRON LIVE 2026-07-28 — shadow only):** `sync-invoices` → `team_data/invoice_data_shadow`.
-  Nothing reads it. Migration `20260728000001` **applied**: **16:00 UTC (21:30 IST)** + resumes at
-  :06/:12 — after the 20:30 IST TO run, clear of the :35–:50 stock/orders window, different row so no
-  contention.
-  - **One date per invocation.** A day can be ~1,000 invoices and Zoho's speed varies ~3.5×
-    (289ms/call quiet, ~1s/call loaded), so a 2-day window can blow the 150s wall clock. Pass 1 takes
-    the first date and leaves the rest in `params/invoiceSyncCursor`; :06/:12 drain it.
-  - **CONCURRENCY 8, not 4.** `/invoices` sustains 4+ calls/sec — nothing like `inventorysummary`'s
-    ~8-per-MINUTE ceiling. 4 → 8 took a 336-invoice day from 85s to 14s.
+- **Stage 4 (REWORKED + DEPLOYED 2026-07-29 — still shadow only):** `sync-invoices` →
+  `team_data/invoice_data_shadow`. Nothing reads it. Migration `20260729000001` **applied**: one cron
+  `invoices-sync-window` at **`5,20 19-22 * * *` UTC = 00:35–04:00 IST**, eight slots. Replaces the
+  16:00/:06/:12 UTC jobs, which were built on the false "invoices complete by 20:30 IST" premise.
+  - **Why overnight:** the day must be **settled**, not merely closed (see the Zoho INVOICES API
+    section — a 21:30 pull lost 27.7% of quantity to `partially_paid`/`sent`). The window is idle
+    (trading ends 20:00 IST, POs start ~06:00 IST) and clear of `:35–:50`.
+  - **ATOMIC PUBLISH — the load-bearing safety property.** Chunks accumulate in
+    `team_data/invoice_sync_buffer`; the target row is written **exactly once**, only when every planned
+    date is fully pulled and both guards pass. IMS recomputes the engine client-side on every page load,
+    so a partial invoice row would immediately show wrong Min/Max — and TOs are sometimes raised as late
+    as ~02:00 IST. Any failure leaves the target holding the previous complete pull. **Timing alone
+    cannot give this; atomicity can.**
+  - **CONCURRENCY 4, chunks of 250, one hour apart** — reverted from 8. See "the 429 cascade": 8 drew
+    429s continuously and its own backoff sleeping blew the 150s wall clock. With eight slots there is
+    no deadline to beat, so Zoho's per-minute budget resets fully between chunks.
+  - **A date with outstanding fetch failures is never marked complete.** Failed ids are retried in
+    bounded rounds (`MAX_RETRY_ROUNDS 3`) by later slots; loss above `MAX_LOST_PCT` (0.5% of the *day's*
+    invoices — not the retry round's, a bug worth not reintroducing) abandons the night with
+    `ok: false` and the target untouched. Retrying is free now, so no accuracy/liveness trade-off remains.
+  - **D-3 re-fetch each night** corrects late voids (an invoice counted while `sent` can be voided next
+    day). A *fixed* lag, not a rotation: every day gets exactly one recheck, and `mergeInvoiceRows`
+    replaces a fetched date wholesale so the correction lands automatically.
+  - `invoiceSyncStatus` now records `statusSeen` (status histogram), `failed`, `degradedDates`,
+    `publishedPlan`/`publishedAt`. The republish guard stops the later slots re-pulling a published plan.
+  - State machine is pure and unit-tested: `_shared/invoiceCursor.ts` + `invoiceCursor.test.ts`.
   - **15-min cooldown** (`_shared/syncCooldown.ts`) that deliberately does NOT block cursor drains.
     ⚠ Added because repeated manual testing on 2026-07-27 pushed ~1,900 calls through the org in
     15 min, collapsed throughput 24 → <4 calls/sec, and made `stock-sync-3` miss its 13:41 UTC cycle.
