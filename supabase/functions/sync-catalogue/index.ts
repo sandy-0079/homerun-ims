@@ -6,9 +6,20 @@
 //   items                      -> ~11 calls (2,074 SKUs at 200/page)
 //   reports/purchasesbyitem    -> ~10-20 calls (12-month window)
 //
-// SCHEDULE 15:20 UTC (20:50 IST) — deliberately BEFORE sync-invoices at 16:00, so
-// the invoice coverage guard checks against a fresh SKU master rather than
-// yesterday's. Clear of the :35-:50 stock/orders window.
+// SCHEDULE 18:25 UTC (23:55 IST) — cron `catalogue-sync-nightly`, migration
+// 20260729000002. Deliberately BEFORE `invoices-sync-window` (19:05-22:20 UTC) so the
+// invoice coverage guard checks a fresh SKU master: a SKU newly created in Zoho would
+// otherwise have its invoice rows counted as unknown, and above 1% that guard refuses
+// to write invoice data at all.
+//
+// ⚠ NOT :50 — `orders-sync-hourly` runs at :50 of EVERY hour and writes this same
+// team_data/global row. Free minutes are :00-:34 and :51-:59.
+//
+// ⚠ UNLIKE sync-invoices, THIS WRITES PRODUCTION. skuMaster and priceData both feed
+// the engine, which IMS recomputes client-side on every page load — so a run here
+// moves Min/Max. status decides whether a SKU is stocked at all; price drives
+// getPriceTag, which selects the PCT percentile, the Fixed Unit Floor gate and the DOC
+// caps. `priceTags` in the report counts how many SKUs actually re-tier.
 //
 // ⚠ WRITES team_data/global, which also holds stockData / poData / toData and the
 // PO/TO caches. Read-merge-write with a FRESH read immediately before writing —
@@ -23,7 +34,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { zohoFetchWithRetry } from "../_shared/zohoClient.ts";
-import { mapItemsToMaster, mapPricesReport, assessMasterChange, mergePrices } from "../_shared/catalogueMap.ts";
+import { mapItemsToMaster, mapPricesReport, assessMasterChange, mergePrices, assessPriceTagChanges } from "../_shared/catalogueMap.ts";
 import { shouldRun } from "../_shared/syncCooldown.ts";
 
 const BASE = "https://www.zohoapis.in/inventory/v1";
@@ -125,11 +136,21 @@ Deno.serve(async (req) => {
       .filter((s) => currentMaster[s] && norm(currentMaster[s].status) !== norm(master[s].status))
       .map((s) => ({ sku: s, from: currentMaster[s].status, to: master[s].status }));
 
+    // Price tiers come from the live params, not a hardcoded default: an admin can
+    // change them in the Logic Tweaker, and re-tiering must be measured against the
+    // boundaries the engine will actually use.
+    const pRow = await supabase.from("params").select("payload").eq("id", "global").maybeSingle();
+    const priceTiers: number[] = pRow.data?.payload?.priceTiers || [3000, 1500, 400, 100];
+
     const stats = {
       itemsFetched: items.length,
+      priceTiers,
       itemFieldSample,
       master: itemReport,
       statusMix: { before: statusMix(currentMaster), after: statusMix(master) },
+      // Price feeds getPriceTag -> PCT percentile / FUF gate / DOC caps, so a refresh
+      // moves Min/Max on unchanged demand. This counts the SKUs that actually re-tier.
+      priceTags: assessPriceTagChanges(currentPrices, prices, priceTiers),
       statusChanged: { count: statusChanged.length, sample: statusChanged.slice(0, 25) },
       prices: { fromZoho: priceReport, merged: mergeReport, window: { fromDate, toDate }, error: priceError },
       change,

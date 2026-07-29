@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mapItemsToMaster, mapPricesReport, assessMasterChange, mergePrices } from "./catalogueMap.ts";
+import { mapItemsToMaster, mapPricesReport, assessMasterChange, mergePrices, assessPriceTagChanges } from "./catalogueMap.ts";
 
 const item = (o: Record<string, unknown> = {}) => ({
   sku: "A", name: "Item A", category_name: "Cement", brand: "ACC", status: "active", ...o,
@@ -230,6 +230,42 @@ describe("customField exposure shapes (caught by the 2026-07-28 dry run)", () =>
 
   it("ignores a blank top-level key", () => {
     expect(mapItemsToMaster([item({ cf_inventorised_at: "" })], current).master.A.inventorisedAt).toBe("DC");
+  });
+});
+
+// A price refresh moves Min/Max on SKUs whose demand never changed: getPriceTag
+// selects the PCT percentile, the Fixed Unit Floor order-days gate and the DOC caps.
+// So the number that matters is not "how many prices changed" but "how many crossed a
+// TIER boundary" — those are the ones whose targets move.
+describe("assessPriceTagChanges", () => {
+  const tiers = [3000, 1500, 400, 100];
+
+  it("ignores a price change that stays inside the same tier", () => {
+    const r = assessPriceTagChanges({ A: 500 }, { A: 600 }, tiers);
+    expect(r.changed).toBe(0);
+  });
+
+  it("counts a price that crosses a tier boundary", () => {
+    const r = assessPriceTagChanges({ A: 390 }, { A: 410 }, tiers);
+    expect(r.changed).toBe(1);
+    expect(r.sample[0]).toMatchObject({ sku: "A", from: "Low", to: "Medium" });
+  });
+
+  it("counts a SKU gaining a price for the first time", () => {
+    // No Price is read as the 95th percentile, so this direction de-stocks.
+    const r = assessPriceTagChanges({}, { A: 5000 }, tiers);
+    expect(r.changed).toBe(1);
+    expect(r.sample[0]).toMatchObject({ from: "No Price", to: "Premium" });
+  });
+
+  it("never reports a SKU that the merge left untouched", () => {
+    const r = assessPriceTagChanges({ A: 500, B: 2000 }, { A: 500, B: 2000 }, tiers);
+    expect(r.changed).toBe(0);
+  });
+
+  it("summarises the tag mix before and after", () => {
+    const r = assessPriceTagChanges({ A: 500 }, { A: 5000 }, tiers);
+    expect(r.mixAfter).toMatchObject({ Premium: 1 });
   });
 });
 

@@ -183,6 +183,58 @@ export function assessMasterChange(
   return { safe: true, reason: "ok", before, after, dBefore, dAfter };
 }
 
+// How many SKUs will actually see their targets move because of a price refresh?
+//
+// Purchase Prices are NOT display-only: getPriceTag selects the PCT percentile, the
+// Fixed Unit Floor order-days gate and the DOC caps. So a price refresh moves Min/Max
+// on SKUs whose demand never changed — and the number that matters is not "prices
+// updated" but "prices that crossed a TIER boundary". 101 updated prices might move
+// nothing, or might re-tier a hundred SKUs; only this tells them apart.
+//
+// Reported, deliberately NOT guarded: re-tiering is a legitimate consequence of fresh
+// purchase data, and CLAUDE.md already asks that an Inv-Value delta be split into the
+// revaluation effect and the target effect. This is the number that lets you do that.
+//
+// Mirrors src/engine/utils.js getPriceTag exactly, including "No Price" for 0/absent —
+// which PCT reads as the 95th percentile, so losing a price stocks a SKU MORE.
+function priceTag(p: unknown, tiers: number[]): string {
+  const v = parseFloat(String(p ?? "")) || 0;
+  const [t1, t2, t3, t4] = tiers;
+  if (v >= t1) return "Premium";
+  if (v >= t2) return "High";
+  if (v >= t3) return "Medium";
+  if (v >= t4) return "Low";
+  if (v > 0) return "Super Low";
+  return "No Price";
+}
+
+export function assessPriceTagChanges(
+  oldPrices: Record<string, number>,
+  newPrices: Record<string, number>,
+  tiers: number[] = [3000, 1500, 400, 100],
+) {
+  const changes: Array<{ sku: string; from: string; to: string; oldPrice: unknown; newPrice: unknown }> = [];
+  const mixBefore: Record<string, number> = {}, mixAfter: Record<string, number> = {};
+
+  for (const sku of new Set([...Object.keys(oldPrices || {}), ...Object.keys(newPrices || {})])) {
+    const from = priceTag(oldPrices?.[sku], tiers), to = priceTag(newPrices?.[sku], tiers);
+    mixBefore[from] = (mixBefore[from] || 0) + 1;
+    mixAfter[to] = (mixAfter[to] || 0) + 1;
+    if (from !== to) changes.push({ sku, from, to, oldPrice: oldPrices?.[sku], newPrice: newPrices?.[sku] });
+  }
+
+  return {
+    changed: changes.length,
+    sample: changes.slice(0, 25),
+    byTransition: changes.reduce((d: Record<string, number>, c) => {
+      const k = `${c.from} -> ${c.to}`;
+      d[k] = (d[k] || 0) + 1;
+      return d;
+    }, {}),
+    mixBefore, mixAfter,
+  };
+}
+
 // Merge Zoho prices over the stored ones instead of replacing them.
 //
 // `reports/purchasesbyitem` can only see purchases made in the CURRENT Zoho org,
