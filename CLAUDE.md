@@ -569,12 +569,21 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
   - End state worth aiming at: IMS reads the canonical stored result too, making divergence
     structurally impossible and page loads much faster. Costs the "engine changes go live on next page
     load" property, and Impact Preview still needs client-side compute. Not urgent.
-- **Stage 7 (BUILT + DEPLOYED 2026-07-28; cron NOT scheduled):** `sync-catalogue` → SKU Master +
-  Purchase Prices into `team_data/global` (read-merge-write, fresh read immediately before writing).
-  ~30 calls, 15s. Suggested slot **15:20 UTC (20:50 IST)** — deliberately *before* sync-invoices so the
-  invoice coverage guard checks a fresh master. See the Zoho ITEMS + PRICES section for the three ⚠s.
-  - Dry run vs live: 2,083 items, 9 new SKUs (defaulted DC and reported), prices 1,822 → 1,834,
-    `inventorisedAt` mix preserved exactly. Can only add or update — never remove.
+- **Stage 7 (LIVE 2026-07-29):** `sync-catalogue` → SKU Master + Purchase Prices into
+  `team_data/global` (read-merge-write, fresh read immediately before writing). ~30 calls, ~16s.
+  Cron `catalogue-sync-nightly` at **`25 18 * * *` UTC (23:55 IST)**, migration `20260729000002` —
+  deliberately *before* `invoices-sync-window` so the invoice coverage guard checks a fresh master.
+  See the Zoho ITEMS + PRICES section for the ⚠s, including status ownership.
+  - **⚠ NOT `:50`** — `orders-sync-hourly` occupies :50 of every hour and writes the same
+    `team_data/global` row; concurrent writers there caused the statement timeout that left DC+DS01
+    74m stale. Free minutes: `:00–:34` and `:51–:59`. (An earlier note here suggested 15:20 UTC and
+    another suggested 18:50 — both superseded.)
+  - Backup before the cutover: `team_data/catalogue_backup_20260729`, verified byte-identical
+    (skuMaster 2,092 · priceData 1,822). **More important than the invoice backup** — `inventorisedAt`
+    is hand-maintained and absent from Zoho, so a bad master write cannot be repaired from the API.
+  - Dry run vs live 2026-07-29: 2,093 items, guard safe, `absentFromZoho: []` (Zoho is now a superset),
+    prices 1,822 → 1,834 with 350 retained. Expected first-run effect: **5 SKUs gain Min/Max** because
+    Zoho marks them active and the master was stale — `TENX4`, `E3MPF`, `WUTDS`, `XP5EV`, `P292Y`.
   - Blocked on ops for full value: create `cf_inventorised_at` in Zoho and populate it. Verify with ONE
     SKU + a `sync-catalogue` dry run (`invAtFromZoho` should go 0 → 1) **before** populating all 2,083.
   - Floors (`minReqQty`, `newSKUQty`) and Dead Stock stay manual — ops judgement, not Zoho data.

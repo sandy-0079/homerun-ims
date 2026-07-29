@@ -34,11 +34,13 @@
 -- "yesterday IST" (see istDateRange's endOffsetDays) — the last complete day. All
 -- eight slots resolve to the same date, which is what lets chunking span them.
 --
--- NOT SCHEDULED HERE: sync-catalogue. It is deployed but still has two open defects
--- (it would rewrite the 5 'Confirmation Pending' SKUs to active, and drop the ~9
--- SKUs present in the CSV master but absent from Zoho /items). Schedule it at
--- 18:50 UTC / 00:20 IST — before this window, so the invoice coverage guard checks a
--- fresh master — only once those are fixed.
+-- NOT SCHEDULED HERE: sync-catalogue. Both of its open defects were fixed later the
+-- same day and it is scheduled by 20260729000002 at 18:25 UTC — deliberately before
+-- this window so the invoice coverage guard checks a fresh master.
+--
+-- ⚠ An earlier version of this comment suggested 18:50 UTC. That is WRONG:
+-- orders-sync-hourly runs at :50 of EVERY hour and writes the same
+-- team_data/global row. Free minutes are :00-:34 and :51-:59.
 
 do $$
 declare r record;
