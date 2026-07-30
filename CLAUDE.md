@@ -40,9 +40,20 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
   Status`, and re-upload filters `["Closed","Overdue"]`, matching nothing. Since the upload replaces
   entirely, the result is a **total wipe of invoice history**, and nothing before 2026-07-01 is
   re-fetchable from the API.
-  - **This is a live booby trap**: `⬇ Data` sits next to `⬆ Upload CSV` and that workflow looks like the
-    *safest* way to re-upload. STILL UNFIXED. The fix is one line — emit `"Closed"` for the status the
-    export cannot recover — after which the button becomes the backup it appears to be.
+  - **✅ FIXED 2026-07-30.** The builder moved out of `App.jsx` to `buildInvoiceCsv` in
+    `engine/utils.js`, directly ABOVE `parseInvoiceCsv`, and emits `"Closed"`. Verified against live
+    data: 74,381 → **74,381**, 0 SKU×DS differing, qty identical. The Closed/Overdue distinction is
+    unrecoverable but immaterial — both pass the filter and nothing downstream reads the field. It also
+    now fills Item Name / Category from `skuMaster`, so the backup is human-readable.
+  - **⚠ Keep the writer next to the reader.** The bug existed because a writer in `App.jsx` and its
+    reader in `engine/utils.js` sat ~3,000 lines apart with an unasserted invariant between them.
+    `invoiceCsvRoundTrip.test.js` (7) now pins `parseInvoiceCsv(buildInvoiceCsv(rows)) === rows`, so
+    changing either side fails immediately. Same shape as `paramConfigRows.js` / `teamDataBundle.js`.
+  - **⚠ `parseCSV` silently STRIPS an embedded quote** (it toggles on each `"` and drops it), so
+    `Floor Drain, 5" x 5"` reads back as `Floor Drain, 5 x 5`. Cosmetic and deliberately left alone:
+    the affected columns (Item Name, Category) are ignored by `parseInvoiceCsv`, and SKUs/order
+    refs/pincodes never contain quotes. **Columns do NOT misalign** — the comma stays protected — and a
+    test pins that. Fixing the un-escaping touches the parser shared by all six uploaders.
   - `minReqQty`, `newSKUQty`, `deadStock`, `skuMaster` and `priceData` round-trip **correctly** (columns
     verified symmetric on both sides). Invoice is the only broken one.
 - **⚠ THE DATE GUARD CHECKS FORMAT, NOT COVERAGE — coverage is the check that actually protects a

@@ -47,6 +47,46 @@ export function parseCSV(text){
 // would leave the upload spinner stuck forever.
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Writes stored invoice rows back out as an uploadable CSV — the Upload Data tab's
+// ⬇ Data button, and the only in-app backup of invoice history.
+//
+// ⚠⚠ IT MUST ROUND-TRIP THROUGH parseInvoiceCsv, AND IT DID NOT. Before 2026-07-30 the
+// builder lived in App.jsx and wrote `r.status || ""` — but stored rows carry NO status,
+// because parseInvoiceCsv drops it after filtering. So the export had an empty
+// `Invoice Status`, re-upload matched neither "Closed" nor "Overdue", and the file
+// parsed to ZERO rows: measured 74,381 -> 0. The invoice upload replaces entirely, so
+// that was a total wipe of history — and the Zoho API cannot re-serve anything before
+// 2026-07-01, making it unrecoverable outside a Supabase backup.
+//
+// It was a live trap: ⬇ Data sits beside ⬆ Upload CSV and reads as the SAFEST way to
+// re-upload. It now lives HERE, next to the reader, so the coupling is visible, and
+// `invoiceCsvRoundTrip.test.js` asserts the property directly.
+//
+// Status is emitted as "Closed". The original Closed/Overdue distinction is
+// unrecoverable — but it is also immaterial: both pass the parser's filter identically
+// and nothing downstream reads the field, so this is a faithful reconstruction for
+// every purpose the data serves.
+const INVOICE_CSV_HEADERS = ["Invoice Date","Invoice Number","Invoice Status","Shopify Order",
+  "Item Name","SKU","Category Name","Quantity","Line Item Location Name","Shipping Code"];
+
+export function buildInvoiceCsv(invoiceData, skuMaster = {}) {
+  if (!invoiceData || !invoiceData.length) return null;
+  // Escape embedded quotes. Item names really do contain them (e.g. a floor drain
+  // described as 5" x 5"), and the old inline version interpolated raw.
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = invoiceData.map((r) => {
+    const m = skuMaster[r.sku] || {};
+    return [
+      r.date, r.invoiceNumber || "", "Closed", r.shopifyOrder || "",
+      // Name and category are not stored on the row; fill them from the master where
+      // we can, purely so the file is readable. The parser ignores both columns.
+      r.itemName || m.name || "", r.sku, r.category || m.category || "",
+      r.qty, r.locationName || r.ds || "", r.pin || "",
+    ].map(q).join(",");
+  });
+  return INVOICE_CSV_HEADERS.map(q).join(",") + "\n" + lines.join("\n");
+}
+
 export function parseInvoiceCsv(text){
   const rows = parseCSV(text)
     .filter(r=>["Closed","Overdue"].includes(r["Invoice Status"]||""))

@@ -10,7 +10,7 @@ import {
   DC_DEAD_MULT_DEFAULT, RECENCY_WT_DEFAULT,
   BASE_MIN_DAYS_DEFAULT, DEFAULT_PARAMS,
   runEngine,
-  parseCSV, parseInvoiceCsv, parsePincodeMapCsv, summariseCoverage, getPriceTag,
+  parseCSV, parseInvoiceCsv, buildInvoiceCsv, parsePincodeMapCsv, summariseCoverage, getPriceTag,
 } from "./engine/index.js";
 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
@@ -3685,12 +3685,11 @@ const visibleOutput = useMemo(() => {
           dlCSV(filename,[headers.join(","),...rows.map(r=>r.join(","))].join("\n"));
         };
         const buildDataCSV=(key)=>{
-          if(key==="invoiceData"){
-            if(!invoiceData.length) return null;
-            const h=["Invoice Date","Invoice Number","Invoice Status","Shopify Order","Item Name","SKU","Category Name","Quantity","Line Item Location Name","Shipping Code"];
-            const rows=invoiceData.map(r=>[r.date,r.invoiceNumber||"",r.status||"",r.shopifyOrder||"",r.itemName||"",r.sku,r.category||"",r.qty,r.locationName||r.ds||"",r.pin||""].map(v=>`"${v}"`).join(","));
-            return h.join(",")+"\n"+rows.join("\n");
-          }
+          // ⚠ Was inline here and wrote an EMPTY Invoice Status, so ⬇ Data -> ⬆ Upload
+          // parsed to ZERO rows and wiped invoice history (74,381 -> 0, measured
+          // 2026-07-30). Now lives beside parseInvoiceCsv in engine/utils.js so the
+          // writer and reader are visibly coupled, with the round trip under test.
+          if(key==="invoiceData") return buildInvoiceCsv(invoiceData, skuMaster);
           if(key==="skuMaster"){
             if(!Object.keys(skuMaster).length) return null;
             const h=["Name","Inventorised At","SKU","Category","Brand","Status"];
