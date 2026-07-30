@@ -120,7 +120,8 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     // Dead Stock cap still applied. All other categories unaffected.
     const networkResult = plywoodNetworkResults[skuId];
     if (networkResult) {
-      const _meta = skuM[skuId] || { sku: skuId, name: skuId, category: 'Plywood, MDF & HDHMR', brand: '', status: 'Active' };
+      // status "Unknown", not "Active" — see the note on the main path below.
+      const _meta = skuM[skuId] || { sku: skuId, name: skuId, category: 'Plywood, MDF & HDHMR', brand: '', status: 'Unknown' };
       const _isDead = deadStockSet.has(skuId);
       const _prTag = getPriceTag(pd[skuId] || 0, priceTiers);
       const _t150Tag = t150[skuId] || 'No';
@@ -180,7 +181,13 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
     }
     // ── END NETWORK DESIGN BYPASS ────────────────────────────────────────────
 
-    const meta = skuM[skuId] || { sku: skuId, name: skuId, category: "Unknown", brand: "", status: "Active", inventorisedAt: "DS" };
+    // ⚠ status is "Unknown", NOT "Active". A SKU absent from the master is not
+    // evidence of an active SKU — it is usually an orphaned pre-July code (Zoho
+    // re-coded the catalogue ~2026-07-01). Claiming Active here is what used to make
+    // the engine stock them; the normalization pass at the end zeroes anything not
+    // active. The rest of the meta is still fabricated because consumers read
+    // `r.meta` unconditionally and would crash on undefined.
+    const meta = skuM[skuId] || { sku: skuId, name: skuId, category: "Unknown", brand: "", status: "Unknown", inventorisedAt: "DS" };
     const prTag = getPriceTag(pd[skuId] || 0, priceTiers),
       t150Tag = t150[skuId] || "No",
       isDead = deadStockSet.has(skuId);
@@ -404,6 +411,38 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
   // ── DS Seed pass (e.g. DS06 = avg of DS02/DS04) — before normalization so
   // Supplier/DS-inv zeroing below still wins over seeded values ──────────────
   applyDSSeed(res, p);
+
+  // ── Active-only normalization (final override) ──────────────────────────────
+  // ONLY SKUs Active in the SKU Master get non-zero targets. Anything else is a
+  // target nobody can act on: ops has marked it not-for-sale, or it is not in the
+  // catalogue at all.
+  //
+  // ⚠ Measured 2026-07-30 before this existed: `status` gated Min/Max NOWHERE, so the
+  // engine emitted targets for 9 such SKUs — 4 inactive in the master, 5 absent from
+  // it (orphaned pre-July codes) — 6 of them carrying real quantities and ₹2.4L of Max
+  // value. Every consumer was separately remembering to filter; `toTargets` only
+  // escaped because it ALSO required inventorisedAt === "dc" and unknown SKUs happened
+  // to be fabricated as "DS".
+  //
+  // An allowlist of exactly "active" is the only safe rule: Zoho's vocabulary already
+  // includes `confirmation_pending` and can grow at any time. A MISSING status still
+  // counts as active — `(status || "Active")` is the established convention for a
+  // master row that omits the field, which is different from a SKU absent from the
+  // master (fabricated as "Unknown" above).
+  //
+  // Same character and convention as Dead Stock / Supplier below: zero min/max, leave
+  // preFloor* intact for audit, record a reason. The entry is KEPT, not dropped —
+  // consumers iterate Object.keys(res), and the Upload tab's "SKUs in Invoice not
+  // Active in SKU Master" warning needs these visible rather than silently gone.
+  Object.values(res).forEach(r => {
+    if (String(r.meta?.status ?? "Active").trim().toLowerCase() === "active") return;
+    const reason = `Not active in SKU Master (status: ${r.meta?.status || "absent"})`;
+    DS_LIST.forEach(ds => {
+      if (!r.stores[ds]) return;
+      r.stores[ds].min = 0; r.stores[ds].max = 0; r.stores[ds].logicTag = "Not Active";
+    });
+    if (r.dc) { r.dc.min = 0; r.dc.max = 0; if (r.dc.dcDetails) r.dc.dcDetails.zeroedReason = reason; }
+  });
 
   // ── Inventorised-At normalization (final override, after all strategies & floors) ──
   // Structural location constraints — same character as the Dead Stock rule, applied last.
