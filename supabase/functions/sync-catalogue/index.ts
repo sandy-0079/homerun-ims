@@ -6,14 +6,26 @@
 //   items                      -> ~11 calls (2,074 SKUs at 200/page)
 //   reports/purchasesbyitem    -> ~10-20 calls (12-month window)
 //
-// SCHEDULE 18:25 UTC (23:55 IST) — cron `catalogue-sync-nightly`, migration
-// 20260729000002. Deliberately BEFORE `invoices-sync-window` (19:05-22:20 UTC) so the
-// invoice coverage guard checks a fresh SKU master: a SKU newly created in Zoho would
-// otherwise have its invoice rows counted as unknown, and above 1% that guard refuses
-// to write invoice data at all.
+// SCHEDULE — FIVE attempts, 21:55 to 23:55 IST, first success wins. Two crons:
+// `catalogue-sync-earlier` ('25,55 16,17 * * *', migration 20260730000001) and
+// `catalogue-sync-nightly` ('25 18 * * *', migration 20260729000002, untouched).
+// All BEFORE `invoices-sync-window` (19:05-22:20 UTC) so the invoice coverage guard
+// checks a fresh SKU master: a SKU newly created in Zoho would otherwise have its
+// invoice rows counted as unknown, and above 1% that guard refuses to write at all.
+// The last slot leaves a 40-minute buffer before the invoice window opens.
+//
+// ⚠ FIVE SLOTS, ONE PULL. `alreadyRanTonight` gates on `lastOkNight`: the first
+// SUCCESS closes the night and later slots return `already_ran_tonight` after one
+// Supabase read and zero Zoho calls. A FAILURE leaves the gate open — which is why
+// the extra slots exist. They were added because the first real run, 2026-07-29,
+// died on an org-wide Zoho 429 window and the catalogue went 24h stale with no
+// retry. `sync-invoices` survived the same event only because it had eight slots.
+//
+// ⚠ No slot crosses midnight IST, which is what keeps the night key simple. Adding
+// one later without reading syncNightKey would silently skip a whole night.
 //
 // ⚠ NOT :50 — `orders-sync-hourly` runs at :50 of EVERY hour and writes this same
-// team_data/global row. Free minutes are :00-:34 and :51-:59.
+// team_data/global row. Free minutes are :00-:34 and :51-:59; the slots use :25/:55.
 //
 // ⚠ UNLIKE sync-invoices, THIS WRITES PRODUCTION. skuMaster and priceData both feed
 // the engine, which IMS recomputes client-side on every page load — so a run here
@@ -25,17 +37,25 @@
 // PO/TO caches. Read-merge-write with a FRESH read immediately before writing —
 // the same discipline sync-stock and sync-orders use. Never a bare PATCH.
 //
-// ⚠ INVENTORISED AT does not exist in Zoho yet. See catalogueMap.ts: Zoho wins
-// only where it has a value, otherwise the stored value stands. Until the field
-// is created and populated, this function preserves the existing classification
-// exactly — verified against the live master (2,004 DC / 58 Supplier / 12 DS).
+// ⚠ INVENTORISED AT NOW EXISTS AND IS POPULATED IN ZOHO (verified 2026-07-29 —
+// superseding the earlier note here that it did not). Dry run measured
+// `invAtFromZoho` 2,092 / `invAtFromStored` 0 with ZERO per-SKU reclassification:
+// Zoho's values match the hand-maintained master exactly. See catalogueMap.ts —
+// Zoho wins where it has a value, else the stored value, else DC.
+//
+// ⚠ So Zoho now owns the highest-consequence field in the master (Supplier =>
+// Min=Max=0 everywhere; DS => DC zeroed) and the stored value is no longer a
+// safety net. assessMasterChange guards a >5% shift in the mix, which catches a
+// mass change but NOT a handful — ~20 SKUs flipped to Supplier is ~1% and passes.
+// The real nightly check is `invAtChanged` in params/catalogueSyncStatus, which
+// lists every SKU becoming Supplier in full.
 //
 // Body: { dryRun?, force?, months? }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { zohoFetchWithRetry } from "../_shared/zohoClient.ts";
 import { mapItemsToMaster, mapPricesReport, assessMasterChange, mergePrices, assessPriceTagChanges } from "../_shared/catalogueMap.ts";
-import { shouldRun } from "../_shared/syncCooldown.ts";
+import { shouldRun, alreadyRanTonight } from "../_shared/syncCooldown.ts";
 
 const BASE = "https://www.zohoapis.in/inventory/v1";
 const ORG = () => Deno.env.get("ZOHO_ORG_ID")!;
@@ -66,8 +86,44 @@ Deno.serve(async (req) => {
     return await res.json();
   };
 
+  // Set only on a SUCCESSFUL publish, so the retry slots stay open after a failure.
+  // Declared out here because the catch block must be able to preserve it.
+  let night = "";
+  let prevStatus: any = null;
+
+  // Single writer for the status row. Every path goes through this so `at` is
+  // always stamped and `lastOkNight` is always carried forward rather than
+  // clobbered — an upsert replaces the whole payload, so a bare
+  // `{ ok:false, at }` would silently erase the gate's own state.
+  const setStatus = async (patch: Record<string, unknown>) => {
+    await supabase.from("params").upsert({
+      id: "catalogueSyncStatus",
+      payload: {
+        lastOkNight: prevStatus?.lastOkNight ?? null,
+        ...patch,
+        at: new Date().toISOString(),
+      },
+    });
+  };
+
   try {
     const status = await supabase.from("params").select("payload").eq("id", "catalogueSyncStatus").maybeSingle();
+    prevStatus = status.data?.payload ?? null;
+
+    // ── Once-per-night gate. The five slots exist to survive a transient Zoho
+    // 429 window (2026-07-29); this stops them re-pulling once one has won.
+    const tonight = alreadyRanTonight({
+      lastOkNight: status.data?.payload?.lastOkNight ?? null,
+      now: Date.now(), force: !!body.force,
+    });
+    night = tonight.night;
+    if (tonight.skip) {
+      console.log(`sync-catalogue: already ran tonight (${night}), nothing to do`);
+      return json({ ok: true, skipped: true, reason: "already_ran_tonight", night });
+    }
+
+    // Secondary guard: stops a human hammering the endpoint inside 15 minutes.
+    // Distinct from the gate above — that one is per-night, this one is per-burst.
     const gate = shouldRun({
       lastRunAt: status.data?.payload?.at ?? null, now: Date.now(),
       cooldownMs: COOLDOWN_MS, hasPending: false, force: !!body.force,
@@ -182,7 +238,10 @@ Deno.serve(async (req) => {
 
     if (!change.safe) {
       console.error("sync-catalogue: CHANGE GUARD FAILED — not writing", JSON.stringify(change));
-      if (!dryRun) await supabase.from("params").upsert({ id: "catalogueSyncStatus", payload: { ...stats, ok: false, at: new Date().toISOString() } });
+      // `at` is written (it feeds the 15-min burst cooldown) but `lastOkNight` is
+      // carried over UNCHANGED from the previous success — a guard rejection must
+      // leave tonight's retry slots open, and must not erase when we last won.
+      if (!dryRun) await setStatus({ ...stats, ok: false, reason: "change_guard_failed" });
       return json({ ok: false, reason: "change_guard_failed", ...stats });
     }
 
@@ -195,13 +254,32 @@ Deno.serve(async (req) => {
       // update — never lose a SKU. Safe to assign unconditionally.
       if (Object.keys(prices).length) payload.priceData = prices;
       await supabase.from("team_data").upsert({ id: "global", payload });
-      await supabase.from("params").upsert({ id: "catalogueSyncStatus", payload: { ...stats, ok: true, at: new Date().toISOString() } });
+      // The ONLY place `lastOkNight` is set. Closes tonight's gate so the
+      // remaining slots no-op instead of re-pulling and re-writing global.
+      await setStatus({ ...stats, ok: true, lastOkNight: night });
     }
 
     console.log(`sync-catalogue: ok — ${Object.keys(master).length} SKUs, ${Object.keys(prices).length} priced, ${stats.elapsedSec}s`);
-    return json({ ok: true, ...stats });
+    return json({ ok: true, night, ...stats });
   } catch (e) {
     console.error("sync-catalogue failed:", e);
+    // ⚠ WHY THIS WRITE EXISTS: on 2026-07-29 this function died on an org-wide
+    // Zoho 429 and wrote NOTHING. `params/catalogueSyncStatus` simply did not
+    // exist, so a total failure was indistinguishable from "the cron never
+    // fired" — it was only caught because skuMaster was still 2,092. sync-invoices
+    // has always recorded its exceptions; this now matches it.
+    //
+    // Deliberately does NOT set `lastOkNight`, so the later slots retry.
+    // Best-effort: if Supabase is what broke, this write fails too, and throwing
+    // here would replace the real error with a useless one.
+    if (!dryRun) {
+      try {
+        await setStatus({
+          ok: false, reason: "exception", error: String(e),
+          elapsedSec: Math.round((Date.now() - started) / 1000),
+        });
+      } catch { /* noop */ }
+    }
     return json({ ok: false, error: String(e), elapsedSec: Math.round((Date.now() - started) / 1000) }, 500);
   }
 });
