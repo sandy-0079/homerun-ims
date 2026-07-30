@@ -240,8 +240,8 @@ of demand lines misattributed** in steady state (20.2% including DS06 launch eff
   DS05 −₹6.2L shed inflated demand, DS03 +₹5.1L / DS04 +₹5.9L / DS06 +₹3.9L / DC −₹6.6L; 1,120 SKUs moved.
 - Tests: `attribution.test.js`, `pincodeMap.test.js`, `coverage.test.js`, `parseInvoiceCsv.test.js`.
 - **Ops dependency:** DS02 is now stocked for ~16L less. If routing doesn't actually follow the pincode
-  mapping, DS02 keeps receiving those orders while stocked for fewer. Known gap: pincode 560111 (193
-  rows, 86% served by DS03) is not in the mapping.
+  mapping, DS02 keeps receiving those orders while stocked for fewer. (The 560111 gap is **closed** —
+  verified live 2026-07-30: `560111 → DS03`, 128 pincodes mapped, mode `shippingCode`.)
 
 **Params-row rule (learned the hard way):** new config belongs in **its own `params` row**, never
 `params/global`. That row is written wholesale on every Apply and loaded with a *shallow* merge
@@ -711,8 +711,8 @@ DC Stock column added between Req Qty and Rep. Qty on DS tabs. Shows DC SoH for 
 
 ### 15. Pincode demand attribution ✅ Shipped & LIVE (2026-07-27, PR #13)
 `src/engine/attribution.js` — see the Demand Attribution section. Flag flipped to `shippingCode` on
-2026-07-27; network Max ₹7.81Cr → ₹7.68Cr. Follow-ups: add pincode 560111 → DS03; confirm ops routing
-follows the mapping (DS02 is stocked ₹16.4L lighter).
+2026-07-27; network Max ₹7.81Cr → ₹7.68Cr. Pincode 560111 → DS03 **done** (128 pincodes mapped as of
+2026-07-30). Remaining follow-up: confirm ops routing follows the mapping (DS02 is stocked ₹16.4L lighter).
 
 ### 16. Nightly model refresh from Zoho — Stages 4-7 (in progress)
 Automate the whole input chain so the model refreshes ~20:30 IST without a manual CSV.
