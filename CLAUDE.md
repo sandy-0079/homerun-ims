@@ -90,7 +90,9 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
   (skuMaster/priceData — **matters more than the invoice backup**, see Stage 7). `params`: `global`,
   `paramsBackup`, `plywoodNetworkConfig`, `plywoodNetworkV2Config`, `networkConfigs`, `pincodeMap`
   (attribution), `toTargets`, `toAudit`, `toSnapshots`, `zohoItemIds`, `binLocations`, `syncLock`,
-  `invoiceSyncStatus`, `invoiceSyncCursor`, `catalogueSyncStatus` (now also carries **`lastOkNight`** —
+  `invoiceSyncStatus`, `invoiceSyncCursor`, `uploadProvenance` (**new 2026-07-30** — when each input was
+  last set BY HAND; the browser is its only writer, syncs record their own times in their own status
+  rows, so no key has two writers), `catalogueSyncStatus` (now also carries **`lastOkNight`** —
   the once-per-night gate; see Stage 7).
 - **⚠ Reading state? Query the exact key name.** `params/global` holds the strategy map under
   **`categoryStrategies`** (plural). A hand-rolled check that guessed `categoryStrategy` silently
@@ -227,6 +229,40 @@ Seeds a new DS's Min/Max from the **equal-weight average of source DSes** — bu
 - Runs after all strategies/floors, **before Inventorised-At normalization** — Supplier/DS-inv zeroing still wins; Dead Stock propagates (0+0→0).
 - **DC re-derived treating the seeded DS as a real sixth store** (deliberate transition overstock — sources are never reduced; both self-correct as carved-out demand leaves source history ~45 days post-go-live): rate-based SKUs add a synthetic rate `max(0, avg(source rates) − organic DS06 rate)` into `sumDailyAvg`; floored SKUs add the seed deltas into Σ DS sums; Network Design adds `ceil(ΔMin × brand dcMult)`. DC never decreases. Audit: `dcDetails.dsSeedAug`.
 - Tests: `src/engine/__tests__/dsSeed.test.js` (18).
+
+### Active-only normalization (final engine override, LIVE 2026-07-30)
+**Only SKUs `active` in the SKU Master get non-zero targets.** Runs immediately before the
+Inventorised-At pass below, with the same conventions: zero `min`/`max`, leave `preFloor*` for audit,
+record `zeroedReason`, and **KEEP the entry** (consumers iterate `Object.keys(res)`, and the Upload
+tab's "SKUs in Invoice not Active in SKU Master" warning needs them visible).
+- **⚠ Before this, `status` gated Min/Max NOWHERE in the engine.** Its only appearances were a
+  Zero-Sale tag and two lines that *fabricated* a master entry for any SKU seen in invoice data:
+  `skuM[skuId] || { …, status: "Active", inventorisedAt: "DS" }`. Measured on live data: **9 SKUs**
+  got targets they had no business having — 4 in the master but not active, 5 absent from it entirely
+  (orphaned pre-July codes like `FUT-DURA-24-18-8`, from the ~2026-07-01 Zoho re-code). 6 carried real
+  quantities, including `Z8DJK` at 10 units ≈ ₹1.6L, a SKU ops had marked not-for-sale.
+- **Fabricated meta now says `status: "Unknown"`, not `"Active"`.** That claim was the lie every other
+  symptom followed from. The rest of the meta is still fabricated — consumers read `r.meta`
+  unconditionally and would crash on undefined.
+- **An allowlist of exactly `"active"` is the only safe rule** — Zoho's vocabulary already includes
+  `confirmation_pending` and can grow. A **missing** status still counts as active (the established
+  `(status || "Active")` convention for a master row that omits the field) — distinct from a SKU
+  absent from the master.
+- **Measured effect (exact):** Inv Value Max **₹8.0195Cr → ₹7.9952Cr**, Min **₹5.6369Cr → ₹5.6238Cr**
+  — i.e. the Overview card reads **8.02 → 8.00**, −₹2.43L. `toTargets` rebuilt from the new engine is
+  **byte-identical** to the old (0 SKUs lost/gained/changed) because it already filtered
+  `status==="active"` *and* `inventorisedAt==="dc"` — so the TO tool was never exposed. Stock Health
+  already filtered too. Overview's "Active SKUs" 2,106 → 2,101 and its `Unknown` category row goes.
+- ⚠ **`toTargets` escaping was luck, not design:** unknown SKUs were fabricated as `"DS"` and the
+  filter only admits `"dc"`. Had that default been `"DC"`, phantom SKUs would have been reaching the DC
+  team's transfer orders. Every consumer was separately remembering to filter; now the engine doesn't
+  emit them. Tests: `src/engine/__tests__/activeOnly.test.js` (10).
+- ⚠ **Reconciling an Inv-Value delta: the KPI sums `Object.entries(results)` — EVERY entry**, not the
+  `activeSkus` set (`App.jsx` `kpis`). That is why non-active SKUs were in the headline figure at all,
+  and it is the trap that made a first pass at this misquote the before/after as 8.00 → 7.98: a
+  per-class breakdown printed at 2dp (`active 8.00 + non_active 0.02 + absent 0.01`) reads as
+  self-consistent while the active subtotal is silently the *after* number. **Reconcile parts against
+  the total at full precision** whenever the measurement's purpose is a before/after delta.
 
 ### Inventorised-At normalization (final engine override)
 Applied as a last pass over `res` in `runEngine` (after all strategies, floors, Dead Stock), keyed on `meta.inventorisedAt`. Same character as Dead Stock — a structural location constraint. Zeroes `min`/`max`, leaves `preFloor*` intact for audit, tags `dc.dcDetails.zeroedReason`.
