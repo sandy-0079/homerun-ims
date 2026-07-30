@@ -1,9 +1,9 @@
 # CLAUDE.md — HomeRun IMS
 
-> 🚧 **IN-FLIGHT WORK — read [`docs/HANDOFF-2026-07-29.md`](docs/HANDOFF-2026-07-29.md) first** if you
-> are touching the nightly model refresh (Stages 4–7), the invoice/catalogue syncs, or pincode
+> 🚧 **IN-FLIGHT WORK — read [`docs/HANDOFF-2026-07-30.md`](docs/HANDOFF-2026-07-30.md) first** if you
+> are touching the nightly model refresh (Stages 4–6), the invoice/catalogue syncs, or pincode
 > attribution. It records what is deployed-but-not-switched-on, tonight's expected events, verification
-> commands, rollback steps, and the open decisions. **Delete that file and this block once Stages 5–7
+> commands, rollback steps, and the open decisions. **Delete that file and this block once Stages 5–6
 > land** — this file is for durable knowledge, that one is for transient state.
 
 HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold.
@@ -51,6 +51,13 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
     (App.jsx) alerts and `PlywoodNetworkV2Tab` surfaces the message; an uncaught throw would leave the
     upload spinner stuck forever. Deliberately **rejects rather than auto-corrects**: DD/MM vs MM/DD is
     ambiguous for days ≤12, and guessing wrong shifts demand by weeks with no visible symptom.
+  - **⚠ THE ZOHO EXPORT ITSELF STILL PRODUCES `DD/MM/YYYY` — the locale setting was never fixed.** A
+    fresh 07-29 export on 2026-07-30 was DD/MM in **all 1,704 rows**. So the guard now (correctly)
+    refuses it, which means **the manual-CSV override path is unusable until the export locale is
+    changed** — worth knowing before reaching for it in an incident. It also blocks
+    `scripts/compare-csv-vs-shadow.mjs`, which imports the real `parseInvoiceCsv` on purpose. Converting
+    a scratch copy is safe **only when every distinct date's leading component is >12** (provably a day);
+    assert that rather than assuming, and never convert the file you would upload.
   - **Generalisable:** `plywoodV2/demand.js:52` and `PlywoodNetworkTab.jsx:461,1223` share the same
     `new Date(latest).toISOString()` pattern. Any single malformed row in a shared `team_data` row can
     take the whole app down for everyone, and lock you out of the tool that would fix it. **Validate at
@@ -78,12 +85,60 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
   `invoice_sync_buffer` (in-flight chunks for the 1–2 dates being pulled, keyed
   `date|round|offset` so a re-run of a chunk is idempotent; **nothing else reads it**),
   `invoice_data_shadow` (Stage 4 target — **nothing reads it**),
-  `invoice_data_backup_20260728` (pre-Stage-5 safety net; the API cannot re-serve anything before
-  2026-07-01, so this is the only copy of Apr–Jun history). `params`: `global`, `paramsBackup`,
-  `plywoodNetworkConfig`, `plywoodNetworkV2Config`, `networkConfigs`, `pincodeMap` (attribution),
-  `toTargets`, `toAudit`, `toSnapshots`, `zohoItemIds`, `binLocations`, `syncLock`,
-  `invoiceSyncStatus`, `invoiceSyncCursor`, `catalogueSyncStatus`.
-- **CSV upload → model re-run is safe:** `saveTeamData` only writes `invoiceData` to the `invoice_data` row when it changes; global row always uses read-merge-write (`...existing` spread) so PO/TO caches and stock data are never wiped by an upload.
+  `invoice_data_backup_20260728` + `_20260729` (pre-Stage-5 safety nets; the API cannot re-serve anything
+  before 2026-07-01, so these are the only copy of Apr–Jun history), `catalogue_backup_20260729`
+  (skuMaster/priceData — **matters more than the invoice backup**, see Stage 7). `params`: `global`,
+  `paramsBackup`, `plywoodNetworkConfig`, `plywoodNetworkV2Config`, `networkConfigs`, `pincodeMap`
+  (attribution), `toTargets`, `toAudit`, `toSnapshots`, `zohoItemIds`, `binLocations`, `syncLock`,
+  `invoiceSyncStatus`, `invoiceSyncCursor`, `catalogueSyncStatus` (now also carries **`lastOkNight`** —
+  the once-per-night gate; see Stage 7).
+- **⚠ Reading state? Query the exact key name.** `params/global` holds the strategy map under
+  **`categoryStrategies`** (plural). A hand-rolled check that guessed `categoryStrategy` silently
+  returned `{}` on 2026-07-30 and reported all 19 categories as unmapped — a confident wrong answer.
+  Never write `p.get('a') or p.get('b')`: the `or` hides which key exists. Same lesson as `diag-items`
+  checking the wrong custom-field shape — **a check that reads the wrong field is worse than no check.**
+- **⚠⚠ `saveTeamData` WRITES ONLY WHAT THE CALLER CHANGED — `src/teamDataBundle.js`, and this is a
+  data-safety rule, not tidiness.** It used to rebuild the whole bundle from React state
+  (`{...existing, skuMaster: overrides.skuMaster ?? skuMaster, …}`). **The `...existing` spread only
+  protects keys the app does not NAME**, and it named `skuMaster`, `priceData`, `stockData` and
+  `stockUploadedAt*` — so every save rewrote them from whatever that tab was holding.
+  - Harmless while a human's CSV upload was the only writer of `skuMaster`: the human doing the upload
+    was the human whose tab it was. **Stage 7 ended that.** `sync-catalogue` now writes `skuMaster` and
+    `priceData` nightly and unattended, so a tab opened BEFORE the nightly run would, on its next
+    upload or Apply, silently revert the whole catalogue — new SKUs dropped, prices reverted, deleted
+    SKUs re-activated. Nearly happened 2026-07-30: a floors upload at 14:57 IST wrote `skuMaster` back
+    over the 14:36 sync and survived only because that tab loaded after 14:36. Timing, not design.
+  - **Symptom is maximally confusing:** `params/catalogueSyncStatus` still reads `ok:true` with
+    `lastOkNight` set. The sync really did succeed and was overwritten afterwards, so it looks like a
+    sync failure that isn't one.
+  - `BROWSER_OWNED_KEYS` = `skuMaster`, `minReqQty`, `newSKUQty`, `deadStock`, `priceData` — the only
+    keys the browser may write. **Adding a key there grants permission to clobber it**, so only add one
+    no edge function writes. Deliberately absent: `invoiceData` (own row; back here takes the payload
+    ~1-2MB → ~7MB and re-exhausts the Disk IO burst), `stockData`/`stockDataAccounting`/
+    `stockUploadedAt*` (sync-stock owns them — the browser only ever READS stock, `setStockData` is
+    called solely from Supabase reads), `poData`/`toData`/caches/`ordersUploadedAt` (sync-orders).
+  - Tests `src/teamDataBundle.test.js` (12). `undefined` means "not changed"; `{}` is a **deliberate
+    clear** (the Upload Data clear buttons pass `{skuMaster:{}}`) — never test falsiness.
+  - **Generalisable:** automating an input the browser also writes turns a single-writer key into a
+    **write-write conflict**. Same shape as the `pincodeConfig` incident. When a sync function takes
+    over a field, audit every browser write path that names it.
+- **⚠ The realtime handler is NOT the place to refresh `skuMaster`/`priceData` — it looks like a
+  two-line fix and is not** (`App.jsx`, channel `stock-sync`). It fires on EVERY update to
+  `team_data/global` — the four stock syncs plus orders-sync, **~5×/hour** — and `loadFromSupabase`
+  returns a freshly parsed object each time, so `setSKU(sbData.skuMaster)` would change the reference
+  on every event and fire the `[params, invoiceData, skuMaster, …]` effect: a full `runEngine` over
+  ~2,100 SKUs plus `setResults`, ~5 times an hour in every open tab, with the table changing under
+  whoever is using it. It refreshes only the five stock/PO/TO keys because it predates Stage 7.
+  - **Known open gap:** a long-lived tab can no longer CLOBBER the row (above) but still COMPUTES from
+    a stale catalogue — stale Min/Max on screen, and a stale `params/toTargets` if someone clicks Apply
+    from it. Needs change-detection against the held catalogue, or better a "catalogue updated, reload"
+    prompt that leaves the user in control. Habit meanwhile: **reload before clicking Apply.**
+- **CSV upload → model re-run is safe:** `saveTeamData` writes `invoiceData` to the `invoice_data` row
+  only when it changes, and the global row is read-merge-write from a FRESH read, so PO/TO caches and
+  stock data are never wiped by an upload.
+- **`applyAndRun` writes only the `params` table** — `params/global`, `paramsBackup`, `pincodeMap`,
+  `toTargets`. It never calls `saveTeamData`, so Apply cannot touch `team_data/global`. Useful when
+  isolating which write moved a value: one write per verification, or a moved value has two causes.
 - **Edge Function deploy:** plain `supabase functions deploy sync-stock` / `sync-orders` is fine.
   (An older note here required `--no-verify-jwt` — obsolete since the cron jobs started sending the
   anon Bearer header in their `pg_net` calls; verified 2026-07-08/09: two plain deploys, every cron
@@ -94,6 +149,14 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 ## Category Strategy Engine
 
 **Why:** 78.7% of SKU×DS combos are Slow/Super Slow. Averages produce near-zero Min for items selling once every 10+ days.
+
+**⚠ An unmapped category silently falls through to Standard.** Measured 2026-07-30: of 2,101 active
+SKUs, 384 are on Standard, but only 259 are the *intended* Standard categories (Painting, General
+Hardware, Fevicol, Water Proofing, Cement). The rest were never consciously assigned — **Home Appliances
+57, Glass Hardware 31, Service 2** (Kitchen Sinks & Faucets 35 was assigned to PCT that day). Premium
+slow-movers on averaging is exactly the profile PCT exists for, so a new Zoho category appearing in the
+master is a decision to make, not a default to accept. Audit: diff `Object.values(skuMaster).category`
+against `params/global.categoryStrategies` — note the key is **`categoryStrategies`** (plural).
 
 | Strategy | Categories | Key Logic |
 |---|---|---|
@@ -176,6 +239,13 @@ Applied as a last pass over `res` in `runEngine` (after all strategies, floors, 
 **Downstream of Supplier exclusion:**
 - **OOS Simulation** (`simWorker.js` `runSim` + `runActualStockSim`) explicitly skips Supplier SKUs via `inventorisedAt==='supplier'` — independent of the engine zeroing (holds even if a floor pushed Max>0; the actual-stock sim doesn't read Max at all). The dead inline `runSim`/`median` in App.jsx were removed (2026-06-30).
 - **Overview tab** store selector "All" = **All Locations (incl. DC)** — `getInv` sums DS01–DS05 **+ DC** so the category/brand/SKU table rollups tie out to the KPI "Inv Value" cards (which always include DC). Coverage figures in "All" mode include DC stock vs DS-only sales by design.
+- **⚠ Overview's "Active SKUs" card counts ENGINE RESULTS, not `skuMaster` rows — the two use different
+  denominators.** Measured 2026-07-30: card read **2,106** while the master held **2,101** active, the
+  difference being an **`Unknown` category row of 5** that does not exist in the master (zero active SKUs
+  there lack a category). Those 5 are SKUs appearing in invoice data but absent from `skuMaster` — the
+  same population as the 0.014% unknown-SKU rate — and they draw real inventory value (₹35.7K Inv Min)
+  with no category to drive strategy selection, so they fall through to Standard. Don't reconcile the
+  card against a `skuMaster` count and conclude something is broken.
 
 ---
 
@@ -399,12 +469,33 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 - `inventorysummary` report: ~18–56s/call depending on Zoho health — dominant cost.
 - **Zoho inventorysummary rate limit: ~8 calls/minute** (confirmed 2026-05-22; re-confirmed on the Inventory API 2026-07-06 — 10 calls in ~2 min → 429). 4 concurrent (2 branches × 2 modes) → 429 after 2 groups; 6 concurrent (3 branches) → 429 after 1 group. Safe: max 4 calls per invocation.
 - **Zoho OAuth token-endpoint throttle (distinct from the inventory-API limit above):** `accounts.zoho.in/oauth/v2/token` throttles *access-token generation* from the refresh token — `{"error":"Access Denied","error_description":"You have made too many requests continuously"}`. On 2026-07-14 this failed stock-sync-1 + stock-sync-2 (DC/DS01/DS02/DS03 missed a cycle) at the auth step, *before* any inventory/Supabase call; stock-sync-3/4 recovered ~3 min later. Root cause: every function minted a fresh token per invocation (~5-10/hr across 4 stock crons + orders + on-demand create-to). **Fix (2026-07-15):** shared `supabase/functions/_shared/zohoToken.ts` `getZohoToken(supabase)` caches the token in `public.zoho_auth_cache` (RLS ON, no policies → service-role only; NOT in `params`, which anon can read) and reuses it until ~10 min before expiry. Cuts token calls to ~1/hr; raising a TO now logs `zoho token: cache hit` and costs zero token calls, so it can't starve the crons. FAIL-SAFE: any cache miss/read/write error → fresh refresh (pre-cache behaviour). Hot path only (sync-stock, sync-orders, create-to); the `zoho-invoices/prices/skumaster` importers still mint per-call. Logs `zoho token: refreshed` / `cache hit`.
-- **Architecture:** 4 staggered cron jobs (3 branch pairs + DS06; ≤4 concurrent calls, never overlaps):
+- **⚠ ZOHO GOES DOWN ORG-WIDE, AND A FUNCTION CAN BE A VICTIM RATHER THAN A CAUSE** (measured
+  2026-07-29). Between **17:35–18:30 UTC every Zoho consumer failed identically** with
+  `Zoho API: 429 after 3 attempts` from `zohoFetchWithRetry` — all four stock syncs, orders-sync, and
+  `sync-catalogue`'s first-ever real run — and all recovered at 18:35. Ruled out: our own call volume
+  (the day was clean; last burst `create-to` ×20 at 15:45 UTC, ~1h50m earlier), a recurring nightly
+  Zoho window (same window on 07-26/27/28: **0 non-200 of 15/18/33** invocations), and the token cache
+  (`zoho token: cache hit` throughout). Trigger external and not reproducible from our logs.
+  - **⚠ DO NOT "FIX" THIS BY SPLITTING THE WORK.** `sync-invoices` was *causing* its own 429s — 8
+    concurrent workers, backoff sleeping ~960 worker-seconds past the 150s wall clock — so chunking cut
+    instantaneous pressure. `sync-catalogue` is ~30 calls, **sequential (concurrency 1)**, ~16s, and
+    **died on page 1 having consumed nothing.** Same symptom, opposite cause: when you trip the limit
+    yourself, reduce concurrency; when you walk into someone else's penalty, **retry later in time**.
+  - So the durable defence is **more slots spread wider than a plausible outage**, plus recording the
+    failure so it is visible. Diagnostic that distinguishes the two: did it die on the first call?
+- **Architecture:** 4 staggered stock crons (3 branch pairs + DS06; ≤4 concurrent calls, never overlaps)
+  + orders + 2 catalogue + the invoice window. **8 jobs, no two sharing a minute** — verify with
+  `select jobname, schedule from cron.job order by jobname;`:
   - `stock-sync-1` at `:35 UTC` (:05 IST) → DC + DS01
   - `stock-sync-2` at `:38 UTC` (:08 IST) → DS02 + DS03
   - `stock-sync-3` at `:41 UTC` (:11 IST) → DS04 + DS05
   - `stock-sync-4` at `:44 UTC` (:14 IST) → DS06 (2 calls)
   - `orders-sync-hourly` at `:50 UTC` (:20 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket). Moved from :35 on 2026-07-08 (migration `20260708000001`) — at :35 it collided with stock-sync-1's `team_data/global` write (statement timeout left DC+DS01 74m stale).
+  - `catalogue-sync-earlier` at `25,55 16,17 * * *` UTC + `catalogue-sync-nightly` at `25 18 * * *`
+    → five attempts, 21:55–23:55 IST (migrations `20260730000001` + `20260729000002`)
+  - `invoices-sync-window` at `5,20 19-22 * * *` UTC → 00:35–04:00 IST
+  - **Free minutes each hour: `:00–:34` and `:51–:59`.** `:35 :38 :41 :44` and `:50` are taken, and
+    `:50` in particular writes `team_data/global`.
 - **syncLock (2026-07-08, deployed):** `sync-stock` acquires `params/syncLock` before pulling (released in `finally`; locks older than 5 min treated as leaked and taken over). A concurrent invocation gets `{ok:true, busy:true}` — callers (TO tool's on-demand pull) retry after ~30s. Prod-verified: concurrent calls → second returned busy, lock released cleanly after.
 - **Session lease + CORS (2026-07-09, `7e0711b`, function DEPLOYED 14:26 IST + prod-verified; frontend rework `c520275` DEPLOYED ~15:25 IST via main — before it shipped, old prod Sync Now caused a second 429 storm at 14:50 IST, healed by the 16:05 cycle):** same `syncLock` row gains a `session` field — a browser tool (TO pull / Sync Now) claims the sync path for its whole multi-group sequence via `{sessionStart, source}` / `{sessionEnd, sessionId}` (12-min self-expiry); crons and the other tool get `busy` meanwhile. Also: CORS headers on ALL responses (previously only the preflight had them → browsers couldn't read any POST response; Sync Now failed silently, TO tool showed successes as ✕). **Deploy this function BEFORE any browser code that sends `sessionStart`** — the old function misreads it as a full 7-branch sync (429 storm).
 - **Browser-triggered syncs need explicit 90s pacing (2026-07-09 RCA):** sequencing groups back-to-back is NOT pacing — on a fast-Zoho morning (5s/group) the TO tool's pull put 12 calls in ~15s → 429 on groups 3–4 + ~60 min penalty that also killed the 04:38 UTC cron. Both Sync Now and the TO pull now enforce a 90s minimum gap between group starts (~2× margin on every observed threshold). Crons are unaffected (wall-clock stagger).
@@ -587,6 +678,24 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
     rows, same qty, **0 SKU×DS differences** — 0% unknown SKUs, 100% pin coverage. `reference_number`
     confirmed as the `Shopify Order` field.
   - Exit criteria: `node scripts/compare-invoice-shadow.mjs` clean ~5 consecutive days.
+  - **⚠ RECONCILING A DIFF: THE DIAGNOSTIC IS *DIRECTION*, NOT SIZE** (learned 2026-07-30, night 1).
+    A **leak subtracts only** — 07-28 lost 27.7% of quantity one-directionally, 146 whole orders, all
+    missing. A **freshness gap goes both ways**: the shadow both over- and under-counts, because the CSV
+    export is taken hours after the pull. Night 1 showed 9 differences, every one traced to a named
+    invoice whose Zoho state changed after the pull, and the arithmetic closed exactly
+    (`+5 −2 −1 = +2` rows, `+5 −3 −1 = +1` qty). Three causes, all expected: an invoice **voided** after
+    the pull (the documented ~0.9% residual), one **created** after it, and a **line item added** to an
+    existing one. So do not read "0 SKU×DS differences" literally against a same-day export — check that
+    every difference resolves to an invoice and that losses are not one-directional.
+  - **⚠ `compare-invoice-shadow.mjs`'s verdict line is untrustworthy: the shadow row is CUMULATIVE.**
+    It compares every overlapping date, including dates fetched by *older, buggier* code that were never
+    re-fetched. Night 1 printed "❌ 3 of 4 dates disagree — do NOT proceed to Stage 5" while 07-27
+    (0.6%) and 07-28 (25.5%) were simply stale pre-fix rows and only 07-29/07-26 were the new code's
+    work. Cross-check `invoiceSyncStatus.publishedPlan` for which dates a run actually touched. The D-3
+    re-fetch overwrites a stale date wholesale, so they heal on their own schedule.
+  - **The D-3 re-fetch is verifiably doing its job:** on 07-26 the only difference from the CSV-uploaded
+    row was one invoice present in the CSV (exported 07-29) and absent from the re-fetch (run 07-30) —
+    voided in between. **The shadow was the more correct of the two.**
 - **Stage 5 (pending decision):** point the sync at the live row — a one-line change of `SHADOW_ROW`.
   CSV upload stays as a manual override.
   - **Backup before any cutover:** `team_data/invoice_data_backup_20260728` — 73,178 rows, 90 dates,
@@ -617,23 +726,52 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
   - End state worth aiming at: IMS reads the canonical stored result too, making divergence
     structurally impossible and page loads much faster. Costs the "engine changes go live on next page
     load" property, and Impact Preview still needs client-side compute. Not urgent.
-- **Stage 7 (LIVE 2026-07-29):** `sync-catalogue` → SKU Master + Purchase Prices into
-  `team_data/global` (read-merge-write, fresh read immediately before writing). ~30 calls, ~16s.
-  Cron `catalogue-sync-nightly` at **`25 18 * * *` UTC (23:55 IST)**, migration `20260729000002` —
-  deliberately *before* `invoices-sync-window` so the invoice coverage guard checks a fresh master.
-  See the Zoho ITEMS + PRICES section for the ⚠s, including status ownership.
+- **Stage 7 (LIVE 2026-07-29; hardened 2026-07-30 after its first run failed):** `sync-catalogue` →
+  SKU Master + Purchase Prices into `team_data/global` (read-merge-write, fresh read immediately before
+  writing). ~30 calls, ~16s. See the Zoho ITEMS + PRICES section for the ⚠s, including status ownership.
+  - **FIVE attempts, 21:55–23:55 IST**, first success wins — `catalogue-sync-earlier`
+    (`25,55 16,17 * * *` UTC, migration `20260730000001`) + `catalogue-sync-nightly`
+    (`25 18 * * *`, `20260729000002`, deliberately left untouched so rollback is one `unschedule` and
+    there is no window with no catalogue cron at all). All before `invoices-sync-window` so the invoice
+    coverage guard checks a fresh master; the last slot leaves a **40-minute buffer**.
+  - **Five slots ≠ five pulls.** `alreadyRanTonight()` (`_shared/syncCooldown.ts`) gates on
+    `lastOkNight` in `params/catalogueSyncStatus`: the first SUCCESS closes the night and later slots
+    return `already_ran_tonight` after one Supabase read and zero Zoho calls — same shape as
+    `sync-invoices`' `already_published`. **A FAILED run does not close the gate**, which is the entire
+    point. `COOLDOWN_MS` (15 min) remains a separate anti-hammering guard and does not block the 30-min
+    slot spacing. ⚠ A manual daytime run consumes that night's slot — by design.
+  - **`syncNightKey()` shifts 3h before taking the IST date rather than using the plain calendar date.**
+    No slot crosses midnight IST today, so it is insurance — but a post-midnight slot on a plain-date
+    key would re-pull AND then poison the FOLLOWING night's gate into skipping entirely while reporting
+    ok. A test pins that case; a plain-date implementation passes every other test and fails only in
+    production, months later. **Re-read it before adding any slot at or past 00:00 IST.**
+  - **⚠ Why the retries exist: its first real run (2026-07-29, 18:25 UTC) returned 500 and wrote NOTHING
+    to `params/catalogueSyncStatus`** — the row simply did not exist, so a total failure was
+    indistinguishable from "the cron never fired". Caught only because `skuMaster` was still 2,092;
+    confirming it needed a Management API dig through `function_logs`. **Every exit path now writes the
+    status row** through one `setStatus()` helper (`reason:"exception"` on the catch), which also carries
+    `lastOkNight` forward — an upsert replaces the whole payload, so a bare `{ok:false, at}` would erase
+    the gate's own state. Cause was the org-wide Zoho 429 window; see the sync-constraints section.
   - **⚠ NOT `:50`** — `orders-sync-hourly` occupies :50 of every hour and writes the same
     `team_data/global` row; concurrent writers there caused the statement timeout that left DC+DS01
     74m stale. Free minutes: `:00–:34` and `:51–:59`. (An earlier note here suggested 15:20 UTC and
     another suggested 18:50 — both superseded.)
-  - Backup before the cutover: `team_data/catalogue_backup_20260729`, verified byte-identical
-    (skuMaster 2,092 · priceData 1,822). **More important than the invoice backup** — `inventorisedAt`
-    is hand-maintained and absent from Zoho, so a bad master write cannot be repaired from the API.
-  - Dry run vs live 2026-07-29: 2,093 items, guard safe, `absentFromZoho: []` (Zoho is now a superset),
-    prices 1,822 → 1,834 with 350 retained. Expected first-run effect: **5 SKUs gain Min/Max** because
-    Zoho marks them active and the master was stale — `TENX4`, `E3MPF`, `WUTDS`, `XP5EV`, `P292Y`.
-  - Blocked on ops for full value: create `cf_inventorised_at` in Zoho and populate it. Verify with ONE
-    SKU + a `sync-catalogue` dry run (`invAtFromZoho` should go 0 → 1) **before** populating all 2,083.
+  - Backup: `team_data/catalogue_backup_20260729` (skuMaster 2,092 · priceData 1,822), verified
+    byte-identical. Restore = read-merge-write those two keys back into `team_data/global`. Keep taking a
+    dated one before any change to this function: `inventorisedAt` decides whether a SKU is stocked
+    anywhere at all, and Zoho now owns it, so there is no local safety net.
+  - **First successful run 2026-07-30 14:36 IST** (the 07-29 cron run died — see above): 2,100 items
+    fetched, guard `safe`, skuMaster 2,092 → **2,105**, prices 1,833 → **1,858** (259 updated, 25 added,
+    **330 retained**), **`invAtChanged: 0` / `toSupplier: []`**, exactly **1** status change —
+    `GHT_C-…-VVN3G` Active → Inactive, the SKU deleted from Zoho, correctly **retained and marked
+    inactive rather than dropped**. 29 price re-tiers, 21 of them `No Price → priced` (all *reducing*
+    stock, since `No Price` sat at the 95th percentile).
+  - **⚠ The delta drifts within the hour — do not act on a stale dry run.** A dry run at 13:47 IST
+    measured 2,101 items / 8 new SKUs; the real run 49 minutes later saw **2,105 / 12** because ops kept
+    creating SKUs. The guard plus the status row are the protection, not a preview. (And since every exit
+    path now records the run, a second dry run before a real one buys little.)
+  - **A new SKU with no `cf_inventorised_at` defaults to DC and is reported in `master.newSkusDefaulted`.**
+    12 such SKUs on 07-30. Safe default, but the default is making the decision — worth setting in Zoho.
   - Floors (`minReqQty`, `newSKUQty`) and Dead Stock stay manual — ops judgement, not Zoho data.
 
 ### 4. Rethink Tool Output Tab — fold buttons into Upload Data tab or keep separate?
@@ -685,4 +823,10 @@ Dead stock SKUs now get Min=Max=0 at all DS and DC locations, overriding all flo
 
 Full backup auto-saved to `params/paramsBackup` on every "Apply & Re-run Model" click. Restore from there if `params/global` is corrupted.
 
-Key non-defaults: `overallPeriod=45`, `newDSFloorTopN=250`, `newDSList=["DS04","DS05","DS03"]`, `brandLeadTimeDays={_default:3,AsianPaints:4}`, `pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`. Category strategies: 8 PCT + 2 Fixed Unit Floor + Plywood=NetworkDesign (see Supabase). `fixedUnitFloor` defaults `{orderQtyPercentile:90, maxMultiplier:1.5, maxAdditive:1, minNZD:2, spikeCapMult:5}` — note prod Supabase `params/global.fixedUnitFloor` predates minNZD/spikeCapMult, so the engine reads them via inline `?? 2`/`?? 5` (shallow param-merge drops keys prod lacks).
+Key non-defaults (verified live 2026-07-30): `overallPeriod=45`, `newDSFloorTopN=250`,
+`newDSList=["DS04","DS05","DS06","DS03"]` (DS06 added at go-live), `brandLeadTimeDays={_default:3,"Asian Paints":4}`,
+`pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`, `dsSeed={DS06:["DS02","DS04"]}`. Category strategies:
+**11** — 8 PCT + 2 Fixed Unit Floor + Plywood=NetworkDesign (`Kitchen Sinks & Faucets` → PCT added 2026-07-30).
+**A reload→Apply round trip is verified lossless** (2026-07-30: fresh Incognito load, Apply, all 7 params
+rows byte-identical bar `_backedUpAt`/`refreshedAt`) — the historic "a reload changed my params" was the
+`loadParamConfigRows` bug, now fixed. The write is always an Apply, never the reload itself. `fixedUnitFloor` defaults `{orderQtyPercentile:90, maxMultiplier:1.5, maxAdditive:1, minNZD:2, spikeCapMult:5}` — note prod Supabase `params/global.fixedUnitFloor` predates minNZD/spikeCapMult, so the engine reads them via inline `?? 2`/`?? 5` (shallow param-merge drops keys prod lacks).
