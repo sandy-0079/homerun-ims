@@ -33,6 +33,29 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 ## Data Model & Key Decisions
 
 - Invoice CSV (Zoho export) replaces entirely on upload — no merge. Engine uses whatever period admin sets.
+- **⚠⚠ THE INVOICE `⬇ Data` BUTTON DOES NOT ROUND-TRIP — RE-UPLOADING ITS OUTPUT YIELDS 0 ROWS.**
+  Measured 2026-07-30 by replaying `buildDataCSV("invoiceData")` through the real `parseInvoiceCsv`:
+  **74,381 rows → 0.** Stored rows carry only `{date, ds, pin, qty, shopifyOrder, sku}` — `status` is
+  dropped after the parse-time filter — so the export writes `r.status || ""`, an EMPTY `Invoice
+  Status`, and re-upload filters `["Closed","Overdue"]`, matching nothing. Since the upload replaces
+  entirely, the result is a **total wipe of invoice history**, and nothing before 2026-07-01 is
+  re-fetchable from the API.
+  - **This is a live booby trap**: `⬇ Data` sits next to `⬆ Upload CSV` and that workflow looks like the
+    *safest* way to re-upload. STILL UNFIXED. The fix is one line — emit `"Closed"` for the status the
+    export cannot recover — after which the button becomes the backup it appears to be.
+  - `minReqQty`, `newSKUQty`, `deadStock`, `skuMaster` and `priceData` round-trip **correctly** (columns
+    verified symmetric on both sides). Invoice is the only broken one.
+- **⚠ THE DATE GUARD CHECKS FORMAT, NOT COVERAGE — coverage is the check that actually protects a
+  replace-entirely upload, and nothing in the app performs it.** A July-only export with perfect ISO
+  dates is accepted and silently destroys Apr–Jun. Before any invoice upload, verify against the stored
+  row: **earliest date ≤ stored earliest**, no stored date absent from the file, row/qty/SKU×DS totals
+  comparable. Cleared exactly this way on 2026-07-30 (`Invoices - Apr30_Jul28.csv`: 74,381 rows,
+  90 dates, 6,231 SKU×DS combos, **0 differing** — a content no-op).
+- **⚠ The unknown-SKU rate is WINDOW-DEPENDENT; quote the window or it reads as a regression.** Same
+  file, 2026-07-30: **0.148% over 90d · 0.014% over 45d · 0.000% over 30d.** Every unknown row is
+  pre-July (Apr 5 / May 85 / Jun 20 / Jul 0) — orphaned old-style codes from the ~2026-07-01 Zoho
+  re-code — so they concentrate in the older half. The bar (<1%) applies to the **engine's** window,
+  i.e. `overallPeriod` = 45 days.
 - **⚠⚠ INVOICE DATES MUST BE `YYYY-MM-DD`. A locale-formatted export took prod down on 2026-07-29.**
   An export wrote the two newest days as `DD/MM/YYYY` (27/07/2026, 28/07/2026 — 2,458 rows) while the
   older 88 days were ISO. `parseInvoiceCsv` stored `Invoice Date` verbatim with no validation, so the
@@ -226,6 +249,10 @@ on reload"; cause was the engine reverting too. Adding a config row is now a one
 ### DS Seed — new store bootstrap (`src/engine/dsSeed.js`)
 Seeds a new DS's Min/Max from the **equal-weight average of source DSes** — built for DS06 Kogilu, whose catchment carves ~50% of orders each from DS02 and DS04. Config: `params.dsSeed = { DS06: ["DS02","DS04"] }` (Logic Tweaker → "DS Seed — New Store Bootstrap" checkbox; empty object = inactive). **Do NOT sunset yet — measured 2026-07-27:** removing the seed drops DS06 from 2,374 stocked SKUs to 1,482 (892 → zero, ₹23.0L) and network Max to ₹6.13Cr. Pincode attribution gives DS06 real catchment history, but 16 pincodes over a mostly pre-launch window is too thin for assortment breadth — the seed solves 'not enough data', not 'no data'. Re-evaluate at ~90 days post-launch as its own diff.
 - Per SKU, per field: `DS06 = max(organic/floor value, ceil(avg(sources)))` — "whichever wins". `ceil` ⇒ union assortment. logicTag `DS Seed`, audit entry in `postBlendSteps`, `preFloor*` untouched.
+- **⚠ A 5-column SKU-Floor file therefore sets SIX stores.** The template has DS01–DS05 only, but a
+  floor lifting DS02 and DS04 propagates to DS06 through the seed. Worked example (2026-07-30, `SMBTV`):
+  a `2/5` floor on DS01–DS05 took DS06 from `2/2` to `2/5` as well, because both its sources became 5.
+  Size a floor for the six-store effect, not the five columns you typed.
 - Runs after all strategies/floors, **before Inventorised-At normalization** — Supplier/DS-inv zeroing still wins; Dead Stock propagates (0+0→0).
 - **DC re-derived treating the seeded DS as a real sixth store** (deliberate transition overstock — sources are never reduced; both self-correct as carved-out demand leaves source history ~45 days post-go-live): rate-based SKUs add a synthetic rate `max(0, avg(source rates) − organic DS06 rate)` into `sumDailyAvg`; floored SKUs add the seed deltas into Σ DS sums; Network Design adds `ceil(ΔMin × brand dcMult)`. DC never decreases. Audit: `dcDetails.dsSeedAug`.
 - Tests: `src/engine/__tests__/dsSeed.test.js` (18).
