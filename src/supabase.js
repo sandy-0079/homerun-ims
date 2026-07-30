@@ -19,6 +19,22 @@ export async function loadFromSupabase(table, id) {
   return data?.payload ?? null
 }
 
+// Reads ONE key out of a payload without transferring the rest.
+//
+// ⚠ Use this for anything that only needs a scalar out of a big row. `params/toTargets`
+// is ~693KB; `select=payload->refreshedAt` returns 44 bytes — a 15,750x saving on a
+// read that happens on every page load for every user. Same pattern the TO tool uses
+// for `payload->stockUploadedAtPerDS`.
+export async function loadPayloadKey(table, id, key) {
+  const { data, error } = await supabase
+    .from(table)
+    .select(`payload->${key}`)
+    .eq('id', id)
+    .maybeSingle()
+  if (error) return null
+  return data?.[key] ?? null
+}
+
 export async function saveToSupabase(table, id, payload) {
   const { error } = await supabase
     .from(table)

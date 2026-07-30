@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { supabase, loadFromSupabase, saveToSupabase } from "./supabase";
+import { supabase, loadFromSupabase, saveToSupabase, loadPayloadKey } from "./supabase";
 import { loadParamConfigRows } from "./paramConfigRows";
 import { buildTeamDataBundle } from "./teamDataBundle";
+import { resolveSource, assessSyncedInput, assessModel } from "./freshness";
+import { summariseInputs } from "./inputSummary";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
@@ -74,6 +76,28 @@ const TagPill=React.memo(({value,colorMap})=>{
 const MovTag=React.memo(({value})=>{
   const color=MOV_COLORS[value]||"#64748b",bg=color+"18";
   return <span style={{...TAG_STYLE,background:bg,color,border:`1px solid ${color}33`}}>{value||"—"}</span>;
+});
+
+// ── Input provenance pill, Upload Data cards ─────────────────────────────────
+// Colours are the file's existing pill vocabulary, not a new palette: ok reuses
+// "Base Logic", ageing reuses "Brand Buffer", stale reuses the "Premium" price tag.
+const FRESH_COLORS={
+  ok:      {bg:"#DCFCE7",color:"#15803D",border:"#BBF7D0"},
+  ageing:  {bg:"#FEF3C7",color:"#92400E",border:"#FDE68A"},
+  stale:   {bg:"#FEE2E2",color:"#B91C1C",border:"#FECACA"},
+  unknown: {bg:"#F8FAFC",color:"#94A3B8",border:"#E2E8F0"},
+};
+// "auto · 6h ago" / "manual · 2h ago". Age is what you act on; the absolute
+// timestamp goes in the tooltip so the pill stays scannable.
+const SourcePill=React.memo(({prov,note})=>{
+  const c=FRESH_COLORS[prov.level]||FRESH_COLORS.unknown;
+  const text=prov.source==="none"?"never loaded":`${prov.source} · ${prov.age}`;
+  return (
+    <span title={`${note||prov.note}\n${prov.at?new Date(prov.at).toLocaleString():"no timestamp recorded"}`}
+      style={{...TAG_STYLE,background:c.bg,color:c.color,border:`1px solid ${c.border}`,cursor:"help"}}>
+      {text}
+    </span>
+  );
 });
 
 const S={
@@ -3091,6 +3115,69 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     })();
   },[]);
 
+  // ── Where each input came from, and whether the model has caught up ─────────
+  // Three small reads. `loadPayloadKey` matters here: toTargets is ~693KB and we
+  // want one timestamp out of it (~44 bytes).
+  //
+  // Re-read on `provTick` (bumped after any upload or Apply) and on a 5-min timer so
+  // ages tick over in a tab left open — a long-lived tab is exactly the case that
+  // goes stale without anyone noticing.
+  const [provRaw, setProvRaw] = useState({ manual: {}, catalogueAt: null, targetsAt: null });
+  const [provNow, setProvNow] = useState(() => Date.now());
+  const [provTick, setProvTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [manual, catalogueAt, targetsAt] = await Promise.all([
+        loadFromSupabase("params", "uploadProvenance"),
+        loadPayloadKey("params", "catalogueSyncStatus", "at"),
+        loadPayloadKey("params", "toTargets", "refreshedAt"),
+      ]);
+      if (!cancelled) { setProvRaw({ manual: manual || {}, catalogueAt, targetsAt }); setProvNow(Date.now()); }
+    })();
+    return () => { cancelled = true; };
+  }, [provTick]);
+  useEffect(() => {
+    const id = setInterval(() => setProvTick(t => t + 1), 5 * 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Canonical counts — one implementation, shared with the Overview card so the two
+  // cannot disagree. See inputSummary.js for why each definition is what it is.
+  const inputSummaries = useMemo(
+    () => summariseInputs({ invoiceData, skuMaster, priceData, minReqQty, newSKUQty, deadStock }),
+    [invoiceData, skuMaster, priceData, minReqQty, newSKUQty, deadStock],
+  );
+
+  // Which write produced each value. ⚠ invoiceData has NO auto source yet:
+  // sync-invoices publishes to team_data/invoice_data_shadow, so nothing automatic
+  // has ever written the live row. Wiring it in before Stage 5 would claim an
+  // auto-sync that never happened. The other three are ops-only by design.
+  const inputProvenance = useMemo(() => {
+    const autoAtFor = {
+      skuMaster: provRaw.catalogueAt,
+      priceData: provRaw.catalogueAt,
+      invoiceData: null,
+      minReqQty: null, newSKUQty: null, deadStock: null,
+    };
+    const out = {};
+    for (const key of Object.keys(inputSummaries)) {
+      const src = resolveSource({
+        manualAt: provRaw.manual?.[key]?.at ?? null,
+        autoAt: autoAtFor[key] ?? null,
+        now: provNow,
+      });
+      out[key] = { ...src, ...assessSyncedInput(src) };
+    }
+    return out;
+  }, [inputSummaries, provRaw, provNow]);
+
+  const modelState = useMemo(() => assessModel({
+    targetsAt: provRaw.targetsAt,
+    inputAts: Object.entries(inputProvenance).map(([k, v]) => ({ label: inputSummaries[k].label, at: v.at })),
+    now: provNow,
+  }), [provRaw.targetsAt, inputProvenance, inputSummaries, provNow]);
+
   // ── Supabase Realtime: auto-refresh stock data when hourly sync writes ─────
   //
   // ⚠ KNOWN GAP, and refreshing skuMaster/priceData here is NOT the safe one-liner
@@ -3181,6 +3268,23 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
       publishedAt: new Date().toISOString(),
     });
     await saveToSupabase("team_data", "global", bundle);
+
+    // ── Stamp manual provenance for exactly the keys this action changed.
+    // This is the right home for it: saveTeamData is only ever called from an upload
+    // or a clear handler, so EVERY call is a manual action, and `overrides` already
+    // names precisely what changed. Doing it per-handler would let one be forgotten.
+    //
+    // Its own row, and the browser is its only writer — the sync functions record
+    // their own timestamps in their own status rows. No key has two writers, which is
+    // what keeps this from becoming the clobber fixed in teamDataBundle.js.
+    const changed = Object.keys(overrides);
+    if (changed.length) {
+      const at = new Date().toISOString();
+      const prev = await loadFromSupabase("params", "uploadProvenance") ?? {};
+      await saveToSupabase("params", "uploadProvenance",
+        { ...prev, ...Object.fromEntries(changed.map((k) => [k, { at }])) });
+      setProvTick((t) => t + 1);
+    }
   }, []); // no state deps: nothing is read from state any more, only from `overrides`
 
   const handleInvoice=useCallback(async(e)=>{
@@ -3340,6 +3444,10 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
               toTargets[sku] = { name: m.name || sku, category: m.category || "", brand: m.brand || "", perDS };
             });
             saveToSupabase("params", "toTargets", { targets: toTargets, refreshedAt: new Date().toISOString() })
+              // Re-read the header pills from the row that was actually written, rather
+              // than optimistically stamping now() — if this write failed, the pill must
+              // keep saying stale. That is the whole reason it exists.
+              .then(() => setProvTick(t => t + 1))
               .catch(e => console.error("toTargets write failed (non-fatal):", e));
           } catch (e) { console.error("toTargets build failed (non-fatal):", e); }
           setModelSnapshot({
@@ -3631,10 +3739,18 @@ const visibleOutput = useMemo(() => {
           newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU",...DS_LIST.flatMap(ds=>[`${ds} Min`,`${ds} Max`])],rows:[["SKU001",3,5,2,3,0,0,5,7,0,0,0,0],["SKU002",0,0,1,2,2,3,0,0,3,4,1,2]]},
           deadStock:  {file:"Dead_Stock_Template.csv",  headers:["Dead Stock"],rows:[["SKU001"],["SKU002"]]},
         };
+        // ⚠ Counts come from inputSummary.js, never from Object.keys() inline. Two of
+        // these were counting the wrong thing before 2026-07-30 — New DS Floor Qty
+        // read 1,921 when only 1,021 SKUs had a floor, because 900 stored values are
+        // `0` and a zero floor is the absence of a floor.
+        const sum = inputSummaries;
         const csvOnlyCards=[
-          {label:"Newly Launched Dark Store Floor Qty",desc:"Columns: SKU, Qty",handler:handleMRQ,count:`${Object.keys(minReqQty).length.toLocaleString()} SKUs`,key:"minReqQty",required:true,hasData:Object.keys(minReqQty).length>0},
-          {label:"SKU Floors - DS Level",desc:"Per-store manual Min/Max floors. Columns: SKU, DS01 Min, DS01 Max, ..., DS05 Max",handler:handleNSQ,count:`${Object.keys(newSKUQty).length.toLocaleString()} SKUs`,key:"newSKUQty",required:true,hasData:Object.keys(newSKUQty).length>0},
-          {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,count:`${deadStock.size.toLocaleString()} SKUs`,key:"deadStock",required:false,hasData:deadStock.size>0},
+          {label:"Newly Launched Dark Store Floor Qty",desc:"Columns: SKU, Qty",handler:handleMRQ,key:"minReqQty",required:true,
+           count:`${sum.minReqQty.count.toLocaleString()} ${sum.minReqQty.unit}`,hasData:sum.minReqQty.total>0},
+          {label:"SKU Floors - DS Level",desc:"Per-store manual Min/Max floors. Columns: SKU, DS01 Min, DS01 Max, ..., DS05 Max",handler:handleNSQ,key:"newSKUQty",required:true,
+           count:`${sum.newSKUQty.count.toLocaleString()} ${sum.newSKUQty.unit}`,hasData:sum.newSKUQty.total>0},
+          {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,key:"deadStock",required:false,
+           count:`${sum.deadStock.count.toLocaleString()} ${sum.deadStock.unit}`,hasData:sum.deadStock.total>0},
         ];
 
         const btnS = (color, text) => ({background:color,color:HR.white,padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,border:"none",whiteSpace:"nowrap"});
@@ -3643,6 +3759,28 @@ const visibleOutput = useMemo(() => {
         const clrBtnS = {background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"};
 
         return(<>
+          {/* ── Model state: has Apply caught up with the inputs above? ──
+              RELATIVE, not absolute: toTargets only changes when a human clicks
+              Apply, so there is no schedule for it to be late against. What matters
+              is whether any input moved since. The TO tool reads this row. */}
+          <div style={{...S.card,marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",
+            borderLeft:`3px solid ${modelState.level==="stale"?"#B91C1C":modelState.level==="ok"?HR.green:HR.border}`}}>
+            <span style={{fontWeight:700,fontSize:12,color:HR.text}}>Model</span>
+            <span style={{fontSize:11,color:HR.muted}}>
+              {modelState.level==="unknown"?"never published":`published ${modelState.age}`}
+            </span>
+            <span style={{...TAG_STYLE,...(modelState.level==="stale"
+              ?{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}
+              :modelState.level==="ok"?{background:"#DCFCE7",color:"#15803D",border:"1px solid #BBF7D0"}
+              :{background:"#F8FAFC",color:"#94A3B8",border:"1px solid #E2E8F0"})}}>
+              {modelState.level==="stale"?`behind ${modelState.behind.join(", ")}`:modelState.level==="ok"?"up to date":"—"}
+            </span>
+            <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>{modelState.note}</span>
+          </div>
+
+          <div style={{fontSize:10,fontWeight:700,color:HR.muted,letterSpacing:0.4,marginBottom:6}}>
+            SYNCED NIGHTLY FROM ZOHO — manual upload is the fallback
+          </div>
           {/* ── ROW 1: Invoice + SKU Master + Prices ── */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:12}}>
 
@@ -3657,7 +3795,11 @@ const visibleOutput = useMemo(() => {
                     {infoCard==="invoiceData"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>Invoice Date, Invoice Number, Invoice Status, Shopify Order, Item Name, SKU, Category Name, Quantity, Line Item Location Name, Shipping Code</div>}
                   </div>
                 </div>
-                <div style={{fontSize:11,color:HR.green,fontWeight:600,whiteSpace:"nowrap"}}>{invoiceData.length.toLocaleString()} rows</div>
+                <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
+                  <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{sum.invoiceData.count.toLocaleString()} {sum.invoiceData.unit}</div>
+                  <div style={{fontSize:9,color:HR.muted,marginTop:1}}>{sum.invoiceData.days}d · to {sum.invoiceData.through||"—"}</div>
+                  <div style={{marginTop:3}}><SourcePill prov={inputProvenance.invoiceData} note="Invoice Data — auto-sync arrives at Stage 5; manual upload until then"/></div>
+                </div>
               </div>
               <div style={{marginTop:"auto"}}>
                 {uploadedFiles.invoiceData&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles.invoiceData}</div>}
@@ -3682,7 +3824,11 @@ const visibleOutput = useMemo(() => {
                     {infoCard==="skuMaster"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>Name, Inventorised At, SKU, Category, Status, Brand</div>}
                   </div>
                 </div>
-                <div style={{fontSize:11,color:HR.green,fontWeight:600,whiteSpace:"nowrap"}}>{Object.keys(skuMaster).length.toLocaleString()} SKUs</div>
+                <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
+                  <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{sum.skuMaster.count.toLocaleString()} {sum.skuMaster.unit}</div>
+                  <div style={{fontSize:9,color:HR.muted,marginTop:1}}>of {sum.skuMaster.total.toLocaleString()} total</div>
+                  <div style={{marginTop:3}}><SourcePill prov={inputProvenance.skuMaster}/></div>
+                </div>
               </div>
               <div style={{marginTop:"auto"}}>
                 {uploadedFiles.skuMaster&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles.skuMaster}</div>}
@@ -3713,7 +3859,11 @@ const visibleOutput = useMemo(() => {
                     {infoCard==="priceData"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>item_id, item_name, unit, is_combo_product, quantity_purchased, amount, average_price, location_name, sku</div>}
                   </div>
                 </div>
-                <div style={{fontSize:11,color:HR.green,fontWeight:600,whiteSpace:"nowrap"}}>{Object.keys(priceData).length.toLocaleString()} SKUs</div>
+                <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
+                  <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{sum.priceData.count.toLocaleString()} {sum.priceData.unit}</div>
+                  <div style={{fontSize:9,color:HR.muted,marginTop:1}}>of {sum.skuMaster.count.toLocaleString()} active</div>
+                  <div style={{marginTop:3}}><SourcePill prov={inputProvenance.priceData}/></div>
+                </div>
               </div>
               <div style={{marginTop:"auto"}}>
                 {uploadedFiles.priceData&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles.priceData}</div>}
@@ -3729,6 +3879,9 @@ const visibleOutput = useMemo(() => {
 
           </div>
 
+          <div style={{fontSize:10,fontWeight:700,color:HR.muted,letterSpacing:0.4,marginBottom:6}}>
+            SET BY OPS — manual only, ops judgement rather than Zoho data
+          </div>
           {/* ── ROW 2: 3 manual CSV cards ── */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:12}}>
             {csvOnlyCards.map(item=>(
@@ -3742,7 +3895,12 @@ const visibleOutput = useMemo(() => {
                       {infoCard===item.key&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>{item.desc}</div>}
                     </div>
                   </div>
-                  <div style={{fontSize:11,color:HR.green,fontWeight:600,whiteSpace:"nowrap"}}>{item.count}</div>
+                  <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
+                    <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{item.count}</div>
+                    {sum[item.key].total!==sum[item.key].count&&
+                      <div style={{fontSize:9,color:HR.muted,marginTop:1}}>of {sum[item.key].total.toLocaleString()} rows</div>}
+                    <div style={{marginTop:3}}><SourcePill prov={inputProvenance[item.key]} note={item.key==="newSKUQty"?"Set by ops — Google Sheet sync planned":"Set by ops — manual only, not auto-synced"}/></div>
+                  </div>
                 </div>
                 <div style={{marginTop:"auto"}}>
                   {uploadedFiles[item.key]&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles[item.key]}</div>}
