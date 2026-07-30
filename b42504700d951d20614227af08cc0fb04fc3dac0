@@ -1,0 +1,17 @@
+CORRECTION (2026-07-30): the Inv Value figures in this commit message are wrong.
+
+Stated:  Network Max ₹8.00Cr -> ₹7.98Cr
+Actual:  Inv Value Max ₹8.0195Cr -> ₹7.9952Cr  (Overview card reads 8.02 -> 8.00)
+         Inv Value Min ₹5.6369Cr -> ₹5.6238Cr
+Delta:   -₹2.43L, which WAS quoted correctly; only the endpoints were mislabelled.
+
+Cause: the per-class blast-radius measurement printed 'active ₹8.00Cr / non_active
+₹0.02Cr / absent ₹0.01Cr' at 2dp. The active subtotal is the AFTER figure, and it was
+read as the BEFORE. The true before is the sum of all three, because the Overview KPI
+sums Object.entries(results) — every entry — not the activeSkus set.
+
+Everything else in this message stands, including the byte-identical toTargets result.
+The message was not amended because this commit is already pushed and deployed, and
+rewriting it would change three SHAs including the one Vercel's live deployment
+records. CLAUDE.md 'Active-only normalization' and docs/HANDOFF-2026-07-30.md are
+authoritative.
