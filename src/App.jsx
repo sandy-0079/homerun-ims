@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase, loadFromSupabase, saveToSupabase } from "./supabase";
 import { loadParamConfigRows } from "./paramConfigRows";
+import { buildTeamDataBundle } from "./teamDataBundle";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
@@ -2820,7 +2821,6 @@ export default function App(){
   const [freshSimLoading, setFreshSimLoading] = useState(false);
   const [stockData, setStockData] = useState({});       // persists across tab switches
   const [stockUploadedAt, setStockUploadedAt] = useState(null);
-  const stockUploadedAtRef = useRef(null); // always current — avoids stale closure in saveTeamData
   const [stockUploadedAtPerDS, setStockUploadedAtPerDS] = useState({});  // per-DS upload timestamps
   const [poData, setPoData] = useState({});  // PO data per DS per SKU (synced from Zoho Books)
   const [toData, setToData] = useState({});  // TO data per DS per SKU (DC→DS transfer orders)
@@ -3021,7 +3021,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   if(sbData.deadStock)setDead(new Set(sbData.deadStock));
   if(sbData.priceData)setPrice(sbData.priceData);
   if(sbData.stockData)setStockData(sbData.stockData);
-  if(sbData.stockUploadedAt){const d=new Date(sbData.stockUploadedAt);setStockUploadedAt(d);stockUploadedAtRef.current=d;}
+  if(sbData.stockUploadedAt)setStockUploadedAt(new Date(sbData.stockUploadedAt));
   if(sbData.stockUploadedAtPerDS)setStockUploadedAtPerDS(sbData.stockUploadedAtPerDS);
   if(sbData.poData)setPoData(sbData.poData);
   if(sbData.toData)setToData(sbData.toData);
@@ -3092,6 +3092,26 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   },[]);
 
   // ── Supabase Realtime: auto-refresh stock data when hourly sync writes ─────
+  //
+  // ⚠ KNOWN GAP, and refreshing skuMaster/priceData here is NOT the safe one-liner
+  // it looks like. Since `sync-catalogue` went live (2026-07-30) this row also gains
+  // a nightly catalogue write, so a long-lived tab keeps COMPUTING the engine from a
+  // stale catalogue — stale Min/Max on screen, and a stale `params/toTargets` if
+  // someone clicks Apply from that tab. (It can no longer CLOBBER the row: see
+  // teamDataBundle.js.)
+  //
+  // But this handler fires on EVERY update to team_data/global — the four stock
+  // syncs plus orders-sync, ~5 times an hour. `loadFromSupabase` returns a freshly
+  // parsed object every time, so `setSKU(sbData.skuMaster)` would change the
+  // reference on each event and fire the effect at the `[params, invoiceData,
+  // skuMaster, ...]` dep list below, which calls setLoading + a FULL runEngine over
+  // ~2,100 SKUs and replaces `results`. That is ~5 engine re-runs an hour in every
+  // open tab, with the table changing under whoever is using it.
+  //
+  // Doing it properly needs change-detection against the currently-held catalogue
+  // (a signature ref), or — probably better — a "catalogue updated, reload" prompt
+  // that leaves the user in control instead of recomputing underneath them. Belongs
+  // with the freshness-timestamp work, not bolted on here.
   useEffect(() => {
     const channel = supabase
       .channel('stock-sync')
@@ -3141,27 +3161,27 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   };
 
   // ── Auto-save: saves team data to Supabase immediately on any data change ────
-  // Pass overrides for whichever field just changed (state hasn't updated yet)
+  // Pass overrides for whichever field just changed (state hasn't updated yet).
+  //
+  // ⚠ WRITES ONLY WHAT THE CALLER CHANGED. This used to rebuild the whole bundle
+  // from React state, which silently reverted `sync-catalogue`'s nightly skuMaster
+  // and priceData whenever an older tab uploaded anything. See teamDataBundle.js
+  // for the full account — the rule is that a key an edge function owns reaches the
+  // payload only through the `...existing` fresh read, never from this component.
   const saveTeamData = useCallback(async (overrides = {}) => {
     // invoiceData is stored in its own row — keeps global payload small for sync functions
     if (overrides.invoiceData !== undefined) {
       await saveToSupabase("team_data", "invoice_data", { invoiceData: overrides.invoiceData });
     }
+    // FRESH read immediately before writing — same discipline the sync functions use.
     const existing = await loadFromSupabase("team_data", "global") ?? {};
-    const bundle = {
-      ...existing,
-      skuMaster:   overrides.skuMaster   ?? skuMaster,
-      minReqQty:   overrides.minReqQty   ?? minReqQty,
-      newSKUQty:   overrides.newSKUQty   ?? newSKUQty,
-      deadStock:   [...(overrides.deadStock ?? deadStock)],
-      priceData:   overrides.priceData   ?? priceData,
-      stockData:   overrides.stockData   ?? stockData,
-      stockUploadedAt: overrides.stockUploadedAt ?? stockUploadedAtRef.current?.toISOString() ?? null,
-      stockUploadedAtPerDS: overrides.stockUploadedAtPerDS ?? stockUploadedAtPerDS,
+    const bundle = buildTeamDataBundle({
+      existing,
+      overrides,
       publishedAt: new Date().toISOString(),
-    };
+    });
     await saveToSupabase("team_data", "global", bundle);
-  }, [invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData, stockData]); // stockUploadedAt read from ref — always current
+  }, []); // no state deps: nothing is read from state any more, only from `overrides`
 
   const handleInvoice=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;
