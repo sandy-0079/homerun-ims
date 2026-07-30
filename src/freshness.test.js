@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  formatAge, resolveSource, assessSyncedInput, assessModel,
+  formatAge, formatStamp, resolveSource, assessSyncedInput, assessModel,
   MISSED_A_NIGHT_MS, AGEING_MS,
 } from "./freshness.js";
 
@@ -139,5 +139,46 @@ describe("assessModel — RELATIVE to its inputs", () => {
     expect(assessModel({ targetsAt: t, inputAts: [{ label: "X", at: t }], now: NOW }).level).toBe("ok");
     const later = new Date(Date.parse(t) + 1).toISOString();
     expect(assessModel({ targetsAt: t, inputAts: [{ label: "X", at: later }], now: NOW }).level).toBe("stale");
+  });
+});
+
+describe("formatStamp", () => {
+  it("renders an ISO-ish local stamp, 24-hour so there is no am/pm to misread", () => {
+    const s = formatStamp("2026-07-30T09:34:00Z");
+    expect(s).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  });
+
+  it("returns null rather than 'Invalid Date' for a missing or junk value", () => {
+    // The whole reason `new Date(x).toISOString()` took prod down on 2026-07-29.
+    for (const v of [null, undefined, "", "not a date"]) expect(formatStamp(v)).toBeNull();
+  });
+});
+
+describe("assessModel — lastRun for the pill", () => {
+  it("carries an absolute stamp alongside the relative age", () => {
+    const at = ago(2 * H);
+    const r = assessModel({ targetsAt: at, inputAts: [], now: NOW });
+    expect(r.lastRun).toBe(formatStamp(at));
+    expect(r.age).toBe("2h ago");
+  });
+
+  it("has no stamp, and says never, when the model has not run", () => {
+    const r = assessModel({ targetsAt: null, inputAts: [], now: NOW });
+    expect(r.lastRun).toBeNull();
+    expect(r.level).toBe("unknown");
+  });
+
+  it("still reports staleness even though the pill text is now just a timestamp", () => {
+    // The pill lost the words "behind X" — the colour and tooltip carry it instead, so
+    // this must keep working or a stale model becomes invisible.
+    const r = assessModel({
+      targetsAt: ago(2 * H),
+      inputAts: [{ label: "SKU Master", at: ago(H) }],
+      now: NOW,
+    });
+    expect(r.level).toBe("stale");
+    expect(r.behind).toEqual(["SKU Master"]);
+    expect(r.note).toMatch(/Apply & Re-run Model/);
+    expect(r.lastRun).not.toBeNull();
   });
 });

@@ -3452,11 +3452,15 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
           } catch (e) { console.error("toTargets build failed (non-fatal):", e); }
           setModelSnapshot({
             dateMin: invoiceDateRange.min, dateMax: invoiceDateRange.max,
+            // Canonical counts, so the strip shows the same numbers as the cards.
+            // `rowCount` stays for back-compat: a snapshot taken before invoiceCount
+            // existed falls back to it and relabels itself "Invoice Rows".
+            invoiceCount: inputSummaries.invoiceData.count,
             rowCount: invoiceData.length,
-            activeSkus: activeMaster.length,
+            activeSkus: inputSummaries.skuMaster.count,
             uniqueSold, zeroSale,
-            deadStockCount: deadStock.size,
-            priceSkus: Object.keys(priceData).length,
+            deadStockCount: inputSummaries.deadStock.count,
+            priceSkus: inputSummaries.priceData.count,
             missingCount: missing.length,
           });
           setModelRunSuccess(true);
@@ -3577,6 +3581,22 @@ const visibleOutput = useMemo(() => {
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <h2 style={{color:HR.yellowDark,margin:0,fontSize:16}}>Data Inputs</h2>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+        {/* Model freshness, sitting left of the Apply button. NOT redundant with that
+            button: it tracks `modelDirty`, a SESSION flag — did YOU change something
+            since YOUR last Apply. This compares STORED timestamps, so it catches what
+            the button structurally cannot — a nightly sync moving an input in another
+            session or overnight, leaving toTargets genuinely behind while the button
+            still reads "up to date". Relative, not absolute: toTargets changes only on
+            Apply, so its age alone says little; what matters is whether an input moved
+            after it. */}
+        <span title={modelState.note} style={{
+          padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap",
+          ...(modelState.level==="stale"?{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}
+            :modelState.level==="ok"?{background:"#DCFCE7",color:"#15803D",border:"1px solid #BBF7D0"}
+            :{background:"#F8FAFC",color:"#94A3B8",border:"1px solid #E2E8F0"})}}>
+          {modelState.lastRun ? `Last run: ${modelState.lastRun}` : "Last run: never"}
+        </span>
         {(() => {
           const hasData = invoiceData.length > 0 && Object.keys(skuMaster).length > 0 && Object.keys(priceData).length > 0;
           // Yellow only when something changed (data upload, clear, or params tweaked)
@@ -3591,27 +3611,7 @@ const visibleOutput = useMemo(() => {
             </button>
           );
         })()}
-      </div>
-      {/* Data Health — horizontal strip */}
-      <div style={{display:"flex",gap:0,background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8,overflow:"hidden"}}>
-        {(()=>{
-          const s=modelSnapshot;
-          const mis=s?s.missingCount:missing.length;
-          return[
-          {label:"Invoice Data",  value:s?`${s.dateMin} → ${s.dateMax}`:invoiceDateRange.min&&invoiceDateRange.max?`${invoiceDateRange.min} → ${invoiceDateRange.max}`:"No data", color:HR.muted, small:true},
-          {label:"Invoice Rows", value:(s?s.rowCount:invoiceData.length).toLocaleString(),             color:"#0077A8"},
-          {label:"Active SKUs",  value:(s?s.activeSkus:activeMaster.length).toLocaleString(),          color:HR.green},
-          {label:"SKUs Sold",    value:(s?s.uniqueSold:uniqueSold).toLocaleString(),                   color:HR.yellowDark},
-          {label:"Zero Sale",    value:(s?s.zeroSale:zeroSale).toLocaleString(),                       color:"#C05A00"},
-          {label:"Dead Stock",   value:(s?s.deadStockCount:deadStock.size).toLocaleString(),           color:"#B91C1C"},
-          {label:"Price SKUs",   value:(s?s.priceSkus:Object.keys(priceData).length).toLocaleString(),color:"#7A3DBF"},
-          {label:"Missing SKUs", value:mis.toLocaleString(),                                           color:mis>0?"#B91C1C":HR.green},
-          ];})().map((c,i)=>(
-          <div key={c.label} style={{flex:1,padding:"8px 10px",borderRight:i<7?`1px solid ${HR.border}`:"none",minWidth:0}}>
-            <div style={{fontSize:9,color:HR.muted,fontWeight:600,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.label}</div>
-            <div style={{fontSize:c.small?9:13,fontWeight:c.small?400:700,color:c.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.value}</div>
-          </div>
-        ))}
+        </div>
       </div>
     </div>
 
@@ -3676,7 +3676,6 @@ const visibleOutput = useMemo(() => {
 
     {/* ── MAIN: cards area ── */}
     <div style={{flex:"0 0 auto"}}>
-      <p style={{color:HR.muted,fontSize:12,marginBottom:12,margin:"0 0 12px"}}>Upload invoice CSV, SKU Master, and Prices as CSV files. Manual CSVs for floors and dead stock.</p>
 
       {(()=>{
         const dlCSV=(filename,csv)=>{
@@ -3744,14 +3743,57 @@ const visibleOutput = useMemo(() => {
         // read 1,921 when only 1,021 SKUs had a floor, because 900 stored values are
         // `0` and a zero floor is the absence of a floor.
         const sum = inputSummaries;
-        const csvOnlyCards=[
-          {label:"Newly Launched Dark Store Floor Qty",desc:"Columns: SKU, Qty",handler:handleMRQ,key:"minReqQty",required:true,
-           count:`${sum.minReqQty.count.toLocaleString()} ${sum.minReqQty.unit}`,hasData:sum.minReqQty.total>0},
+        // SKU Floors belongs in the AUTO bucket: the Google Sheet sync is the agreed
+        // next step. Its own pill still reads "manual" until that ships, which is the
+        // honest signal — "should be automatic, currently isn't" is more useful than
+        // filing it away under ops.
+        const autoBucketCards=[
           {label:"SKU Floors - DS Level",desc:"Per-store manual Min/Max floors. Columns: SKU, DS01 Min, DS01 Max, ..., DS05 Max",handler:handleNSQ,key:"newSKUQty",required:true,
+           note:"Google Sheet sync is the next step — manual upload until then",
            count:`${sum.newSKUQty.count.toLocaleString()} ${sum.newSKUQty.unit}`,hasData:sum.newSKUQty.total>0},
+        ];
+        const opsCards=[
+          {label:"Newly Launched Dark Store Floor Qty",desc:"Columns: SKU, Qty",handler:handleMRQ,key:"minReqQty",required:true,
+           note:"Ops judgement — never auto-synced",
+           count:`${sum.minReqQty.count.toLocaleString()} ${sum.minReqQty.unit}`,hasData:sum.minReqQty.total>0},
           {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,key:"deadStock",required:false,
+           note:"Ops judgement — never auto-synced",
            count:`${sum.deadStock.count.toLocaleString()} ${sum.deadStock.unit}`,hasData:sum.deadStock.total>0},
         ];
+
+        // One card body, rendered for BOTH buckets so the two groups cannot
+        // drift apart visually. `item.note` supplies the pill tooltip, which is what
+        // lets SKU Floors sit in AUTO while honestly reporting itself as manual.
+        const renderUploadCard = (item) => (
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{fontWeight:700,color:HR.text,fontSize:12}}>{item.label}</span>
+                    {item.required&&<span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>}
+                    <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
+                      <span onMouseEnter={()=>setInfoCard(item.key)} onMouseLeave={()=>setInfoCard(null)} style={{cursor:"help",color:HR.muted,fontSize:11,userSelect:"none"}}>ⓘ</span>
+                      {infoCard===item.key&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>{item.desc}</div>}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
+                    <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{item.count}</div>
+                    {sum[item.key].total!==sum[item.key].count&&
+                      <div style={{fontSize:9,color:HR.muted,marginTop:1}}>of {sum[item.key].total.toLocaleString()} rows</div>}
+                    <div style={{marginTop:3}}><SourcePill prov={inputProvenance[item.key]} note={item.note}/></div>
+                  </div>
+                </div>
+                <div style={{marginTop:"auto"}}>
+                  {uploadedFiles[item.key]&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles[item.key]}</div>}
+                  {uploading===item.key&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={item.handler} style={{display:"none"}}/></label>
+                    <button onClick={()=>{const t=templates[item.key];dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
+                    {item.hasData&&<button onClick={()=>{const csv=buildDataCSV(item.key);if(csv)dlCSV(item.key+"_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
+                    {item.hasData&&<button onClick={()=>clearData(item.key)} style={clrBtnS}>🗑 Clear</button>}
+                  </div>
+                </div>
+              </div>
+        );
 
         const btnS = (color, text) => ({background:color,color:HR.white,padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,border:"none",whiteSpace:"nowrap"});
         const dlBtnS = {background:"#F3E8FF",color:"#7C3AED",border:"1px solid #D8B4FE",padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"};
@@ -3759,30 +3801,16 @@ const visibleOutput = useMemo(() => {
         const clrBtnS = {background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"};
 
         return(<>
-          {/* ── Model state: has Apply caught up with the inputs above? ──
-              RELATIVE, not absolute: toTargets only changes when a human clicks
-              Apply, so there is no schedule for it to be late against. What matters
-              is whether any input moved since. The TO tool reads this row. */}
-          <div style={{...S.card,marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",
-            borderLeft:`3px solid ${modelState.level==="stale"?"#B91C1C":modelState.level==="ok"?HR.green:HR.border}`}}>
-            <span style={{fontWeight:700,fontSize:12,color:HR.text}}>Model</span>
-            <span style={{fontSize:11,color:HR.muted}}>
-              {modelState.level==="unknown"?"never published":`published ${modelState.age}`}
-            </span>
-            <span style={{...TAG_STYLE,...(modelState.level==="stale"
-              ?{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}
-              :modelState.level==="ok"?{background:"#DCFCE7",color:"#15803D",border:"1px solid #BBF7D0"}
-              :{background:"#F8FAFC",color:"#94A3B8",border:"1px solid #E2E8F0"})}}>
-              {modelState.level==="stale"?`behind ${modelState.behind.join(", ")}`:modelState.level==="ok"?"up to date":"—"}
-            </span>
-            <span style={{fontSize:10,color:HR.muted,marginLeft:"auto"}}>{modelState.note}</span>
-          </div>
-
-          <div style={{fontSize:10,fontWeight:700,color:HR.muted,letterSpacing:0.4,marginBottom:6}}>
-            SYNCED NIGHTLY FROM ZOHO — manual upload is the fallback
-          </div>
-          {/* ── ROW 1: Invoice + SKU Master + Prices ── */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:12}}>
+          {/* ── AUTO bucket. Tinted panel + accent border + solid badge, because a
+                 small uppercase heading was too quiet to separate the two groups. ── */}
+          <div style={{background:"#F7FCFF",border:`1px solid ${DC_COLOR.header}33`,borderLeft:`4px solid ${DC_COLOR.header}`,borderRadius:8,padding:"10px 12px 12px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+              <span style={{background:DC_COLOR.header,color:HR.white,padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:800,letterSpacing:0.5}}>⟳ AUTO</span>
+              <span style={{fontSize:12,fontWeight:700,color:DC_COLOR.text}}>Updated daily without anyone touching it</span>
+              <span style={{fontSize:10,color:HR.muted}}>manual upload is the fallback when a sync breaks</span>
+            </div>
+          {/* ── Invoice + SKU Master + Prices + SKU Floors ── */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
 
             {/* Invoice card */}
             <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
@@ -3877,54 +3905,69 @@ const visibleOutput = useMemo(() => {
               </div>
             </div>
 
+            {autoBucketCards.map(renderUploadCard)}
+          </div>
           </div>
 
-          <div style={{fontSize:10,fontWeight:700,color:HR.muted,letterSpacing:0.4,marginBottom:6}}>
-            SET BY OPS — manual only, ops judgement rather than Zoho data
+          {/* ── MANUAL bucket: ops judgement, never auto-synced ── */}
+          <div style={{background:"#FFFDF5",border:`1px solid ${HR.yellowDark}33`,borderLeft:`4px solid ${HR.yellowDark}`,borderRadius:8,padding:"10px 12px 12px",marginBottom:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+              <span style={{background:HR.yellowDark,color:HR.white,padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:800,letterSpacing:0.5}}>✎ MANUAL</span>
+              <span style={{fontSize:12,fontWeight:700,color:"#7A5800"}}>Set by ops, by hand</span>
+              <span style={{fontSize:10,color:HR.muted}}>judgement calls, not Zoho data — these will never auto-sync</span>
+            </div>
+          {/* ── New DS Floor Qty + Dead Stock ── */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
+            {opsCards.map(renderUploadCard)}
           </div>
-          {/* ── ROW 2: 3 manual CSV cards ── */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:12}}>
-            {csvOnlyCards.map(item=>(
-              <div key={item.label} style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                  <div style={{display:"flex",alignItems:"center",gap:5}}>
-                    <span style={{fontWeight:700,color:HR.text,fontSize:12}}>{item.label}</span>
-                    {item.required&&<span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>}
-                    <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
-                      <span onMouseEnter={()=>setInfoCard(item.key)} onMouseLeave={()=>setInfoCard(null)} style={{cursor:"help",color:HR.muted,fontSize:11,userSelect:"none"}}>ⓘ</span>
-                      {infoCard===item.key&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>{item.desc}</div>}
-                    </div>
-                  </div>
-                  <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
-                    <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{item.count}</div>
-                    {sum[item.key].total!==sum[item.key].count&&
-                      <div style={{fontSize:9,color:HR.muted,marginTop:1}}>of {sum[item.key].total.toLocaleString()} rows</div>}
-                    <div style={{marginTop:3}}><SourcePill prov={inputProvenance[item.key]} note={item.key==="newSKUQty"?"Set by ops — Google Sheet sync planned":"Set by ops — manual only, not auto-synced"}/></div>
-                  </div>
-                </div>
-                <div style={{marginTop:"auto"}}>
-                  {uploadedFiles[item.key]&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles[item.key]}</div>}
-                  {uploading===item.key&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                    <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={item.handler} style={{display:"none"}}/></label>
-                    <button onClick={()=>{const t=templates[item.key];dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
-                    {item.hasData&&<button onClick={()=>{const csv=buildDataCSV(item.key);if(csv)dlCSV(item.key+"_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
-                    {item.hasData&&<button onClick={()=>clearData(item.key)} style={clrBtnS}>🗑 Clear</button>}
-                  </div>
-                </div>
-              </div>
-            ))}
           </div>
         </>);
       })()}
+
+      {/* ── What the model ran with. Moved down from above the inputs (2026-07-30):
+             it is a diagnostic summary, so it belongs next to the Missing SKUs table
+             it explains, after the cards it summarises.
+
+             ⚠ Counts come from inputSummary.js — the same numbers the cards show. It
+             used to read "Invoice Rows 74,381", which is line items, not invoices, and
+             disagreed with the Invoice Data card. Values come from `modelSnapshot`
+             (i.e. as of the last run) when one exists; a snapshot taken before
+             `invoiceCount` was recorded falls back to rows AND relabels itself, rather
+             than presenting rows under an "Invoices" heading. ── */}
+      <div style={{display:"flex",gap:0,background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8,overflow:"hidden",marginTop:4}}>
+        {(()=>{
+          const s=modelSnapshot;
+          const mis=s?s.missingCount:missing.length;
+          const iv=inputSummaries.invoiceData;
+          return[
+          {label:"Invoice Data",  value:s?`${s.dateMin} → ${s.dateMax}`:iv.from&&iv.through?`${iv.from} → ${iv.through}`:"No data", color:HR.muted, small:true},
+          {label:(s&&s.invoiceCount===undefined)?"Invoice Rows":"Invoices",
+                                  value:(s?(s.invoiceCount??s.rowCount):iv.count).toLocaleString(),      color:"#0077A8"},
+          {label:"Active SKUs",   value:(s?s.activeSkus:inputSummaries.skuMaster.count).toLocaleString(),color:HR.green},
+          {label:"SKUs Sold",     value:(s?s.uniqueSold:uniqueSold).toLocaleString(),                    color:HR.yellowDark},
+          {label:"Zero Sale",     value:(s?s.zeroSale:zeroSale).toLocaleString(),                        color:"#C05A00"},
+          {label:"Dead Stock",    value:(s?s.deadStockCount:inputSummaries.deadStock.count).toLocaleString(),color:"#B91C1C"},
+          {label:"Price SKUs",    value:(s?s.priceSkus:inputSummaries.priceData.count).toLocaleString(), color:"#7A3DBF"},
+          {label:"Missing SKUs",  value:mis.toLocaleString(),                                            color:mis>0?"#B91C1C":HR.green},
+          ];})().map((c,i)=>(
+          <div key={c.label} style={{flex:1,padding:"8px 10px",borderRight:i<7?`1px solid ${HR.border}`:"none",minWidth:0}}>
+            <div style={{fontSize:9,color:HR.muted,fontWeight:600,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.label}</div>
+            <div style={{fontSize:c.small?9:13,fontWeight:c.small?400:700,color:c.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.value}</div>
+          </div>
+        ))}
+      </div>
 
       {/* ── Errors: missing SKUs ── */}
       {missing.length>0&&(
         <div style={{...S.card,marginTop:8,border:`1px solid ${HR.yellow}`}}>
           <div style={{fontWeight:700,color:HR.yellowDark,marginBottom:3,fontSize:13}}>⚠ {missing.length} SKUs in Invoice not Active in SKU Master</div>
-          <div style={{fontSize:11,color:HR.muted,marginBottom:10}}>These SKUs have sales but are missing or inactive in SKU Master.</div>
-          <div style={{maxHeight:400,overflowY:"auto"}}>
-            <table style={S.table}><thead><tr style={{background:HR.surfaceLight}}><th style={S.th}>SKU</th><th style={S.th}>Status in Master</th></tr></thead>
+          <div style={{fontSize:11,color:HR.muted,marginBottom:10}}>These SKUs have sales but are missing or inactive in SKU Master. Each one is either absent from the catalogue or not Active in it, so the engine gives it no Min/Max.</div>
+          {/* No maxHeight: the table runs to its natural length and the PAGE scrolls
+              (S.pageWrap already owns overflowY). A 400px inner scroller left dead
+              space below it and hid rows behind a second scrollbar. `sticky` keeps the
+              header visible while scrolling the page instead. */}
+          <div>
+            <table style={S.table}><thead><tr style={{background:HR.surfaceLight}}><th style={{...S.th,position:"sticky",top:0,zIndex:1,background:HR.surfaceLight}}>SKU</th><th style={{...S.th,position:"sticky",top:0,zIndex:1,background:HR.surfaceLight}}>Status in Master</th></tr></thead>
               <tbody>{missing.map((s,i)=><tr key={s} style={{background:i%2===0?HR.white:HR.surfaceLight}}><td style={S.td}>{s}</td><td style={{...S.td,color:skuMaster[s]?HR.yellowDark:"#B91C1C",fontSize:11}}>{skuMaster[s]?skuMaster[s].status:"Not in SKU Master"}</td></tr>)}</tbody>
             </table>
           </div>

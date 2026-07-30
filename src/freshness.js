@@ -71,6 +71,17 @@ export function assessSyncedInput({ source, ms }) {
   return { level: "ok", note: "Auto-synced from Zoho" };
 }
 
+/** `YYYY-MM-DD HH:mm` in the viewer's local time. ISO-ish to match how dates read
+ *  everywhere else in the app (the date-range strip shows 2026-04-30 → 2026-07-28),
+ *  and 24-hour so there is no am/pm to misread on a glance. */
+export function formatStamp(at) {
+  const t = Date.parse(String(at ?? ""));
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /**
  * Has the model caught up with its inputs?
  *
@@ -86,17 +97,22 @@ export function assessSyncedInput({ source, ms }) {
  */
 export function assessModel({ targetsAt, inputAts = [], now }) {
   const t = usable(parse(targetsAt), now);
-  if (t === null) return { level: "unknown", note: "Model has never been published", age: "—", behind: [] };
+  if (t === null) {
+    return { level: "unknown", note: "Model has never been run", age: "—", lastRun: null, behind: [] };
+  }
 
   const behind = inputAts
     .map(({ label, at }) => ({ label, ms: usable(parse(at), now) }))
     .filter((x) => x.ms !== null && x.ms > t)
     .map((x) => x.label);
 
+  // `lastRun` is the absolute stamp shown on the pill; `age` stays available for the
+  // tooltip and any caller that wants the relative reading.
+  const common = { age: formatAge(now - t), lastRun: formatStamp(targetsAt) };
   return behind.length
     ? {
-        level: "stale", age: formatAge(now - t), behind,
-        note: `Behind ${behind.join(", ")} — click Apply & Re-run Model`,
+        ...common, level: "stale", behind,
+        note: `Ran ${formatAge(now - t)}, but ${behind.join(", ")} changed since — click Apply & Re-run Model`,
       }
-    : { level: "ok", age: formatAge(now - t), behind: [], note: "Model is newer than every input" };
+    : { ...common, level: "ok", behind: [], note: `Ran ${formatAge(now - t)}; newer than every input` };
 }
