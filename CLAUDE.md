@@ -543,8 +543,9 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 - `inventorysummary` report: ~18–56s/call depending on Zoho health — dominant cost.
 - **Zoho inventorysummary rate limit: ~8 calls/minute** (confirmed 2026-05-22; re-confirmed on the Inventory API 2026-07-06 — 10 calls in ~2 min → 429). 4 concurrent (2 branches × 2 modes) → 429 after 2 groups; 6 concurrent (3 branches) → 429 after 1 group. Safe: max 4 calls per invocation.
 - **Zoho OAuth token-endpoint throttle (distinct from the inventory-API limit above):** `accounts.zoho.in/oauth/v2/token` throttles *access-token generation* from the refresh token — `{"error":"Access Denied","error_description":"You have made too many requests continuously"}`. On 2026-07-14 this failed stock-sync-1 + stock-sync-2 (DC/DS01/DS02/DS03 missed a cycle) at the auth step, *before* any inventory/Supabase call; stock-sync-3/4 recovered ~3 min later. Root cause: every function minted a fresh token per invocation (~5-10/hr across 4 stock crons + orders + on-demand create-to). **Fix (2026-07-15):** shared `supabase/functions/_shared/zohoToken.ts` `getZohoToken(supabase)` caches the token in `public.zoho_auth_cache` (RLS ON, no policies → service-role only; NOT in `params`, which anon can read) and reuses it until ~10 min before expiry. Cuts token calls to ~1/hr; raising a TO now logs `zoho token: cache hit` and costs zero token calls, so it can't starve the crons. FAIL-SAFE: any cache miss/read/write error → fresh refresh (pre-cache behaviour). Hot path only (sync-stock, sync-orders, create-to); the `zoho-invoices/prices/skumaster` importers still mint per-call. Logs `zoho token: refreshed` / `cache hit`.
-- **⚠ ZOHO GOES DOWN ORG-WIDE, AND A FUNCTION CAN BE A VICTIM RATHER THAN A CAUSE** (measured
-  2026-07-29). Between **17:35–18:30 UTC every Zoho consumer failed identically** with
+- **⚠ ZOHO GOES DOWN ORG-WIDE, AND A FUNCTION CAN BE A VICTIM RATHER THAN A CAUSE — TWICE NOW,
+  2026-07-29 and 2026-07-30.** First occurrence: between **17:35–18:30 UTC every Zoho consumer failed
+  identically** with
   `Zoho API: 429 after 3 attempts` from `zohoFetchWithRetry` — all four stock syncs, orders-sync, and
   `sync-catalogue`'s first-ever real run — and all recovered at 18:35. Ruled out: our own call volume
   (the day was clean; last burst `create-to` ×20 at 15:45 UTC, ~1h50m earlier), a recurring nightly
@@ -557,6 +558,45 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
     yourself, reduce concurrency; when you walk into someone else's penalty, **retry later in time**.
   - So the durable defence is **more slots spread wider than a plausible outage**, plus recording the
     failure so it is visible. Diagnostic that distinguishes the two: did it die on the first call?
+  - **SECOND OCCURRENCE, 2026-07-30, ~15:41–16:30 UTC (~50 min).** Killed `stock-sync-3` (DS04+DS05)
+    at 15:41, `stock-sync-4` (DS06) at 15:44, `orders-sync` at 15:50, and a browser-triggered TO-tool
+    stock pull at 16:28. All recovered 16:41–16:53. **Zero 429s in the other 12 hours of that day.**
+    - **⚠ THE DECISIVE EVIDENCE IS CROSS-BUCKET: two DIFFERENT rate-limit buckets failed inside ten
+      minutes.** 15:41/15:44 were `inventorysummary`; **15:50 was `sync-orders`**, i.e.
+      `/purchaseorders` + `/transferorders` — a *separate* bucket (see the rate-limit notes above). So
+      it was **not** our inventorysummary pacing, which is the whole thing the 4-cron stagger exists to
+      manage, and which was demonstrably working. Something above the endpoint level shed our requests.
+      **Check the buckets before blaming the stagger.**
+    - Four self-inflicted hypotheses ruled out, measured: **(1)** load was metronomic — 11:00–15:44 is
+      exactly 4 cron pulls/hour on `:35 :38 :41 :44`, **0 off-schedule pulls**, and the 8 calls in the
+      6 min before the failure ≈ 1.3/min against a ~8/min limit; **(2)** no `create-to` burst — 12 TOs
+      all day, 6 at 08:55–08:59 and 6 at 16:44–16:57, i.e. **nothing between 09:00 and 16:44**, the
+      second burst landing *after* the window closed; **(3)** no browser Sync Now / TO pull before
+      15:41; **(4)** not org quota — ~3k calls/day against `x-rate-limit-limit: 57500` per ~8.4h ≈ 5%.
+      It **died on the first call** (`429 attempt 1/3` at 15:41:01) — the diagnostic above — so:
+      someone else's penalty.
+    - **Ops impact was near zero and that is the point.** Each branch pair missed exactly one cycle
+      (DS04/DS05 + DS06 ~2h stale at worst; DC/DS01 77 min, DS02/DS03 75 min; PO/TO ~2h). The TO team
+      saw the staleness, repulled, raised TOs, ops resumed. Everything self-healed within the hour.
+    - **⚠ WHY WE STILL CANNOT NAME THE CAUSE — and the deliberate decision (2026-07-31) NOT to fix
+      it.** `zohoFetchWithRetry` logs only the attempt number: it never reads `res.headers`
+      (`x-rate-limit-remaining`, `Retry-After`) nor the 429 **body** (`{code, message}`, which is what
+      distinguishes a per-minute throttle from quota exhaustion from a concurrency cap), and
+      `throw new Error("Zoho API: 429 after N attempts")` carries none of it. Instrumenting it was
+      considered and **rejected**: `_shared/zohoClient.ts` is the path for **all five** functions, the
+      body-consumption hazard lands exactly on the `retry429: false` branch that **only `create-to`**
+      uses (the live DC TO-raising write path), and the payoff is diagnostic-only on an event ops
+      absorbs with a repull. **Get the diagnosis instead from ONE read-only local call DURING the next
+      window** — they last ~50 min, which is ample, and it needs no deploy and bundles nothing.
+    - **Generalisable: piggyback observability on a deploy you are already making for a substantive
+      reason; never deploy solely for observability.** The risk is the redeploy, not the diff —
+      `supabase functions deploy X` bundles whatever `_shared/*` is on disk, so a one-line log change
+      also ships the current local `_shared/` to prod, and checking for that drift means
+      `functions download`, which itself overwrites `_shared/*`. A **new** function gets its own
+      bundle, so adding one cannot disturb the five that are running.
+    - **Two occurrences in two days, both in the 15:40–18:30 UTC band. Not yet a pattern — a THIRD
+      makes it one**, at which point revisit the "no recurring nightly Zoho window" conclusion above
+      (which rests on 07-26/27/28 being clean).
 - **Architecture:** 4 staggered stock crons (3 branch pairs + DS06; ≤4 concurrent calls, never overlaps)
   + orders + 2 catalogue + the invoice window. **8 jobs, no two sharing a minute** — verify with
   `select jobname, schedule from cron.job order by jobname;`:
@@ -618,7 +658,34 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
   `function_logs` / `function_edge_logs`. Token lives in the macOS keychain
   (`security find-generic-password -s "Supabase CLI" -w`, `go-keyring-base64:` prefixed). **Send a browser
   `User-Agent`** or Cloudflare answers `403 error code: 1010`. Cap queries at 1000 rows — split by time
-  window to attribute logs per invocation.
+  window to attribute logs per invocation. ⚠ **An `order by timestamp asc limit 1000` that HITS the cap
+  truncates the END of the window silently** — a missing log line can be the cap, not a missing event.
+  Prefer a `where event_message like '%429%'`-style filtered query when counting, so "zero" means zero.
+  - **⚠ "DID THE CRON FIRE?" IS ANSWERABLE WITHOUT ANY CODE CHANGE — use `function_edge_logs`, not
+    `function_logs`.** Unnest the metadata for `execution_time_ms` and the duration alone separates the
+    cases. Measured 07-30: `sync-stock` **1176ms / 1139ms** at 16:35/16:38 = fired-and-skipped, vs
+    **14425ms / 12085ms** at 16:41/16:44 = fired-and-did-the-work; `sync-catalogue` skips are ~**810ms**.
+    ```sql
+    select timestamp, req.url, resp.status_code, m.execution_time_ms from function_edge_logs
+    cross join unnest(metadata) as m cross join unnest(m.request) as req
+    cross join unnest(m.response) as resp order by timestamp asc
+    ```
+    This matters because **the skip paths log NOTHING**: `sync-stock`'s cooldown skip and its `busy`
+    exit, and `sync-catalogue`'s cooldown gate, all `return json(...)` with no `console.log`, so a
+    skipped invocation appears in `function_logs` as `booted` → `shutdown` with nothing between —
+    indistinguishable from a crash, or from the cron never firing. Adding those log lines was
+    **considered and rejected 2026-07-31** on the piggyback rule above: it would only add the *reason*
+    (cooldown vs busy vs foreign session), and the reason is usually inferable from the lease/cooldown
+    arithmetic. Don't redeploy two live functions for it.
+  - **⚠ A BROWSER-HELD SESSION LEASE LOOKS EXACTLY LIKE A FAILED CRON.** `SESSION_TTL_MINS = 12` while
+    the stock crons sit 3 min apart at `:35 :38 :41 :44`, so **one browser Sync Now / TO pull can block
+    up to all four stock groups** for a cycle, silently (above). Worked example 07-30: a pull claimed
+    the lease ~16:28, `:35` and `:38` returned `busy`, and `:41`/`:44` ran normally because the lease had
+    expired — that split is the signature. The browser tool's own paced retry (90s gaps — visible as
+    16:52:14 then 16:53:45) recovered the two blocked pairs. **⚠ But if the tab goes away after
+    `sessionStart`, nothing retries and those branches stay stale for the full hour with no signal** —
+    the argument for surfacing freshness in the UI rather than shortening the TTL, which exists to
+    prevent the 2026-07-09 429 storm.
 - **Deployed function inventory (2026-07-29).** Exactly five, all load-bearing: `sync-stock`,
   `sync-orders`, `create-to`, `sync-invoices`, `sync-catalogue`. Anything else you find deployed is
   drift — check before assuming it is wanted.
