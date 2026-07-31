@@ -1,10 +1,12 @@
 # CLAUDE.md — HomeRun IMS
 
-> 🚧 **IN-FLIGHT WORK — read [`docs/HANDOFF-2026-07-30.md`](docs/HANDOFF-2026-07-30.md) first** if you
-> are touching the nightly model refresh (Stages 4–6), the invoice/catalogue syncs, or pincode
-> attribution. It records what is deployed-but-not-switched-on, tonight's expected events, verification
-> commands, rollback steps, and the open decisions. **Delete that file and this block once Stages 5–6
-> land** — this file is for durable knowledge, that one is for transient state.
+> 🚧 **IN-FLIGHT WORK — read [`docs/HANDOFF-2026-07-31.md`](docs/HANDOFF-2026-07-31.md) first** if you
+> are touching the nightly model refresh, the invoice/catalogue/floor syncs, or pincode attribution.
+> **The night of 2026-07-31 is the first time the whole chain runs unattended**, so that file leads with
+> the four morning checks and their expected values, then live state, verification commands and
+> rollbacks. **Stage 5 (invoices → the live row) is the only remaining gap** — everything else is
+> automatic. **Delete that file and this block once Stage 5 lands**; this file is for durable knowledge,
+> that one is for transient state.
 
 HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold.
 
@@ -148,8 +150,18 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
     `lastOkNight` set. The sync really did succeed and was overwritten afterwards, so it looks like a
     sync failure that isn't one.
   - `BROWSER_OWNED_KEYS` = `skuMaster`, `minReqQty`, `newSKUQty`, `deadStock`, `priceData` — the only
-    keys the browser may write. **Adding a key there grants permission to clobber it**, so only add one
-    no edge function writes. Deliberately absent: `invoiceData` (own row; back here takes the payload
+    keys the browser may write. **Adding a key there grants permission to clobber it.**
+    - **⚠ THREE OF THE FIVE NOW HAVE AN EDGE-FUNCTION WRITER TOO** — `skuMaster` and `priceData`
+      (`sync-catalogue`, from 2026-07-29) and **`newSKUQty` (`sync-sku-floors`, from 2026-07-31)**.
+      An earlier version of this line said "only add one no edge function writes"; that ship has
+      sailed, so the rule is now the one that actually keeps it safe: **the browser may write such a
+      key ONLY on an explicit human action on that specific input** (a CSV upload or a clear button),
+      never as a side effect. That is exactly what `96a1bf4` bought — before it, the whole bundle was
+      rebuilt from React state on every save, so any unrelated Apply rewrote all five.
+    - **The remaining exposure is intentional and bounded:** a human CSV upload overrides the sync,
+      and the sync re-asserts on its next run. That is the fallback path working, not a conflict.
+      `sync-sku-floors` reports it as `overrodeManualUpload` rather than reverting silently.
+    - Deliberately absent: `invoiceData` (own row; back here takes the payload
     ~1-2MB → ~7MB and re-exhausts the Disk IO burst), `stockData`/`stockDataAccounting`/
     `stockUploadedAt*` (sync-stock owns them — the browser only ever READS stock, `setStockData` is
     called solely from Supabase reads), `poData`/`toData`/caches/`ordersUploadedAt` (sync-orders).
@@ -229,6 +241,29 @@ of demand lines misattributed** in steady state (20.2% including DS06 launch eff
 - **Resolved in `runEngine` (first line), NOT at CSV-parse time.** `parseInvoiceCsv` carries the raw
   `pin` (Shipping Code = `shipping_address.zip`) into the stored rows, so switching mode is a **re-run,
   not a CSV re-upload**. `applyAttribution` returns `inv` unchanged unless `shippingCode` is on.
+- **⚠ THAT SINGLE CALL SITE WAS A TRAP FOR FIVE WEEKS — fixed 2026-07-31.** Because `invoiceData` in
+  React state stays RAW (deliberately, see above), every tab that computed its own demand by grouping
+  `r.ds` was silently still on fulfilling-location behaviour while the engine used pincodes. SKU
+  Detail's per-location chart therefore **contradicted the Min/Max printed beside it on the same
+  screen**, and Plywood v2 showed different numbers than the engine would produce from the same config
+  (`plywoodV2/` never attributes internally: via `runEngine` it gets attributed rows, from the tab it
+  got raw ones — so an admin tuning and publishing from that view would have published a plan fitted to
+  the wrong demand). Plywood v1 and Baskets had it too.
+  - Fixed with **one derivation** in `App.jsx` — `attributedInvoice = useMemo(() =>
+    applyAttribution(invoiceData, params.pincodeConfig), …)` — passed to SKU Detail, Plywood v1,
+    Plywood v2, Baskets and Simulation. `OverviewTab` deliberately still gets raw: it never groups by
+    `r.ds`, so attributing would change nothing.
+  - **⚠ `runEngine` still gets RAW `invoiceData`** and attributes internally. Double-applying is
+    harmless (idempotent — `r.pin` is never modified) but it is a trap for the next reader, so keep the
+    two paths distinct. **If you add a tab that reads `invoiceData`, pass it `attributedInvoice`.**
+  - Measured effect on what the tabs display (45d window): **20.5% of demand lines change store.**
+    DS06 **+190%** (credited 5.1% of demand while its catchment generates 14.8%), DS02 **−34.9%**,
+    DS05 −20.1%, DS03 +7.9%, DS04 +6.4%, DS01 −2.3%. No engine or `toTargets` change.
+  - Same commit fixed two DS06 blind spots: `SD_DS_OPTS` (the SKU Detail store picker) was hardcoded
+    to five stores while the rest of the tab used `DS_LIST`, so DS06 data existed with no per-store
+    view; it now **derives** from `DS_LIST`. `BasketAnalysisTab` had a stale local five-store `DS_LIST`
+    (now imports the canonical one), and `simWorker.js` had one ×2 — it **cannot** import (Web Worker),
+    so the literal is completed to six with a comment saying why it is duplicated.
 - **Static current mapping applied to all history is deliberate** — it asks "what would demand be if
   today's catchment had always existed", the right counterfactual for future Min/Max. No date-versioning
   even though ops reassign pincodes over time.
@@ -643,7 +678,9 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
       makes it one**, at which point revisit the "no recurring nightly Zoho window" conclusion above
       (which rests on 07-26/27/28 being clean).
 - **Architecture:** 4 staggered stock crons (3 branch pairs + DS06; ≤4 concurrent calls, never overlaps)
-  + orders + 2 catalogue + the invoice window. **8 jobs, no two sharing a minute** — verify with
+  + orders + 2 catalogue + the invoice window + 2 floors + 2 engine. **10 jobs, no two sharing a
+  minute WITHIN THE SAME HOUR** (the floors and engine slots reuse free minutes at hours 23 and 00) —
+  verify with
   `select jobname, schedule from cron.job order by jobname;`:
   - `stock-sync-1` at `:35 UTC` (:05 IST) → DC + DS01
   - `stock-sync-2` at `:38 UTC` (:08 IST) → DS02 + DS03
@@ -653,6 +690,21 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
   - `catalogue-sync-earlier` at `25,55 16,17 * * *` UTC + `catalogue-sync-nightly` at `25 18 * * *`
     → five attempts, 21:55–23:55 IST (migrations `20260730000001` + `20260729000002`)
   - `invoices-sync-window` at `5,20 19-22 * * *` UTC → 00:35–04:00 IST
+  - **`sku-floors-sync` at `5,55 23 * * *` UTC → 04:35 + 05:25 IST** (migration `20260731000001`) →
+    the ops Google Sheet into `newSKUQty`. Body **MUST** carry `{"dryRun": false}`.
+  - **`engine-run-nightly` at `15,45 0 * * *` UTC → 05:45 + 06:15 IST** (migration `20260731000002`) →
+    POSTs the **Vercel** endpoint `/api/run-engine`, which recomputes the engine and writes
+    `params/toTargets`. Body **MUST** carry `{"mode":"live"}`. See Stage 6.
+  - **⚠ THE TWO NIGHTLY ADDITIONS ARE 50 MINUTES APART FOR A REASON, and it is not the Zoho limit.**
+    `COOLDOWN_MS` (15 min) is stamped on FAILURE too, so a retry slot closer than that is silently
+    refused. Measured against the real `shouldRun`: `23:05 fails → 23:20 retry` = **run=FALSE, wait
+    3s** — three seconds short, and indistinguishable from "the retry never fired". Any slot added to
+    either job must clear 15 minutes from the END of the previous run.
+  - **⚠ These are the first slots that fall AFTER midnight IST.** Safe only because `syncNightKey`
+    shifts 3h before taking the IST date — verified: `23:05Z` and `23:55Z` both key to the *same*
+    night. Re-read it before adding any further post-midnight slot.
+  - **Full nightly order:** catalogue 21:55–23:55 → invoices 00:35–04:00 → floors 04:35/05:25 →
+    engine 05:45/06:15 → ops POs ~06:00 IST.
   - **Free minutes each hour: `:00–:34` and `:51–:59`.** `:35 :38 :41 :44` and `:50` are taken, and
     `:50` in particular writes `team_data/global`.
 - **syncLock (2026-07-08, deployed):** `sync-stock` acquires `params/syncLock` before pulling (released in `finally`; locks older than 5 min treated as leaked and taken over). A concurrent invocation gets `{ok:true, busy:true}` — callers (TO tool's on-demand pull) retry after ~30s. Prod-verified: concurrent calls → second returned busy, lock released cleanly after.
@@ -731,9 +783,11 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
     `sessionStart`, nothing retries and those branches stay stale for the full hour with no signal** —
     the argument for surfacing freshness in the UI rather than shortening the TTL, which exists to
     prevent the 2026-07-09 429 storm.
-- **Deployed function inventory (2026-07-29).** Exactly five, all load-bearing: `sync-stock`,
-  `sync-orders`, `create-to`, `sync-invoices`, `sync-catalogue`. Anything else you find deployed is
-  drift — check before assuming it is wanted.
+- **Deployed function inventory (2026-07-31).** **SIX**, all load-bearing: `sync-stock`,
+  `sync-orders`, `create-to`, `sync-invoices`, `sync-catalogue`, **`sync-sku-floors`** (added
+  2026-07-31). Anything else you find deployed is drift — check before assuming it is wanted.
+  - ⚠ A **seventh** surface now exists outside Supabase: **`api/run-engine.js` on Vercel** (Stage 6).
+  It is not an edge function and will not appear in `supabase functions list` — see Stage 6.
   - **Deleted 2026-07-29:** `zoho-invoices`, `zoho-prices`, `zoho-skumaster` (Books-era importers,
     superseded by `sync-invoices`/`sync-catalogue`). ⚠ They were **not** broken by the org migration —
     `_shared/zoho.ts` points at `/inventory/v1` and reads the current `ZOHO_ORG_ID`, so they would have
@@ -894,24 +948,79 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
     `mergeInvoiceRows`, not merely intended.
   - Self-sufficiency arrives once the retention window starts on/after 2026-07-01: **~14 Aug 2026** at
     45-day retention, **~28 Sep 2026** at 90-day.
-- **Stage 6 (design agreed 2026-07-28, NOT built):** headless engine run → `params/toTargets`.
-  `App.jsx:3312` is the ONLY writer of that row, inside `applyAndRun` — so the TO tool runs against
-  whatever an admin last clicked Apply on, while IMS recomputes client-side on every page load.
-  **Two paths to the same number, and they diverged on 2026-07-28.**
-  - **EVENT-DRIVEN, NOT A CRON** (Sandy's call, and the better design): the syncs chain into the engine
-    run so `toTargets` is never stale relative to its inputs. Inputs that move Min/Max: `invoiceData`,
-    `skuMaster`/`priceData`, `params`, `overrides`, engine code.
-  - **The TO tool must keep only *mirroring*, never computing.** The engine is ~2,900 lines with 200+
-    tests in this repo; a second implementation in `homerun-to` would drift, and the drift surfaces as
-    wrong transfer quantities found by ops.
-  - Write to **`params/toTargets_shadow`** first and diff against a browser Apply (per-SKU deep
-    equality) before flipping. The first real write must not land unattended before a 14:30/20:30 run.
-  - **Stamp the engine commit SHA into `toTargets`.** Vercel and Supabase deploy separately, so a
-    frontend deploy can update the browser engine while the edge function still runs an older copy —
-    silent drift. IMS can compare and warn.
+- **Stage 6 (✅ LIVE 2026-07-31):** headless engine run → `params/toTargets`, so the TO tool no longer
+  depends on a human clicking Apply. **`api/run-engine.js` — a VERCEL serverless function, not a
+  Supabase edge function**, scheduled by pg_cron (`engine-run-nightly`, 05:45 + 06:15 IST, body
+  `{"mode":"live"}`). Status in `params/engineRunStatus`. Design doc:
+  `docs/superpowers/specs/2026-07-31-stage6-headless-engine-design.md`.
+  - **⚠ `toTargets` NOW HAS TWO WRITERS** — `applyAndRun` in App.jsx and the nightly run. They share
+    `src/toTargets.js` (`mergeCoreOverrides` + `buildToTargets` + `buildInputsStamp`, 31 tests), which
+    is the only thing keeping them from drifting. An earlier note here said App.jsx was the *only*
+    writer; that is no longer true.
+  - **WHY VERCEL:** it imports `src/engine/` DIRECTLY, so there is exactly one engine implementation. A
+    Deno port would be a second copy of ~2,900 lines whose drift surfaces as wrong transfer quantities
+    found by ops. Verified headless-safe — no `window`/`document`/`localStorage` in the engine (all 20
+    hits for "window" are the word in prose). `"type": "module"` in package.json is what lets a Node
+    function import it.
+  - **⚠ WHY A CLOCK, NOT THE EVENT CHAIN THIS ENTRY USED TO SPECIFY.** Event-driven existed to
+    guarantee `toTargets` was never computed from stale inputs. Once we decided to **ALWAYS RUN and
+    stamp freshness** — safe because every input sync already fails closed ATOMICALLY, so there is no
+    half-updated input — completion detection became unnecessary, and running after the last input slot
+    was enough. It also needs **zero edits to the deployed Supabase functions**.
+  - **⚠ MODE DEFAULTS TO `"dry"`**, deliberately unlike the edge functions, because it replaces the row
+    wholesale. So a cron sending `{}` would report `ok:true` nightly and never write.
+  - **Guard:** `assessTargetsChange` blocks a >20% fall in target count against the live row (baseline
+    is always the LIVE row, even on a shadow run, so a shadow run reports what a live write *would*
+    have done). The realistic failure is an input that failed to load, and nothing legitimately takes
+    this row to zero.
+  - **Writes ONLY the `params` table**, exactly like `applyAndRun` — it cannot disturb `team_data`.
+  - **Freshness is DERIVED FROM THE DATA:** `inputs.invoiceDataThrough` (max date in the rows),
+    per-input counts, attribution mode, plus `engineCommit`. ⚠ `refreshedAt` alone is the weak signal —
+    on the first run it read "just now" while `invoiceDataThrough` was three days stale. A run timestamp
+    says a computer did something; `invoiceDataThrough` says whether the answer is current.
+  - **`engineCommit` is stamped by BOTH writers** — the browser via `__ENGINE_COMMIT__`
+    (`vite.config.js` define, from `VERCEL_GIT_COMMIT_SHA`, falling back to `"local"`). Vercel and
+    Supabase deploy separately, so this makes a skew visible in the row. A row stamped `"local"` was
+    written from somebody's laptop. ⚠ Note the define changes bundle content, so a Vercel build's asset
+    hash will NOT match a local `npm run build` — that is expected, not a deploy problem.
+  - Verified before going live: headless run reproduced a browser Apply **exactly, 0 of 2,030 SKUs
+    differing** — twice (a local harness with an independent re-implementation, then the deployed
+    function writing `toTargets_shadow`) — plus one attended live write verified byte-identical.
+    Timing on Vercel **4.9–5.6s**; `vercel.json` raises `maxDuration` to 60s because Hobby's 10s default
+    left only ~2× headroom (a local measurement of 2.4s had suggested 5×).
+  - Regression check: `node --experimental-strip-types` is not needed —
+    `npx vite-node scripts/diff-headless-totargets.mjs` re-runs the whole comparison read-only, and is
+    the **drift detector** between the shared builder and anything that diverges.
   - End state worth aiming at: IMS reads the canonical stored result too, making divergence
     structurally impossible and page loads much faster. Costs the "engine changes go live on next page
     load" property, and Impact Preview still needs client-side compute. Not urgent.
+- **Stage 8 — SKU floors from the ops Google Sheet (✅ LIVE 2026-07-31):** `sync-sku-floors` →
+  `team_data/global.newSKUQty`, replacing the manual SKU-Floors CSV upload. ONE HTTP GET to the
+  published sheet plus two Supabase reads, ~1s, **no Zoho at all** — so it cannot contribute to a 429
+  window. Status in `params/skuFloorSyncStatus`. Cron `sku-floors-sync`, 04:35 + 05:25 IST.
+  - **⚠ `dryRun` DEFAULTS TO TRUE** (`body.dryRun !== false`) — the cron body must carry
+    `{"dryRun": false}` or it no-ops nightly while reporting `ok:true`.
+  - Parse + guard are pure and tested: `_shared/skuFloorSheet.ts` (26 tests). Output shape mirrors
+    `App.jsx handleFloors` EXACTLY — `max` floored at `min`, DSes at 0/0 omitted, an all-zero SKU kept
+    as a **present-but-empty** object. Proven, not assumed: `changed: 0` across all 1,148 SKUs on the
+    first run.
+  - **Stricter than the browser on purpose:** `2.5`, `-1`, `abc` are REJECTED, not coerced —
+    `parseFloat` turning a typo into `0` is indistinguishable from ops deliberately removing a floor.
+    A blank cell is still `0`. An unknown DS column (DS07 before `DS_LIST` gains it) is a **hard stop**.
+  - **⚠ THE GUARD NEEDS TWO DIMENSIONS.** Ops removes a floor either by deleting the row OR by setting
+    it `0,0`; the second leaves the SKU key in place, so a key-count guard alone reads a **0% drop** and
+    would wave through a bad formula that zeroed every value column — 1,148 rows in, 1,148 out, every
+    floor gone. `floorDropPct` tracks SKUs actually CARRYING a floor. Either falling >20% fails closed.
+  - **⚠ `force` OVERRIDES POLICY, NEVER CORRECTNESS.** It bypasses the night gate, the cooldown and the
+    guard *threshold* — never parse validation. A header-only sheet (empty tab, or a filter hiding every
+    row) parses "successfully" to `{}`, and with the guard widened to 100% that would have been written
+    over every live floor; `parseFloorSheet` refuses zero SKUs outright.
+  - Dry run any time, read-only: `npx vite-node scripts/dryrun-sku-floors.mjs`. It also reports floors
+    that **can never take effect** (SKU absent from `skuMaster`, or not Active) — the most useful output
+    and nothing to do with syncing: ops maintained 1,148 floors believing all were live; 39 were not.
+  - ⚠ The sheet is AUTHORITATIVE and replaces `newSKUQty` wholesale, so **update the SHEET first**. A
+    CSV-only upload is reverted at 04:35 with `ok:true`. Download the sheet as CSV and upload *that*, so
+    the two cannot diverge.
 - **Stage 7 (LIVE 2026-07-29; hardened 2026-07-30 after its first run failed):** `sync-catalogue` →
   SKU Master + Purchase Prices into `team_data/global` (read-merge-write, fresh read immediately before
   writing). ~30 calls, ~16s. See the Zoho ITEMS + PRICES section for the ⚠s, including status ownership.
