@@ -1,0 +1,95 @@
+-- engine-run-nightly: the headless engine run that keeps params/toTargets fresh,
+-- so the TO tool no longer depends on a human clicking "Apply & Re-run Model".
+--
+-- ⚠ THIS IS THE FIRST CRON IN THIS PROJECT THAT CALLS SOMETHING OTHER THAN A
+-- SUPABASE EDGE FUNCTION. The target is a Vercel serverless function
+-- (api/run-engine.js) because it imports src/engine/ DIRECTLY — one engine
+-- implementation, so browser and headless cannot drift. A Deno port would be a
+-- second copy of ~2,900 lines and the drift surfaces as wrong transfer quantities
+-- found by ops. pg_net does not care what the host is; this is an ordinary POST.
+--
+-- SCHEDULE — 00:15 and 00:45 UTC = 05:45 and 06:15 IST.
+--
+--   Placed after the LAST input slot of the night, so it computes on everything
+--   that refreshed overnight:
+--       catalogue ends 18:25 UTC · invoices 22:20 UTC · floors 23:55 UTC
+--   05:45 IST is 20 minutes after the floors' last slot (a floors run takes ~2s)
+--   and ~15 minutes before ops POs start at ~06:00 IST.
+--
+--   ⚠ WHY A CLOCK AND NOT AN EVENT CHAIN. The original design chained this off
+--   each sync's success so toTargets could never be stale relative to its inputs.
+--   Once we decided to ALWAYS RUN and stamp freshness instead — safe because every
+--   input sync already fails closed ATOMICALLY, so there is no half-updated input —
+--   completion detection became unnecessary. Running after the last slot suffices,
+--   and it needs zero edits to the five deployed edge functions.
+--
+--   ⚠ THE SECOND SLOT IS A RETRY, AND IT EXISTS BECAUSE pg_net IS FIRE-AND-FORGET.
+--   The cron cannot observe the response, so a failed 05:45 run would otherwise
+--   leave toTargets stale for a whole day. The run is IDEMPOTENT (recompute + write
+--   the same row), so if 05:45 succeeded, 06:15 simply rewrites identical values.
+--   There is deliberately NO once-per-night gate here, unlike sync-catalogue and
+--   sync-sku-floors: those gates exist to avoid re-hitting ZOHO's rate limit, and
+--   this function never touches Zoho. Two Supabase reads a night is not worth the
+--   extra state.
+--   Note 06:15 IST is just after ops start, but it is a fallback, not the primary —
+--   and it is still ~8h before the 14:30 IST TO run.
+--
+--   ⚠ MINUTES. Hour 00 UTC has no other job. Occupied elsewhere: :35 :38 :41 :44
+--   (stock) and :50 (orders) every hour, :05/:20 at 19-22 (invoices), :25/:55 at
+--   16-18 (catalogue), :05/:55 at 23 (floors).
+--
+-- ⚠ BODY MUST CARRY {"mode":"live"}. api/run-engine.js defaults to `mode: "dry"`
+-- (computes and reports, writes nothing) because it replaces toTargets wholesale.
+-- A cron sending '{}' would report ok:true every night and never write. Same
+-- footgun as sync-sku-floors' dryRun default; copy the body if you rebuild this.
+--
+-- ⚠ THE SECRET IS IN THIS FILE AND THEREFORE IN GIT. Accepted knowingly:
+--   * cron.job is readable only by service-role (anon cannot see it), the same
+--     protection as public.zoho_auth_cache.
+--   * 15 existing migrations already commit the Supabase ANON KEY, which is
+--     strictly MORE powerful — it can write any params row directly, including
+--     toTargets, without going through this endpoint at all. So this adds no
+--     meaningful exposure.
+--   * Blast radius if leaked: someone can trigger an engine recompute. The output
+--     is deterministic from stored inputs, and toTargets is reconstructable in
+--     seconds by clicking Apply.
+--   Rotation = update ENGINE_RUN_SECRET in Vercel, redeploy, and add a migration.
+--
+-- WHY THIS IS SAFE TO SCHEDULE, in one line: today an admin clicking Apply writes
+-- toTargets with no guard, no status record and no verification. This does the
+-- identical computation with a >20% collapse guard, a status row
+-- (params/engineRunStatus), data-derived freshness stamps and the engine commit
+-- SHA. The risk is not new — only the trigger is.
+--
+-- Verified before scheduling (2026-07-31):
+--   * headless run reproduced a browser Apply EXACTLY — 0 of 2,030 SKUs differ —
+--     twice: once from a local harness with an INDEPENDENT re-implementation of the
+--     serialization, once from the deployed function writing toTargets_shadow.
+--   * one ATTENDED live write: targets byte-identical to the browser Apply.
+--   * timing on Vercel 4.9-5.6s over four runs; maxDuration raised to 60s
+--     (vercel.json) because Hobby's 10s default left only ~2x headroom.
+--
+-- ⚠ WHAT THIS DOES NOT FIX. On the night it was scheduled, the engine reported
+-- `invoiceDataThrough: 2026-07-28` — invoice data 3 days stale, because Stage 5 is
+-- NOT flipped and sync-invoices still publishes to team_data/invoice_data_shadow.
+-- So this refreshes the PUBLISH, not that input. The freshness stamp makes it
+-- visible rather than silent, which is the point. Flip Stage 5 separately.
+
+select cron.schedule('engine-run-nightly', '15,45 0 * * *', $$
+  select net.http_post(
+    url := 'https://homerun-ims.vercel.app/api/run-engine',
+    headers := '{"Content-Type":"application/json","x-engine-secret":"7e0ca2dea6f7e24ffaa04ca1ad1783a32712ea68951fb274a2a5247033d5d430"}'::jsonb,
+    body := '{"mode":"live"}'::jsonb
+  );
+$$);
+
+-- ROLLBACK — toTargets simply stops auto-refreshing; Apply still works and is
+-- unaffected, so this costs freshness only:
+--   select cron.unschedule('engine-run-nightly');
+--
+-- RECOVER a bad write: click "Apply & Re-run Model" in IMS. toTargets is fully
+-- reconstructable from stored inputs, which is why this stage was safe to ship
+-- faster than the invoice cutover.
+--
+-- Verify: select jobname, schedule from cron.job order by jobname;
+-- Results:  select payload from params where id = 'engineRunStatus';
