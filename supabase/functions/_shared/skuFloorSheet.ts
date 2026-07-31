@@ -21,7 +21,8 @@ export type ParseReason =
   | "header_mismatch"
   | "unknown_ds"
   | "duplicate_sku"
-  | "invalid_value";
+  | "invalid_value"
+  | "empty";
 
 export type ParseResult = {
   ok: boolean;
@@ -108,6 +109,14 @@ export function parseFloorSheet(csv: string, dsList: string[]): ParseResult {
   }
 
   const skuCount = Object.keys(floors).length;
+  // ⚠ Zero SKUs from a structurally VALID header is always an accident — an empty
+  // tab, or a filter hiding every row. It must be refused here rather than left to
+  // the change guard, because `force: true` widens that guard to 100% and would
+  // then write `{}` over every live floor. Parse validation is the layer `force`
+  // cannot reach: it overrides POLICY, never CORRECTNESS.
+  if (skuCount === 0) {
+    return { ...base, reason: "empty", floors, skuCount, invalid, blankSkuRows };
+  }
   if (duplicateSkus.length) {
     return { ...base, reason: "duplicate_sku", floors, skuCount, duplicateSkus, invalid, blankSkuRows };
   }

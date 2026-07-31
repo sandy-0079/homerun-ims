@@ -100,6 +100,30 @@ describe("parseFloorSheet — fails closed on anything it does not understand", 
     expect(r.ok).toBe(true);
     expect(Object.keys(r.floors)).toEqual(["REAL"]);
   });
+
+  it("rejects a header-only sheet, so `force` can never wipe every floor", () => {
+    // A valid header with zero data rows parses "successfully" to {}, and since
+    // force widens the change guard to 100% it would then be written over 1,115
+    // live floors. The authoritative sheet having no rows is always an accident
+    // (empty tab, filter); force overrides POLICY, never CORRECTNESS.
+    const r = parseFloorSheet(sheet(), DS);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("empty");
+  });
+});
+
+describe("assessFloorChange — defaults the edge function relies on", () => {
+  it("falls back to the 20% threshold when maxDropPct is undefined", () => {
+    // sync-sku-floors passes `maxDropPct: force ? 100 : undefined`, so an
+    // undefined must mean "use the default", not "no limit".
+    const live = Object.fromEntries(
+      Array.from({ length: 100 }, (_, i) => [`SKU${i}`, { DS01: { min: 1, max: 2 } }]),
+    );
+    const parsed = Object.fromEntries(Object.entries(live).slice(0, 70)); // 30% drop
+    const r = assessFloorChange({ parsed, live, maxDropPct: undefined });
+    expect(r.safe).toBe(false);
+    expect(r.reason).toBe("row_collapse");
+  });
 });
 
 describe("assessFloorChange — small deliberate removals pass, a collapse fails closed", () => {
