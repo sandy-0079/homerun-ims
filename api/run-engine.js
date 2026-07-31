@@ -37,7 +37,7 @@
 import { runEngine } from "../src/engine/index.js";
 import { DEFAULT_PARAMS, DS_LIST } from "../src/engine/constants.js";
 import { loadParamConfigRows } from "../src/paramConfigRows.js";
-import { mergeCoreOverrides, buildToTargets, assessTargetsChange } from "../src/toTargets.js";
+import { mergeCoreOverrides, buildToTargets, assessTargetsChange, buildInputsStamp } from "../src/toTargets.js";
 
 const LIVE_ROW = "toTargets";
 const SHADOW_ROW = "toTargets_shadow";
@@ -128,27 +128,20 @@ export default async function handler(req, res) {
     const change = assessTargetsChange({ built, live: liveTo?.targets ?? {} });
 
     // ── Freshness: DERIVED FROM THE DATA, not from a report that a job ran ────
-    // A run timestamp says a computer did something; `invoiceDataThrough` says how
-    // current the answer actually is. That distinction is the whole point.
-    let through = null;
-    for (const r of invoiceData) if (r?.date && (through === null || r.date > through)) through = r.date;
-
-    const inputs = {
-      invoiceDataThrough: through,
-      invoiceRows: invoiceData.length,
-      skuMaster: Object.keys(skuMaster).length,
-      priceData: Object.keys(team?.priceData ?? {}).length,
-      newSKUQty: Object.keys(team?.newSKUQty ?? {}).length,
-      minReqQty: Object.keys(team?.minReqQty ?? {}).length,
-      deadStock: (team?.deadStock ?? []).length,
-      coreOverrides: Object.keys(sbOverrides ?? {}).length,
-      attributionMode: params.pincodeConfig?.mode ?? null,
+    // Shared with applyAndRun via src/toTargets.js so both writers leave this row
+    // in ONE shape — the browser used to write only {targets, refreshedAt} and so
+    // erased these fields on every Apply.
+    const inputs = buildInputsStamp({
+      invoiceData, skuMaster,
+      priceData: team?.priceData, newSKUQty: team?.newSKUQty,
+      minReqQty: team?.minReqQty, deadStock: team?.deadStock,
+      coreOverrides: sbOverrides, params,
       lastSyncs: {
         invoices: invStat?.publishedAt ?? invStat?.at ?? null,
         catalogue: catStat?.lastOkNight ?? null,
         floors: floorStat?.lastOkNight ?? null,
       },
-    };
+    });
 
     status = {
       ok: change.safe, mode, engineCommit,

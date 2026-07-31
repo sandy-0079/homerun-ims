@@ -57,6 +57,47 @@ export function mergeCoreOverrides(results, overrides) {
   return merged;
 }
 
+// The freshness block stamped into `params/toTargets` alongside `refreshedAt`.
+//
+// ⚠ WHY IT EXISTS: `refreshedAt` alone is the WEAK signal — a run timestamp says a
+// computer did something, not that the answer is current. Demonstrated 2026-07-31:
+// the first headless run reported `refreshedAt` "just now" while `invoiceDataThrough`
+// was 2026-07-28, because Stage 5 was not flipped and the invoice sync was still
+// publishing to a shadow row. A fresh-looking stamp over stale inputs is worse than
+// no stamp at all.
+//
+// ⚠ WHY IT IS SHARED: `applyAndRun` (browser) and `api/run-engine.js` (nightly) both
+// write this row. Before this existed, the browser wrote only `{targets,
+// refreshedAt}` and so ERASED `engineCommit`/`inputs` on every Apply — which would
+// have made the TO tool's freshness display blank intermittently, the fastest way to
+// make people stop trusting it. One builder, one key set, whoever writes.
+export function buildInputsStamp({
+  invoiceData, skuMaster, priceData, newSKUQty, minReqQty, deadStock,
+  coreOverrides, params, lastSyncs,
+}) {
+  // MAX date, not the last row — stored invoice rows are not sorted.
+  let through = null;
+  for (const r of invoiceData || []) {
+    if (r?.date && (through === null || r.date > through)) through = r.date;
+  }
+  // deadStock is a Set in React state and an array from Supabase. Serve both.
+  const count = (v) => (v == null ? 0 : (v.size ?? (Array.isArray(v) ? v.length : Object.keys(v).length)));
+  return {
+    invoiceDataThrough: through,
+    invoiceRows: (invoiceData || []).length,
+    skuMaster: count(skuMaster),
+    priceData: count(priceData),
+    newSKUQty: count(newSKUQty),
+    minReqQty: count(minReqQty),
+    deadStock: count(deadStock),
+    coreOverrides: count(coreOverrides),
+    attributionMode: params?.pincodeConfig?.mode ?? null,
+    // The browser does not read the sync status rows (not worth the extra I/O on
+    // Apply), so it stamps null. Present either way so the key set never varies.
+    lastSyncs: lastSyncs ?? null,
+  };
+}
+
 // A write to `toTargets` REPLACES it wholesale, and the TO tool has no fallback if
 // it arrives empty — the DC team would see no targets at all. So the headless
 // writer needs the same discipline as every other replace-entirely writer here

@@ -4,6 +4,7 @@ import { loadParamConfigRows } from "./paramConfigRows";
 import { buildTeamDataBundle } from "./teamDataBundle";
 import { resolveSource, assessSyncedInput, assessModel } from "./freshness";
 import { summariseInputs } from "./inputSummary";
+import { mergeCoreOverrides, buildToTargets, buildInputsStamp } from "./toTargets";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
@@ -3419,35 +3420,33 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
       setTimeout(() => {
         try {
           const dsCapacities = buildDSCapacities(networkConfigs);
-          const raw = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, dsCapacities ? { ...np, dsCapacities } : np);
-          const merged = { ...raw };
-          Object.entries(coreOverrides).forEach(([sku, dsList]) => {
-            if (!merged[sku]) return;
-            const newStores = { ...merged[sku].stores };
-            Object.entries(dsList).forEach(([ds, ov]) => {
-              if (!newStores[ds]) return;
-              newStores[ds] = { ...newStores[ds], min: Math.max(newStores[ds].min, ov.min), max: Math.max(newStores[ds].max, ov.max) };
-            });
-            merged[sku] = { ...merged[sku], stores: newStores };
-          });
+          const engineParams = dsCapacities ? { ...np, dsCapacities } : np;
+          const raw = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, engineParams);
+          // Shared with api/run-engine.js — see src/toTargets.js. Was inline here,
+          // which made the nightly headless run a second implementation of a filter
+          // whose drift shows up as wrong transfer quantities found by ops.
+          const merged = mergeCoreOverrides(raw, coreOverrides);
           setResults(merged);
           // Persist a compact DC-inventorised-active target slice for the standalone TO tool.
           // Own row (params/toTargets) — never touched by the sync functions (which only write
           // team_data/global), written only here on Apply. Non-blocking: a failure never affects Apply.
           try {
-            const toTargets = {};
-            Object.entries(merged).forEach(([sku, r]) => {
-              const m = r.meta || {};
-              if ((m.inventorisedAt || "DS").toLowerCase() !== "dc") return;
-              if ((m.status || "Active").toLowerCase() !== "active") return;
-              const perDS = {};
-              DS_LIST.forEach(ds => {
-                const s = r.stores?.[ds];
-                if (s) perDS[ds] = { min: s.min, max: s.max };
-              });
-              toTargets[sku] = { name: m.name || sku, category: m.category || "", brand: m.brand || "", perDS };
-            });
-            saveToSupabase("params", "toTargets", { targets: toTargets, refreshedAt: new Date().toISOString() })
+            const toTargets = buildToTargets(merged, DS_LIST);
+            // ⚠ Stamp the SAME fields the nightly run stamps. This used to write only
+            // `{targets, refreshedAt}`, so every Apply ERASED `engineCommit` and
+            // `inputs` — which would blank the TO tool's freshness display
+            // intermittently, the fastest way to make people stop trusting it.
+            // `refreshedAt` alone is the weak signal: on 2026-07-31 it read "just
+            // now" while invoiceDataThrough was three days stale.
+            saveToSupabase("params", "toTargets", {
+              targets: toTargets,
+              refreshedAt: new Date().toISOString(),
+              engineCommit: __ENGINE_COMMIT__,
+              inputs: buildInputsStamp({
+                invoiceData, skuMaster, priceData, newSKUQty, minReqQty, deadStock,
+                coreOverrides, params: engineParams,
+              }),
+            })
               // Re-read the header pills from the row that was actually written, rather
               // than optimistically stamping now() — if this write failed, the pill must
               // keep saying stale. That is the whole reason it exists.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergeCoreOverrides, buildToTargets, assessTargetsChange } from "./toTargets.js";
+import { mergeCoreOverrides, buildToTargets, assessTargetsChange, buildInputsStamp } from "./toTargets.js";
 
 const DS = ["DS01", "DS02", "DS03"];
 
@@ -174,5 +174,60 @@ describe("assessTargetsChange — a replace-entirely writer needs a floor", () =
     });
     expect(r.added).toEqual(["FRESH"]);
     expect(r.removed).toEqual(["GONE"]);
+  });
+});
+
+describe("buildInputsStamp — freshness derived from the DATA, not from a run clock", () => {
+  const args = (over = {}) => ({
+    invoiceData: [{ date: "2026-07-28", qty: 1 }, { date: "2026-07-30", qty: 2 }, { date: "2026-07-29", qty: 1 }],
+    skuMaster: { A: {}, B: {} },
+    priceData: { A: 10 },
+    newSKUQty: { A: {}, B: {}, C: {} },
+    minReqQty: { A: {} },
+    deadStock: ["X", "Y"],
+    coreOverrides: {},
+    params: { pincodeConfig: { mode: "shippingCode" } },
+    ...over,
+  });
+
+  it("reports invoiceDataThrough as the MAX date, not the last row", () => {
+    // The rows are not sorted; taking the last one would report 07-29.
+    expect(buildInputsStamp(args()).invoiceDataThrough).toBe("2026-07-30");
+  });
+
+  it("reports null when there is no invoice data at all", () => {
+    expect(buildInputsStamp(args({ invoiceData: [] })).invoiceDataThrough).toBeNull();
+  });
+
+  it("counts every input", () => {
+    const s = buildInputsStamp(args());
+    expect(s).toMatchObject({
+      invoiceRows: 3, skuMaster: 2, priceData: 1, newSKUQty: 3, minReqQty: 1, deadStock: 2, coreOverrides: 0,
+    });
+  });
+
+  it("⚠ accepts deadStock as a Set — the browser holds one in React state", () => {
+    // App.jsx keeps deadStock as a Set; api/run-engine.js reads it as an array.
+    // One stamp builder serves both, so it must not assume .length.
+    expect(buildInputsStamp(args({ deadStock: new Set(["X", "Y", "Z"]) })).deadStock).toBe(3);
+  });
+
+  it("carries the attribution mode, and null when unset", () => {
+    expect(buildInputsStamp(args()).attributionMode).toBe("shippingCode");
+    expect(buildInputsStamp(args({ params: {} })).attributionMode).toBeNull();
+  });
+
+  it("passes lastSyncs through, defaulting to null for the browser writer", () => {
+    expect(buildInputsStamp(args()).lastSyncs).toBeNull();
+    const ls = { invoices: "x", catalogue: "y", floors: "z" };
+    expect(buildInputsStamp(args({ lastSyncs: ls })).lastSyncs).toEqual(ls);
+  });
+
+  it("produces the SAME KEY SET whichever writer calls it", () => {
+    // The whole point: a browser Apply and the nightly run must leave the row in
+    // one shape, or the TO tool's freshness display blanks after every Apply.
+    const browser = buildInputsStamp(args({ deadStock: new Set(["X"]) }));
+    const headless = buildInputsStamp(args({ lastSyncs: { invoices: "a", catalogue: "b", floors: "c" } }));
+    expect(Object.keys(browser).sort()).toEqual(Object.keys(headless).sort());
   });
 });

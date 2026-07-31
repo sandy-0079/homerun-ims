@@ -15,7 +15,7 @@ export default defineConfig([
     ],
     languageOptions: {
       ecmaVersion: 2020,
-      globals: globals.browser,
+      globals: { ...globals.browser, __ENGINE_COMMIT__: 'readonly' },
       parserOptions: {
         ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },
@@ -30,7 +30,7 @@ export default defineConfig([
   // reads process.env, and scripts/ are run with vite-node. Both are outside the
   // browser bundle, so they need Node globals rather than browser ones.
   {
-    files: ['api/**/*.js', 'scripts/**/*.{js,mjs}'],
+    files: ['api/**/*.js', 'scripts/**/*.{js,mjs}', '*.config.js'],
     languageOptions: { globals: globals.node },
   },
 ])
