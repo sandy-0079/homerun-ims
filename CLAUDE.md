@@ -258,12 +258,53 @@ effect: every page load silently reverted attribution to "location" (₹7.95Cr v
 on reload"; cause was the engine reverting too. Adding a config row is now a one-line change there.
 
 ### DS Seed — new store bootstrap (`src/engine/dsSeed.js`)
-Seeds a new DS's Min/Max from the **equal-weight average of source DSes** — built for DS06 Kogilu, whose catchment carves ~50% of orders each from DS02 and DS04. Config: `params.dsSeed = { DS06: ["DS02","DS04"] }` (Logic Tweaker → "DS Seed — New Store Bootstrap" checkbox; empty object = inactive). **Do NOT sunset yet — measured 2026-07-27:** removing the seed drops DS06 from 2,374 stocked SKUs to 1,482 (892 → zero, ₹23.0L) and network Max to ₹6.13Cr. Pincode attribution gives DS06 real catchment history, but 16 pincodes over a mostly pre-launch window is too thin for assortment breadth — the seed solves 'not enough data', not 'no data'. Re-evaluate at ~90 days post-launch as its own diff.
+Seeds a new DS's Min/Max from the **equal-weight average of source DSes** — built for DS06 Kogilu, whose catchment carves ~50% of orders each from DS02 and DS04. Config: `params.dsSeed = { DS06: ["DS02","DS04"] }` (Logic Tweaker → "DS Seed — New Store Bootstrap" checkbox; empty object = inactive).
+
+**✅ SUNSET 2026-07-31 — `dsSeed = {}` is now live, and this was the right call.** Superseding the
+earlier "do NOT sunset yet" note (measured 07-27: 2,374 → 1,482 stocked SKUs, 892 → zero, ₹23.0L).
+That note reasoned from the *map's* sparseness — "16 pincodes over a mostly pre-launch window is too
+thin" — and set a ~90-day calendar trigger. Both were wrong, for the same reason:
+
+- **⚠ THE "PRE-LAUNCH WINDOW" ARGUMENT IS INVALID, and it is easy to re-derive by mistake.** Attribution
+  applies the **static current mapping to ALL history** on purpose (see Demand Attribution), so
+  pre-go-live orders from DS06 pincodes are reassigned to DS06. DS06 therefore has a **full 45 days** of
+  real catchment demand, not 23. Anyone re-opening this question will be tempted by "half the window
+  predates go-live" — it does, and it does not matter.
+- **DS06 is not a data-poor store.** Measured 2026-07-31 over `2026-06-16 → 07-30` with
+  `shippingCode` on: attributed demand share **DS01 26.3% · DS03 21.5% · DS02 16.9% · DS06 14.8% ·
+  DS04 11.3% · DS05 9.1%.** Its 16 pincodes out-earn two long-established stores, and bought **941
+  distinct SKUs** in the window.
+- **The decisive measurement — the seed was inventing assortment, not bridging thin data.** Of the
+  **431** SKUs that lose DS06 stocking when the seed is removed, **417 (97%) have ZERO DS06-attributed
+  demand in 45 days**; the other 14 have exactly one order-day each (111 units total). Of the ₹19.5L the
+  seed added, **₹18.8L sat on zero-demand SKUs.** By category the 431 were: Furniture & Arch HW 117 ·
+  Wires/MCB 85 · CPVC 57 · Plywood/MDF 32 · Sanitary & Bath 32 · Tiling 27 · Switches 18 · Lighting 14.
+- **Why, mechanically:** under `shippingCode`, DS02's and DS04's historical orders *from DS06 pincodes
+  have already been moved to DS06*. Seeding DS06 from their averages then adds back their **remaining**
+  demand — which belongs to other catchments. It is not filling a gap.
+- **The chicken-and-egg objection does not apply**, which is what makes the sunset safe: a SKU never
+  stocked at DS06 can still be ordered by a DS06-catchment customer and fulfilled elsewhere, and
+  attribution credits it to DS06 by pincode. So "zero attributed demand" means that catchment has not
+  wanted it — not that it was unavailable.
+- **Residual protection:** DS06 stays in `newDSList` with `newDSFloorTopN` 250, so the New DS Floor
+  still guarantees baseline breadth. ⚠ The floor does **not** compensate for the seed — the 431-SKU drop
+  was measured with the floor active in both runs. Different jobs: the floor gives a new store top-N
+  breadth, the seed mirrored its donors' whole assortment.
+- Decay confirms it had done its job: the same removal cost **892 SKUs on 07-27 and 431 on 07-31** as
+  DS06's own history accumulated.
+
+**⚠ GENERALISABLE — a bootstrap justified by "no data" must be re-tested when the DEFINITION of the data
+changes, not when a calendar trigger fires.** The 07-27 note set a 90-day review. What actually
+obsoleted the seed was the attribution flip four days later, which changed what "DS06 demand" *means*.
+Re-derive with `applyAttribution` + a two-way `runEngine` diff (`dsSeed:{}` vs `{DS06:[…]}`) rather than
+trusting either this entry or the calendar. Re-enabling it needs a fresh measurement, not a rollback.
 - Per SKU, per field: `DS06 = max(organic/floor value, ceil(avg(sources)))` — "whichever wins". `ceil` ⇒ union assortment. logicTag `DS Seed`, audit entry in `postBlendSteps`, `preFloor*` untouched.
-- **⚠ A 5-column SKU-Floor file therefore sets SIX stores.** The template has DS01–DS05 only, but a
-  floor lifting DS02 and DS04 propagates to DS06 through the seed. Worked example (2026-07-30, `SMBTV`):
-  a `2/5` floor on DS01–DS05 took DS06 from `2/2` to `2/5` as well, because both its sources became 5.
-  Size a floor for the six-store effect, not the five columns you typed.
+- **⚠ WHILE ACTIVE, A 5-COLUMN SKU-FLOOR FILE SET SIX STORES — no longer true since the 07-31 sunset,
+  but re-read this before re-enabling.** A floor lifting DS02 and DS04 propagated to DS06 through the
+  seed. Worked example (2026-07-30, `SMBTV`): a `2/5` floor on DS01–DS05 took DS06 from `2/2` to `2/5`
+  as well, because both its sources became 5. With `dsSeed = {}` a floor now sets exactly the columns
+  you type — the ops sheet carries explicit DS06 columns (260 SKUs) and those are the only thing setting
+  DS06 floors.
 - Runs after all strategies/floors, **before Inventorised-At normalization** — Supplier/DS-inv zeroing still wins; Dead Stock propagates (0+0→0).
 - **DC re-derived treating the seeded DS as a real sixth store** (deliberate transition overstock — sources are never reduced; both self-correct as carved-out demand leaves source history ~45 days post-go-live): rate-based SKUs add a synthetic rate `max(0, avg(source rates) − organic DS06 rate)` into `sumDailyAvg`; floored SKUs add the seed deltas into Σ DS sums; Network Design adds `ceil(ΔMin × brand dcMult)`. DC never decreases. Audit: `dcDetails.dsSeedAug`.
 - Tests: `src/engine/__tests__/dsSeed.test.js` (18).
@@ -334,7 +375,11 @@ Applied as a last pass over `res` in `runEngine` (after all strategies, floors, 
 **Current brand assignments (live Supabase config, verified 2026-07-06 — code defaults in constants.js are stale):**
 - All four brands (Action Tesa, CenturyPly, ArchidPly, GreenPly) stocked at **every DS, each node covering only itself** (no cross-DS coverage, no DC direct-serve nodes). Per-brand dcMultMin/dcMultMax = 0.75/1.0.
 - Merino: excluded from this tab, uses PCT.
-- DS06 is not in any brand matrix — v1 gives it Min=Max=0; the DS Seed pass fills it (valid because self-covering node values ≈ local demand).
+- **DS06 IS in all four brand matrices** (verified live 2026-07-31 — added at go-live, superseding an
+  earlier note here that said it was absent and relied on the DS Seed to fill it). With the seed now
+  sunset, DS06's plywood stocking is entirely organic: **75 SKUs vs 107 under the seed**, and the 32
+  difference are Rare-zone by the network's own `minNZD` rule (NZD < 2), i.e. correctly not stocked
+  rather than a gap.
 
 **3-zone stocking per SKU (NZD = non-zero demand days in lookback):**
 - **Rare** (NZD < minNZD=2): Min=Max=0, not stocked
@@ -487,7 +532,7 @@ invoice sync:**
 **Zoho Inventory location IDs (org 60075214606, confirmed 2026-07-06):**
 `DC=3915979000000118466`, `DS01=3915979000000054002`, `DS02=3915979000000054017`, `DS03=3915979000000054032`, `DS04=3915979000000054047`, `DS05=3915979000000054062`, `DS06=3915979000000118484`
 
-**DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase). **Phase 2 (2026-07-06, now in `main`):** `DS_LIST` includes DS06 (Stock Health tab/KPIs/DC ROS/DS Req Covered follow automatically; 6th `DS_COLORS` entry added) + engine **DS Seed pass** gives DS06 Min/Max = avg(DS02, DS04) — see the DS Seed section. On activation, admin ticks "Seed DS06" in Logic Tweaker (and optionally adds DS06 to `newDSList` for the floor) + Apply. Plywood tab (v1) is DS06-aware (filter button, matrix editor column, DS_DEFAULTS entry) — **at go-live, also add DS06 to each brand's matrix (self-covers) via the tab's config editor**: nodes compute 0 until Kogilu demand exists, the seed wins meanwhile, and organic node values take over as demand builds — this is what lets the plywood seed sunset (network strategy ignores DSes not in the matrix). Review later: local `DS_LIST` copies in `simWorker.js`/`BasketAnalysisTab.jsx`, cluster assignment.
+**DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase). **Phase 2 (2026-07-06, now in `main`):** `DS_LIST` includes DS06 (Stock Health tab/KPIs/DC ROS/DS Req Covered follow automatically; 6th `DS_COLORS` entry added) + engine **DS Seed pass** gives DS06 Min/Max = avg(DS02, DS04) — see the DS Seed section. Both go-live steps are **done**: DS06 is in `newDSList`, and DS06 is in all four plywood brand matrices. **The DS Seed was sunset 2026-07-31** once pincode attribution gave DS06 a full 45-day catchment history — see the DS Seed section for the measurement and the reasoning. Review later: cluster assignment.
 
 **SKU filtering rules:**
 - Only `status = Active` SKUs (from SKU Master)
@@ -964,9 +1009,10 @@ Dead stock SKUs now get Min=Max=0 at all DS and DC locations, overriding all flo
 
 Full backup auto-saved to `params/paramsBackup` on every "Apply & Re-run Model" click. Restore from there if `params/global` is corrupted.
 
-Key non-defaults (verified live 2026-07-30): `overallPeriod=45`, `newDSFloorTopN=250`,
+Key non-defaults (verified live 2026-07-31): `overallPeriod=45`, `newDSFloorTopN=250`,
 `newDSList=["DS04","DS05","DS06","DS03"]` (DS06 added at go-live), `brandLeadTimeDays={_default:3,"Asian Paints":4}`,
-`pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`, `dsSeed={DS06:["DS02","DS04"]}`. Category strategies:
+`pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`, **`dsSeed={}` — sunset 2026-07-31**, see the DS Seed
+section for the measurement. Category strategies:
 **11** — 8 PCT + 2 Fixed Unit Floor + Plywood=NetworkDesign (`Kitchen Sinks & Faucets` → PCT added 2026-07-30).
 **A reload→Apply round trip is verified lossless** (2026-07-30: fresh Incognito load, Apply, all 7 params
 rows byte-identical bar `_backedUpAt`/`refreshedAt`) — the historic "a reload changed my params" was the
