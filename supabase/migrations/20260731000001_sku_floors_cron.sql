@@ -1,0 +1,91 @@
+-- sku-floors-sync: pull the ops SKU-floor Google Sheet into
+-- team_data/global.newSKUQty every night, replacing the manual CSV upload.
+--
+-- The function has been deployed and exercised before this migration existed:
+-- a dry run from an empty body (wrote nothing, status row absent afterwards),
+-- then one ATTENDED real write which was a provable no-op — sheet and prod both
+-- 1,115 SKUs, added 0 / removed 0 / changed 0, and the written map verified
+-- byte-identical to team_data/sku_floors_backup_20260731. Sibling keys survived
+-- the read-merge-write (skuMaster 2,105, priceData 1,858, minReqQty 1,921,
+-- deadStock 20, stockData 2,121, poData/toData intact).
+--
+-- ⚠⚠ THE BODY MUST CARRY {"dryRun": false}. Unlike sync-catalogue and
+-- sync-invoices, this function DEFAULTS TO A DRY RUN — `body.dryRun !== false`,
+-- so absent/null/true all mean "assess and report, write nothing". That default
+-- exists because it is a REPLACE-ENTIRELY writer of every floor in the network
+-- and it sat dormant before this migration; an accidental empty-body POST must
+-- not be able to change anything. The cost is precisely this footgun: a cron
+-- sending '{}' would no-op every night while reporting ok:true. If you ever
+-- rebuild this job, copy the body.
+--
+-- SCHEDULE — 23:05 and 23:55 UTC = 04:35 and 05:25 IST.
+--
+--   ⚠ WHY 04:35 IST. After `invoices-sync-window`'s last slot (22:20 UTC) so the
+--   two never overlap, and after `catalogue-sync-*` (<=18:25 UTC) so a SKU created
+--   in Zoho overnight is already in skuMaster and its floor is not skipped as
+--   "unknown" for no reason. Before ops POs start ~06:00 IST.
+--
+--   ⚠ MINUTES. Occupied every hour: :35 :38 :41 :44 (stock-sync-1..4) and :50
+--   (orders-sync, which writes this SAME team_data/global row — concurrent
+--   writers there caused the statement timeout that left DC+DS01 74m stale).
+--   Free: :00-:34 and :51-:59. This job uses :05 and :55.
+--
+--   ⚠ THE TWO SLOTS ARE 50 MINUTES APART, NOT 15, AND THAT SPACING IS LOAD-BEARING.
+--   COOLDOWN_MS (15 min) is stamped on FAILURE too, so a retry too close behind a
+--   failed run is silently refused. Measured against the real shouldRun():
+--       23:05 fails -> 23:20 retry:  run=FALSE (cooldown, wait 3s)   <-- swallowed
+--       23:05 fails -> 23:55 retry:  run=true  (cooldown_elapsed)
+--   Three seconds short would have looked exactly like "the retry never fired".
+--   Any slot added here must clear 15 minutes from the one before it, measured
+--   from the END of that run.
+--
+--   ⚠ THIS IS THE FIRST CRON IN THE REPO WHOSE SLOTS FALL AFTER MIDNIGHT IST, the
+--   case CLAUDE.md warns to re-read `syncNightKey` before adding. It is safe: the
+--   3-hour offset shift puts both slots on the same night key, verified against the
+--   real implementation —
+--       23:05Z = 04:35 IST -> nightKey 2026-08-01
+--       23:55Z = 05:25 IST -> nightKey 2026-08-01
+--   A plain-calendar-date implementation would instead have treated these as a new
+--   night, re-pulled, and then poisoned the FOLLOWING night's gate into skipping
+--   while reporting ok. Do not "simplify" syncNightKey.
+--
+-- ⚠ TWO SLOTS DO NOT MEAN TWO PULLS. `alreadyRanTonight` gates on `lastOkNight`
+-- in params/skuFloorSyncStatus: the first SUCCESS closes the night and 23:55
+-- returns `already_ran_tonight` after one Supabase read. A FAILURE leaves the gate
+-- open, which is the entire point of the second slot. Note today's manual run set
+-- lastOkNight = '2026-07-31' while tonight's fire keys to '2026-08-01', so it does
+-- NOT consume tonight's slot (verified).
+--
+-- The sheet is AUTHORITATIVE and this write REPLACES newSKUQty wholesale, so the
+-- guards are what stand between a bad fetch and every floor in the network:
+--   * parse fails closed on a header mismatch (a revoked publish serves an HTML
+--     error page), an unknown DS column, a duplicate SKU, a non-integer value, or
+--     ZERO SKUs — and `force` cannot bypass any of them.
+--   * the change guard blocks a >20% fall in EITHER SKU count OR SKUs actually
+--     carrying a floor. The second dimension exists because ops removes a floor by
+--     zeroing a row as well as by deleting it, and zeroing leaves the key count
+--     flat: 1,148 rows in, 1,148 out, every floor gone.
+-- Any refusal leaves the previous complete set of floors in place.
+--
+-- The manual CSV upload REMAINS as the fallback and is expected to be used when
+-- the sheet is unreachable. It is a temporary override that this sync re-asserts
+-- over on its next run, reported as `overrodeManualUpload` rather than silently
+-- reverted.
+
+select cron.schedule('sku-floors-sync', '5,55 23 * * *', $$
+  select net.http_post(
+    url := 'https://rgyupnrogkbugsadwlye.supabase.co/functions/v1/sync-sku-floors',
+    headers := '{"Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJneXVwbnJvZ2tidWdzYWR3bHllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3NzgzMzgsImV4cCI6MjA4ODM1NDMzOH0.sbZh8CbmW7hhpiUCg5OoS7hQzHaNqExkaAlACEqJ9sc","Content-Type":"application/json"}'::jsonb,
+    body := '{"dryRun": false}'::jsonb
+  );
+$$);
+
+-- ROLLBACK — the floors simply stop refreshing; the manual CSV upload still works
+-- and nothing else depends on this job:
+--   select cron.unschedule('sku-floors-sync');
+--
+-- RESTORE a bad write (read-merge-write, never a bare PATCH):
+--   team_data/sku_floors_backup_20260731 -> team_data/global.newSKUQty
+--
+-- Verify the job, and that no two jobs share a minute:
+--   select jobname, schedule from cron.job order by jobname;
