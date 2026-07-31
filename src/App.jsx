@@ -11,6 +11,7 @@ import {
   BASE_MIN_DAYS_DEFAULT, DEFAULT_PARAMS,
   runEngine,
   parseCSV, parseInvoiceCsv, buildInvoiceCsv, parsePincodeMapCsv, summariseCoverage, getPriceTag,
+  applyAttribution,
 } from "./engine/index.js";
 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
@@ -1957,7 +1958,10 @@ const SD_PERIODS = [
   { key: "L7D",  label: "L7D",  days: 7 },
   { key: "CUSTOM", label: "Custom" },
 ];
-const SD_DS_OPTS = ["All", "DS01", "DS02", "DS03", "DS04", "DS05"];
+// Derived, not hardcoded: this list omitted DS06 for three weeks after go-live while
+// the rest of SKUDetailTab already used DS_LIST, so DS06 data existed but had no
+// per-store view. Deriving means a DS07 needs one edit (engine/constants.js).
+const SD_DS_OPTS = ["All", ...DS_LIST];
 
 function filterInvoiceByPeriod(invoiceData, periodKey, dateFrom, dateTo, invoiceDateRange) {
   if (!invoiceData || !invoiceData.length) return [];
@@ -3500,6 +3504,27 @@ const invoiceDateRange = useMemo(() => {
   return { min: dates[0], max: dates[dates.length - 1], dates };
 }, [invoiceData]);
 
+// ⚠ THE ONE PLACE THE TABS GET ATTRIBUTED DEMAND. `applyAttribution` reassigns
+// `r.ds` from the FULFILLING store to the pincode-derived one, and until 2026-07-31
+// it was called in exactly one place — `runEngine.js` — so every tab that grouped
+// raw `invoiceData` by `r.ds` was still showing the pre-attribution behaviour. The
+// SKU Detail demand chart therefore contradicted the Min/Max shown beside it on the
+// same screen, and Plywood v2 showed different numbers than the engine would
+// produce from the same config (it never attributes internally; via runEngine it
+// receives attributed rows, from the tab it received raw ones).
+//
+// ⚠ `runEngine` still gets RAW `invoiceData` — it attributes internally. Passing
+// attributed rows there would double-apply. That is harmless today (the transform
+// is idempotent because `r.pin` is never modified) but it is a trap for the next
+// reader, so keep the two paths distinct.
+//
+// Returns `invoiceData` itself when the mode is "location", so the off-path costs
+// nothing and the reference stays stable.
+const attributedInvoice = useMemo(
+  () => applyAttribution(invoiceData, params.pincodeConfig),
+  [invoiceData, params.pincodeConfig],
+);
+
   /* skusByMov removed — was only used by old Dashboard filtering */
 
 const outputRows = useMemo(() => results ? Object.values(results) : [], [results]);
@@ -4012,7 +4037,7 @@ const visibleOutput = useMemo(() => {
             </div>
           ):(
             <SKUDetailTab
-              invoiceData={invoiceData} skuMaster={skuMaster} results={results} params={params}
+              invoiceData={attributedInvoice} skuMaster={skuMaster} results={results} params={params}
               invoiceDateRange={invoiceDateRange}
               skuId={sdSku} setSkuId={setSdSku}
               searchVal={sdSearch} setSearchVal={setSdSearch}
@@ -4026,7 +4051,7 @@ const visibleOutput = useMemo(() => {
 
         <div style={{display:tab==="baskets"?"block":"none"}}>
           <BasketAnalysisTab
-            invoiceData={invoiceData}
+            invoiceData={attributedInvoice}
             skuMaster={skuMaster}
             invoiceDateRange={invoiceDateRange}
             isAdmin={isAdmin}
@@ -4034,7 +4059,7 @@ const visibleOutput = useMemo(() => {
         </div>
         <div style={{display:tab==="plywood"?"block":"none"}}>
           <PlywoodNetworkTab
-            invoiceData={invoiceData}
+            invoiceData={attributedInvoice}
             skuMaster={skuMaster}
             invoiceDateRange={invoiceDateRange}
             isAdmin={isAdmin}
@@ -4050,7 +4075,7 @@ const visibleOutput = useMemo(() => {
           {/* kept mounted (no tab=== guard) so tuning/knob draft state survives tab switches */}
           {(tab==="plywoodV2" || v2Mounted) && (
             <PlywoodNetworkV2Tab
-              invoiceData={invoiceData}
+              invoiceData={attributedInvoice}
               skuMaster={skuMaster}
               priceData={priceData}
               isAdmin={isAdmin}
@@ -4208,7 +4233,7 @@ ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
             }} />
         )}
         <div style={{display: tab==="simulation" ? "block" : "none"}}>
-  <SimulationTab invoiceData={invoiceData} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}
+  <SimulationTab invoiceData={attributedInvoice} results={results} skuMaster={skuMaster} params={params} priceData={priceData} onApplyToCore={payload=>{const merged={...coreOverrides,...payload};Object.keys(payload).forEach(sku=>{merged[sku]={...coreOverrides[sku],...payload[sku]};});saveCoreOverrides(merged);}} simOverrides={simOverrides} setSimOverrides={setSimOverrides} simOverrideCount={simOverrideCount} setSimOverrideCount={setSimOverrideCount} simResults={simResults} setSimResults={setSimResults} simLoading={simLoading} setSimLoading={setSimLoading} simDays={simDays} setSimDays={setSimDays}
     freshInvoiceData={freshInvoiceData} setFreshInvoiceData={setFreshInvoiceData}
     freshInvoiceFile={freshInvoiceFile} setFreshInvoiceFile={setFreshInvoiceFile}
     dsStockData={dsStockData} setDsStockData={setDsStockData}

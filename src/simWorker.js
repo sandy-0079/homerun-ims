@@ -5,7 +5,10 @@ function median(arr) {
 }
 
 function runSim(invoiceData, results, overrides, simDates) {
-  const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
+  // ⚠ Duplicated from engine/constants.js because this is a Web Worker with no
+  // module imports. It sat at five stores for three weeks after DS06 go-live, so
+  // the OOS sim silently ignored DS06. Keep in step with DS_LIST by hand.
+  const DS_LIST = ["DS01","DS02","DS03","DS04","DS05","DS06"];
   if (!invoiceData.length || !results || !simDates.length) return [];
   const simDateSet = new Set(simDates);
   const simIndex = {};
@@ -77,7 +80,10 @@ function classifyRootCause(openingStock, toolMin, orderQty, physical, inTransit)
 
 function runActualStockSim(invoiceData, results, openingStock, singleDate) {
   // openingStock: { DS01: { SKU1: { physical, inTransit }, ... }, ... }
-  const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
+  // ⚠ Duplicated from engine/constants.js because this is a Web Worker with no
+  // module imports. It sat at five stores for three weeks after DS06 go-live, so
+  // the OOS sim silently ignored DS06. Keep in step with DS_LIST by hand.
+  const DS_LIST = ["DS01","DS02","DS03","DS04","DS05","DS06"];
   if (!invoiceData.length || !results) return [];
   if (!singleDate) return [];
   const dayLines = invoiceData.filter(r => r.date === singleDate);

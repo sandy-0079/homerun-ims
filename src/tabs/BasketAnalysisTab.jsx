@@ -3,6 +3,7 @@ import {
   PieChart, Pie, Cell, Tooltip as RTooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
+import { DS_LIST } from "../engine/constants.js";
 
 const HR = {
   yellow:"#F5C400",black:"#1A1A1A",white:"#FFFFFF",
@@ -24,7 +25,6 @@ const BA_PERIODS = [
   { key:"CUSTOM",label:"Custom" },
 ];
 
-const DS_LIST = ["DS01","DS02","DS03","DS04","DS05"];
 const DONUT_COLORS = ["#16a34a","#F5C400","#C05A00"];
 
 function filterByPeriod(invoiceData, periodKey, dateFrom, dateTo, invoiceDateRange) {
