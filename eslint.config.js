@@ -26,4 +26,11 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  // Server-side code: the Vercel serverless function under api/ runs in Node and
+  // reads process.env, and scripts/ are run with vite-node. Both are outside the
+  // browser bundle, so they need Node globals rather than browser ones.
+  {
+    files: ['api/**/*.js', 'scripts/**/*.{js,mjs}'],
+    languageOptions: { globals: globals.node },
+  },
 ])
