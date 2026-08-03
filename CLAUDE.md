@@ -1,12 +1,17 @@
 # CLAUDE.md — HomeRun IMS
 
-> 🚧 **IN-FLIGHT WORK — read [`docs/HANDOFF-2026-07-31.md`](docs/HANDOFF-2026-07-31.md) first** if you
-> are touching the nightly model refresh, the invoice/catalogue/floor syncs, or pincode attribution.
-> **The night of 2026-07-31 is the first time the whole chain runs unattended**, so that file leads with
-> the four morning checks and their expected values, then live state, verification commands and
-> rollbacks. **Stage 5 (invoices → the live row) is the only remaining gap** — everything else is
-> automatic. **Delete that file and this block once Stage 5 lands**; this file is for durable knowledge,
-> that one is for transient state.
+> ✅ **THE NIGHTLY CHAIN IS COMPLETE — Stage 5 went live 2026-08-03.** Every input the engine consumes
+> daily now has an unattended writer: catalogue 21:55–23:55 IST → **invoices 00:35–04:00 (writes
+> `team_data/invoice_data`, the live row)** → SKU floors 04:35/05:25 → engine → `params/toTargets`
+> 05:45/06:15 → ops POs ~06:00. `minReqQty` and `deadStock` stay manual **by design** (ops judgement,
+> not Zoho data). **No manual invoice CSV is needed again**; upload remains the emergency override.
+>
+> 🚧 **ONE VERIFICATION STILL OPEN: Step 5 of [`docs/RUNBOOK-2026-08-03-STAGE5.md`](docs/RUNBOOK-2026-08-03-STAGE5.md)**,
+> the morning after the first live night (2026-08-04). Expected: `merge.datesTrimmed: 4`,
+> `datesReplaced: 1`, live row `05-06 → 08-03` / 90 dates / ~77,660 rows, and the Data Inputs chip
+> reading **`Last run: 2026-08-04 05:45 · demand through 2026-08-03`** — the two halves agreeing is the
+> one-glance confirmation. **Delete that runbook and this second paragraph once it passes.**
+> (`docs/HANDOFF-2026-07-31.md` is deleted — it was transient state for the 07-31 night.)
 
 HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold.
 
@@ -120,9 +125,11 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
 - **Row inventory (2026-07-29).** `team_data`: `global`, `invoice_data`,
   `invoice_sync_buffer` (in-flight chunks for the 1–2 dates being pulled, keyed
   `date|round|offset` so a re-run of a chunk is idempotent; **nothing else reads it**),
-  `invoice_data_shadow` (Stage 4 target — **nothing reads it**),
-  `invoice_data_backup_20260728` + `_20260729` (pre-Stage-5 safety nets; the API cannot re-serve anything
-  before 2026-07-01, so these are the only copy of Apr–Jun history), `catalogue_backup_20260729`
+  `invoice_data_shadow` (**frozen since Stage 5, 2026-08-03** — no longer written, nothing reads it;
+  a stale 07-26…08-02 snapshot, drop it once the runbook's Step 5 passes),
+  `invoice_data_backup_20260728` + `_20260729` + **`_20260803`** (the last is the Stage 5 cutover backup,
+  75,699 rows / 90 dates verified; the API cannot re-serve anything before 2026-07-01, so these are the
+  only copy of Apr–Jun history), `catalogue_backup_20260729`
   (skuMaster/priceData — **matters more than the invoice backup**, see Stage 7). `params`: `global`,
   `paramsBackup`, `plywoodNetworkConfig`, `plywoodNetworkV2Config`, `networkConfigs`, `pincodeMap`
   (attribution), `toTargets`, `toAudit`, `toSnapshots`, `zohoItemIds`, `binLocations`, `syncLock`,
@@ -170,6 +177,26 @@ HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Ma
   - **Generalisable:** automating an input the browser also writes turns a single-writer key into a
     **write-write conflict**. Same shape as the `pincodeConfig` incident. When a sync function takes
     over a field, audit every browser write path that names it.
+  - **⚠⚠ AND AUDIT EVERY PLACE THAT *DESCRIBES* WHO WRITES IT — two such places lied for days
+    (both found + fixed 2026-08-03, commits `e9640ea`/`1af1efe`).** A stage shipping silently falsifies
+    constants elsewhere that were correct the day they were written, and nothing fails loudly:
+    - **`autoAtFor` in `App.jsx` (the Data Inputs provenance pills).** A `null` there asserts "only
+      humans write this key". `newSKUQty` was `null` from 07-30 to 08-03 even though `sync-sku-floors`
+      began writing it nightly on **07-31** — three unattended syncs ran while the pill credited a
+      human's 07-31 upload. (`invoiceData` was correctly `null` until Stage 5, then wired.)
+    - **The knock-on was worse than a wrong label:** `assessModel` compares `toTargets` against those
+      same timestamps, so a stale entry **silences the staleness check that depends on it**.
+    - **A hardcoded `note` on a pill SUPPRESSES the derived one** — `SourcePill` does
+      `title={note || prov.note}`, so a literal string hides `assessSyncedInput`'s
+      "Auto-sync has missed a night". The two cards carrying literal notes were exactly the two that had
+      just gained syncs, so the inputs whose overdue warning mattered most could not show it.
+      **Rule: leave `note` off anything with an auto writer**; ops-only cards (`minReqQty`, `deadStock`)
+      keep theirs.
+    - **⚠ Prefer a publish-only timestamp.** Use `invoiceSyncStatus.publishedAt`, not `.at` — `at` is
+      stamped on **every** exit including failures, so it would claim an auto-sync produced the value on
+      a night that refused to write. `sync-catalogue` and `sync-sku-floors` have **no** publish-only
+      field (floors is ok-gated by hand in App.jsx; **`catalogueAt` still has the flaw**). The real fix
+      is a `lastOkAt` written by each sync — not yet done.
 - **⚠ The realtime handler is NOT the place to refresh `skuMaster`/`priceData` — it looks like a
   two-line fix and is not** (`App.jsx`, channel `stock-sync`). It fires on EVERY update to
   `team_data/global` — the four stock syncs plus orders-sync, **~5×/hour** — and `loadFromSupabase`
@@ -882,8 +909,9 @@ DC Stock column added between Req Qty and Rep. Qty on DS tabs. Shows DC SoH for 
 
 ### 16. Nightly model refresh from Zoho — Stages 4-7 (in progress)
 Automate the whole input chain so the model refreshes ~20:30 IST without a manual CSV.
-- **Stage 4 (REWORKED + DEPLOYED 2026-07-29 — still shadow only):** `sync-invoices` →
-  `team_data/invoice_data_shadow`. Nothing reads it. Migration `20260729000001` **applied**: one cron
+- **Stage 4 (REWORKED + DEPLOYED 2026-07-29; target flipped to the live row by Stage 5 on 2026-08-03
+  — read the Stage 5 entry below for what that changed):** `sync-invoices` → **`team_data/invoice_data`**
+  (`TARGET_ROW`, `index.ts:58`). Migration `20260729000001` **applied**: one cron
   `invoices-sync-window` at **`5,20 19-22 * * *` UTC = 00:35–04:00 IST**, eight slots. Replaces the
   16:00/:06/:12 UTC jobs, which were built on the false "invoices complete by 20:30 IST" premise.
   - **Why overnight:** the day must be **settled**, not merely closed (see the Zoho INVOICES API
@@ -936,11 +964,54 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
   - **The D-3 re-fetch is verifiably doing its job:** on 07-26 the only difference from the CSV-uploaded
     row was one invoice present in the CSV (exported 07-29) and absent from the re-fetch (run 07-30) —
     voided in between. **The shadow was the more correct of the two.**
-- **Stage 5 (pending decision):** point the sync at the live row — a one-line change of `SHADOW_ROW`.
-  CSV upload stays as a manual override.
-  - **Backup before any cutover:** `team_data/invoice_data_backup_20260728` — 73,178 rows, 90 dates,
-    byte-identical row set verified. Restore = copy that payload back into `invoice_data`. Take a fresh
-    dated backup before any future cutover; it turns a one-way door into an undo.
+- **Stage 5 (✅ LIVE 2026-08-03):** `TARGET_ROW` in `sync-invoices/index.ts:58` is now `"invoice_data"`.
+  CSV upload stays as a manual override. Commit `e9640ea`.
+  - **The cutover evidence, because it is the template for verifying this kind of flip.** The shadow row
+    was reconciled against a Zoho export covering 07-27…08-02 with the **real `parseInvoiceCsv` on both
+    sides** (`scripts/compare-csv-vs-shadow.mjs`), so a parser difference could not masquerade as a sync
+    bug: **8,028 of 8,028 sellable CSV rows present, `in CSV but MISSING from shadow: 0` on all seven
+    dates**, identical qty and SKU×DS aggregates on six of seven. The one difference (07-31, shadow +2
+    rows) was invoice `HC/26/015391`, **voided after the pull** — the documented ~0.9% over-count
+    residual of the `{void,draft}` blocklist, corrected by the D-3 re-fetch.
+  - **⚠ THE LEAK METRIC IS `in CSV but MISSING from shadow`, AND IT MUST BE ZERO ON EVERY DATE.** That
+    single line is what would have caught 07-28's 27.7% loss. Six-of-seven-identical was a *stronger*
+    result than seven-perfect would have been: the CSV is a snapshot hours after each pull, so some
+    drift is physically expected, and what matters is that every difference resolves to a named invoice
+    and that losses are never one-directional.
+  - **The live row was BACKFILLED from the shadow first** (07-30…08-02 via
+    `scripts/backfill-invoice-dates.mjs --apply`), because `planNightDates`' fixed 3-day lag would not
+    have reached 08-01/08-02 for three more nights, and `pctMinNZD` / `fixedUnitFloor.minNZD` / the
+    plywood Rare-Sparse boundary all gate on **NZD ≥ 2** — so a missing day can drop a slow mover out of
+    its strategy entirely. 75,699 → **78,765 rows, 93 contiguous dates**.
+    - 07-30 was **replaced**, not just appended: live held a pre-void-correction 1,220 rows where both
+      the CSV and the shadow said 1,214, and that date's single D-3 recheck had already fired, so
+      nothing would ever have corrected it. 0.008% and immaterial to Min/Max — done because we had
+      proof of the right value and no second chance.
+  - **⚠ A ROW-COUNT SANITY FLOOR MUST BE DAY-OF-WEEK AWARE.** The runbook's "< 800 rows ⇒ stop and
+    investigate" fired on 08-02 (752 rows) and cost a morning. **Sundays are structurally ~40% lighter:**
+    13 Sundays in the window measured min 382 / median 522 / max 760, vs non-Sunday median 866. At 752
+    rows / 349 orders, 08-02 was the *second-busiest Sunday on record*. Compare against the same
+    weekday's median, never a global floor — a guard that cries wolf on schedule gets ignored.
+  - **⚠ AN OUT-OF-BAND SCRIPT WRITE IS INVISIBLE TO THE PROVENANCE UI.** `uploadProvenance` assumes
+    exactly two writers (browser, and each sync's own status row). The backfill script was a third and
+    stamped neither, so for ~14 hours the Data Inputs chip read `✓ Model up to date` while `toTargets`
+    held 07-30 and the row held 08-02. Deliberately **not** patched by stamping `uploadProvenance` —
+    that would have planted a "click Apply & Re-run Model" prompt for an action consciously deferred
+    (see the ops-cycle note in Stage 6). If you hand-write an input row, either accept the gap for one
+    night or re-run the engine.
+  - **Backups:** `team_data/invoice_data_backup_20260803` — 75,699 rows, 90 dates, verified row-for-row
+    and date-for-date **before** live was touched. Restore = copy that payload back into `invoice_data`
+    (read-merge-write, never a partial PATCH). The older `invoice_data_backup_20260728` (73,178 rows)
+    is still there. Take a fresh dated backup before any change of this shape; it turns a one-way door
+    into an undo.
+  - **⚠ `team_data/invoice_data_shadow` IS NOW FROZEN AND WILL GO STALE** — `sync-invoices` no longer
+    writes it, and nothing reads it. It is a snapshot of 07-26…08-02, useful only as a cross-check of
+    the cutover. Do not treat it as current; drop it once Step 5 passes.
+  - **⚠ The retention trim bites for real from the first live night.** The row sat at 93 dates, so
+    adding 08-03 makes 94 and `RETENTION_DAYS = 90` trims **four**: 05-02…05-05, 2,354 rows,
+    **permanently and un-refetchably** (pre-July, and the API cannot serve them).
+    `mergeInvoiceRows`' guard is `datesAfter >= datesBefore - datesTrimmed`, which computes to
+    90 ≥ 89 — verified safe before the flip. The 2026-08-03 backup is those four dates' last copy.
   - **⚠ APPEND-ONLY IS A DATA-SAFETY RULE, NOT AN OPTIMISATION.** The current Zoho org has no invoices
     before **2026-07-01** (org migrated; the old Books org is retired and we are not wiring it up).
     Everything earlier exists ONLY in the Supabase payload, hand-uploaded from CSV — the API cannot
@@ -978,6 +1049,26 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
     per-input counts, attribution mode, plus `engineCommit`. ⚠ `refreshedAt` alone is the weak signal —
     on the first run it read "just now" while `invoiceDataThrough` was three days stale. A run timestamp
     says a computer did something; `invoiceDataThrough` says whether the answer is current.
+  - **✅ BOTH ARE NOW ON SCREEN (2026-08-03, `ec7e8b8`)** — the Data Inputs chip reads
+    `Last run: 2026-08-04 05:45 · demand through 2026-08-03`. Fetched with `loadPayloadKey(…,"inputs")`
+    so it costs a few hundred bytes, not the ~693KB row; falls back to the clock alone if a row predates
+    Stage 6's shared inputs stamp.
+    - **⚠ WHY THE CLOCK ALONE CAN NEVER BE ENOUGH, precisely.** If the invoice sync fails for three
+      nights while `engine-run-nightly` keeps succeeding at 05:45, `refreshedAt` reads fresh every
+      morning and `✓ Model up to date` is **TRUE** — targets really are newer than their inputs. "Up to
+      date" is a **relative** claim and is structurally silent on the inputs being old. Only
+      `invoiceDataThrough` exposes that. Demonstrated live on 2026-08-03: a perfectly accurate
+      `Last run: 06:15` sat beside demand through 07-30 while the row held 08-02.
+    - **Still missing: the same line in the TO tool footer**, where the consequence is transfer
+      quantities rather than a label. Its clock reads `toTargets.refreshedAt` and flags stale only as
+      "not from today IST", so it renders no ⚠ while running on days-old demand.
+  - **⚠ Intra-day: do NOT push a fresh Min/Max into `toTargets` just because it exists.** POs are raised
+    ~06:00 IST off the morning's numbers; re-running mid-day puts that afternoon's 14:30/20:30 TOs on a
+    different demand basis than the POs. `overallPeriod` is a **sliding** 45-day window, so advancing
+    the latest date a few days slides it rather than adding demand — the gain is low single-digit %,
+    the confusion is real. Default to letting the nightly run take it. (Done deliberately on 2026-08-03
+    at 12:01 IST *because* the operator wanted TO and IMS to match on cutover day, which is the
+    exception, not the rule.)
   - **`engineCommit` is stamped by BOTH writers** — the browser via `__ENGINE_COMMIT__`
     (`vite.config.js` define, from `VERCEL_GIT_COMMIT_SHA`, falling back to `"local"`). Vercel and
     Supabase deploy separately, so this makes a skew visible in the row. A row stamped `"local"` was
@@ -988,6 +1079,17 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
     function writing `toTargets_shadow`) — plus one attended live write verified byte-identical.
     Timing on Vercel **4.9–5.6s**; `vercel.json` raises `maxDuration` to 60s because Hobby's 10s default
     left only ~2× headroom (a local measurement of 2.4s had suggested 5×).
+  - **⚠ TO CALL IT BY HAND YOU NEED `ENGINE_RUN_SECRET`, AND `vercel env pull` WILL NOT GIVE IT TO YOU.**
+    Vercel treats it as sensitive and writes `ENGINE_RUN_SECRET=""` — an **empty value under the right
+    key**, so `grep -c '^ENGINE_RUN_SECRET='` returns 1 and looks like success. *Grep the value, not the
+    key.* Get the working one from the cron that already calls the endpoint nightly (provably the one in
+    use) via the Management API:
+    `{"query":"select command from cron.job where jobname = 'engine-run-nightly';"}` → the
+    `x-engine-secret` value in the `net.http_post` headers jsonb (64 chars). Extract it in the **same**
+    shell command that uses it so it never lands in a transcript, and build that SQL with a **heredoc** —
+    `''` inside a single-quoted shell string collapses to nothing and silently produces invalid SQL.
+    Body **must** carry `{"mode":"live"}`; mode defaults to `"dry"`, which reports `ok:true` and writes
+    nothing. A successful live run answers in ~6s with `wroteTo:"toTargets"`.
   - Regression check: `node --experimental-strip-types` is not needed —
     `npx vite-node scripts/diff-headless-totargets.mjs` re-runs the whole comparison read-only, and is
     the **drift detector** between the shared builder and anything that diverges.
