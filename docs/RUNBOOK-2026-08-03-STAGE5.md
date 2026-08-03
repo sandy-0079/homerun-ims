@@ -234,23 +234,11 @@ night.
   `Last run: … · demand through …`. Also fixed two stale `autoAtFor` entries and the hardcoded pill
   notes that were suppressing "Auto-sync has missed a night". See CLAUDE.md.
 
-**Still to do, once Step 5 above passes:**
+**Still to do, once Step 5 above passes — in this order:**
+
 1. **Delete this file** and the second paragraph of the block at the top of `CLAUDE.md`.
 2. Drop the now-frozen `team_data/invoice_data_shadow` row.
-3. **A nightly health check that shouts** — the highest-value item left. Four status rows
-   (`invoiceSyncStatus`, `catalogueSyncStatus`, `skuFloorSyncStatus`, `engineRunStatus`) are written
-   and nobody reads them; cutover morning they were checked by hand. Key it on **derived freshness**
-   (`invoiceDataThrough`), not `ok:true` — the 07-28 run reported `ok:true` while 27.7% short.
-4. **Fix the Zoho export locale** (still `DD/MM/YYYY` in all rows, measured again 2026-08-03). The date
-   guard correctly refuses it, which means the manual-CSV **rollback path in the table above is
-   currently unusable**. Worth fixing precisely because it is the fallback.
-5. **`lastOkAt` written by `sync-catalogue` + `sync-sku-floors`**, then drop the hand `ok`-gating in
-   `App.jsx` and fix `catalogueAt`, which still credits a failed run. Piggyback on a deploy you are
-   making anyway — never redeploy live functions for observability alone.
-6. **Pin the provenance invariant with a test**: extract `autoAtFor` from `App.jsx` and assert that
-   every input with an auto writer has a non-null `autoAt`. That is literally the 2026-08-03 bug, and
-   `src/freshness.js` currently has **no test file** at all.
-7. **The same `demand through` line in the TO tool footer**, where the consequence is transfer
-   quantities rather than a label.
-8. Make the row-count sanity floor in Step 1 **day-of-week aware** (see CLAUDE.md: Sundays run ~40%
-   lighter, and the flat `< 800` guard false-alarmed on cutover morning).
+
+Everything else has moved to **`CLAUDE.md` → `## Open Work`** (items 17–24), so deleting this file
+loses nothing. There is deliberately no second copy here: the follow-ups outlive the runbook, and two
+lists would drift. The one to do first is **17 — nothing tells anyone when a night fails.**

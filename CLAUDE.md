@@ -876,7 +876,97 @@ reads. Supporting changes in this repo (deployed): `syncLock` in `sync-stock` + 
 :35→:50 (see sync architecture above). Task 6 (summary heatmap + Phase 2 Zoho write-back):
 see `homerun-to/CLAUDE.md`.
 
-## To-Do (Active)
+## Open Work
+
+**Numbers are stable IDs** — they appear in commit messages and PRs, so they are never renumbered or
+reused. Items are listed in priority order, not numeric order. Everything shipped keeps its number in
+the changelog below.
+
+**🚧 First, once only:** verify the first live nightly run — **Step 5 of
+[`docs/RUNBOOK-2026-08-03-STAGE5.md`](docs/RUNBOOK-2026-08-03-STAGE5.md)**, morning of 2026-08-04.
+Then delete that runbook, the second paragraph of the block at the top of this file, and the frozen
+`team_data/invoice_data_shadow` row.
+
+### 17. Nothing tells anyone when a night fails ← highest value
+`invoiceSyncStatus`, `catalogueSyncStatus`, `skuFloorSyncStatus` and `engineRunStatus` are all written
+nightly and **nobody reads them**. On the Stage 5 cutover morning they were checked by hand; from
+2026-08-04 nobody will. The whole chain is now automatic but **not self-reporting** — that is the gap
+between "it runs every night" and "you will know if it didn't".
+- **⚠ Key it on DERIVED freshness (`toTargets.inputs.invoiceDataThrough`), not `ok:true`.** The
+  2026-07-28 run reported `ok:true` over a day missing 27.7% of its quantity. And see Stage 6: a run
+  clock cannot expose a stale input — if the invoice sync fails while the engine keeps succeeding,
+  `✓ Model up to date` is *true* and silent about it.
+- The Data Inputs chip now shows both facts, but that requires a human to open the app.
+
+### 19. The Zoho export locale is still `DD/MM/YYYY` — the documented rollback is unusable
+Measured again 2026-08-03: all rows. The date guard correctly refuses it (see the 2026-07-29 outage), so
+**the manual-CSV override — the fallback every rollback plan in this file points at — cannot currently be
+used.** Not a code change; a Zoho setting. Cheap, and it is the emergency path.
+
+### 8. DC calculation for PCT + Fixed Unit Floor — 639 SKUs, measured 2026-08-03
+`sumDailyAvg × (leadTime+1)` (`runEngine.js:397`) understocks the DC for erratic demand. Proposed fix:
+`Σ DS Mins × mult`, as floored SKUs already use.
+- **⚠ IT LOOKS FIXED AND IS NOT — don't re-close it from memory.** Two *adjacent* things did get
+  `Σ DS Min`: **floored SKUs** (`runEngine.js:387`, gated on having a manual `newSKUQty` floor — a
+  strategy-independent condition) and **Network Design**, which has its own
+  `P95 + ceil(Σ DS_Min × dcMult)` in `plywoodNetwork.js`. The `else` branch is untouched and applies to
+  every non-dead, non-floored SKU whatever its strategy.
+- **Scope, of 2,019 DC-inventorised active SKUs:** Fixed Unit Floor **406**, PCT **233**. PCT is
+  already 75% covered via the floor path (714 of 947), so **the gap is concentrated in Fixed Unit Floor
+  — 30% floored** — i.e. exactly Wires/MCB and Overhead Tanks, the erratic categories the item was
+  written about. Standard is out of scope by design.
+- Its old blocker ("held pending Network Design learnings") was satisfied on 2026-04-28 and nobody
+  revisited for three months. **Decide it: do it, or park it with a stated reason.**
+
+### 18. `lastOkAt` written by each sync
+`sync-catalogue` and `sync-sku-floors` stamp `at` on **every** exit including failures, and store no
+last-success timestamp — so a failed night can claim to be the source of the current value.
+`sync-sku-floors` is `ok`-gated by hand in `App.jsx`; **`catalogueAt` still has the flaw.** Fix it at the
+source, then drop the hand-gating. ⚠ Piggyback on a deploy you are making anyway — never redeploy live
+functions for observability alone.
+
+### 20. Pin the provenance invariant with a test
+`src/freshness.js` has **no test file**, and it is the module that decides whether the UI tells the truth.
+Extract `autoAtFor` from `App.jsx` and assert that **every input with an auto writer has a non-null
+`autoAt`** — literally the 2026-08-03 bug. Same shape as `invoiceCsvRoundTrip` / `paramConfigRows` /
+`teamDataBundle`.
+
+### 21. `demand through …` in the TO tool footer
+The IMS chip has it since 2026-08-03; the TO tool footer still shows only `refreshedAt` and flags stale
+merely as "not from today IST", so it renders no ⚠ while running on days-old demand. Same one-line fix,
+but here the consequence is transfer quantities. Repo: `homerun-to`.
+
+### 22. Stale-tab gap — a long-lived tab computes from a stale catalogue
+It can no longer *clobber* `team_data` (see `teamDataBundle.js`) but still computes from a stale
+catalogue, and can publish a stale `params/toTargets` if someone clicks Apply. Wants change-detection or
+a "catalogue updated, reload" prompt. Habit meanwhile: **reload before clicking Apply.**
+
+### 7. Read-only config visibility for non-admins — Logic Tweaker + Overrides tabs
+**Verified still open 2026-08-03:** `PUBLIC_TABS` (`App.jsx:3589`) lacks `logic` and `overrides`, so
+non-admins cannot see them at all. Plan: add both to `PUBLIC_TABS` and disable every input with
+`disabled={!isAdmin}`. Upload Data stays admin-only. Plywood Network Design Config is already done this
+way (visible to all, inputs disabled, Save hidden) — copy that pattern.
+
+### 23. DS06 cluster assignment
+Clusters are DS01+DS05 (C1), DS02+DC/Rampura (C2), DS03+DS04 (C3). DS06 went live ~2026-07-08 and has
+never been assigned one. Flagged "review later" since then.
+
+### 24. Make the invoice row-count sanity floor day-of-week aware
+The Stage 5 runbook's flat `< 800 rows ⇒ stop` false-alarmed on 08-02's 752 rows, which was the
+**second-busiest Sunday on record** (13 Sundays: min 382 / median 522 / max 760, vs non-Sunday median
+866). Compare against the same weekday's median. A guard that cries wolf on schedule gets ignored.
+
+### Later, not urgent
+- **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence
+  structurally impossible and page loads much faster. Costs the "engine changes go live on next page
+  load" property, and Impact Preview still needs client-side compute.
+
+---
+
+## Shipped — changelog
+
+Kept because several entries carry durable knowledge (Stock Health's columns, dead-stock semantics, the
+DS-Req-Covered formula, the whole Stage 4–8 design). Not a work list.
 
 ### 1. Category Network Analysis ✅ Shipped (2026-04-18)
 `src/tabs/BasketAnalysisTab.jsx` + Plywood Network tab. Baskets: category/brand analysis with DS×Brand heat map. Plywood: per-DS thick/thin view (PCT mode) — recommendation only, does NOT write into engine.
@@ -905,10 +995,21 @@ DC Stock column added between Req Qty and Rep. Qty on DS tabs. Shows DC SoH for 
 ### 15. Pincode demand attribution ✅ Shipped & LIVE (2026-07-27, PR #13)
 `src/engine/attribution.js` — see the Demand Attribution section. Flag flipped to `shippingCode` on
 2026-07-27; network Max ₹7.81Cr → ₹7.68Cr. Pincode 560111 → DS03 **done** (128 pincodes mapped as of
-2026-07-30). Remaining follow-up: confirm ops routing follows the mapping (DS02 is stocked ₹16.4L lighter).
+2026-07-30).
+**✅ Ops-routing question CLOSED 2026-08-03: routing follows this mapping, because the uploaded CSV *is*
+the ops routing sheet** — `parsePincodeMapCsv` accepts their working sheet (the per-DS 60/90/120-min
+column blocks) directly, so the map is a copy of operational truth rather than a modelling assumption.
+That is what makes DS02 being stocked ₹16.4L lighter safe.
+- **⚠ BUT IT IS A POINT-IN-TIME COPY WITH NO SYNC — the two drift silently.** Nothing notices if ops
+  revise their sheet; IMS keeps attributing on the version last uploaded through Logic Tweaker, and the
+  only symptom is a store quietly stocked for the wrong catchment. **So the durable rule is a process
+  one: when ops change the routing sheet, re-upload it.** Worth a `pincodeMap`-age line beside the other
+  freshness signals if this ever bites (there is no `uploadProvenance` entry for it today).
 
-### 16. Nightly model refresh from Zoho — Stages 4-7 (in progress)
-Automate the whole input chain so the model refreshes ~20:30 IST without a manual CSV.
+### 16. Nightly model refresh from Zoho — Stages 4-8 ✅ ALL LIVE (2026-07-29 → 2026-08-03)
+Automates the whole input chain so the model refreshes overnight without a manual CSV. **Stage 5 landed
+last, on 2026-08-03, completing the chain.** Kept in full below: this is the design record for six
+deployed surfaces, and most of the ⚠s are the reasons the current shape is what it is.
 - **Stage 4 (REWORKED + DEPLOYED 2026-07-29; target flipped to the live row by Stage 5 on 2026-08-03
   — read the Stage 5 entry below for what that changed):** `sync-invoices` → **`team_data/invoice_data`**
   (`TARGET_ROW`, `index.ts:58`). Migration `20260729000001` **applied**: one cron
@@ -1171,15 +1272,11 @@ Automate the whole input chain so the model refreshes ~20:30 IST without a manua
     12 such SKUs on 07-30. Safe default, but the default is making the decision — worth setting in Zoho.
   - Floors (`minReqQty`, `newSKUQty`) and Dead Stock stay manual — ops judgement, not Zoho data.
 
-### 4. Rethink Tool Output Tab — fold buttons into Upload Data tab or keep separate?
-
-### 5. Full UI Polish Pass — all tabs (Overview, SKU Detail, Stock Health, Logic Tweaker, etc.)
+> **4** (rethink the Tool Output tab) and **5** (full UI polish pass) were **dropped 2026-08-03** — open
+> since April with no specifics. Numbers retired, not reused.
 
 ### 6. Plywood Network Design ✅ Shipped (2026-04-28)
 Network Design strategy in engine (`src/engine/strategies/plywoodNetwork.js`). Full UI in PlywoodNetworkTab.jsx — unified SKU table with zone colouring, DC tab, brand assignment editor, compact modal with zone-aware formula display and lookback-period charts.
-
-### 7. Read-only config visibility for non-admins — Logic Tweaker + Overrides tabs
-Non-admins currently cannot see Logic Tweaker or Overrides tabs at all (controlled by `ADMIN_TABS` vs `PUBLIC_TABS` in App.jsx). Plan: add both to `PUBLIC_TABS` and disable all inputs with `disabled={!isAdmin}`. Upload Data tab stays admin-only. Plywood Network Design Config already done (visible to all, inputs disabled for non-admins, Save button hidden).
 
 ### 10. Sync resilience — staggered cron jobs ✅ Shipped (2026-05-22), updated 2026-05-23
 Split sync into `sync-stock` (stock only, 3 staggered cron jobs) + `sync-orders` (PO+TO, :35 UTC). Solves Zoho inventorysummary ~8 calls/min rate limit and 150s timeout on slow Zoho days. Stagger increased 1→2→3 min after successive Supabase statement timeout collisions. Current schedule: :35/:38/:41 UTC = :05/:08/:11 IST. See sync performance constraints section for full architecture.
@@ -1195,9 +1292,6 @@ Clickable column header sorting (Item Name, Brand, AFS, Req Qty, Date, Est. Deli
 
 ### 14. Dead stock logic — Min=Max=0 everywhere ✅ Shipped (2026-05-23)
 Dead stock SKUs now get Min=Max=0 at all DS and DC locations, overriding all floors (New DS Floor, SKU Floor) as the absolute last post-blend step. Previously DS had Max=Min (non-zero) and DC used dcDeadMult×0.25. New behaviour: no PO or TO raised, Stock Health filters them out (0/0 excluded from table). `dcDeadMult` param in Logic Tweaker is now a no-op. Applies to Standard, Fixed Unit Floor, and Network Design paths.
-
-### 8. DC Calculation Fix for PCT + Fixed Unit Floor Categories
-`sumDailyAvg × (leadTime+1)` understocks for erratic demand at DC. Fix: switch to `Σ DS Mins × mult` approach (same as floored SKUs). Held pending any follow-up from Network Design learnings.
 
 ## Deferred
 - Cluster fulfillment — build into tool or ops process?
