@@ -3121,19 +3121,19 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   },[]);
 
   // ── Where each input came from, and whether the model has caught up ─────────
-  // Three small reads. `loadPayloadKey` matters here: toTargets is ~693KB and we
-  // want one timestamp out of it (~44 bytes).
+  // Six small reads. `loadPayloadKey` matters here: toTargets is ~693KB and we want a
+  // timestamp (~44 bytes) and the inputs stamp out of it, not the row.
   //
   // Re-read on `provTick` (bumped after any upload or Apply) and on a 5-min timer so
   // ages tick over in a tab left open — a long-lived tab is exactly the case that
   // goes stale without anyone noticing.
-  const [provRaw, setProvRaw] = useState({ manual: {}, catalogueAt: null, targetsAt: null, invoiceAt: null, floorAt: null });
+  const [provRaw, setProvRaw] = useState({ manual: {}, catalogueAt: null, targetsAt: null, invoiceAt: null, floorAt: null, targetsThrough: null });
   const [provNow, setProvNow] = useState(() => Date.now());
   const [provTick, setProvTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [manual, catalogueAt, targetsAt, invoiceAt, floorStatus] = await Promise.all([
+      const [manual, catalogueAt, targetsAt, invoiceAt, floorStatus, targetsInputs] = await Promise.all([
         loadFromSupabase("params", "uploadProvenance"),
         loadPayloadKey("params", "catalogueSyncStatus", "at"),
         loadPayloadKey("params", "toTargets", "refreshedAt"),
@@ -3143,6 +3143,13 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
         // atomic publish that actually replaced the row, so it is already ok-gated.
         loadPayloadKey("params", "invoiceSyncStatus", "publishedAt"),
         loadFromSupabase("params", "skuFloorSyncStatus"),
+        // ⚠ WHAT the engine ran ON, not when it ran. A second tiny select on the same
+        // ~693KB row (`payload->inputs` is a few hundred bytes) rather than pulling it.
+        // `refreshedAt` alone is the weak signal: if the invoice sync fails for three
+        // nights while the engine keeps running at 05:45, the clock reads fresh every
+        // morning and "Model up to date" is TRUE — targets really are newer than their
+        // inputs. It is silent on the inputs being old. Only invoiceDataThrough says so.
+        loadPayloadKey("params", "toTargets", "inputs"),
       ]);
       // Same hazard, no equivalent field: sync-sku-floors stamps `at` on every exit and
       // stores no last-success timestamp, so gate on `ok` by hand. On a failed night this
@@ -3151,7 +3158,12 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
       // the real one is a `lastOkAt` timestamp written by each sync. See CLAUDE.md.
       const floorAt = floorStatus?.ok ? (floorStatus.at ?? null) : null;
       if (!cancelled) {
-        setProvRaw({ manual: manual || {}, catalogueAt, targetsAt, invoiceAt, floorAt });
+        setProvRaw({
+          manual: manual || {}, catalogueAt, targetsAt, invoiceAt, floorAt,
+          // null on a row written before Stage 6's shared builder stamped inputs; the
+          // chip then falls back to the clock alone rather than showing "through —".
+          targetsThrough: targetsInputs?.invoiceDataThrough ?? null,
+        });
         setProvNow(Date.now());
       }
     })();
@@ -3647,12 +3659,22 @@ const visibleOutput = useMemo(() => {
             still reads "up to date". Relative, not absolute: toTargets changes only on
             Apply, so its age alone says little; what matters is whether an input moved
             after it. */}
-        <span title={modelState.note} style={{
+        {/* ⚠ TWO FACTS, DELIBERATELY TOGETHER. "Last run" is when the engine ran;
+            "demand through" is what it ran ON, from toTargets.inputs.invoiceDataThrough.
+            The clock alone cannot expose a stale input — see the load effect above — and
+            on 2026-08-03 it read a perfectly accurate 06:15 beside demand three days
+            behind. Same line belongs in the TO tool footer, where the consequence is
+            transfer quantities. */}
+        <span title={provRaw.targetsThrough
+                       ? `${modelState.note}\nEngine ran on invoice demand through ${provRaw.targetsThrough}`
+                       : modelState.note}
+          style={{
           padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap",
           ...(modelState.level==="stale"?{background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA"}
             :modelState.level==="ok"?{background:"#DCFCE7",color:"#15803D",border:"1px solid #BBF7D0"}
             :{background:"#F8FAFC",color:"#94A3B8",border:"1px solid #E2E8F0"})}}>
           {modelState.lastRun ? `Last run: ${modelState.lastRun}` : "Last run: never"}
+          {provRaw.targetsThrough ? ` · demand through ${provRaw.targetsThrough}` : ""}
         </span>
         {(() => {
           const hasData = invoiceData.length > 0 && Object.keys(skuMaster).length > 0 && Object.keys(priceData).length > 0;
