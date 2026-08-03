@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatAge, formatStamp, resolveSource, assessSyncedInput, assessModel,
-  MISSED_A_NIGHT_MS, AGEING_MS,
+  assessOutputFreshness, MISSED_A_NIGHT_MS, AGEING_MS,
 } from "./freshness.js";
 
 const NOW = Date.parse("2026-07-31T06:00:00Z");
@@ -180,5 +180,65 @@ describe("assessModel — lastRun for the pill", () => {
     expect(r.behind).toEqual(["SKU Master"]);
     expect(r.note).toMatch(/Apply & Re-run Model/);
     expect(r.lastRun).not.toBeNull();
+  });
+});
+
+describe("assessOutputFreshness — gates the Tool Output downloads", () => {
+  describe("stale is the ONLY state that may block", () => {
+    it("blocks when the published date is genuinely newer than the page's", () => {
+      expect(assessOutputFreshness({ pageThrough: "2026-08-02", liveThrough: "2026-08-03" }))
+        .toEqual({ state: "stale", blocked: true, pageThrough: "2026-08-02", liveThrough: "2026-08-03" });
+    });
+
+    it("blocks across a month boundary — ISO string compare is safe", () => {
+      expect(assessOutputFreshness({ pageThrough: "2026-07-31", liveThrough: "2026-08-01" }).blocked).toBe(true);
+    });
+  });
+
+  describe("fresh", () => {
+    it("does not block when the dates match", () => {
+      const r = assessOutputFreshness({ pageThrough: "2026-08-03", liveThrough: "2026-08-03" });
+      expect(r.state).toBe("fresh");
+      expect(r.blocked).toBe(false);
+    });
+
+    it("does not block when the page is AHEAD of the published date", () => {
+      // Real case: a manual CSV upload before the next nightly publish. Not stale.
+      const r = assessOutputFreshness({ pageThrough: "2026-08-04", liveThrough: "2026-08-03" });
+      expect(r.state).toBe("fresh");
+      expect(r.blocked).toBe(false);
+    });
+  });
+
+  describe("unknown — MUST NEVER BLOCK", () => {
+    // Every entry is a way the CHECK can fail. Blocking on any of them would stop the PO
+    // team working at 06:00 IST because of our bug or a slow network, which is strictly
+    // worse than handing them a slightly stale file.
+    const cases = [
+      ["no live date (network failed / row missing)", { pageThrough: "2026-08-02", liveThrough: null }],
+      ["no page date (no invoice data loaded)", { pageThrough: null, liveThrough: "2026-08-03" }],
+      ["neither date", {}],
+      ["malformed live date (DD/MM slipped in)", { pageThrough: "2026-08-02", liveThrough: "03/08/2026" }],
+      ["malformed page date", { pageThrough: "garbage", liveThrough: "2026-08-03" }],
+      ["empty strings", { pageThrough: "", liveThrough: "" }],
+      ["called with no argument at all", undefined],
+    ];
+    for (const [label, input] of cases) {
+      it(`does not block: ${label}`, () => {
+        const r = assessOutputFreshness(input);
+        expect(r.state).toBe("unknown");
+        expect(r.blocked).toBe(false);
+      });
+    }
+  });
+
+  it("never reports blocked:true outside the stale state", () => {
+    // The UI keys on `blocked` alone, so this invariant is what actually protects it.
+    for (const i of [
+      { pageThrough: "2026-08-03", liveThrough: "2026-08-03" },
+      { pageThrough: "2026-08-04", liveThrough: "2026-08-03" },
+      { pageThrough: null, liveThrough: null },
+      { pageThrough: "2026-08-02", liveThrough: "nonsense" },
+    ]) expect(assessOutputFreshness(i).blocked).toBe(false);
   });
 });

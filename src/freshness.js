@@ -71,6 +71,40 @@ export function assessSyncedInput({ source, ms }) {
   return { level: "ok", note: "Auto-synced from Zoho" };
 }
 
+/**
+ * Is what THIS TAB computed still current enough to download?
+ *
+ * The Tool Output downloads serialise a client-side engine run from page load, so a tab
+ * left open overnight produces yesterday's Min/Max in a file that looks entirely normal
+ * — and the PO team commits spend from it. This gates all four downloads.
+ *
+ * ⚠⚠ TRI-STATE ON PURPOSE — "unknown" must NEVER block. A hard block is only as
+ * trustworthy as the check behind it, and the two ways to be wrong are not symmetric:
+ *   • a stale file is mildly wrong and correctable;
+ *   • a download blocked at 06:00 IST stops purchasing for the day.
+ * So we remove capability ONLY on positive evidence — both dates present and the
+ * published one genuinely newer. A missing status row, a slow network, a malformed date
+ * or a night the sync did not publish all resolve to `unknown`, which downloads freely.
+ * Fail open, exactly like the sync guards elsewhere fail closed on WRITES: the cheap
+ * direction differs by which action is destructive.
+ *
+ * (The alternative, blocking on uncertainty, converts a freshness check into an
+ * availability risk on the critical path. The TO tool made the same call for stale
+ * stock — "warn + override, never hard-block".)
+ *
+ * @param pageThrough newest invoice date THIS tab's engine run used
+ * @param liveThrough newest invoice date published to Supabase
+ * @returns {{state:"fresh"|"stale"|"unknown", blocked:boolean, pageThrough:string|null, liveThrough:string|null}}
+ */
+export function assessOutputFreshness({ pageThrough, liveThrough } = {}) {
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+  const p = ISO.test(String(pageThrough ?? "")) ? pageThrough : null;
+  const l = ISO.test(String(liveThrough ?? "")) ? liveThrough : null;
+  if (!p || !l) return { state: "unknown", blocked: false, pageThrough: p, liveThrough: l };
+  if (l > p) return { state: "stale", blocked: true, pageThrough: p, liveThrough: l };
+  return { state: "fresh", blocked: false, pageThrough: p, liveThrough: l };
+}
+
 /** `YYYY-MM-DD HH:mm` in the viewer's local time. ISO-ish to match how dates read
  *  everywhere else in the app (the date-range strip shows 2026-04-30 → 2026-07-28),
  *  and 24-hour so there is no am/pm to misread on a glance. */
