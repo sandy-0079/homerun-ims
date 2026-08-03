@@ -2,9 +2,11 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { supabase, loadFromSupabase, saveToSupabase, loadPayloadKey } from "./supabase";
 import { loadParamConfigRows } from "./paramConfigRows";
 import { buildTeamDataBundle } from "./teamDataBundle";
-import { resolveSource, assessSyncedInput, assessModel } from "./freshness";
+import { resolveSource, assessSyncedInput, assessModel, assessOutputFreshness } from "./freshness";
 import { summariseInputs } from "./inputSummary";
 import { mergeCoreOverrides, buildToTargets, buildInputsStamp } from "./toTargets";
+import { buildPoTargetsCsv, poCsvFilename, PO_CSV_HEADERS } from "./poTargetsCsv";
+import { normaliseStatus } from "./skuStatus";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
@@ -101,6 +103,42 @@ const SourcePill=React.memo(({prov,note})=>{
     </span>
   );
 });
+
+/** Trigger a browser download of CSV text. Mirrors the `dlCSV` helper inside the Upload
+ *  tab's block, which is out of scope on the Tool Output tab; kept separate rather than
+ *  hoisting that one, so this change touches nothing in Upload. */
+function downloadCsvFile(filename,csv){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download=filename;
+  a.click();
+}
+
+/**
+ * One download on the Tool Output tab.
+ *
+ * Replaced a full-width Min/Max table there on 2026-08-03. The table was virtualised so
+ * it cost little to render, but the tab is called "Tool Output Download" and a read-only
+ * viewer was not what anyone opened it for — every number it showed is available in SKU
+ * Detail, Overview, Stock Health or Manual Overrides.
+ *
+ * `footnote` exists for the one thing a button row had no room for: how current the
+ * numbers are. These files serialise a client-side recompute from page load, so a tab
+ * left open overnight produces yesterday's targets in a file that looks entirely normal.
+ */
+const DownloadCard=React.memo(({title,accent,blurb,shape,cta,footnote,primary,disabled,onClick,hint})=>(
+  <div style={{...S.card,display:"flex",flexDirection:"column",gap:8,borderTop:`3px solid ${disabled?"#ccc":accent}`,
+    ...(primary&&!disabled?{boxShadow:`0 2px 12px ${accent}38`}:{})}}>
+    <div style={{fontWeight:800,fontSize:13,color:HR.text,letterSpacing:0.2}}>{title}</div>
+    <div style={{fontSize:11,color:HR.muted,lineHeight:1.5,flex:1}}>{blurb}</div>
+    <div style={{fontSize:10,color:HR.muted,fontFamily:"monospace"}}>{shape}</div>
+    <button disabled={disabled} onClick={onClick} title={hint}
+      style={{background:disabled?"#E5E5E5":accent,color:disabled?"#999":HR.white,border:"none",
+        padding:"9px 12px",borderRadius:6,cursor:disabled?"not-allowed":"pointer",
+        fontWeight:primary?800:700,fontSize:12,width:"100%"}}>{cta}</button>
+    <div style={{fontSize:10,color:HR.muted,textAlign:"center",minHeight:13}}>{footnote||""}</div>
+  </div>
+));
 
 const S={
   app:{fontFamily:"Inter,sans-serif",background:HR.bg,height:"calc(100vh / 0.85)",color:HR.text,width:"100%",boxSizing:"border-box",overflowX:"hidden",display:"flex",flexDirection:"column"},
@@ -3127,13 +3165,13 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   // Re-read on `provTick` (bumped after any upload or Apply) and on a 5-min timer so
   // ages tick over in a tab left open — a long-lived tab is exactly the case that
   // goes stale without anyone noticing.
-  const [provRaw, setProvRaw] = useState({ manual: {}, catalogueAt: null, targetsAt: null, invoiceAt: null, floorAt: null, targetsThrough: null });
+  const [provRaw, setProvRaw] = useState({ manual: {}, catalogueAt: null, targetsAt: null, invoiceAt: null, floorAt: null, targetsThrough: null, invoiceLiveThrough: null });
   const [provNow, setProvNow] = useState(() => Date.now());
   const [provTick, setProvTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [manual, catalogueAt, targetsAt, invoiceAt, floorStatus, targetsInputs] = await Promise.all([
+      const [manual, catalogueAt, targetsAt, invStatus, floorStatus, targetsInputs] = await Promise.all([
         loadFromSupabase("params", "uploadProvenance"),
         loadPayloadKey("params", "catalogueSyncStatus", "at"),
         loadPayloadKey("params", "toTargets", "refreshedAt"),
@@ -3141,7 +3179,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
         // it would claim an auto-sync produced the value on a night that refused to write
         // — the failure mode this card exists to expose. `publishedAt` is set only by the
         // atomic publish that actually replaced the row, so it is already ok-gated.
-        loadPayloadKey("params", "invoiceSyncStatus", "publishedAt"),
+        loadFromSupabase("params", "invoiceSyncStatus"),
         loadFromSupabase("params", "skuFloorSyncStatus"),
         // ⚠ WHAT the engine ran ON, not when it ran. A second tiny select on the same
         // ~693KB row (`payload->inputs` is a few hundred bytes) rather than pulling it.
@@ -3157,6 +3195,11 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
       // that did not happen. ⚠ `catalogueAt` above has this same flaw and no fix here;
       // the real one is a `lastOkAt` timestamp written by each sync. See CLAUDE.md.
       const floorAt = floorStatus?.ok ? (floorStatus.at ?? null) : null;
+      const invoiceAt = invStatus?.publishedAt ?? null;
+      // Newest invoice date PUBLISHED to Supabase — the other half of the download gate.
+      // From the same row we already read, so gating costs no extra request.
+      const invoiceLiveThrough = Array.isArray(invStatus?.dates) && invStatus.dates.length
+        ? [...invStatus.dates].sort().at(-1) : null;
       if (!cancelled) {
         setProvRaw({
           manual: manual || {}, catalogueAt, targetsAt, invoiceAt, floorAt,
@@ -3524,7 +3567,8 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   const handleTabClick=t=>{
   if(tab==="logic"&&hasChanges&&isAdmin){setPending(t);return;}
   setTab(t);
-  setOutputScrollTop(0);
+  // (previously reset the Tool Output table's virtual scroll — that table was removed
+  // 2026-08-03 in favour of download cards, so there is nothing to reset.)
 };
 
   const periodDates=useMemo(()=>{const d=[...new Set(invoiceData.map(r=>r.date))].sort();return new Set(d.slice(-(params.overallPeriod||90)));},[invoiceData,params.overallPeriod]);
@@ -3571,14 +3615,20 @@ const attributedInvoice = useMemo(
 
   /* skusByMov removed — was only used by old Dashboard filtering */
 
-const outputRows = useMemo(() => results ? Object.values(results) : [], [results]);
-const [outputScrollTop, setOutputScrollTop] = useState(0);
-const visibleOutput = useMemo(() => {
-  const ROW_HEIGHT_OUT = 36;
-  const start = Math.max(0, Math.floor(outputScrollTop / ROW_HEIGHT_OUT) - 5);
-  const end = Math.min(outputRows.length, start + 30);
-  return { rows: outputRows.slice(start, end), startIndex: start };
-}, [outputRows, outputScrollTop]);
+// Newest invoice date THIS tab's engine run used. Shown on the Tool Output cards and
+// compared against the newest published date before a PO download, because these files
+// are a client-side recompute from page load and carry no freshness of their own.
+const outputDemandThrough = useMemo(
+  () => (invoiceData.length ? [...new Set(invoiceData.map(r => r.date))].sort().at(-1) : null),
+  [invoiceData],
+);
+// Gates ALL FOUR Tool Output downloads. Re-evaluates on the same 5-min tick that drives
+// the provenance pills, so a tab open across the nightly publish notices without a click.
+// ⚠ `blocked` is true ONLY on positive evidence of staleness — see assessOutputFreshness.
+const outputFreshness = useMemo(
+  () => assessOutputFreshness({ pageThrough: outputDemandThrough, liveThrough: provRaw.invoiceLiveThrough }),
+  [outputDemandThrough, provRaw.invoiceLiveThrough],
+);
 
 
   const mi=params.movIntervals||[2,4,7,10],pt=params.priceTiers||[3000,1500,400,100];
@@ -4149,39 +4199,77 @@ const visibleOutput = useMemo(() => {
         {/* Old dashboard tab removed — replaced by OverviewTab */}
         {tab==="output"&&(
           !results?<div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>Loading data, please wait...</div>:(
-            <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{display:"flex",flexDirection:"column",height:"100%",gap:12}}>
+              <div>
                 <h2 style={{color:HR.yellowDark,margin:0,fontSize:16}}>Tool Output Download</h2>
-                <div style={{display:"flex",gap:8}}>
+                <div style={{fontSize:11,color:HR.muted,marginTop:4}}>
+                  Every file below is generated from the model as computed in <b>this browser tab</b>.
+                  If it has been open a while, hard-reload before downloading.
+                  {outputDemandThrough&&<> Currently showing demand through <b>{outputDemandThrough}</b>.</>}
+                </div>
+              </div>
 
-                  {/* ── SKU Master Download ── */}
-                  <button
-                    disabled={!results}
-                    onClick={()=>{
-                      const hdr=["Item Name","Inventorised At","SKU","Category","Status","Brand","Price Tag","Top N"].join(",");
-                      const rows=Object.values(skuMaster).map(s=>{
-                        const res=results[s.sku];
-                        const priceTag=res?.meta?.priceTag||getPriceTag(priceData[s.sku]||0,params.priceTiers);
-                        const topN=res?.meta?.t150Tag||"Zero Sale";
-                        return[
-                          `"${(s.name||"").replace(/"/g,'""')}"`,
-                          `"${(s.inventorisedAt||"").replace(/"/g,'""')}"`,
-                          `"${s.sku.replace(/"/g,'""')}"`,
-                          `"${(s.category||"").replace(/"/g,'""')}"`,
-                          `"${(s.status||"").trim()}"`,
-                          `"${(s.brand||"").replace(/"/g,'""')}"`,
-                          priceTag,
-                          topN,
-                        ].join(",");
-                      });
-                      const blob=new Blob([[hdr,...rows].join("\n")],{type:"text/csv"});
-                      const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="SKU_Master.csv";a.click();
-                    }}
-                    style={{background:results?"#7C3AED":"#ccc",color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:results?"pointer":"not-allowed",fontWeight:700,fontSize:12,opacity:results?1:0.6}}
-                  >⬇ SKU Master CSV</button>
+              {/* ⚠ Blocks ALL FOUR downloads, but only on positive evidence that newer
+                  demand data was published (assessOutputFreshness). A failed or unknown
+                  check leaves every download working — a blocked download at 06:00 IST
+                  stops purchasing, which is worse than a slightly stale file. */}
+              {outputFreshness.blocked&&(
+                <div style={{background:"#FEF3C7",border:"1px solid #FCD34D",borderRadius:8,padding:"12px 14px",
+                  display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+                  <div style={{flex:1,minWidth:280}}>
+                    <div style={{fontWeight:800,fontSize:12,color:"#92400E"}}>⚠ Newer demand data is available — downloads are disabled</div>
+                    <div style={{fontSize:11,color:"#92400E",marginTop:3,lineHeight:1.5}}>
+                      This page computed Min/Max from demand through <b>{outputFreshness.pageThrough}</b>,
+                      but <b>{outputFreshness.liveThrough}</b> has since been published.
+                      Reload to recompute, then download.
+                    </div>
+                  </div>
+                  <button onClick={()=>window.location.reload()}
+                    style={{background:"#92400E",color:HR.white,border:"none",padding:"9px 18px",borderRadius:6,
+                      cursor:"pointer",fontWeight:800,fontSize:12,whiteSpace:"nowrap"}}>↻ Reload now</button>
+                </div>
+              )}
 
-                  {/* ── Tool Output DS Level CSV ── */}
-                  <button onClick={()=>{
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:12,alignItems:"stretch"}}>
+
+                {/* ── PO Team Download ─────────────────────────────────────────────
+                    Column order is a FROZEN CONTRACT (src/poTargetsCsv.js): the PO
+                    team's sheet formulas key on position, so a reorder produces wrong
+                    POs rather than an error. Anything new goes AFTER DS06 Max. */}
+                <DownloadCard
+                  primary
+                  title="PO Team Download"
+                  accent="#F97316"
+                  blurb={<>Min/Max targets for raising POs. One row per SKU with <b>DC and DS01–DS06 side by side</b>, plus Inventorised At and Status so the sheet can filter out Supplier and inactive items.</>}
+                  shape={`${PO_CSV_HEADERS.length} columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
+                  cta="⬇ PO Team Download"
+                  footnote={outputDemandThrough?`demand through ${outputDemandThrough}`:null}
+                  hint="Filter on Status = Active and Inventorised At ≠ Supplier in your sheet."
+                  disabled={!results||outputFreshness.blocked}
+                  onClick={async ()=>{
+                    const csv=buildPoTargetsCsv({skuMaster,results,coreOverrides});
+                    if(!csv){alert("No SKU Master loaded — nothing to download.");return;}
+
+                    // No staleness check here — the banner above gates all four
+                    // downloads before the click, so reaching this point means the page
+                    // is fresh or the check could not prove otherwise.
+                    const d=new Date(),p=n=>String(n).padStart(2,"0");
+                    downloadCsvFile(poCsvFilename({
+                      refreshedOn:`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`,
+                      demandThrough:outputDemandThrough,
+                    }),csv);
+                  }}
+                />
+
+                {/* ── Tool Output DS Level ── */}
+                <DownloadCard
+                  title="Tool Output — DS Level"
+                  accent={HR.green}
+                  blurb="Per-store Min/Max only, no DC column. Manual overrides are applied, so this matches what the stores are actually stocked to."
+                  shape={`15 columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
+                  cta="⬇ Download DS Level"
+                  disabled={!results||outputFreshness.blocked}
+                  onClick={()=>{
                     const hdr=["Item Name","SKU","Category",...DS_LIST.flatMap(d=>[`${d} Min`,`${d} Max`])].join(",");
                     const rows=Object.values(skuMaster).map(s=>{
                       const r=results[s.sku];
@@ -4199,12 +4287,19 @@ const visibleOutput = useMemo(() => {
                         ...dsCols,
                       ].join(",");
                     });
-                    const blob=new Blob([[hdr,...rows].join("\n")],{type:"text/csv"});
-                    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="IMS_Output_DS.csv";a.click();
-                  }} style={{background:HR.green,color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:"pointer",fontWeight:700,fontSize:12}}>⬇ Tool Output DS Level</button>
+                    downloadCsvFile("IMS_Output_DS.csv",[hdr,...rows].join("\n"));
+                  }}
+                />
 
-                  {/* ── Tool Output DC CSV ── */}
-                  <button onClick={()=>{
+                {/* ── Tool Output DC ── */}
+                <DownloadCard
+                  title="Tool Output — DC"
+                  accent="#0077A8"
+                  blurb="DC Min/Max only. Note DS-inventorised and Supplier SKUs read 0/0 here by design — they never flow through the DC."
+                  shape={`5 columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
+                  cta="⬇ Download DC"
+                  disabled={!results||outputFreshness.blocked}
+                  onClick={()=>{
                     const hdr=["Item Name","SKU","Category","DC Min","DC Max"].join(",");
                     const rows=Object.values(skuMaster).map(s=>{
                       const r=results[s.sku];
@@ -4216,65 +4311,43 @@ const visibleOutput = useMemo(() => {
                         r?.dc.max??0,
                       ].join(",");
                     });
-                    const blob=new Blob([[hdr,...rows].join("\n")],{type:"text/csv"});
-                    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="IMS_Output_DC.csv";a.click();
-                  }} style={{background:"#0077A8",color:HR.white,border:"none",padding:"7px 18px",borderRadius:5,cursor:"pointer",fontWeight:700,fontSize:12}}>⬇ Tool Output DC</button>
+                    downloadCsvFile("IMS_Output_DC.csv",[hdr,...rows].join("\n"));
+                  }}
+                />
 
-                </div>
+                {/* ── SKU Master ── */}
+                <DownloadCard
+                  title="SKU Master"
+                  accent="#7C3AED"
+                  blurb="The catalogue as the model sees it — category, brand and status, plus the Price Tag and Top-N volume tag the engine assigned to each SKU."
+                  shape={`8 columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
+                  cta="⬇ Download SKU Master"
+                  disabled={!results||outputFreshness.blocked}
+                  onClick={()=>{
+                    const hdr=["Item Name","Inventorised At","SKU","Category","Status","Brand","Price Tag","Top N"].join(",");
+                    const rows=Object.values(skuMaster).map(s=>{
+                      const res=results[s.sku];
+                      const priceTag=res?.meta?.priceTag||getPriceTag(priceData[s.sku]||0,params.priceTiers);
+                      const topN=res?.meta?.t150Tag||"Zero Sale";
+                      return[
+                        `"${(s.name||"").replace(/"/g,'""')}"`,
+                        `"${(s.inventorisedAt||"").replace(/"/g,'""')}"`,
+                        `"${s.sku.replace(/"/g,'""')}"`,
+                        `"${(s.category||"").replace(/"/g,'""')}"`,
+                        // Shared with the PO Team Download so the two files can never
+                        // disagree on how a status is spelled — Zoho sends four
+                        // spellings (see skuStatus.js).
+                        `"${normaliseStatus(s.status)}"`,
+                        `"${(s.brand||"").replace(/"/g,'""')}"`,
+                        priceTag,
+                        topN,
+                      ].join(",");
+                    });
+                    downloadCsvFile("SKU_Master.csv",[hdr,...rows].join("\n"));
+                  }}
+                />
+
               </div>
-
-              {/* ── Table — fills remaining height, no blank space ── */}
-              <div style={{...S.card,padding:0,overflow:"auto",flex:1,minHeight:0,width:"100%",boxSizing:"border-box"}} onScroll={e => setOutputScrollTop(e.currentTarget.scrollTop)}
-ref={el => { if(el && outputScrollTop === 0) el.scrollTop = 0; }}>
-                <table style={{...S.table}}>
-                  <thead style={{position:"sticky",top:0,zIndex:4}}>
-                    <tr style={{background:HR.surfaceLight}}>
-                      <th style={{...S.th,minWidth:160}} rowSpan={2}>Item</th>
-                      <th style={S.th} rowSpan={2}>SKU</th>
-                      <th style={S.th} rowSpan={2}>Category</th>
-                      <th style={S.th} rowSpan={2}>Price Tag</th>
-                      {DS_LIST.map((ds,di)=>{const dc=DS_COLORS[di];return <th key={ds} style={{...S.th,textAlign:"center",background:dc.bg,color:dc.header}} colSpan={2}>{ds}</th>;})}
-                      <th style={{...S.th,textAlign:"center",background:DC_COLOR.bg,color:DC_COLOR.header}} colSpan={2}>DC</th>
-                    </tr>
-                    <tr style={{background:HR.surfaceLight}}>
-                      {DS_LIST.map((ds,di)=>{const dc=DS_COLORS[di];return[
-                        <th key={ds+"m"} style={{...S.th,fontSize:10,textAlign:"center",color:dc.header,background:dc.bg,position:"sticky",top:24,zIndex:3}}>Min</th>,
-                        <th key={ds+"x"} style={{...S.th,fontSize:10,textAlign:"center",color:dc.header,background:dc.bg,position:"sticky",top:24,zIndex:3}}>Max</th>,
-                      ];})}
-                      <th style={{...S.th,fontSize:10,textAlign:"center",color:DC_COLOR.header,background:DC_COLOR.bg,position:"sticky",top:24,zIndex:3}}>Min</th>
-                      <th style={{...S.th,fontSize:10,textAlign:"center",color:DC_COLOR.header,background:DC_COLOR.bg,position:"sticky",top:24,zIndex:3}}>Max</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr style={{height: visibleOutput.startIndex * 36}}><td colSpan={999}/></tr>
-{visibleOutput.rows.map((r,i)=>{
-  const actualIndex = visibleOutput.startIndex + i;
-  return(
-                      <tr key={r.meta.sku} style={{background:i%2===0?HR.white:HR.surfaceLight}}>
-                        <td style={{...S.td,color:HR.text,fontSize:10}}>{r.meta.name||r.meta.sku}</td>
-                        <td style={{...S.td,color:HR.muted,fontSize:10}}>{r.meta.sku}</td>
-                        <td style={{...S.td,color:HR.muted,fontSize:10}}>{r.meta.category}</td>
-                        <td style={S.td}><TagPill value={r.meta.priceTag} colorMap={PRICE_TAG_COLORS}/></td>
-                        {DS_LIST.map((ds,di)=>{
-                          const s=r.stores[ds]||{min:0,max:0},dc=DS_COLORS[di];
-                          const ov=coreOverrides[r.meta.sku]?.[ds];
-                          const min=ov?Math.max(s.min,ov.min):s.min;
-                          const max=ov?Math.max(s.max,ov.max):s.max;
-                          return[
-                            <td key={ds+"m"} style={{...S.td,textAlign:"center",color:dc.text,fontWeight:700,background:dc.bg,fontSize:10}}>{min}</td>,
-                            <td key={ds+"x"} style={{...S.td,textAlign:"center",color:dc.text,fontWeight:700,background:dc.bg,fontSize:10}}>{max}</td>,
-                          ];
-                        })}
-                        <td style={{...S.td,textAlign:"center",color:DC_COLOR.text,fontWeight:700,background:DC_COLOR.bg,fontSize:10}}>{r.dc.min}</td>
-                        <td style={{...S.td,textAlign:"center",color:DC_COLOR.text,fontWeight:700,background:DC_COLOR.bg,fontSize:10}}>{r.dc.max}</td>
-                      </tr>
-                    );
-  })}
-  <tr style={{height: (outputRows.length - visibleOutput.startIndex - visibleOutput.rows.length) * 36}}><td colSpan={999}/></tr>
-                  </tbody>
-                </table>
-              </div>
-
             </div>
           )
         )}
