@@ -194,23 +194,66 @@ curl -sS "$B/params?select=payload&id=eq.invoiceSyncStatus" -H "apikey: $K" | py
 
 ## Step 5 — Tuesday 2026-08-04 morning (the real verification)
 
+**This is the first morning the whole chain has run unattended with `sync-invoices` writing the live
+row.** Nothing before today has proven that.
+
+### 5a. One glance first — the Data Inputs chip
+
+Open IMS → **Upload Data** tab (admin). The chip reads:
+
+> `Last run: 2026-08-04 05:45 · demand through 2026-08-03`
+
+**Both halves must agree with the date.** The clock alone cannot tell you the inputs are current — see
+the Stage 6 notes in CLAUDE.md. If it reads `demand through 2026-08-02`, the invoice night did not
+publish; if `Last run` is yesterday's date, the engine did not run. Either way the row below says why.
+
+### 5b. The four status rows
+
 ```bash
-node scripts/compare-invoice-shadow.mjs     # ⚠ verdict line is cumulative/untrustworthy — read the table
+B=https://rgyupnrogkbugsadwlye.supabase.co/rest/v1; K=<anon key from CLAUDE.md>
+for r in invoiceSyncStatus engineRunStatus catalogueSyncStatus skuFloorSyncStatus; do
+  echo "== $r"; curl -sS "$B/params?select=payload&id=eq.$r" -H "apikey: $K" | python3 -m json.tool
+done
 ```
 
 | check | expect |
 |---|---|
 | `invoiceSyncStatus.publishedPlan` | `["2026-08-03","2026-07-31"]` |
-| `invoiceSyncStatus` | `phase:"published"` · `merge.safe:true` · `merge.datesTrimmed: 3` |
+| `invoiceSyncStatus` | `phase:"published"` · `merge.safe:true` · **`merge.datesTrimmed: 4`** · `datesReplaced: 1` · `datesAfter: 90` |
 | `toTargets.inputs.invoiceDataThrough` | **`"2026-08-03"`** ← the whole point |
-| `engineRunStatus` | `ok:true` · `reason:"ok"` · `change.dropPct` small |
-| live row dates | `05-05 → 08-03`, 90 dates |
+| `toTargets.inputs.invoiceRows` | **~77,660 ±200** |
+| `engineRunStatus` | `ok:true` · `mode:"live"` · `reason:"ok"` · `change.dropPct` ~0 |
+| live row dates | **`05-06 → 08-03`**, 90 dates |
+| `catalogueSyncStatus` | `lastOkNight:"2026-08-03"` · `invAtChanged.toSupplier: []` |
+| `skuFloorSyncStatus` | `lastOkNight:"2026-08-04"` · `change.reason:"ok"` |
 
-`datesTrimmed: 3` is the retention trim removing 05-02…05-04. Expected.
+**⚠ `datesTrimmed` is 4, not 3, and the range starts 05-06.** The backfill left the row at 93 dates
+(05-02 → 08-02); Monday night *adds* 08-03 making 94, so `RETENTION_DAYS = 90` trims **four**:
+**05-02, 05-03, 05-04, 05-05 — 2,354 rows, permanently and un-refetchably** (pre-July; the API cannot
+serve them). `team_data/invoice_data_backup_20260803` is their last copy. Expected, not a fault.
+*(An earlier version of this table said 3 / `05-05`, written before the backfill scope was known.)*
 
-**If `invoiceDataThrough` still reads `2026-08-02`**, the Monday-night invoice run did not publish —
-check `invoiceSyncStatus.reason`. Min/Max is then one day stale, not wrong. It self-heals the next
-night.
+### 5c. The PO download still works
+
+```bash
+npx vite-node scripts/verify-po-csv.mjs      # read-only
+```
+Then click **⬇ PO Team Download** in the Tool Output tab. Expect
+`PO_Targets_2026-08-04_demand-thru-2026-08-03.csv`.
+- **If all four download buttons are disabled with an amber banner, that is the freshness gate working**
+  — the tab was open across the nightly publish. Click `↻ Reload now`. See the Tool Output Download
+  section in CLAUDE.md.
+
+### If it did not publish
+
+`invoiceSyncStatus.reason` says why. Min/Max is then **one day stale, not wrong**, and the fixed-lag D-3
+re-fetch heals the hole within three nights. Do **not** reach for a manual CSV upload: it replaces
+entirely, and the Zoho export locale still emits `DD/MM/YYYY` so the date guard will refuse it anyway
+(Open Work item 19).
+
+⚠ `scripts/compare-invoice-shadow.mjs` is **no longer the right tool** — `invoice_data_shadow` has been
+frozen since the cutover, so it now compares the live row against a stale snapshot and its verdict is
+noise. Drop that row once this step passes.
 
 ---
 
