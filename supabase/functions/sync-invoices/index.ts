@@ -1,9 +1,19 @@
 // sync-invoices — nightly invoice pull from Zoho Inventory.
 //
-// TARGET IS STILL THE SHADOW ROW. `TARGET_ROW` below is `invoice_data_shadow`, which
-// nothing reads, so this cannot affect Min/Max, Stock Health or the TO tool whatever
-// it produces. Stage 5 is a one-line change of that constant, after a morning
-// reconciliation against a manual CSV export (scripts/compare-invoice-shadow.mjs).
+// ⚠ TARGET IS THE LIVE ROW — Stage 5 went live 2026-08-03. `TARGET_ROW` below is
+// `invoice_data`, which IMS reads on every page load to recompute Min/Max client-side,
+// and which feeds Stock Health and (via params/toTargets) the TO tool. What this
+// function writes IS the demand the business stocks to. The ALL-OR-NOTHING property
+// below is what makes that safe: a failed night leaves the previous complete pull in
+// place rather than a partial day.
+//
+// Cutover evidence (2026-08-03): the shadow row was reconciled against a manual Zoho
+// export covering 07-27..08-02 — 8,028 of 8,028 sellable CSV rows present, 0 rows
+// missing on all 7 dates, identical qty and SKU×DS aggregates on 6 of 7. The single
+// difference (07-31, +2 rows) was one invoice voided after the pull: the documented
+// ~0.9% over-count residual of the {void,draft} blocklist, self-corrected by the D-3
+// re-fetch. Rollback is this constant back to "invoice_data_shadow" + redeploy, or
+// `select cron.unschedule('invoices-sync-window');`.
 //
 // SCHEDULE — 19:05-22:20 UTC = 00:35-03:50 IST, eight slots (`5,20 19-22 * * *`).
 //   Moved 2026-07-29 from a single 21:30 IST run. Two reasons:
@@ -45,7 +55,7 @@ import { shouldRun } from "../_shared/syncCooldown.ts";
 const BASE = "https://www.zohoapis.in/inventory/v1";
 const ORG = () => Deno.env.get("ZOHO_ORG_ID")!;
 
-const TARGET_ROW = "invoice_data_shadow";  // ⚠ Stage 5 flips this to "invoice_data"
+const TARGET_ROW = "invoice_data";         // LIVE since Stage 5, 2026-08-03
 const BUFFER_ROW = "invoice_sync_buffer";  // in-flight rows; not read by anything else
 
 const VOID_RECHECK_DAYS_BACK = 3;  // re-fetch D-3 so a late void gets corrected

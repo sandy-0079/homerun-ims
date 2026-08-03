@@ -3127,18 +3127,33 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   // Re-read on `provTick` (bumped after any upload or Apply) and on a 5-min timer so
   // ages tick over in a tab left open — a long-lived tab is exactly the case that
   // goes stale without anyone noticing.
-  const [provRaw, setProvRaw] = useState({ manual: {}, catalogueAt: null, targetsAt: null });
+  const [provRaw, setProvRaw] = useState({ manual: {}, catalogueAt: null, targetsAt: null, invoiceAt: null, floorAt: null });
   const [provNow, setProvNow] = useState(() => Date.now());
   const [provTick, setProvTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [manual, catalogueAt, targetsAt] = await Promise.all([
+      const [manual, catalogueAt, targetsAt, invoiceAt, floorStatus] = await Promise.all([
         loadFromSupabase("params", "uploadProvenance"),
         loadPayloadKey("params", "catalogueSyncStatus", "at"),
         loadPayloadKey("params", "toTargets", "refreshedAt"),
+        // ⚠ `publishedAt`, NOT `at`. `at` is stamped on every run INCLUDING failures, so
+        // it would claim an auto-sync produced the value on a night that refused to write
+        // — the failure mode this card exists to expose. `publishedAt` is set only by the
+        // atomic publish that actually replaced the row, so it is already ok-gated.
+        loadPayloadKey("params", "invoiceSyncStatus", "publishedAt"),
+        loadFromSupabase("params", "skuFloorSyncStatus"),
       ]);
-      if (!cancelled) { setProvRaw({ manual: manual || {}, catalogueAt, targetsAt }); setProvNow(Date.now()); }
+      // Same hazard, no equivalent field: sync-sku-floors stamps `at` on every exit and
+      // stores no last-success timestamp, so gate on `ok` by hand. On a failed night this
+      // falls back to the manual stamp — which understates, but never asserts a freshness
+      // that did not happen. ⚠ `catalogueAt` above has this same flaw and no fix here;
+      // the real one is a `lastOkAt` timestamp written by each sync. See CLAUDE.md.
+      const floorAt = floorStatus?.ok ? (floorStatus.at ?? null) : null;
+      if (!cancelled) {
+        setProvRaw({ manual: manual || {}, catalogueAt, targetsAt, invoiceAt, floorAt });
+        setProvNow(Date.now());
+      }
     })();
     return () => { cancelled = true; };
   }, [provTick]);
@@ -3154,16 +3169,34 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     [invoiceData, skuMaster, priceData, minReqQty, newSKUQty, deadStock],
   );
 
-  // Which write produced each value. ⚠ invoiceData has NO auto source yet:
-  // sync-invoices publishes to team_data/invoice_data_shadow, so nothing automatic
-  // has ever written the live row. Wiring it in before Stage 5 would claim an
-  // auto-sync that never happened. The other three are ops-only by design.
+  // Which write produced each value.
+  //
+  // ⚠ THIS MAP MUST BE AUDITED WHENEVER A SYNC TAKES OVER AN INPUT — a `null` here is a
+  // claim that only humans write the key, and it goes silently wrong the day that stops
+  // being true. Both wrong entries were found the same way, by someone reading the card
+  // and asking why it said "manual":
+  //   * `newSKUQty` was null from 2026-07-30 to 2026-08-03 even though Stage 8
+  //     (`sync-sku-floors`) began writing it nightly on 07-31. Three unattended syncs ran
+  //     and the pill kept crediting a human's 07-31 upload.
+  //   * `invoiceData` was null CORRECTLY until Stage 5 (2026-08-03) — sync-invoices
+  //     published to `invoice_data_shadow`, so nothing automatic had touched the live row
+  //     and wiring it earlier would have claimed a sync that never happened. It now
+  //     writes the live row, so it is wired.
+  //
+  // The knock-on was worse than a wrong label: `assessModel` compares `toTargets` against
+  // these timestamps, so with invoiceData pinned to a 2-day-old manual stamp the header
+  // read "✓ Model up to date" on 2026-08-03 while `toTargets.inputs.invoiceDataThrough`
+  // was 07-30 and the row held 08-02. A stale provenance entry doesn't just mislabel the
+  // input — it silences the staleness check that depends on it.
+  //
+  // `minReqQty` and `deadStock` are genuinely ops-only (judgement calls, not Zoho data).
   const inputProvenance = useMemo(() => {
     const autoAtFor = {
       skuMaster: provRaw.catalogueAt,
       priceData: provRaw.catalogueAt,
-      invoiceData: null,
-      minReqQty: null, newSKUQty: null, deadStock: null,
+      invoiceData: provRaw.invoiceAt,
+      newSKUQty: provRaw.floorAt,
+      minReqQty: null, deadStock: null,
     };
     const out = {};
     for (const key of Object.keys(inputSummaries)) {
