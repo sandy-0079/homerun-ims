@@ -13,7 +13,7 @@
 > one-glance confirmation. **Delete that runbook and this second paragraph once it passes.**
 > (`docs/HANDOFF-2026-07-31.md` is deleted — it was transient state for the 07-31 night.)
 
-HomeRun operates 5 dark stores (DS01–DS05) + one DC. This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold.
+HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold. (DS06 Kogilu went live ~2026-07-08; `DS_LIST` in `constants.js` has six entries and everything iterates it.)
 
 ---
 
