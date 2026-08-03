@@ -840,6 +840,90 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 
 ---
 
+## Tool Output Download Tab
+
+**Four download cards, no table** (rebuilt 2026-08-03 — commits `9a64dee`, `bf35922`, `f3958a7`).
+The Min/Max table that used to fill this tab is gone: it was virtualised so it cost little to render,
+but every number it showed is in SKU Detail, Overview, Stock Health or Manual Overrides, and the tab is
+called *Download*. Removing it also retired `outputRows`, `outputScrollTop` and `visibleOutput`.
+
+| card | file | shape |
+|---|---|---|
+| **PO Team Download** (orange, leftmost) | `PO_Targets_<today>_demand-thru-<date>.csv` | **20 cols** · all master SKUs |
+| Tool Output — DS Level | `IMS_Output_DS.csv` | 15 cols · unchanged |
+| Tool Output — DC | `IMS_Output_DC.csv` | 5 cols · unchanged |
+| SKU Master | `SKU_Master.csv` | 8 cols · Status now normalised |
+
+### ⚠⚠ The PO column order is a FROZEN CONTRACT
+`src/poTargetsCsv.js` — `PO_CSV_HEADERS`:
+```
+Item Name · Inventorised At · SKU · Category · Brand · Status ·
+DC Min · DC Max · DS01 Min · DS01 Max · … · DS06 Min · DS06 Max
+```
+The PO team's Google Sheet formulas key on column **POSITION**, so reordering or inserting a column
+**produces wrong purchase orders, not an error**. Anything added later goes **AFTER `DS06 Max`** — same
+rule as the Stock Health CSV's two appended columns. A test asserts the literal 20-column order so a
+reorder fails loudly.
+- **⚠ Derive indices, never hardcode them.** Inserting `Brand` after `Category` on 2026-08-03 shifted all
+  14 numeric columns one right and would have silently desynced both the test file and
+  `scripts/verify-po-csv.mjs`, which had positions written in by hand. They now read
+  `PO_FIRST_NUMERIC_COL` / a name→index map off the header.
+- **Targets only, deliberately** — no stock, no in-transit, no suggested quantity. The sheet owns the
+  ordering arithmetic, so the file has **no dependency on stock freshness**.
+- **Every master SKU is emitted**, including the ~89 Supplier / non-active rows that read 0/0. That is
+  *why* `Inventorised At` and `Status` are columns: they are what let the sheet filter those out, which
+  the older files gave no way to do. A stable row set also stops formulas shifting when a SKU is
+  deactivated.
+- Read-only re-check any time: `npx vite-node scripts/verify-po-csv.mjs` — asserts the header, that
+  **every** row has exactly 20 columns (one unescaped comma in an item name would shift that row alone),
+  and that the structural zeros hold.
+
+### ⚠ Status is normalised — and four spellings were live
+`src/skuStatus.js` `normaliseStatus`, shared by the PO file and the SKU Master CSV so the two can never
+disagree. Measured live 2026-08-03, `skuMaster.status` held **four spellings at once**:
+`active` 2090 · `inactive` 27 · **`Inactive` 1** · `confirmation_pending` 3. So a sheet formula
+`=IF(E2="Active", …)` matched **zero rows** and `="active"` missed one. Output is now
+`Active` / `Inactive` / `Confirmation Pending`; a status Zoho adds later arrives readable
+(`on_hold` → `On Hold`) rather than raw.
+- **⚠ NOT for engine logic.** Three call sites still read the raw lowercase value for counting, and the
+  engine gates Min/Max on an allowlist of exactly `"active"`. **A display transform must never decide
+  whether a SKU gets stocked** — leave those alone.
+
+### ⚠ All four downloads are GATED on demand freshness
+These files serialise a **client-side engine run from page load**, so a tab left open overnight produces
+yesterday's Min/Max in a file that looks entirely normal — and the PO team commits spend from it. On
+opening the tab, and on the 5-minute tick that already drives the provenance pills, the newest invoice
+date *this tab computed from* is compared against the newest date **published** to Supabase
+(`params/invoiceSyncStatus.dates`, taken from the same read that feeds the Invoice Data pill, so gating
+costs no extra request). If the page is behind: amber banner naming both dates, a `↻ Reload now` button,
+and **all four buttons disabled**. Reload recomputes through the existing load path rather than
+re-implementing the engine inside a click handler.
+- **⚠⚠ TRI-STATE — `unknown` MUST NEVER BLOCK** (`assessOutputFreshness`, `src/freshness.js`). The two
+  failure directions are not symmetric: a stale file is **mildly wrong and correctable**, a download
+  blocked at 06:00 IST **stops purchasing for the day**. So capability is removed ONLY on positive
+  evidence — both dates present and the published one genuinely newer. A missing status row, slow
+  network, malformed date, or a night the sync did not publish all resolve to `unknown`, which downloads
+  freely. **Blocking on uncertainty turns a freshness check into an availability risk on the critical
+  path.** Seven of the nine tests assert exactly this.
+- Consequence to expect: each night between the invoice publish (~04:00 IST) and the engine run (~05:45),
+  a tab left open from the previous day shows all downloads disabled until reloaded. That is the feature.
+- All four are gated, not just PO — the DS/DC files are equally stale, and SKU Master embeds engine
+  output (`Price Tag`, `Top N`).
+
+### ⚠ A GREEN BUILD IS NOT EVIDENCE THAT JSX RUNS
+Three bugs in this work **all passed `npm run build` cleanly** and would each have broken production:
+1. `dlCSV` is defined inside the Upload tab's IIFE — out of scope on this tab, so all four cards would
+   have thrown on click. (Hence the module-level `downloadCsvFile`.)
+2. `PO_CSV_HEADERS` was used on a card but never imported — `ReferenceError`, white-screened the tab.
+3. `setOutputScrollTop` was still called in `handleTabClick` after the table's state was removed —
+   **that throws on every tab click, breaking navigation app-wide.**
+
+esbuild does not resolve undefined identifiers, so `npm run build` says nothing about them. What caught
+all three was **`npx eslint src/ | grep no-undef`** plus actually loading the page. Run both before any
+frontend push. (Lint baseline is **79 problems** — an earlier note here said 68, which was stale.)
+
+---
+
 ## What's Parked (don't revisit without new data)
 
 - **CV-based demand shaping:** 96.3% combos have CV>2.0 (sparsity-driven). No segmentation power.
@@ -926,10 +1010,14 @@ source, then drop the hand-gating. ⚠ Piggyback on a deploy you are making anyw
 functions for observability alone.
 
 ### 20. Pin the provenance invariant with a test
-`src/freshness.js` has **no test file**, and it is the module that decides whether the UI tells the truth.
 Extract `autoAtFor` from `App.jsx` and assert that **every input with an auto writer has a non-null
 `autoAt`** — literally the 2026-08-03 bug. Same shape as `invoiceCsvRoundTrip` / `paramConfigRows` /
 `teamDataBundle`.
+- ⚠ **An earlier version of this entry claimed `src/freshness.js` has no test file. That was wrong** —
+  `src/freshness.test.js` has existed since 2026-07-30 (37 tests as of 08-03). The gap is narrower than
+  stated: the module's *pure functions* are well covered; what is unpinned is the `autoAtFor` **map**,
+  which lives in `App.jsx` and is therefore not reachable from that suite. Extracting it is the whole
+  task.
 
 ### 21. `demand through …` in the TO tool footer
 The IMS chip has it since 2026-08-03; the TO tool footer still shows only `refreshedAt` and flags stale
@@ -940,6 +1028,11 @@ but here the consequence is transfer quantities. Repo: `homerun-to`.
 It can no longer *clobber* `team_data` (see `teamDataBundle.js`) but still computes from a stale
 catalogue, and can publish a stale `params/toTargets` if someone clicks Apply. Wants change-detection or
 a "catalogue updated, reload" prompt. Habit meanwhile: **reload before clicking Apply.**
+- **✅ The DOWNLOAD half of this gap is closed (2026-08-03)** — all four Tool Output downloads are now
+  gated on demand freshness, so a stale tab cannot produce a CSV. See the Tool Output Download section.
+  What remains is **Apply**, which is the higher-consequence half: it writes `params/toTargets`. The same
+  tri-state assessment could gate it, but Apply is not a download — blocking it would strand a genuine
+  config change, so it likely wants the "catalogue updated, reload" prompt instead.
 
 ### 7. Read-only config visibility for non-admins — Logic Tweaker + Overrides tabs
 **Verified still open 2026-08-03:** `PUBLIC_TABS` (`App.jsx:3589`) lacks `logic` and `overrides`, so
@@ -1274,6 +1367,11 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
 
 > **4** (rethink the Tool Output tab) and **5** (full UI polish pass) were **dropped 2026-08-03** — open
 > since April with no specifics. Numbers retired, not reused.
+>
+> ⚠ **4 then got done anyway, later the same day** — the tab was rebuilt as four download cards with the
+> table removed, and gained the PO Team Download. So the item was not wrong, just unspecified; a concrete
+> need ("the PO team wants one CSV") produced in an afternoon what an open-ended "rethink" had not in four
+> months. See the **Tool Output Download Tab** section for what it is now.
 
 ### 6. Plywood Network Design ✅ Shipped (2026-04-28)
 Network Design strategy in engine (`src/engine/strategies/plywoodNetwork.js`). Full UI in PlywoodNetworkTab.jsx — unified SKU table with zone colouring, DC tab, brand assignment editor, compact modal with zone-aware formula display and lookback-period charts.
