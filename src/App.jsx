@@ -3799,13 +3799,17 @@ const visibleOutput = useMemo(() => {
         // read 1,921 when only 1,021 SKUs had a floor, because 900 stored values are
         // `0` and a zero floor is the absence of a floor.
         const sum = inputSummaries;
-        // SKU Floors belongs in the AUTO bucket: the Google Sheet sync is the agreed
-        // next step. Its own pill still reads "manual" until that ships, which is the
-        // honest signal — "should be automatic, currently isn't" is more useful than
-        // filing it away under ops.
+        // SKU Floors is genuinely auto since Stage 8 (sync-sku-floors, 2026-07-31).
+        //
+        // ⚠ NO `note` HERE ON PURPOSE — for an auto-synced input the hardcoded note is
+        // actively harmful, not just stale. SourcePill does `note || prov.note`, so a
+        // literal string SUPPRESSES the state-derived note from assessSyncedInput —
+        // including "Auto-sync has missed a night". This card carried
+        // "Google Sheet sync is the next step" for three days after that sync went live,
+        // so the one input whose overdue warning we most needed could not have shown it.
+        // Leave `note` off anything with an auto writer; let the derived note through.
         const autoBucketCards=[
-          {label:"SKU Floors - DS Level",desc:"Per-store manual Min/Max floors. Columns: SKU, DS01 Min, DS01 Max, ..., DS05 Max",handler:handleNSQ,key:"newSKUQty",required:true,
-           note:"Google Sheet sync is the next step — manual upload until then",
+          {label:"SKU Floors - DS Level",desc:"Per-store Min/Max floors from the ops Google Sheet. Columns: SKU, DS01 Min, DS01 Max, ..., DS06 Max",handler:handleNSQ,key:"newSKUQty",required:true,
            count:`${sum.newSKUQty.count.toLocaleString()} ${sum.newSKUQty.unit}`,hasData:sum.newSKUQty.total>0},
         ];
         const opsCards=[
@@ -3882,7 +3886,8 @@ const visibleOutput = useMemo(() => {
                 <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
                   <div style={{fontSize:11,color:HR.green,fontWeight:600}}>{sum.invoiceData.count.toLocaleString()} {sum.invoiceData.unit}</div>
                   <div style={{fontSize:9,color:HR.muted,marginTop:1}}>{sum.invoiceData.days}d · to {sum.invoiceData.through||"—"}</div>
-                  <div style={{marginTop:3}}><SourcePill prov={inputProvenance.invoiceData} note="Invoice Data — auto-sync arrives at Stage 5; manual upload until then"/></div>
+                  {/* No `note` — auto since Stage 5 (2026-08-03); see autoBucketCards. */}
+                  <div style={{marginTop:3}}><SourcePill prov={inputProvenance.invoiceData}/></div>
                 </div>
               </div>
               <div style={{marginTop:"auto"}}>
