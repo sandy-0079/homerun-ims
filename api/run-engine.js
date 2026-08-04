@@ -38,6 +38,7 @@ import { runEngine } from "../src/engine/index.js";
 import { DEFAULT_PARAMS, DS_LIST } from "../src/engine/constants.js";
 import { loadParamConfigRows } from "../src/paramConfigRows.js";
 import { mergeCoreOverrides, buildToTargets, assessTargetsChange, buildInputsStamp } from "../src/toTargets.js";
+import { computeInvValue } from "../src/invValue.js";
 
 const LIVE_ROW = "toTargets";
 const SHADOW_ROW = "toTargets_shadow";
@@ -123,6 +124,25 @@ export default async function handler(req, res) {
     const built = buildToTargets(mergeCoreOverrides(raw, sbOverrides), DS_LIST);
     const engineMs = Date.now() - tEngine;
 
+    // Network inventory value, for the nightly digest's directional line.
+    //
+    // ⚠ NON-FATAL BY CONSTRUCTION. This is a reporting nicety riding along on the row
+    // that feeds transfer orders; it must never be able to stop the write. Same
+    // pattern as create-to's toSnapshots. A null here degrades the email to "no value
+    // line", which is the correct failure direction.
+    //
+    // ⚠ Computed from `raw`, NOT from `built`. Two reasons: `built` is the DS-only,
+    // DC-inventorised-Active slice (measured 33.3% below the card), and `raw` is the
+    // exact basis App.jsx's `kpis` uses, so the email and the Overview card agree.
+    // Overrides are empty today so raw and merged coincide; matching the card is the
+    // tie-breaker if they ever diverge.
+    let invValue = null;
+    try {
+      invValue = computeInvValue(raw, team?.priceData ?? {}, DS_LIST);
+    } catch (e) {
+      console.error("run-engine: invValue failed (non-fatal):", e);
+    }
+
     // Baseline is ALWAYS the live row, even on a shadow run — that is what makes a
     // shadow run informative: it reports what a live write would have done.
     const change = assessTargetsChange({ built, live: liveTo?.targets ?? {} });
@@ -154,6 +174,7 @@ export default async function handler(req, res) {
         counts: { added: change.added.length, removed: change.removed.length },
       },
       inputs,
+      invValue,
       timing: { loadMs, engineMs, totalMs: Date.now() - started },
       wroteTo: null,
     };
@@ -165,7 +186,10 @@ export default async function handler(req, res) {
 
     if (mode !== "dry") {
       const row = mode === "live" ? LIVE_ROW : SHADOW_ROW;
-      await save("params", row, { targets: built, refreshedAt: new Date().toISOString(), engineCommit, inputs });
+      // `invValue` is a new TOP-LEVEL key alongside targets/inputs/refreshedAt.
+      // Safe by inspection: SKUs live nested under `targets`, so it cannot shadow one,
+      // and assessTargetsChange counts `liveTo?.targets` — never top-level keys.
+      await save("params", row, { targets: built, refreshedAt: new Date().toISOString(), engineCommit, inputs, invValue });
       status.wroteTo = row;
       await save("params", STATUS_ROW, { ...status, at: new Date().toISOString() });
     }

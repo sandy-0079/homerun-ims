@@ -7,6 +7,7 @@ import { summariseInputs } from "./inputSummary";
 import { mergeCoreOverrides, buildToTargets, buildInputsStamp } from "./toTargets";
 import { buildPoTargetsCsv, poCsvFilename, PO_CSV_HEADERS } from "./poTargetsCsv";
 import { normaliseStatus } from "./skuStatus";
+import { computeInvValue } from "./invValue";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
@@ -2550,19 +2551,12 @@ function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange
     const skusSold = activeSkus.filter(r => soldSkus.has(r.sku)).length;
     const zeroSale = activeCt - skusSold;
 
-    let invMin = 0, invMax = 0;
-    if (results) {
-      Object.entries(results).forEach(([sku, r]) => {
-        const p = priceData[sku] || 0;
-        DS_LIST.forEach(ds => {
-          invMin += (r.stores[ds]?.min || 0) * p;
-          invMax += (r.stores[ds]?.max || 0) * p;
-        });
-        invMin += (r.dc?.min || 0) * p;
-        invMax += (r.dc?.max || 0) * p;
-      });
-    }
-    return { activeCt, skusSold, zeroSale, invMin: Math.round(invMin), invMax: Math.round(invMax) };
+    // ⚠ SHARED with api/run-engine.js via src/invValue.js. The nightly digest mails
+    // this figure every morning; an inline copy here is how the email would come to
+    // quietly disagree with the card it is meant to summarise. Same reasoning as
+    // src/toTargets.js having two writers on one builder.
+    const { min: invMin, max: invMax } = computeInvValue(results, priceData, DS_LIST);
+    return { activeCt, skusSold, zeroSale, invMin, invMax };
   }, [activeSkus, filteredInv, results, priceData]);
 
   // Helper: get inv min/max for a SKU given store selection
