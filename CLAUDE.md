@@ -22,6 +22,11 @@
 >
 > Cleanup done 2026-08-04: the Stage 5 runbook and the frozen `team_data/invoice_data_shadow` row are
 > both deleted, along with `docs/HANDOFF-2026-07-31.md`. All were transient cutover state.
+>
+> 🚧 **ONE CHECK OPEN — morning of 2026-08-05: [`docs/RUNBOOK-2026-08-05-MORNING.md`](docs/RUNBOOK-2026-08-05-MORNING.md).**
+> Two things fire unattended for the first time tonight: the **`nightly-digest` cron** (deployed and
+> hand-tested, never auto-fired) and the **invoice window on 12 slots**. Delete that file and this
+> paragraph once it passes.
 
 HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold. (DS06 Kogilu went live ~2026-07-08; `DS_LIST` in `constants.js` has six entries and everything iterates it.)
 
