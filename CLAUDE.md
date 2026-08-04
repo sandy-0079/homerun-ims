@@ -729,7 +729,9 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
   - `orders-sync-hourly` at `:50 UTC` (:20 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket). Moved from :35 on 2026-07-08 (migration `20260708000001`) — at :35 it collided with stock-sync-1's `team_data/global` write (statement timeout left DC+DS01 74m stale).
   - `catalogue-sync-earlier` at `25,55 16,17 * * *` UTC + `catalogue-sync-nightly` at `25 18 * * *`
     → five attempts, 21:55–23:55 IST (migrations `20260730000001` + `20260729000002`)
-  - `invoices-sync-window` at `5,20 19-22 * * *` UTC → 00:35–04:00 IST
+  - `invoices-sync-window` at `5,15,25 19-22 * * *` UTC → 00:35–03:55 IST, **twelve slots**
+    (widened from eight on 2026-08-04, migration `20260804000002`, via `cron.alter_job` so the
+    POST command could not be disturbed — verified by md5)
   - **`sku-floors-sync` at `5,55 23 * * *` UTC → 04:35 + 05:25 IST** (migration `20260731000001`) →
     the ops Google Sheet into `newSKUQty`. Body **MUST** carry `{"dryRun": false}`.
   - **`engine-run-nightly` at `15,45 0 * * *` UTC → 05:45 + 06:15 IST** (migration `20260731000002`) →
@@ -1015,26 +1017,44 @@ used.** Not a code change; a Zoho setting. Cheap, and it is the emergency path.
 - Its old blocker ("held pending Network Design learnings") was satisfied on 2026-04-28 and nobody
   revisited for three months. **Decide it: do it, or park it with a stated reason.**
 
-### 25. Invoice sync uses 6 of its 8 slots — decide before volume forces it
-Measured 2026-08-04 (night 1): `CHUNK_INVOICES = 250`, 1,169 invoices over two dates → 5 fetch chunks
-(00:35, 00:50, 01:35, 01:50, 02:35) + publish at 02:50. **Ceiling is ~1,750 invoices/night**
-(7 chunks + a publish slot), against ~1,169 today — and those 2 spare slots are also the retry budget.
-- **The D-3 re-fetch is half the cost for a tiny return:** it consumed 1,175 of the 2,408 detail calls
-  and corrected **2 rows**.
-- **⚠ THE OBVIOUS FIX IS WRONG.** "Fetch only *modified* invoices for the D-3 date" collides with
+### 25. The D-3 recheck re-fetches ~585 invoices to change ~2 rows
+**Half the runway problem is fixed; the waste is not.** Slots went 8 → 12 on 2026-08-04 (migration
+`20260804000002`), which carries N to 2,750 invoices/night ≈ **~1,375 orders/day** against ~600 today.
+That bought time, not a cure.
+
+**The waste, measured night 1:** the D-3 re-fetch consumed **1,175 of 2,408 detail calls — half the
+night — and corrected 2 rows.**
+
+- **⚠ THE RECHECK IS NOT OPTIONAL, and the reason is not voids.** It catches four things, and *three*
+  are under-counts (the expensive direction): an invoice **created** after the pull, a **line item
+  added** to an existing one, and invoices lost to `MAX_LOST_PCT` — the initial pull may silently
+  publish having lost up to 0.5% of a day, and this is the only thing that heals it. Voids are the
+  cheap direction. Do not "simplify" this away.
+- **⚠ AND THE OBVIOUS FIX IS WRONG.** "Fetch only *modified* invoices for D-3" collides with
   `mergeInvoiceRows`, which drops each fetched date **wholesale** — and stored rows carry no invoice
-  identity (`{date,sku,ds,qty,shopifyOrder,pin}`; `shopifyOrder` can be blank). A partial set would
-  delete the rest of that day. **Use modified-time as a TRIGGER, not a payload:** list-only for D-3
-  (~3 header calls), and if nothing changed since publish, skip the date entirely; if anything moved,
-  re-fetch it whole. Fails in the safe direction — an over-sensitive `last_modified_time` just means
-  today's behaviour.
-- **⚠ There is a ZERO-DEPLOY lever, and it is not what the code comments imply.** `shouldRun` sits
-  inside the "no cursor yet" branch (`sync-invoices/index.ts:169`), so the 15-min cooldown gates only
-  the **start** of a night, never the drains. Extra cron slots may therefore sit closer than 15 minutes
-  apart: `5,20 19-22` → `5,15,25 19-22` is 12 slots (~3,000 invoices/night) as a **migration only**,
-  no function deploy. Only constraint is staying off `:35–:44` and `:50`.
-- Not urgent at 67% utilisation. Prefer the cron densify if it ever binds; bank the trigger design for
-  the next time `sync-invoices` is being deployed anyway.
+  identity (`{date,sku,ds,qty,shopifyOrder,pin}`; `shopifyOrder` is `reference_number` and can be
+  blank). A partial set would delete the rest of that day.
+- **⚠ SO IS THE FIRST FIX FOR THAT.** Using modified-time as a *trigger* (list; skip the date if
+  nothing changed) only pays off on nights where **nothing at all** changed — and night 1 changed. With
+  ~585 invoices/day at a ~0.9% void rate, something probably changes most nights, so the trigger likely
+  saves ~nothing. **Nobody has measured the rate.**
+- **The design that works — splice, don't re-fetch.** List the date (~3 header calls), then: now
+  `void`/`draft` ⇒ **delete its rows, zero detail calls** (you already know from the list); id we don't
+  hold ⇒ detail-fetch it; `last_modified_time` newer than recorded ⇒ detail-fetch and replace. **~5
+  calls instead of 585.** Needs `inv` (Zoho `invoice_id`) on stored rows.
+  - **Guard 1: NEVER delete on absence from the list — only on an explicit `void`/`draft` status.** A
+    partial/paginated list is indistinguishable from a mass void, and that mistake deletes real demand.
+  - **Guard 2: only splice a date where EVERY stored row carries `inv`; otherwise fall back to today's
+    full re-fetch.** D-3 is always three days old, so every recheck date qualifies within three days of
+    shipping, and the fallback is current behaviour — the failure mode is "no saving", never "wrong data".
+  - **Guard 3: keep a full re-fetch WEEKLY** (Sunday, the lightest day) to sweep up anything the
+    splice's assumptions missed — e.g. a change that does not bump `last_modified_time`. Average cost
+    ~88 calls/night instead of 585.
+- **⚠ DO PHASE 1 FIRST, AND IT IS MEASUREMENT, NOT CODE.** Stamp `inv` on new rows, record per-date
+  invoice count + `max(last_modified_time)` at publish, and record how much each recheck actually
+  changed. **Zero behaviour change**, and after a week it says whether the splice is worth building or
+  whether dropping the recheck to weekly is enough. Every option above — including the ones here — is
+  currently a guess.
 
 ### 18. `lastOkAt` written by each sync
 `sync-catalogue` and `sync-sku-floors` stamp `at` on **every** exit including failures, and store no
@@ -1140,7 +1160,8 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
 - **Stage 4 (REWORKED + DEPLOYED 2026-07-29; target flipped to the live row by Stage 5 on 2026-08-03
   — read the Stage 5 entry below for what that changed):** `sync-invoices` → **`team_data/invoice_data`**
   (`TARGET_ROW`, `index.ts:58`). Migration `20260729000001` **applied**: one cron
-  `invoices-sync-window` at **`5,20 19-22 * * *` UTC = 00:35–04:00 IST**, eight slots. Replaces the
+  `invoices-sync-window` at **`5,15,25 19-22 * * *` UTC = 00:35–03:55 IST**, twelve slots
+  (eight until 2026-08-04). Replaces the
   16:00/:06/:12 UTC jobs, which were built on the false "invoices complete by 20:30 IST" premise.
   - **Why overnight:** the day must be **settled**, not merely closed (see the Zoho INVOICES API
     section — a 21:30 pull lost 27.7% of quantity to `partially_paid`/`sent`). The window is idle
@@ -1152,7 +1173,7 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
     as ~02:00 IST. Any failure leaves the target holding the previous complete pull. **Timing alone
     cannot give this; atomicity can.**
   - **CONCURRENCY 4, chunks of 250, one hour apart** — reverted from 8. See "the 429 cascade": 8 drew
-    429s continuously and its own backoff sleeping blew the 150s wall clock. With eight slots there is
+    429s continuously and its own backoff sleeping blew the 150s wall clock. With twelve slots there is
     no deadline to beat, so Zoho's per-minute budget resets fully between chunks.
   - **A date with outstanding fetch failures is never marked complete.** Failed ids are retried in
     bounded rounds (`MAX_RETRY_ROUNDS 3`) by later slots; loss above `MAX_LOST_PCT` (0.5% of the *day's*

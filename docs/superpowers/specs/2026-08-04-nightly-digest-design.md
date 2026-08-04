@@ -84,7 +84,7 @@ right to fire on the first miss.
 It also does not self-heal: the sheet is read wholesale each night, so a floor added Monday and missed
 Monday night is simply absent until a run succeeds. And the remedy is trivial.
 
-Contrast invoices, which have eight slots *precisely because* Zoho is flaky. One miss there is
+Contrast invoices, which have twelve slots *precisely because* Zoho is flaky. One miss there is
 unremarkable; one miss in floors is not.
 
 ### 4. Green carries composition, not just volume

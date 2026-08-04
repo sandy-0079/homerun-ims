@@ -1,0 +1,63 @@
+-- invoices-sync-window: 8 slots -> 12. Schedule only; the function is NOT redeployed.
+--
+--   '5,20 19-22 * * *'    -> 00:35 00:50 · 01:35 01:50 · 02:35 02:50 · 03:35 03:50   (8)
+--   '5,15,25 19-22 * * *' -> 00:35 00:45 00:55 · 01:35 01:45 01:55 · …               (12)
+--
+-- WHY. One firing = one invocation = ONE chunk of up to CHUNK_INVOICES (250) invoices,
+-- or the final publish. The function does not loop. So slots needed is
+-- ceil(N / 250) + 1, and 8 slots caps N at 1,750 invoices/night = ~875 orders/day
+-- across the two dates a night pulls. Measured 2026-08-04 (night 1): 1,169 invoices
+-- over 08-03 Monday + 07-31 Friday — both normal trading days, so that is a
+-- representative pair, not a light one — using 6 of 8 slots. At the ~1,000 orders/day
+-- this business is heading for, N = 2,000 needs 9 slots and the night would NOT
+-- FINISH. 12 slots carry N up to 2,750 = ~1,375 orders/day.
+--
+-- ⚠ THIS DOES NOT INCREASE ZOHO LOAD. Total calls are set by invoice count, not slot
+-- count; concurrency stays 4 and each chunk is still ~250 calls in ~18s (~14/sec).
+-- A slot with nothing left to do returns `already_published` after ONE Supabase read
+-- and ZERO Zoho calls — measured at 0.6-0.8s on 2026-08-04. Slots are permission to
+-- work, not instructions to.
+--
+-- ⚠ AND IT MAKES THE TO WINDOW QUIETER, NOT BUSIER. TOs are occasionally raised as
+-- late as ~02:00 IST. Because the same fixed work now drains through more openings,
+-- today's volume finishes at ~01:55 instead of ~02:50 — the busy period shrinks and
+-- ends before the late-TO window. The extra slots only carry real work on heavy
+-- nights. (The TO tool is structurally insulated regardless: it reads params/toTargets
+-- and team_data/global, neither of which sync-invoices writes, and sync-invoices does
+-- not use params/syncLock, so there is no lease contention with its stock pull.)
+--
+-- ⚠ MINUTES. Within hours 19-22 UTC the only other jobs are stock-sync-1..4
+-- (:35 :38 :41 :44) and orders-sync (:50). :05, :15 and :25 are all free there.
+-- :25 is used by catalogue-sync at hours 16-18 and :15 by engine-run-nightly at hour
+-- 0 — different hours, no overlap. Free minutes remain :00-:34 and :51-:59.
+--
+-- ⚠ THE 15-MINUTE COOLDOWN IS NOT A CONSTRAINT HERE, unlike sku-floors-sync where
+-- slot spacing is load-bearing. `shouldRun` sits inside the `if (!draining)` branch
+-- (index.ts), so it gates only the START of a night; once a cursor exists every
+-- subsequent chunk bypasses it. The one case it bites — the first slot failing before
+-- it writes a cursor — improves: the retry moves from +60 min to +20 min, since :15
+-- no-ops on the cooldown and :25 clears it.
+--
+-- ⚠ USES alter_job, NOT schedule(). `cron.schedule` with an existing job name replaces
+-- the WHOLE job, schedule and command — so retyping that net.http_post block is the
+-- one way this change could break the sync. alter_job with only `schedule` set cannot
+-- touch the command by construction. Verify with:
+--     select jobname, schedule, md5(command) from cron.job
+--      where jobname = 'invoices-sync-window';
+-- The command md5 must still be 894e3d026f14f156401e492f31b04110 (431 bytes), and
+-- there must be exactly ONE row.
+--
+-- ⚠ WHAT THIS DOES NOT FIX. The waste: the D-3 recheck re-fetches ~585 invoices to
+-- change ~2 rows, half the night's budget. This buys runway, not a cure. See Open
+-- Work 25 — the fix wants invoice identity on stored rows so the recheck can splice
+-- rather than replace, and phase 1 of that is measurement, not code.
+--
+-- ROLLBACK — one statement, and the command is untouched either way:
+--   select cron.alter_job(
+--     job_id := (select jobid from cron.job where jobname = 'invoices-sync-window'),
+--     schedule := '5,20 19-22 * * *');
+
+select cron.alter_job(
+  job_id   := (select jobid from cron.job where jobname = 'invoices-sync-window'),
+  schedule := '5,15,25 19-22 * * *'
+);

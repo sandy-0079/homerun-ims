@@ -101,7 +101,7 @@ export function appendHistory(history: unknown, entry: ValuePoint, keepDays = 60
  *
  * `amberAt: null` means no amber tier — floors go straight to red. That is earned by a
  * near-zero benign failure rate: one HTTP GET to a Google Sheet, no Zoho, so it cannot
- * be caught in a 429 window or starved. Invoices have eight slots precisely because
+ * be caught in a 429 window or starved. Invoices have twelve slots precisely because
  * Zoho is flaky, so one miss there is unremarkable.
  */
 const SPEC = {

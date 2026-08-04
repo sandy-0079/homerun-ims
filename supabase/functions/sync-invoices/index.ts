@@ -15,7 +15,19 @@
 // re-fetch. Rollback is this constant back to "invoice_data_shadow" + redeploy, or
 // `select cron.unschedule('invoices-sync-window');`.
 //
-// SCHEDULE — 19:05-22:20 UTC = 00:35-03:50 IST, eight slots (`5,20 19-22 * * *`).
+// SCHEDULE — 19:05-22:25 UTC = 00:35-03:55 IST, TWELVE slots (`5,15,25 19-22 * * *`).
+//   Widened 2026-08-04 from eight (`5,20 19-22`) by migration 20260804000002, which
+//   used cron.alter_job so the POST command could not be disturbed. One firing = one
+//   invocation = ONE chunk, so slots needed is ceil(N/250)+1 and eight capped N at
+//   1,750 invoices/night = ~875 orders/day. Night 1 measured 1,169 invoices over two
+//   NORMAL trading days using 6 of 8; at the ~1,000 orders/day this is heading for,
+//   nine slots would be needed and the night would not finish.
+//   ⚠ This did not change Zoho load — total calls are set by invoice count, not slot
+//   count, and a slot with nothing to do returns `already_published` in ~0.7s with
+//   zero Zoho calls. It makes the night FINISH EARLIER (~01:55 rather than ~02:50 at
+//   today's volume), which also moves activity away from the ~02:00 IST window when
+//   the DC team occasionally still raises TOs.
+//
 //   Moved 2026-07-29 from a single 21:30 IST run. Two reasons:
 //
 //   1. 21:30 IST was chosen on a false premise. The old note here said invoices are
@@ -26,18 +38,21 @@
 //      would have IMS recompute Min/Max from half a day (IMS runs the engine
 //      client-side on every page load), so the write must be all-or-nothing.
 //
-//   The window is idle: trading ends 20:00 IST and ops POs start ~06:00 IST. Slots at
-//   :05 and :20 leave 15+ minutes clear of stock-sync-1..4 (:35-:44) and
-//   orders-sync-hourly (:50).
+//   The window is idle: trading ends 20:00 IST and ops POs start ~07:30 IST. Slots at
+//   :05, :15 and :25 sit inside the free band :00-:34, clear of stock-sync-1..4
+//   (:35-:44) and orders-sync-hourly (:50).
 //
 // PACING, NOT BACKOFF. The old design fetched a whole day in one invocation at
 // CONCURRENCY 8 to beat the 150s wall clock, and paid for it: on 2026-07-28, 44 calls
 // got 429 / 26 again / 15 exhausted and were dropped, and the ~960 worker-seconds of
 // backoff sleeping pushed the run to 172s where the gateway killed it with a 504. The
 // isolate kept running and still wrote, so the status row said ok:true over a day that
-// was 27.7% short. With eight slots and no deadline we go slow instead: a few hundred
-// invoices per invocation at CONCURRENCY 4, an hour apart, so Zoho's per-minute budget
-// resets fully between chunks and 429s stop being generated rather than retried.
+// was 27.7% short. With twelve slots and no deadline we go slow instead: up to 250
+// invoices per invocation at CONCURRENCY 4 — ~18s at ~14 calls/sec, measured — with
+// 10-40 minute gaps, so Zoho's per-minute budget (which resets every 60s) is fully
+// clear between chunks and 429s stop being generated rather than retried. The knob
+// that caused the cascade was CONCURRENCY, not the gap: 8 workers sustained ~28
+// calls/sec. Do not raise it back.
 //
 // ALL-OR-NOTHING. Chunks accumulate in `team_data/invoice_sync_buffer` (small — only
 // the 1-2 in-flight dates). The target row is written exactly ONCE, when every planned
@@ -61,7 +76,7 @@ const BUFFER_ROW = "invoice_sync_buffer";  // in-flight rows; not read by anythi
 const VOID_RECHECK_DAYS_BACK = 3;  // re-fetch D-3 so a late void gets corrected
 const CHUNK_INVOICES = 250;        // detail calls per invocation
 const CONCURRENCY = 4;             // was 8 — see PACING above
-const MAX_RETRY_ROUNDS = 3;        // bounded so a dead id can't eat all eight slots
+const MAX_RETRY_ROUNDS = 3;        // bounded so a dead id can't eat all twelve slots
 const MAX_LOST_PCT = 0.5;          // % of a date's invoices we tolerate losing
 const RETENTION_DAYS = 90;
 const UNKNOWN_SKU_LIMIT = 1;       // % — healthy runs measure 0.02-0.1%

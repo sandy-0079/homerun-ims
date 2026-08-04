@@ -595,7 +595,7 @@ All scheduling is `pg_cron` inside Supabase. **10 jobs.** Verify with
 | IST | UTC | job | writes |
 |---|---|---|---|
 | 21:55, 22:25, 22:55, 23:25, 23:55 | `25,55 16,17 *` + `25 18 *` | `catalogue-sync-earlier` / `-nightly` | `skuMaster`, `priceData` |
-| 00:35 – 04:00, 8 slots | `5,20 19-22 *` | `invoices-sync-window` | `invoice_data` |
+| 00:35 – 03:55, 12 slots | `5,15,25 19-22 *` | `invoices-sync-window` | `invoice_data` |
 | 04:35, 05:25 | `5,55 23 *` | `sku-floors-sync` | `newSKUQty` |
 | 05:45, 06:15 | `15,45 0 *` | `engine-run-nightly` | `params/toTargets` |
 | hourly :05 :08 :11 :14 | `:35 :38 :41 :44` | `stock-sync-1..4` | `stockData`, `stockDataAccounting` |

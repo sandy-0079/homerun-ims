@@ -20,7 +20,7 @@
 // WHY THIS EXISTS: on 2026-07-29 an org-wide Zoho 429 window (17:35-18:30 UTC)
 // killed every sync, including `catalogue-sync-nightly`'s single nightly fire.
 // The catalogue went 24h stale. `sync-invoices` rode out the SAME event because
-// it has eight slots; the catalogue had one.
+// it has twelve slots (eight until 2026-08-04); the catalogue had one.
 //
 // The fix is more slots — but `COOLDOWN_MS` is 15 minutes, far too short to act
 // as a once-per-night gate: five slots 30 minutes apart would mean five full
