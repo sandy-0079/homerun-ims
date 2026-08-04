@@ -1,6 +1,8 @@
 # Nightly digest — one email that says whether the chain worked
 
-**Open Work item 17.** Status: **spec + local dry run only.** Nothing deployed, nothing scheduled.
+**Open Work item 17.** Status: **SHIPPED 2026-08-04** — function deployed, cron scheduled at 06:30 IST,
+one email delivered by hand. ⚠ The cron's **first unattended firing is the morning of 2026-08-05**;
+until that is verified, nothing here has been proven to work without a human.
 
 ---
 
@@ -116,7 +118,8 @@ fine. `ineffective.total` is a first-class line in the email for this reason.
 Decision 1 already covers "the watchdog died", so scheduler independence buys less than it first appears.
 What remains favours pg_cron:
 
-- **Exact firing.** The email must land before POs start ~06:00–07:00.
+- **Exact firing.** The email must land before POs start (~07:30 IST, confirmed by the operator
+  2026-08-04; an earlier note said ~06:00, which was their own buffer rather than the real start).
 - **Existing operational tooling** — `cron.job_run_details` and the Management API log queries are already
   how this chain gets debugged.
 - **A new edge function gets its own bundle**, so adding one cannot disturb the six that are running.
@@ -200,7 +203,7 @@ chain. So **absent data raises red**, and says which row it could not read.
 | `supabase/functions/_shared/nightlyDigest.test.ts` | Pins every threshold above. 50 tests. |
 | `scripts/dryrun-nightly-digest.mjs` | Read-only. Imports the **real** module, prints the exact email. `--demo` for synthetic failures, `--with-value` runs the engine locally to preview the ₹ line. |
 | `supabase/functions/nightly-digest/index.ts` | Reads six params rows, calls the module, records history, posts to Resend. |
-| `supabase/migrations/20260804000001_nightly_digest_cron.sql` | **Written, NOT applied.** One cron at `0 1 * * *` UTC = 06:30 IST. |
+| `supabase/migrations/20260804000001_nightly_digest_cron.sql` | **Applied 2026-08-04.** One cron at `0 1 * * *` UTC = 06:30 IST. ⚠ Its header still reads "DO NOT APPLY UNTIL THE FUNCTION HAS BEEN DEPLOYED" — left deliberately: that is a **replay** precondition, still correct on a fresh database, and applied migration files are not edited. |
 | `api/run-engine.js` *(modified)* | +26 lines: stamps `invValue`, wrapped in try/catch. |
 | `src/App.jsx` *(modified)* | −14/+6: the inline KPI loop becomes a `computeInvValue` call. |
 
@@ -231,16 +234,22 @@ nothing about the thing that will actually send.
 | 0 | This spec | none | ✅ |
 | 1 | `scripts/dryrun-nightly-digest.mjs` — prints the real email from live data | reads only | ✅ |
 | 1b | Build everything: module, tests, edge function, migration, `invValue` stamp | none — all local | ✅ |
-| 2 | Brevo account + verified sender; set `BREVO_API_KEY` / `DIGEST_RECIPIENTS` / `DIGEST_FROM_EMAIL` | secrets only | account ✅, secrets pending |
-| 3 | `git push` — deploys the `invValue` stamp (Vercel) | **prod deploy** | pending consent |
-| 3b | Confirm `toTargets.invValue` appears after the next engine run, or via one `{"mode":"dry"}` call | reads only | pending |
-| 4 | `supabase functions deploy nightly-digest` — **BY NAME** | one new function; nothing scheduled | pending consent |
-| 4b | Invoke `{"send": false}`, then re-run the 2026-08-04 morning checks | no email | pending |
-| 5 | Invoke `{"send": true}` → one real email | one email; still no cron | pending |
-| 6 | Apply the cron migration | scheduled | pending |
+| 2 | Brevo account + verified sender; four secrets set | secrets only | ✅ |
+| 4 | `supabase functions deploy nightly-digest` — **BY NAME** | one new function | ✅ v2, other six untouched |
+| 4b | Invoke `{"send": false}`; re-verify the four nightly rows | no email | ✅ unchanged |
+| 5 | Invoke `{"send": true}` | one email | ✅ delivered to the Inbox |
+| 3 | `git push` — the `invValue` stamp (Vercel) | **prod deploy** | ✅ `3f5a878` |
+| 3b | Confirm `invValue` via `{"mode":"dry"}` | reads only | ✅ ₹7.9289Cr, matches the card |
+| 6 | Apply the cron migration | scheduled | ✅ `0 1 * * *` UTC |
+| **7** | **First unattended firing** | — | **🚧 2026-08-05 — see `docs/RUNBOOK-2026-08-05-MORNING.md`** |
 
-Note stage 3 lands a day before stage 5 can show a delta: the digest needs one prior
-day recorded, so **the first email will read `— first reading`**.
+⚠ **Deployed in a different order than planned, deliberately.** The new function went first, so the
+whole email pipeline was proven end-to-end while touching nothing that already existed; only then was
+prod code changed. The digest degrades gracefully when `invValue` is absent, which is what made the
+reordering safe.
+
+The first email will read **`— first reading`**: the delta needs a prior day in `digestHistory`, and
+the digest writes that only after computing the verdict. A real delta appears 2026-08-06.
 
 **Rollback:** `select cron.unschedule('nightly-digest');` — one statement, instant, complete. An
 unscheduled function does nothing.
