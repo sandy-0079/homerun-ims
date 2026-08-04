@@ -20,10 +20,8 @@
 > verification against the one value that indicates a fault. Generalisable: derive a check's expected
 > value from the write semantics (last successful run wins), not from the schedule.
 >
-> 🚧 **Two cleanups still awaiting the operator's go:** delete
-> [`docs/RUNBOOK-2026-08-03-STAGE5.md`](docs/RUNBOOK-2026-08-03-STAGE5.md) and this paragraph, and drop
-> the frozen `team_data/invoice_data_shadow` row.
-> (`docs/HANDOFF-2026-07-31.md` is deleted — it was transient state for the 07-31 night.)
+> Cleanup done 2026-08-04: the Stage 5 runbook and the frozen `team_data/invoice_data_shadow` row are
+> both deleted, along with `docs/HANDOFF-2026-07-31.md`. All were transient cutover state.
 
 HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold. (DS06 Kogilu went live ~2026-07-08; `DS_LIST` in `constants.js` has six entries and everything iterates it.)
 
@@ -137,8 +135,9 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
 - **Row inventory (2026-07-29).** `team_data`: `global`, `invoice_data`,
   `invoice_sync_buffer` (in-flight chunks for the 1–2 dates being pulled, keyed
   `date|round|offset` so a re-run of a chunk is idempotent; **nothing else reads it**),
-  `invoice_data_shadow` (**frozen since Stage 5, 2026-08-03** — no longer written, nothing reads it;
-  a stale 07-26…08-02 snapshot, drop it once the runbook's Step 5 passes),
+  (`invoice_data_shadow` was **deleted 2026-08-04** — verified first that all 8 of its dates existed in
+  the live row, none were pre-July, and where counts differed the live row was the *more* correct one,
+  post-void-correction),
   `invoice_data_backup_20260728` + `_20260729` + **`_20260803`** (the last is the Stage 5 cutover backup,
   75,699 rows / 90 dates verified; the API cannot re-serve anything before 2026-07-01, so these are the
   only copy of Apr–Jun history), `catalogue_backup_20260729`
@@ -993,9 +992,8 @@ see `homerun-to/CLAUDE.md`.
 reused. Items are listed in priority order, not numeric order. Everything shipped keeps its number in
 the changelog below.
 
-**🚧 First, once only:** Step 5 **passed** on 2026-08-04 (see the block at the top). Two cleanups are
-left and both await the operator's go: delete `docs/RUNBOOK-2026-08-03-STAGE5.md` plus that block's
-last paragraph, and drop the frozen `team_data/invoice_data_shadow` row.
+Step 5 **passed** on 2026-08-04 and its cleanup is done (see the block at the top) — the whole nightly
+chain now runs, and reports on itself, unattended.
 
 ### 19. The Zoho export locale is still `DD/MM/YYYY` — the documented rollback is unusable
 Measured again 2026-08-03: all rows. The date guard correctly refuses it (see the 2026-07-29 outage), so
@@ -1234,9 +1232,15 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
     (read-merge-write, never a partial PATCH). The older `invoice_data_backup_20260728` (73,178 rows)
     is still there. Take a fresh dated backup before any change of this shape; it turns a one-way door
     into an undo.
-  - **⚠ `team_data/invoice_data_shadow` IS NOW FROZEN AND WILL GO STALE** — `sync-invoices` no longer
-    writes it, and nothing reads it. It is a snapshot of 07-26…08-02, useful only as a cross-check of
-    the cutover. Do not treat it as current; drop it once Step 5 passes.
+  - **`team_data/invoice_data_shadow` is GONE (deleted 2026-08-04)** once Step 5 passed. It had been
+    frozen since the cutover — a stale 07-26…08-02 snapshot nothing read. ⚠ **Three dev scripts still
+    reference it and will now fail:** `compare-invoice-shadow.mjs` (already recorded below as the wrong
+    tool), `compare-csv-vs-shadow.mjs` (the cutover verifier) and `backfill-invoice-dates.mjs` (a
+    one-shot Stage 5 helper whose job is done and which would be actively wrong to re-run). Retire or
+    repoint them at `invoice_data` before anyone trusts their output — a script that reads a missing
+    row produces a confident wrong answer, which this file has learned twice already (`diag-items`,
+    `categoryStrategy`). The **rollback** noted in `sync-invoices/index.ts` still works: reverting
+    `TARGET_ROW` upserts the row back into existence.
   - **⚠ The retention trim bites for real from the first live night.** The row sat at 93 dates, so
     adding 08-03 makes 94 and `RETENTION_DAYS = 90` trims **four**: 05-02…05-05, 2,354 rows,
     **permanently and un-refetchably** (pre-July, and the API cannot serve them).
