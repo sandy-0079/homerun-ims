@@ -6,11 +6,23 @@
 > 05:45/06:15 → ops POs ~06:00. `minReqQty` and `deadStock` stay manual **by design** (ops judgement,
 > not Zoho data). **No manual invoice CSV is needed again**; upload remains the emergency override.
 >
-> 🚧 **ONE VERIFICATION STILL OPEN: Step 5 of [`docs/RUNBOOK-2026-08-03-STAGE5.md`](docs/RUNBOOK-2026-08-03-STAGE5.md)**,
-> the morning after the first live night (2026-08-04). Expected: `merge.datesTrimmed: 4`,
-> `datesReplaced: 1`, live row `05-06 → 08-03` / 90 dates / ~77,660 rows, and the Data Inputs chip
-> reading **`Last run: 2026-08-04 05:45 · demand through 2026-08-03`** — the two halves agreeing is the
-> one-glance confirmation. **Delete that runbook and this second paragraph once it passes.**
+> ✅ **STEP 5 PASSED on 2026-08-04 — the first unattended night worked.** Verified from the data, not
+> the runbook's table: live row **`05-06 → 08-03`, 90 contiguous dates, 77,642 rows**, `datesTrimmed: 4`
+> (05-02…05-05, 2,354 rows, counted out of `invoice_data_backup_20260803`), `datesReplaced: 1`,
+> `unknownPct 0`, `pinPct 100`. Row arithmetic closes exactly:
+> `78,765 − 2,354 trimmed − 1,177 (old 07-31) + 2,408 fetched = 77,642`, and the 07-31 re-fetch came back
+> **2 rows lighter** — the D-3 void correction doing its job. All four status rows green; every cron slot
+> fired. **`toTargets.inputs.invoiceDataThrough: "2026-08-03"`** — the whole point.
+>
+> ⚠ **The runbook expected the chip to read `05:45`; it reads `06:15`, and 06:15 is CORRECT.**
+> `engine-run-nightly` is `15,45 0 * * *` UTC — **two slots** — and the second rewrites
+> `toTargets.refreshedAt`. So 05:45 on the chip would mean the 06:15 run FAILED. The runbook asked for
+> verification against the one value that indicates a fault. Generalisable: derive a check's expected
+> value from the write semantics (last successful run wins), not from the schedule.
+>
+> 🚧 **Two cleanups still awaiting the operator's go:** delete
+> [`docs/RUNBOOK-2026-08-03-STAGE5.md`](docs/RUNBOOK-2026-08-03-STAGE5.md) and this paragraph, and drop
+> the frozen `team_data/invoice_data_shadow` row.
 > (`docs/HANDOFF-2026-07-31.md` is deleted — it was transient state for the 07-31 night.)
 
 HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold. (DS06 Kogilu went live ~2026-07-08; `DS_LIST` in `constants.js` has six entries and everything iterates it.)
@@ -136,7 +148,9 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
   `invoiceSyncStatus`, `invoiceSyncCursor`, `uploadProvenance` (**new 2026-07-30** — when each input was
   last set BY HAND; the browser is its only writer, syncs record their own times in their own status
   rows, so no key has two writers), `catalogueSyncStatus` (now also carries **`lastOkNight`** —
-  the once-per-night gate; see Stage 7).
+  the once-per-night gate; see Stage 7), **`digestHistory`** + **`digestStatus`** (new 2026-08-04 —
+  `nightly-digest` is the only reader and writer of both; history is `{days:[{date,min,max}]}`,
+  idempotent by IST date, trimmed to 60).
 - **⚠ Reading state? Query the exact key name.** `params/global` holds the strategy map under
   **`categoryStrategies`** (plural). A hand-rolled check that guessed `categoryStrategy` silently
   returned `{}` on 2026-07-30 and reported all 19 categories as unmapped — a confident wrong answer.
@@ -705,9 +719,9 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
       makes it one**, at which point revisit the "no recurring nightly Zoho window" conclusion above
       (which rests on 07-26/27/28 being clean).
 - **Architecture:** 4 staggered stock crons (3 branch pairs + DS06; ≤4 concurrent calls, never overlaps)
-  + orders + 2 catalogue + the invoice window + 2 floors + 2 engine. **10 jobs, no two sharing a
-  minute WITHIN THE SAME HOUR** (the floors and engine slots reuse free minutes at hours 23 and 00) —
-  verify with
+  + orders + 2 catalogue + the invoice window + 2 floors + 2 engine + the digest. **11 jobs, no two
+  sharing a minute WITHIN THE SAME HOUR** (the floors, engine and digest slots reuse free minutes at
+  hours 23, 00 and 01) — verify with
   `select jobname, schedule from cron.job order by jobname;`:
   - `stock-sync-1` at `:35 UTC` (:05 IST) → DC + DS01
   - `stock-sync-2` at `:38 UTC` (:08 IST) → DS02 + DS03
@@ -722,6 +736,11 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
   - **`engine-run-nightly` at `15,45 0 * * *` UTC → 05:45 + 06:15 IST** (migration `20260731000002`) →
     POSTs the **Vercel** endpoint `/api/run-engine`, which recomputes the engine and writes
     `params/toTargets`. Body **MUST** carry `{"mode":"live"}`. See Stage 6.
+    ⚠ **BOTH slots run — there is no once-per-night gate — so the SECOND one's stamp is what you see.**
+    A chip or footer reading `05:45` means the 06:15 run failed. Steady state is **06:15**.
+  - **`nightly-digest` at `0 1 * * *` UTC → 06:30 IST** (migration `20260804000001`) → one email
+    reporting whether the chain worked. **After** the engine's second slot, an hour before ops POs at
+    ~07:30 IST. `:00` is free and hour 01 UTC carries nothing else. See item 17 in the changelog.
   - **⚠ THE TWO NIGHTLY ADDITIONS ARE 50 MINUTES APART FOR A REASON, and it is not the Zoho limit.**
     `COOLDOWN_MS` (15 min) is stamped on FAILURE too, so a retry slot closer than that is silently
     refused. Measured against the real `shouldRun`: `23:05 fails → 23:20 retry` = **run=FALSE, wait
@@ -731,7 +750,9 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
     shifts 3h before taking the IST date — verified: `23:05Z` and `23:55Z` both key to the *same*
     night. Re-read it before adding any further post-midnight slot.
   - **Full nightly order:** catalogue 21:55–23:55 → invoices 00:35–04:00 → floors 04:35/05:25 →
-    engine 05:45/06:15 → ops POs ~06:00 IST.
+    engine 05:45/06:15 → **digest 06:30** → ops POs ~07:30 IST. (An earlier note here said POs start
+    ~06:00; the operator confirmed 2026-08-04 that 06:00 was their own buffer and the real start is
+    ~07:30.)
   - **Free minutes each hour: `:00–:34` and `:51–:59`.** `:35 :38 :41 :44` and `:50` are taken, and
     `:50` in particular writes `team_data/global`.
 - **syncLock (2026-07-08, deployed):** `sync-stock` acquires `params/syncLock` before pulling (released in `finally`; locks older than 5 min treated as leaked and taken over). A concurrent invocation gets `{ok:true, busy:true}` — callers (TO tool's on-demand pull) retry after ~30s. Prod-verified: concurrent calls → second returned busy, lock released cleanly after.
@@ -810,9 +831,15 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
     `sessionStart`, nothing retries and those branches stay stale for the full hour with no signal** —
     the argument for surfacing freshness in the UI rather than shortening the TTL, which exists to
     prevent the 2026-07-09 429 storm.
-- **Deployed function inventory (2026-07-31).** **SIX**, all load-bearing: `sync-stock`,
-  `sync-orders`, `create-to`, `sync-invoices`, `sync-catalogue`, **`sync-sku-floors`** (added
-  2026-07-31). Anything else you find deployed is drift — check before assuming it is wanted.
+- **Deployed function inventory (2026-08-04).** **SEVEN**, all load-bearing: `sync-stock`,
+  `sync-orders`, `create-to`, `sync-invoices`, `sync-catalogue`, `sync-sku-floors` (2026-07-31),
+  **`nightly-digest`** (2026-08-04). Anything else you find deployed is drift — check before assuming
+  it is wanted.
+  - ⚠ **ALWAYS NAME THE FUNCTION: `supabase functions deploy <name>`.** A bare
+    `supabase functions deploy` redeploys **all** of them with whatever `_shared/*` is on disk. This is
+    the single real hazard in adding a function; a named deploy bundles only the files that function
+    imports (verified 2026-08-04 — deploying `nightly-digest` uploaded exactly `index.ts` and
+    `_shared/nightlyDigest.ts`, and left the other six on their existing versions).
   - ⚠ A **seventh** surface now exists outside Supabase: **`api/run-engine.js` on Vercel** (Stage 6).
   It is not an edge function and will not appear in `supabase functions list` — see Stage 6.
   - **Deleted 2026-07-29:** `zoho-invoices`, `zoho-prices`, `zoho-skumaster` (Books-era importers,
@@ -966,21 +993,9 @@ see `homerun-to/CLAUDE.md`.
 reused. Items are listed in priority order, not numeric order. Everything shipped keeps its number in
 the changelog below.
 
-**🚧 First, once only:** verify the first live nightly run — **Step 5 of
-[`docs/RUNBOOK-2026-08-03-STAGE5.md`](docs/RUNBOOK-2026-08-03-STAGE5.md)**, morning of 2026-08-04.
-Then delete that runbook, the second paragraph of the block at the top of this file, and the frozen
-`team_data/invoice_data_shadow` row.
-
-### 17. Nothing tells anyone when a night fails ← highest value
-`invoiceSyncStatus`, `catalogueSyncStatus`, `skuFloorSyncStatus` and `engineRunStatus` are all written
-nightly and **nobody reads them**. On the Stage 5 cutover morning they were checked by hand; from
-2026-08-04 nobody will. The whole chain is now automatic but **not self-reporting** — that is the gap
-between "it runs every night" and "you will know if it didn't".
-- **⚠ Key it on DERIVED freshness (`toTargets.inputs.invoiceDataThrough`), not `ok:true`.** The
-  2026-07-28 run reported `ok:true` over a day missing 27.7% of its quantity. And see Stage 6: a run
-  clock cannot expose a stale input — if the invoice sync fails while the engine keeps succeeding,
-  `✓ Model up to date` is *true* and silent about it.
-- The Data Inputs chip now shows both facts, but that requires a human to open the app.
+**🚧 First, once only:** Step 5 **passed** on 2026-08-04 (see the block at the top). Two cleanups are
+left and both await the operator's go: delete `docs/RUNBOOK-2026-08-03-STAGE5.md` plus that block's
+last paragraph, and drop the frozen `team_data/invoice_data_shadow` row.
 
 ### 19. The Zoho export locale is still `DD/MM/YYYY` — the documented rollback is unusable
 Measured again 2026-08-03: all rows. The date guard correctly refuses it (see the 2026-07-29 outage), so
@@ -1001,6 +1016,27 @@ used.** Not a code change; a Zoho setting. Cheap, and it is the emergency path.
   written about. Standard is out of scope by design.
 - Its old blocker ("held pending Network Design learnings") was satisfied on 2026-04-28 and nobody
   revisited for three months. **Decide it: do it, or park it with a stated reason.**
+
+### 25. Invoice sync uses 6 of its 8 slots — decide before volume forces it
+Measured 2026-08-04 (night 1): `CHUNK_INVOICES = 250`, 1,169 invoices over two dates → 5 fetch chunks
+(00:35, 00:50, 01:35, 01:50, 02:35) + publish at 02:50. **Ceiling is ~1,750 invoices/night**
+(7 chunks + a publish slot), against ~1,169 today — and those 2 spare slots are also the retry budget.
+- **The D-3 re-fetch is half the cost for a tiny return:** it consumed 1,175 of the 2,408 detail calls
+  and corrected **2 rows**.
+- **⚠ THE OBVIOUS FIX IS WRONG.** "Fetch only *modified* invoices for the D-3 date" collides with
+  `mergeInvoiceRows`, which drops each fetched date **wholesale** — and stored rows carry no invoice
+  identity (`{date,sku,ds,qty,shopifyOrder,pin}`; `shopifyOrder` can be blank). A partial set would
+  delete the rest of that day. **Use modified-time as a TRIGGER, not a payload:** list-only for D-3
+  (~3 header calls), and if nothing changed since publish, skip the date entirely; if anything moved,
+  re-fetch it whole. Fails in the safe direction — an over-sensitive `last_modified_time` just means
+  today's behaviour.
+- **⚠ There is a ZERO-DEPLOY lever, and it is not what the code comments imply.** `shouldRun` sits
+  inside the "no cursor yet" branch (`sync-invoices/index.ts:169`), so the 15-min cooldown gates only
+  the **start** of a night, never the drains. Extra cron slots may therefore sit closer than 15 minutes
+  apart: `5,20 19-22` → `5,15,25 19-22` is 12 slots (~3,000 invoices/night) as a **migration only**,
+  no function deploy. Only constraint is staying off `:35–:44` and `:50`.
+- Not urgent at 67% utilisation. Prefer the cron densify if it ever binds; bank the trigger design for
+  the next time `sync-invoices` is being deployed anyway.
 
 ### 18. `lastOkAt` written by each sync
 `sync-catalogue` and `sync-sku-floors` stamp `at` on **every** exit including failures, and store no
@@ -1222,6 +1258,23 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
     `src/toTargets.js` (`mergeCoreOverrides` + `buildToTargets` + `buildInputsStamp`, 31 tests), which
     is the only thing keeping them from drifting. An earlier note here said App.jsx was the *only*
     writer; that is no longer true.
+  - **`invValue: {min,max}` — a top-level key on the row since 2026-08-04**, for the nightly digest's
+    directional line. Computed by **`src/invValue.js`**, shared with App.jsx's `kpis` so the email and
+    the Overview card cannot disagree.
+    - **⚠ IT CANNOT BE DERIVED FROM `toTargets` ITSELF, which is why the engine stamps it.** Measured
+      2026-08-04: `buildToTargets` carries **DS columns only** and DC-inventorised Active SKUs only, so
+      a value computed from that row came out **₹5.29Cr against the card's ₹7.93Cr — 33.3% short**,
+      because the DC alone is **27.0%** of network Max. Mailing that beside an app reading 7.93 would
+      be worse than mailing nothing.
+    - Computed from **`raw`, not `built`** — the same basis as `kpis`, which sums **every** entry in
+      `results` over DS_LIST **+ DC**. Overrides are empty today so raw and merged coincide; matching
+      the card is the tie-breaker if they ever diverge.
+    - **⚠ Wrapped in try/catch, deliberately.** It is a reporting nicety riding on the row that feeds
+      transfer orders and must never be able to stop that write — same `(non-fatal)` pattern as
+      `create-to`'s `toSnapshots`. A null degrades the email to "no value line".
+    - Safe to add because SKUs live nested under `targets`, so a top-level key cannot shadow one, and
+      `assessTargetsChange` is called with `live: liveTo?.targets ?? {}` — it never counts top-level
+      keys. **Check that before adding any further key here.**
   - **WHY VERCEL:** it imports `src/engine/` DIRECTLY, so there is exactly one engine implementation. A
     Deno port would be a second copy of ~2,900 lines whose drift surfaces as wrong transfer quantities
     found by ops. Verified headless-safe — no `window`/`document`/`localStorage` in the engine (all 20
@@ -1372,6 +1425,75 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
 > table removed, and gained the PO Team Download. So the item was not wrong, just unspecified; a concrete
 > need ("the PO team wants one CSV") produced in an afternoon what an open-ended "rethink" had not in four
 > months. See the **Tool Output Download Tab** section for what it is now.
+
+### 17. Nightly digest — one email that says whether the chain worked ✅ Shipped (2026-08-04)
+`supabase/functions/nightly-digest` + cron `0 1 * * *` UTC = **06:30 IST**. Reads the four status rows
+plus `toTargets`, mails one summary, green or red. Pure logic in `_shared/nightlyDigest.ts` (50 tests);
+`scripts/dryrun-nightly-digest.mjs` renders the real email read-only (`--demo` for synthetic failures,
+`--with-value` runs the engine locally to preview the ₹ line). Spec:
+`docs/superpowers/specs/2026-08-04-nightly-digest-design.md`.
+- **HEARTBEAT, NOT ALERT-ONLY.** Alert-only shares a failure mode with what it watches: if the alerter
+  dies, silence reads as success. With a fixed-time daily send, **"no email by 06:40 IST" is itself the
+  signal** — which is also what made the scheduler choice low-stakes.
+- **⚠ THRESHOLDS ARE PER-INPUT, and the healthy lag DIFFERS — it is not an off-by-one.** Catalogue runs
+  *before* midnight IST so its `lastOkNight` is correctly **yesterday**; floors run 04:35 IST so theirs
+  is correctly **today**. One shared baseline would report a healthy catalogue as late every day.
+
+  | input | healthy lag | amber | red |
+  |---|---|---|---|
+  | invoices | 1 | 1 night missed | **2** |
+  | catalogue | 1 | 1 | **2** |
+  | floors | 0 | — none — | **1 (first miss)** |
+  | engine | 0 | 1 | **2** |
+
+  - **Invoice red at 2 missed nights is set by the recovery mechanics, not by taste.** `planNightDates`
+    is purely clock-derived (`[yesterday, yesterday−3]`) with **no memory of misses**, so a date gets
+    exactly two chances and becomes **permanently unrecoverable at lag 5**. Red at lag 3 leaves two
+    nights of margin.
+  - **Floors red on the FIRST miss** because *alert aggressiveness scales inversely with the rate of
+    benign failure*: one HTTP GET to a Google Sheet, no Zoho, so it cannot be 429'd or starved — a miss
+    is anomalous by construction and will essentially never fire spuriously. It also never self-heals.
+- **⚠ UNKNOWN RESOLVES TO RED — the opposite of `assessOutputFreshness`, and the difference is the
+  action.** There, uncertainty must not block a download because that stops purchasing. Here the action
+  is sending an email: a spurious red costs thirty seconds, silence costs a night.
+- **⚠ `send` DEFAULTS TO TRUE**, deliberately inverting `sync-sku-floors` (`dryRun`) and `run-engine`
+  (`mode`). For a writer a silent no-op is safe; for a watchdog it is the exact failure being fixed.
+  Dry runs pass `{"send": false}`.
+- **⚠ "Refused" is judged on `ok === false`, NEVER on how recent the row is.** A cron that never fired
+  leaves the PREVIOUS successful row in place — recent *and* `ok:true` — so a recency test printed
+  `refused: ok` and pointed at the wrong remedy. Same class as the `autoAtFor` bug: a proxy signal
+  standing in for the real one, which diverges on exactly the input the thing exists to catch.
+- **The green line carries COMPOSITION, not volume** — volume is what the guards already refuse on.
+  `invAtChanged.toSupplier` (Min=Max=0 everywhere; the guard only trips above a 5% mix shift) and
+  `coverage.unknownPct` (>0.5% ⇒ amber; the guard refuses only at 1%) both raise amber. `ineffective`
+  floors is reported because a stale catalogue **silently disables new floors** — a floor on a SKU
+  absent from `skuMaster` can never take effect.
+- **⚠ The inventory value NEVER changes the alert level.** Min/Max moves every night as the 45-day
+  window slides and nobody has measured the normal variance; a guessed threshold is the
+  Sunday-row-count mistake and would discredit the reds sharing the email. Asking for a **delta and a
+  %** instead of a highlight removed the need to know the variance at all. Revisit once
+  `digestHistory` has a few weeks in it.
+- **Provider is Brevo, not Resend.** Resend requires a verified **domain** (DNS on `home-run.co`, a
+  managed process — the SPF is flattened through `_spfm.home-run.co`); Brevo verifies a single **sender
+  address** by email + mobile. `POST https://api.brevo.com/v3/smtp/email`, header `api-key`, **201** on
+  success — test `r.ok`, not `status === 200`. HTTPS rather than SMTP because Supabase's own email guide
+  only demonstrates `fetch` and raw outbound TCP is unconfirmed on Edge Functions. Secrets:
+  `BREVO_API_KEY`, `DIGEST_RECIPIENTS`, `DIGEST_FROM_EMAIL`, `DIGEST_FROM_NAME`.
+- **⚠ Gmail shows a "Be careful with this message" impersonation banner, and it is EXPECTED.** Measured
+  2026-08-04: `home-run.co` publishes `v=DMARC1; p=none` with SPF `~all` and MX on Google, so
+  unauthenticated mail is **delivered, not rejected** — it reaches the Inbox. But `From` and `To` are
+  the same address and Brevo signs as `brevosend.com`, which trips Gmail's *self*-impersonation check.
+  Accepted deliberately for a single recipient. **⚠ It does NOT survive adding the other four** — four
+  people seeing "someone might be impersonating your account" daily ends with one reporting it as
+  phishing. Fix then, by authenticating `ims.home-run.co` (a subdomain, so the root SPF carrying
+  Workspace mail is never touched).
+- **⚠ Monospace layout does not survive a plain-text email.** Stage labels were aligned with
+  `padEnd(15)`; Gmail renders `text/plain` in a proportional font and collapses runs of spaces, so the
+  columns dissolved. Now a colon separator. **This class of bug cannot be caught locally** — a terminal
+  dry run is monospace, so it looked perfect until it was delivered.
+- **Three of this build's defects were found by reading rendered output, not by tests** (`refused: ok`,
+  an empty `WHAT TO DO` heading, the collapsed columns). All passed every assertion, because the tests
+  checked the logic intended rather than the text a person reads. **Render the artifact.**
 
 ### 6. Plywood Network Design ✅ Shipped (2026-04-28)
 Network Design strategy in engine (`src/engine/strategies/plywoodNetwork.js`). Full UI in PlywoodNetworkTab.jsx — unified SKU table with zone colouring, DC tab, brand assignment editor, compact modal with zone-aware formula display and lookback-period charts.
