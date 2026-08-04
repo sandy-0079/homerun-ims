@@ -5,7 +5,7 @@
 //
 // Imports the same `_shared/skuFloorSheet.ts` the edge function will use, on
 // purpose: a dry run that re-implements the parse proves nothing about the thing
-// that will actually write. Same reasoning as compare-csv-vs-shadow.mjs importing
+// that will actually write. Same reasoning as compare-csv-vs-live.mjs importing
 // the real parseInvoiceCsv.
 
 import { parseFloorSheet, assessFloorChange } from "../supabase/functions/_shared/skuFloorSheet.ts";

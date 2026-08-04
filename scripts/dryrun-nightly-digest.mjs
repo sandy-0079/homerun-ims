@@ -8,7 +8,7 @@
 //
 // Imports the same `_shared/nightlyDigest.ts` the edge function will use, on purpose:
 // a dry run that re-implements the assessment proves nothing about the thing that will
-// actually send. Same reasoning as dryrun-sku-floors.mjs and compare-csv-vs-shadow.mjs.
+// actually send. Same reasoning as dryrun-sku-floors.mjs and compare-csv-vs-live.mjs.
 //
 // ⚠ READS ONLY THE SMALL `params` ROWS. Never team_data/invoice_data (~7MB) or
 // team_data/global — row counts come from stamps that already exist. A daily job that

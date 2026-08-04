@@ -205,7 +205,7 @@ chain. So **absent data raises red**, and says which row it could not read.
 | `src/App.jsx` *(modified)* | −14/+6: the inline KPI loop becomes a `computeInvValue` call. |
 
 The dry-run script imports the same `_shared` module the edge function will use — same reasoning as
-`dryrun-sku-floors.mjs` and `compare-csv-vs-shadow.mjs`. A dry run that re-implements the logic proves
+`dryrun-sku-floors.mjs` and `compare-csv-vs-live.mjs`. A dry run that re-implements the logic proves
 nothing about the thing that will actually send.
 
 ---

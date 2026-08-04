@@ -106,7 +106,7 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
     fresh 07-29 export on 2026-07-30 was DD/MM in **all 1,704 rows**. So the guard now (correctly)
     refuses it, which means **the manual-CSV override path is unusable until the export locale is
     changed** — worth knowing before reaching for it in an incident. It also blocks
-    `scripts/compare-csv-vs-shadow.mjs`, which imports the real `parseInvoiceCsv` on purpose. Converting
+    `scripts/compare-csv-vs-live.mjs`, which imports the real `parseInvoiceCsv` on purpose. Converting
     a scratch copy is safe **only when every distinct date's leading component is >12** (provably a day);
     assert that rather than assuming, and never convert the file you would upload.
   - **Generalisable:** `plywoodV2/demand.js:52` and `PlywoodNetworkTab.jsx:461,1223` share the same
@@ -1173,7 +1173,8 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
   - Verified against a real day (2026-07-26): 336 invoices → 648 rows, **identical to the CSV** — same
     rows, same qty, **0 SKU×DS differences** — 0% unknown SKUs, 100% pin coverage. `reference_number`
     confirmed as the `Shopify Order` field.
-  - Exit criteria: `node scripts/compare-invoice-shadow.mjs` clean ~5 consecutive days.
+  - Exit criteria (met; Stage 5 shipped 2026-08-03). `compare-invoice-shadow.mjs` was **deleted
+    2026-08-04** along with the shadow row it read.
   - **⚠ RECONCILING A DIFF: THE DIAGNOSTIC IS *DIRECTION*, NOT SIZE** (learned 2026-07-30, night 1).
     A **leak subtracts only** — 07-28 lost 27.7% of quantity one-directionally, 146 whole orders, all
     missing. A **freshness gap goes both ways**: the shadow both over- and under-counts, because the CSV
@@ -1183,7 +1184,8 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
     the pull (the documented ~0.9% residual), one **created** after it, and a **line item added** to an
     existing one. So do not read "0 SKU×DS differences" literally against a same-day export — check that
     every difference resolves to an invoice and that losses are not one-directional.
-  - **⚠ `compare-invoice-shadow.mjs`'s verdict line is untrustworthy: the shadow row is CUMULATIVE.**
+  - **⚠ A CUMULATIVE ROW MAKES ANY "do they agree?" VERDICT UNTRUSTWORTHY** (learned from the
+    now-deleted `compare-invoice-shadow.mjs`; the lesson outlives the tool).
     It compares every overlapping date, including dates fetched by *older, buggier* code that were never
     re-fetched. Night 1 printed "❌ 3 of 4 dates disagree — do NOT proceed to Stage 5" while 07-27
     (0.6%) and 07-28 (25.5%) were simply stale pre-fix rows and only 07-29/07-26 were the new code's
@@ -1196,7 +1198,8 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
   CSV upload stays as a manual override. Commit `e9640ea`.
   - **The cutover evidence, because it is the template for verifying this kind of flip.** The shadow row
     was reconciled against a Zoho export covering 07-27…08-02 with the **real `parseInvoiceCsv` on both
-    sides** (`scripts/compare-csv-vs-shadow.mjs`), so a parser difference could not masquerade as a sync
+    sides** (`scripts/compare-csv-vs-live.mjs`, then pointed at the shadow row), so a parser difference
+    could not masquerade as a sync
     bug: **8,028 of 8,028 sellable CSV rows present, `in CSV but MISSING from shadow: 0` on all seven
     dates**, identical qty and SKU×DS aggregates on six of seven. The one difference (07-31, shadow +2
     rows) was invoice `HC/26/015391`, **voided after the pull** — the documented ~0.9% over-count
@@ -1207,7 +1210,8 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
     drift is physically expected, and what matters is that every difference resolves to a named invoice
     and that losses are never one-directional.
   - **The live row was BACKFILLED from the shadow first** (07-30…08-02 via
-    `scripts/backfill-invoice-dates.mjs --apply`), because `planNightDates`' fixed 3-day lag would not
+    `scripts/backfill-invoice-dates.mjs --apply` — **deleted 2026-08-04**, a one-shot helper that would
+    be actively wrong to re-run), because `planNightDates`' fixed 3-day lag would not
     have reached 08-01/08-02 for three more nights, and `pctMinNZD` / `fixedUnitFloor.minNZD` / the
     plywood Rare-Sparse boundary all gate on **NZD ≥ 2** — so a missing day can drop a slow mover out of
     its strategy entirely. 75,699 → **78,765 rows, 93 contiguous dates**.
@@ -1233,14 +1237,14 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
     is still there. Take a fresh dated backup before any change of this shape; it turns a one-way door
     into an undo.
   - **`team_data/invoice_data_shadow` is GONE (deleted 2026-08-04)** once Step 5 passed. It had been
-    frozen since the cutover — a stale 07-26…08-02 snapshot nothing read. ⚠ **Three dev scripts still
-    reference it and will now fail:** `compare-invoice-shadow.mjs` (already recorded below as the wrong
-    tool), `compare-csv-vs-shadow.mjs` (the cutover verifier) and `backfill-invoice-dates.mjs` (a
-    one-shot Stage 5 helper whose job is done and which would be actively wrong to re-run). Retire or
-    repoint them at `invoice_data` before anyone trusts their output — a script that reads a missing
-    row produces a confident wrong answer, which this file has learned twice already (`diag-items`,
-    `categoryStrategy`). The **rollback** noted in `sync-invoices/index.ts` still works: reverting
-    `TARGET_ROW` upserts the row back into existence.
+    frozen since the cutover — a stale 07-26…08-02 snapshot nothing read. The three dev scripts that
+    read it were dealt with in the same commit, because **a script that reads a missing row produces a
+    confident wrong answer** — the `diag-items` / `categoryStrategy` lesson: `compare-invoice-shadow.mjs`
+    and `backfill-invoice-dates.mjs` **deleted**, `compare-csv-vs-shadow.mjs` **renamed to
+    `compare-csv-vs-live.mjs` and repointed at `invoice_data`**. That one is worth keeping: it reconciles
+    a Zoho CSV against live demand using the REAL `parseInvoiceCsv`, which is the check that would have
+    caught 2026-07-28. The **rollback** noted in `sync-invoices/index.ts` is unaffected — reverting
+    `TARGET_ROW` upserts the shadow row back into existence.
   - **⚠ The retention trim bites for real from the first live night.** The row sat at 93 dates, so
     adding 08-03 makes 94 and `RETENTION_DAYS = 90` trims **four**: 05-02…05-05, 2,354 rows,
     **permanently and un-refetchably** (pre-July, and the API cannot serve them).

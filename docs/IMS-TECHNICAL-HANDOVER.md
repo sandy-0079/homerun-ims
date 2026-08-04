@@ -1135,10 +1135,18 @@ npx vite-node scripts/dryrun-sku-floors.mjs
 # Reproduce the nightly engine run read-only and diff it against the live toTargets
 npx vite-node scripts/diff-headless-totargets.mjs
 
-# Compare stored invoice data against a Zoho CSV export
-node scripts/compare-invoice-shadow.mjs
+# Compare stored invoice data against a Zoho CSV export on disk.
+# The metric that matters is "in CSV but MISSING from live" — it must be zero on
+# every date. Blocked until the Zoho export locale stops emitting DD/MM/YYYY.
+npx vite-node scripts/compare-csv-vs-live.mjs <path-to-csv>
 
-# Tests: 397 across 33 files
+# What the nightly digest would mail right now, read-only, no send
+npx vite-node scripts/dryrun-nightly-digest.mjs          # --demo for failure examples
+
+# Verify the PO Team Download CSV against live data
+npx vite-node scripts/verify-po-csv.mjs
+
+# Tests: 485 across 37 files
 npx vitest run
 ```
 
