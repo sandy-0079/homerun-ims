@@ -22,12 +22,10 @@ export const DEFAULT_BRAND_BUFFER = {
 export const PLYWOOD_NETWORK_CONFIG_DEFAULT = {
   lookbackDays: 90,
   minPercentile: 95,
-  maxBufferPercentile: 75,
   maxCap: 20,
   spikeCapMultiplier: 3,
   minNZD: 2,
   sparseNZD: 5,
-  abqMultiplier: 1.5,
   dcCapacity: { thick: 400, thin: 400 },
   thickBoundaryMm: 9,
   capacityTolerancePct: 2,

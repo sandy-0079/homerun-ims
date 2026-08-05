@@ -259,17 +259,30 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
 
 **Why:** 78.7% of SKU×DS combos are Slow/Super Slow. Averages produce near-zero Min for items selling once every 10+ days.
 
-**⚠ An unmapped category silently falls through to Standard.** Measured 2026-07-30: of 2,101 active
-SKUs, 384 are on Standard, but only 259 are the *intended* Standard categories (Painting, General
-Hardware, Fevicol, Water Proofing, Cement). The rest were never consciously assigned — **Home Appliances
-57, Glass Hardware 31, Service 2** (Kitchen Sinks & Faucets 35 was assigned to PCT that day). Premium
-slow-movers on averaging is exactly the profile PCT exists for, so a new Zoho category appearing in the
-master is a decision to make, not a default to accept. Audit: diff `Object.values(skuMaster).category`
-against `params/global.categoryStrategies` — note the key is **`categoryStrategies`** (plural).
+**✅ STANDARD IS THE DEFAULT, BY DESIGN — a category is Standard until someone changes it** (confirmed
+with the operator 2026-08-05). This is intended behaviour, not a gap, and the earlier framing here
+("a decision to make, not a default to accept") overstated it.
+
+**⚠ BUT STANDARD IS ENCODED AS THE *ABSENCE* OF A KEY, so no audit can tell a deliberate Standard from a
+never-considered category.** `App.jsx:4531` does `if (v === "standard") delete next[cat]; else next[cat] = v`,
+and `resolveStrategy` (`runEngine.js:38`) returns `"standard"` for any missing key. Consequences worth
+knowing before you write a check:
+- **`categoryStrategies` can NEVER contain a Standard entry.** "Zero categories map to Standard" is true
+  by construction, not a finding — don't report it as one.
+- The old claim that "only 259 of 384 were the *intended* Standard categories" asserted a distinction the
+  data cannot represent. It was somebody's judgement about which categories look intended, presented as
+  measured. **Verified live 2026-08-05:** 11 mapped entries (8 PCT + 2 Fixed Unit Floor + 1 Network
+  Design), **377 of 2,110 active SKUs on Standard, all of them unmapped** — Painting 110, General
+  Hardware 90, Home Appliances 58, Fevicol 46, Glass Hardware 34, Water Proofing 19, Cement 18,
+  Service 2.
+- **The residual risk is visibility, not correctness:** a new Zoho category lands on Standard with nobody
+  told. Glass Hardware (34 active SKUs, **zero sales in the window**) arrived this way. Audit by diffing
+  `Object.values(skuMaster).category` against `params/global.categoryStrategies` — the key is
+  **`categoryStrategies`** (plural).
 
 | Strategy | Categories | Key Logic |
 |---|---|---|
-| **Standard** | Cement, General Hardware, Painting, Fevicol, Water Proofing | Daily avg × base min days, long/recent blend |
+| **Standard** | *(default — the 8 unmapped categories above, incl. Cement, General Hardware, Painting, Fevicol, Water Proofing)* | Daily avg × base min days, long/recent blend |
 | **Percentile Cover (PCT)** | Furniture & Arch HW, Tiling, CPVC, Plywood/MDF, Switches, Conduits, Lighting, Sanitary & Bath | Pxx of non-zero daily qty × cover days |
 | **Fixed Unit Floor** | Wires/MCB, Overhead Tanks | P90 of individual order quantities (spike-capped); Premium/High single-order-day → Standard fallback — see guardrails below |
 | **Network Design** | Plywood/MDF (opt-in) | Brand-level stocking — see below |
@@ -468,8 +481,8 @@ Applied as a last pass over `res` in `runEngine` (after all strategies, floors, 
 
 **Concept:** Brand-level assignments — each brand is stocked at specific DS nodes which aggregate demand from multiple DSes. Non-stocking DSes get Min=Max=0 (fulfilled from stocking node or DC).
 
-**Current brand assignments (live Supabase config, verified 2026-07-06 — code defaults in constants.js are stale):**
-- All four brands (Action Tesa, CenturyPly, ArchidPly, GreenPly) stocked at **every DS, each node covering only itself** (no cross-DS coverage, no DC direct-serve nodes). Per-brand dcMultMin/dcMultMax = 0.75/1.0.
+**Current brand assignments (live Supabase config, re-verified 2026-08-05 — code defaults in constants.js are stale):**
+- All four brands (Action Tesa, CenturyPly, ArchidPly, GreenPly) stocked at **every DS, each node covering only itself** (no cross-DS coverage, no DC direct-serve nodes — the engine also `continue`s on any `DC` node key). Per-brand dcMultMin/dcMultMax = **0.75/1.0**, identical across all four.
 - Merino: excluded from this tab, uses PCT.
 - **DS06 IS in all four brand matrices** (verified live 2026-07-31 — added at go-live, superseding an
   earlier note here that said it was absent and relied on the DS Seed to fill it). With the seed now
@@ -477,16 +490,74 @@ Applied as a last pass over `res` in `runEngine` (after all strategies, floors, 
   difference are Rare-zone by the network's own `minNZD` rule (NZD < 2), i.e. correctly not stocked
   rather than a gap.
 
-**3-zone stocking per SKU (NZD = non-zero demand days in lookback):**
-- **Rare** (NZD < minNZD=2): Min=Max=0, not stocked
-- **Sparse** (2 ≤ NZD < sparseNZD=5): Min=ceil(ABQ), Max=ceil(Min×abqMult) ≥ Min+1. ABQ = total qty ÷ orders.
-- **Frequent** (NZD ≥ 5): Min=P95 of winsorised aggregated daily demand, Max=Min+P75(orders), capped at maxCap=20.
+**3-zone stocking per SKU (NZD = non-zero demand days in lookback). ⚠ Re-derived from
+`plywoodNetwork.js` on 2026-08-05 — the formulae here were WRONG for both stocked zones:**
+- **Rare** (total NZD < minNZD=2): Min=Max=0, not stocked
+- **Sparse** (2 ≤ NZD < sparseNZD=5): `Min = ceil(ABQ)` · **`Max = min(max(winsorisedMax, Min+1), maxCap)`**.
+  ABQ = total qty ÷ orders, from **regular** orders only.
+- **Frequent** (NZD ≥ 5): **`Max = min(max(winsorisedMax, P95+1), maxCap)`**, then
+  **`Min = min(P95, max(0, Max−1))`** — note Min is derived *from* Max and can be pulled BELOW P95 to
+  keep Max > Min. P95 is of winsorised **regular** daily demand.
+- **⚠ Both Maxes are driven by `winsorisedMax` — the largest winsorised regular day — NOT by a
+  percentile of order quantities and NOT by `ABQ × a multiplier`.** The old text said
+  `Max = Min + P75(orders)` and `Max = ceil(Min × abqMult)`; neither exists in the code.
 
-Winsorising: daily demand capped at median×spikeCapMult before P95 to handle outlier days.
+Winsorising: daily demand capped at `median × spikeCapMultiplier` before P95 to handle outlier days.
+
+**⚠ Zone classification uses TOTAL NZD, but Min/Max use REGULAR orders only** — a mechanism this file
+previously omitted entirely. Orders above `bulkThresholdMultiplier × cross-DS ABQ` (or ≥
+`bulkMaxThreshold` outright) are classed **bulk**, excluded from DS stocking, and left to the DC.
+`minOrdersForBulkFilter` is the minimum total orders across all DSes before the ABQ-based threshold is
+trusted; below it only the hard floor applies. So a SKU can be Frequent by NZD and still have
+`regularNZD = 0`, in which case it gets Min=Max=0.
 
 **DC formula:** `DC = P95(direct-serving DSes) + ceil(Σ DS_Min × dcMult)`. Uses Σ DS_Min (not Σ(Max-Min)) so fast-movers get proportional DC buffer. **Floored SKUs:** DC result is floored to `max(network_dc, Σ DS_Min × skuFloorDCMultMin / Σ DS_Max × skuFloorDCMultMax)` — same global multipliers as non-network floored SKUs (defaults: 0.2/0.3).
 
-**Config:** Plywood tab → ⚙ Network Design Configuration (admin). Stored in `params/plywoodNetworkConfig` (separate from `params/global`). Saving auto-reruns engine. Key params: lookbackDays=90, minPercentile=95, maxBufferPercentile=75, maxCap=20, spikeCapMult=3, minNZD=2, sparseNZD=5, abqMult=1.5, dcCapacity={thick:400,thin:400}, per-brand dcMultMin/dcMultMax (tuned to 0.3/0.5).
+**Config:** Plywood tab → ⚙ Network Design Configuration (admin; visible read-only to all). Stored in
+`params/plywoodNetworkConfig` (separate from `params/global`). Saving auto-reruns engine.
+
+**⚠ LIVE VALUES, read from the row 2026-08-05 — the code defaults in `engine/constants.js`
+(`PLYWOOD_NETWORK_CONFIG_DEFAULT`) are STALE and deliberately left so; the live row wins. Quote the live
+column, not the default:**
+
+| key | live | code default |
+|---|---|---|
+| `lookbackDays` | **45** | 90 |
+| `minPercentile` | 95 | 95 |
+| `maxCap` | 20 | 20 |
+| `spikeCapMultiplier` | **4** | 3 |
+| `minNZD` | 2 | 2 |
+| `sparseNZD` | 5 | 5 |
+| `bulkThresholdMultiplier` | **1.5** | 2.0 |
+| `minOrdersForBulkFilter` | 5 | 5 |
+| `bulkMaxThreshold` | 10 | 10 |
+| `thickBoundaryMm` | 9 | 9 |
+| `capacityTolerancePct` | **1** | 2 |
+| `sparseErraticThreshold` | 1.5 | 1.5 |
+| `dcCapacity` | **`{thick:1200, thin:600}`** | `{thick:400, thin:400}` |
+| per-brand `dcMultMin`/`dcMultMax` | **0.75 / 1.0** (all four brands) | — |
+
+- **⚠ The key names are the LONG forms** — `spikeCapMultiplier`, not `spikeCapMult`. This file used to
+  say `spikeCapMult=3` / `abqMult=1.5`, borrowing the abbreviated names from **`fixedUnitFloor`'s**
+  namespace, where `spikeCapMult` *is* a real key. Different config, different spelling. A doc error, not
+  a code one: the engine destructures the long names and the live values are in effect.
+- **An earlier line here claimed `dcMultMin/dcMultMax` were "tuned to 0.3/0.5". Wrong** — live is
+  0.75/1.0 on all four brands, which is what the brand-assignment paragraph above already said. That
+  contradiction is resolved in favour of 0.75/1.0.
+- **⚠⚠ `maxBufferPercentile` and `abqMultiplier` WERE DEAD KNOBS AND ARE NOW DELETED (2026-08-05).**
+  Both were read from config and never used — by the engine *or* the tab — while remaining editable in
+  the admin config UI, `maxBufferPercentile` under the hint "Max = Min + PXX of historical order
+  quantities at this node", describing a calculation that never ran. Someone had moved them from their
+  defaults (75→45 and 1.5→1.25) with **zero effect on stocking**, which is how the doc error above got
+  believed. Removed from `plywoodNetwork.js`, `PlywoodNetworkTab.jsx` (locals, the trace field, and both
+  UI fields) and `PLYWOOD_NETWORK_CONFIG_DEFAULT`. Engine output verified **byte-identical** after
+  removal — `diff-headless-totargets.mjs`, 0 of 2,039 SKUs differing.
+  - **eslint already knew.** Both were `no-unused-vars` entries inside the 79-problem lint baseline; the
+    count dropped to **76** on deletion. A dead config knob is visible to the linter *before* anyone
+    notices the docs are wrong — worth a glance at that baseline rather than treating it as noise.
+  - **The live row still carries the two orphan keys** (`maxBufferPercentile: 45`, `abqMultiplier: 1.25`).
+    Deliberately NOT stripped — nothing reads them, and editing prod config to tidy a comment is a worse
+    trade than leaving two inert keys. Expect to see them in the row; they do nothing.
 
 Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). Brand matching is case-insensitive.
 

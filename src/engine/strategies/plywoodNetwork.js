@@ -233,12 +233,10 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
   const {
     lookbackDays = 90,
     minPercentile = 95,
-    maxBufferPercentile = 75,
     maxCap = 20,
     spikeCapMultiplier = 3,
     minNZD = 2,
     sparseNZD = 5,
-    abqMultiplier = 1.5,
     bulkThresholdMultiplier = 2.0,
     minOrdersForBulkFilter = 5,
     bulkMaxThreshold = 10,

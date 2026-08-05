@@ -1029,12 +1029,10 @@ const ZONE_STYLES = {
 
 function applyNetworkFormula(statsList, cfg, boundary) {
   const pMin     = cfg.minPercentile       || 95;
-  const pBuf     = cfg.maxBufferPercentile  || 75;
   const cap      = cfg.maxCap              || 20;
   const spike    = cfg.spikeCapMultiplier   || 3;
   const nzdTh    = cfg.minNZD              || 2;
   const sparseNZD   = cfg.sparseNZD        || 5;
-  const abqMult  = cfg.abqMultiplier       || 1.5;
 
   return statsList.map(s => {
     const mm = inferThickness(s.name);
@@ -1085,7 +1083,7 @@ function applyNetworkFormula(statsList, cfg, boundary) {
       orderQtyCount: s.orderQtys.length,
       capApplied: zone === 'frequent' && maxDayWinsorisedForTrace > cap,
       cap, lookbackDays: cfg.lookbackDays || 90,
-      zone, abq, abqMultiplier: abqMult, demandSignal,
+      zone, abq, demandSignal,
       // Bulk/regular split info for modal display
       bulkThreshold: s.bulkThreshold ?? null,
       crossDSAbq: s.bulkThreshold != null ? s.bulkThreshold / (cfg.bulkThresholdMultiplier || 2.0) : null,
@@ -1570,10 +1568,8 @@ export default function PlywoodNetworkTab({ invoiceData, skuMaster, invoiceDateR
                 {[
                   {label:"History Window",key:"lookbackDays",min:30,max:365,step:1,hint:"Days of sales history used to compute Min & Max"},
                   {label:"Min Qty Percentile",key:"minPercentile",min:50,max:99,step:1,hint:"P95 = stock enough for 95% of peak demand days"},
-                  {label:"Max Buffer Percentile",key:"maxBufferPercentile",min:50,max:99,step:1,hint:"Max = Min + PXX of historical order quantities at this node"},
                   {label:"Rare Zone Threshold (NZD)",key:"minNZD",min:1,max:20,step:1,hint:"Below this NZD → Rare zone (not stocked at all)"},
                   {label:"Sparse Zone Threshold (NZD)",key:"sparseNZD",min:2,max:20,step:1,hint:"Below this NZD → Sparse (ABQ-based). Above → Frequent (P95-based)"},
-                  {label:"Sparse Zone Multiplier",key:"abqMultiplier",min:1,max:5,step:0.1,hint:"Sparse Max = ceil(ABQ × this). Default 1.5 = 50% above Min"},
                   {label:"Outlier Cap (× median)",key:"spikeCapMultiplier",min:1,max:20,step:0.5,hint:"Winsorise spike days at N × median before P95"},
                   {label:"Max Sheets per Location",key:"maxCap",min:1,max:100,step:1,hint:"Hard ceiling on Max per SKU per location"},
                   {label:"Thick Boundary (mm)",key:"thickBoundaryMm",min:1,max:30,step:1,hint:"SKUs above this mm are Thick, below are Thin — affects capacity trim and display"},
