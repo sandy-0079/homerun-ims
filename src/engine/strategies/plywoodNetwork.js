@@ -75,16 +75,6 @@ function computeRegularNodeMin(sku, coveredDSes, regularDailyDemand, minPct, spi
   return { min: Math.ceil(p95Raw), regularNZD: nonZero.length, p95Raw, winsorisedMax };
 }
 
-// P{pct} of individual order quantities across covered DSes → Max buffer.
-// orderQtyMap: { skuId: { ds: [qty] } }
-function computeOrderBuffer(sku, coveredDSes, orderQtyMap, maxBufPct) {
-  const all = [];
-  for (const ds of coveredDSes) all.push(...(orderQtyMap[sku]?.[ds] || []));
-  if (all.length === 0) return 0;
-  all.sort((a, b) => a - b);
-  return Math.ceil(percentile(all, maxBufPct));
-}
-
 // Legacy P95 computeNodeMin — still used by applyCapacityTrim Pass 4 and DC direct-serving.
 function computeNodeMin(sku, coveredDSes, dailyDemand, minPct, spikeCapMult, minNZD) {
   const totals = aggregateDailyTotals(sku, coveredDSes, dailyDemand);

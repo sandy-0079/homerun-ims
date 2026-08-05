@@ -126,10 +126,15 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
     `scripts/compare-csv-vs-live.mjs`, which imports the real `parseInvoiceCsv` on purpose. Converting
     a scratch copy is safe **only when every distinct date's leading component is >12** (provably a day);
     assert that rather than assuming, and never convert the file you would upload.
-  - **Generalisable:** `plywoodV2/demand.js:52` and `PlywoodNetworkTab.jsx:461,1223` share the same
+  - **Generalisable:** `plywoodV2/demand.js:52` and `PlywoodNetworkTab.jsx:461,1221` share the same
     `new Date(latest).toISOString()` pattern. Any single malformed row in a shared `team_data` row can
     take the whole app down for everyone, and lock you out of the tool that would fix it. **Validate at
     the boundary, before the write.**
+    - ⚠ **Grep for the pattern, don't trust these line numbers.** Both citations here drifted within
+      three months: `plywoodNetwork.js:250` was off by 2 and only became right by accident when two
+      lines were deleted above it on 2026-08-05, and `1223` became `1221` in that same commit. A cited
+      line number is stale the moment anyone edits above it, and nothing fails when it does —
+      `grep -n "toISOString" src/` is the durable form of this note.
 - **⚠ Invoice exports MUST resolve line items to the item's CURRENT SKU code.** Zoho re-coded the
   catalogue ~2026-07-01 (`WHI-BIR-CEM-50K` → `UVJQ9`). An export that preserves the code *as at invoice
   time* splits ~1,090 products across two identities; the pre-July half lands on codes absent from
@@ -555,6 +560,21 @@ column, not the default:**
   - **eslint already knew.** Both were `no-unused-vars` entries inside the 79-problem lint baseline; the
     count dropped to **76** on deletion. A dead config knob is visible to the linter *before* anyone
     notices the docs are wrong — worth a glance at that baseline rather than treating it as noise.
+  - **⚠⚠ WHERE THE WRONG FORMULA CAME FROM — CLAUDE.md WAS DOCUMENTING THE PLAN, NOT THE BUILD.**
+    `docs/superpowers/plans/2026-04-27-plywood-brand-stocking.md:36` specifies, verbatim:
+    `Max = min(Min + P{maxBufferPercentile}(individual order qtys across covered DSes), maxCap)`
+    — which is exactly the sentence that sat in this file for three months. The plan also specified a
+    `computeOrderBuffer()` helper, and **that helper exists in `plywoodNetwork.js` and is never called**
+    (`no-unused-vars`, still flagged). So the feature was **half-built**: helper written, config key
+    added, UI field added, hint written — and the call site never created. Nothing failed, because a
+    coherent fallback (`winsorisedMax`) was already computing Max.
+    - **This was never doc *drift*. It was wrong on day one and no measurement ever contradicted it**,
+      because the doc, the plan, the UI hint and the live config value all agreed with each other. Four
+      mutually consistent sources, none of them the code.
+    - **Generalisable: after shipping from a plan, re-derive the doc from the BUILD.** A plan describes
+      intent; a half-implemented plan leaves intent looking like fact. The check that catches it is
+      cheap — read the function that computes the number, or grep the config key for a *use* rather
+      than a declaration.
   - **The live row still carries the two orphan keys** (`maxBufferPercentile: 45`, `abqMultiplier: 1.25`).
     Deliberately NOT stripped — nothing reads them, and editing prod config to tidy a comment is a worse
     trade than leaving two inert keys. Expect to see them in the row; they do nothing.
