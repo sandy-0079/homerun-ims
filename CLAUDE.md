@@ -1,32 +1,44 @@
 # CLAUDE.md — HomeRun IMS
 
-> ✅ **THE NIGHTLY CHAIN IS COMPLETE — Stage 5 went live 2026-08-03.** Every input the engine consumes
-> daily now has an unattended writer: catalogue 21:55–23:55 IST → **invoices 00:35–04:00 (writes
-> `team_data/invoice_data`, the live row)** → SKU floors 04:35/05:25 → engine → `params/toTargets`
-> 05:45/06:15 → ops POs ~06:00. `minReqQty` and `deadStock` stay manual **by design** (ops judgement,
-> not Zoho data). **No manual invoice CSV is needed again**; upload remains the emergency override.
+> ✅ **THE NIGHTLY CHAIN IS COMPLETE AND PROVEN — nothing is pending verification.** Every input the
+> engine consumes daily has an unattended writer: catalogue 21:55–23:55 IST → **invoices 00:35–04:00
+> (writes `team_data/invoice_data`, the live row)** → SKU floors 04:35/05:25 → engine →
+> `params/toTargets` 05:45/06:15 → **digest email 06:30** → ops POs ~07:30. `minReqQty` and `deadStock`
+> stay manual **by design** (ops judgement, not Zoho data). **No manual invoice CSV is needed again**;
+> upload remains the emergency override.
 >
-> ✅ **STEP 5 PASSED on 2026-08-04 — the first unattended night worked.** Verified from the data, not
-> the runbook's table: live row **`05-06 → 08-03`, 90 contiguous dates, 77,642 rows**, `datesTrimmed: 4`
-> (05-02…05-05, 2,354 rows, counted out of `invoice_data_backup_20260803`), `datesReplaced: 1`,
-> `unknownPct 0`, `pinPct 100`. Row arithmetic closes exactly:
-> `78,765 − 2,354 trimmed − 1,177 (old 07-31) + 2,408 fetched = 77,642`, and the 07-31 re-fetch came back
-> **2 rows lighter** — the D-3 void correction doing its job. All four status rows green; every cron slot
-> fired. **`toTargets.inputs.invoiceDataThrough: "2026-08-03"`** — the whole point.
+> ✅ **Two proving runs, both passed, both verified from the data rather than a runbook table.**
+> **Night 1 (2026-08-04)** — first unattended night: 90 contiguous dates, 77,642 rows, `datesTrimmed: 4`
+> (05-02…05-05), the 07-31 re-fetch **2 rows lighter** from the D-3 void correction.
+> **Night 2 (2026-08-05)** — first `nightly-digest` cron firing and first night on 12 invoice slots:
+> email delivered **06:30:02 IST** green to the Inbox; live row **`05-07 → 08-04`, 90 dates over a
+> 90-day span (contiguous), 78,284 rows**; `datesTrimmed: 1` (05-06, 646 rows, counted out of
+> `invoice_data_backup_20260803`), `datesReplaced: 1`; `unknownPct 0`; zero 429s and **zero non-200
+> responses across every function all night**. Arithmetic closes exactly:
+> `77,642 − 646 trimmed − 1,143 (old 08-01) + 2,431 fetched = 78,284`, and the 08-01 re-fetch came back
+> **1 row lighter** against 15 voids in `statusSeen`. `toTargets.invValue` stamped for the first time
+> (₹7.99Cr Max / ₹5.60Cr Min), `digestHistory` holds one day, `recorded: true`.
+> **`invoiceDataThrough: "2026-08-04"`** — the whole point.
 >
-> ⚠ **The runbook expected the chip to read `05:45`; it reads `06:15`, and 06:15 is CORRECT.**
-> `engine-run-nightly` is `15,45 0 * * *` UTC — **two slots** — and the second rewrites
-> `toTargets.refreshedAt`. So 05:45 on the chip would mean the 06:15 run FAILED. The runbook asked for
-> verification against the one value that indicates a fault. Generalisable: derive a check's expected
-> value from the write semantics (last successful run wins), not from the schedule.
+> ⚠ **STEADY STATE NOW LOSES ONE PRE-JULY DATE EVERY NIGHT, PERMANENTLY — by design, not a fault.** The
+> row sits at the `RETENTION_DAYS = 90` ceiling, so each night's new date trims the oldest. Those dates
+> are pre-2026-07-01 and **the Zoho API cannot re-serve them**, so `team_data/invoice_data_backup_20260803`
+> is their last copy. Continues until the window starts after 2026-07-01 — ~**28 Sep 2026** at 90-day
+> retention. Don't "fix" a shrinking earliest-date; check it against `datesTrimmed` instead.
 >
-> Cleanup done 2026-08-04: the Stage 5 runbook and the frozen `team_data/invoice_data_shadow` row are
-> both deleted, along with `docs/HANDOFF-2026-07-31.md`. All were transient cutover state.
+> ⚠ **`toTargets.refreshedAt` reads `06:15`, and 06:15 is CORRECT — confirmed both nights.**
+> `engine-run-nightly` is `15,45 0 * * *` UTC — **two slots** — and the second rewrites it. So `05:45`
+> on the chip would mean the 06:15 run FAILED. The Stage 5 runbook asked for `05:45` and nearly had a
+> healthy system reported as broken. Generalisable: derive a check's expected value from the **write
+> semantics** (last successful run wins), not from the schedule.
 >
-> 🚧 **ONE CHECK OPEN — morning of 2026-08-05: [`docs/RUNBOOK-2026-08-05-MORNING.md`](docs/RUNBOOK-2026-08-05-MORNING.md).**
-> Two things fire unattended for the first time tonight: the **`nightly-digest` cron** (deployed and
-> hand-tested, never auto-fired) and the **invoice window on 12 slots**. Delete that file and this
-> paragraph once it passes.
+> ⚠ **The 12-slot gain is schedule arithmetic, not luck — 55 minutes, reproducible.** Publish moved
+> `02:50 → 01:55:10 IST`. Both nights needed the same **6 working chunks**; volume did not change the
+> chunk count. The old `:35,:50` layout forced a 45-min wait to the next hour (6 chunks → 02:50), the
+> new `:35,:45,:55` layout does not (6 chunks → 01:55). Expect the gain on any 6-chunk night.
+>
+> Cleanup done: the Stage 5 runbook, the 2026-08-05 runbook, the frozen `team_data/invoice_data_shadow`
+> row and `docs/HANDOFF-2026-07-31.md` are all deleted. All were transient cutover state.
 
 HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold. (DS06 Kogilu went live ~2026-07-08; `DS_LIST` in `constants.js` has six entries and everything iterates it.)
 
@@ -137,15 +149,18 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
   - Both functions do a **fresh read immediately before writing** to prevent race condition from parallel runs.
   - Sync functions only read/write `team_data/global`. They never touch `team_data/invoice_data`.
 - **team_data row separation:** `invoiceData` lives in `team_data/invoice_data` (written once on CSV upload). All other app data + sync data lives in `team_data/global`. This keeps the global payload ~1-2MB vs ~7MB, preventing Supabase Disk IO budget exhaustion from hourly syncs.
-- **Row inventory (2026-07-29).** `team_data`: `global`, `invoice_data`,
-  `invoice_sync_buffer` (in-flight chunks for the 1–2 dates being pulled, keyed
-  `date|round|offset` so a re-run of a chunk is idempotent; **nothing else reads it**),
+- **Row inventory (verified live 2026-08-05).** `team_data` — **8 rows**: `global` (4.3MB), `invoice_data`
+  (8.6MB), `invoice_sync_buffer` (in-flight chunks for the 1–2 dates being pulled, keyed
+  `date|round|offset` so a re-run of a chunk is idempotent; **nothing else reads it** — sits at **32
+  bytes** when drained, which is what a healthy morning looks like),
   (`invoice_data_shadow` was **deleted 2026-08-04** — verified first that all 8 of its dates existed in
   the live row, none were pre-July, and where counts differed the live row was the *more* correct one,
   post-void-correction),
   `invoice_data_backup_20260728` + `_20260729` + **`_20260803`** (the last is the Stage 5 cutover backup,
   75,699 rows / 90 dates verified; the API cannot re-serve anything before 2026-07-01, so these are the
-  only copy of Apr–Jun history), `catalogue_backup_20260729`
+  only copy of Apr–Jun history — and **the only copy of each date the retention trim trims**, one per
+  night until ~28 Sep 2026), **`sku_floors_backup_20260731`** (159KB, taken at the Stage 8 cutover),
+  `catalogue_backup_20260729`
   (skuMaster/priceData — **matters more than the invoice backup**, see Stage 7). `params`: `global`,
   `paramsBackup`, `plywoodNetworkConfig`, `plywoodNetworkV2Config`, `networkConfigs`, `pincodeMap`
   (attribution), `toTargets`, `toAudit`, `toSnapshots`, `zohoItemIds`, `binLocations`, `syncLock`,
@@ -154,7 +169,8 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
   rows, so no key has two writers), `catalogueSyncStatus` (now also carries **`lastOkNight`** —
   the once-per-night gate; see Stage 7), **`digestHistory`** + **`digestStatus`** (new 2026-08-04 —
   `nightly-digest` is the only reader and writer of both; history is `{days:[{date,min,max}]}`,
-  idempotent by IST date, trimmed to 60).
+  idempotent by IST date, trimmed to 60; **first real entry written 2026-08-05**, so the email's ₹ delta
+  line starts appearing from 2026-08-06).
 - **⚠ Reading state? Query the exact key name.** `params/global` holds the strategy map under
   **`categoryStrategies`** (plural). A hand-rolled check that guessed `categoryStrategy` silently
   returned `{}` on 2026-07-30 and reported all 19 categories as unmapped — a confident wrong answer.
@@ -487,7 +503,7 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
   `partially_paid`/`sent` fraction — see the Zoho INVOICES API section. **The finish line for invoice
   data is settlement, not the trading close.**
 - **Scheduling consequence:** the nightly refresh runs in the idle **00:35–04:00 IST** window, against
-  the last *complete* IST day. Trading ends 20:00 IST and ops POs start ~06:00 IST, so the night is
+  the last *complete* IST day. Trading ends 20:00 IST and ops POs start ~07:30 IST, so the night is
   free, and TOs are occasionally raised as late as ~02:00 IST — which is why the invoice write is
   **atomic** rather than merely late-scheduled (see Stage 4). This costs no freshness versus the old
   21:30 slot: both produce targets before the next day's 14:30 TO run, but only this one uses a whole
@@ -668,6 +684,18 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 - `inventorysummary` report: ~18–56s/call depending on Zoho health — dominant cost.
 - **Zoho inventorysummary rate limit: ~8 calls/minute** (confirmed 2026-05-22; re-confirmed on the Inventory API 2026-07-06 — 10 calls in ~2 min → 429). 4 concurrent (2 branches × 2 modes) → 429 after 2 groups; 6 concurrent (3 branches) → 429 after 1 group. Safe: max 4 calls per invocation.
 - **Zoho OAuth token-endpoint throttle (distinct from the inventory-API limit above):** `accounts.zoho.in/oauth/v2/token` throttles *access-token generation* from the refresh token — `{"error":"Access Denied","error_description":"You have made too many requests continuously"}`. On 2026-07-14 this failed stock-sync-1 + stock-sync-2 (DC/DS01/DS02/DS03 missed a cycle) at the auth step, *before* any inventory/Supabase call; stock-sync-3/4 recovered ~3 min later. Root cause: every function minted a fresh token per invocation (~5-10/hr across 4 stock crons + orders + on-demand create-to). **Fix (2026-07-15):** shared `supabase/functions/_shared/zohoToken.ts` `getZohoToken(supabase)` caches the token in `public.zoho_auth_cache` (RLS ON, no policies → service-role only; NOT in `params`, which anon can read) and reuses it until ~10 min before expiry. Cuts token calls to ~1/hr; raising a TO now logs `zoho token: cache hit` and costs zero token calls, so it can't starve the crons. FAIL-SAFE: any cache miss/read/write error → fresh refresh (pre-cache behaviour). Hot path only (sync-stock, sync-orders, create-to); the `zoho-invoices/prices/skumaster` importers still mint per-call. Logs `zoho token: refreshed` / `cache hit`.
+  - **⚠ KNOWN-BENIGN, DO NOT TREAT AS AN INCIDENT: nightly `401 → force-refresh` bursts, in groups of
+    exactly FOUR.** Measured 2026-08-05 (and present on the 08-03 night, so not new): **11 events in one
+    night** — `00:35 ×1`, `01:05 ×4`, `01:55 ×4`, `02:14 ×2` — each logging
+    `zoho: 401 — force-refreshing token and retrying once` immediately followed by
+    `zoho token: force-refreshed (after 401)`. **Every one self-healed on the retry; zero 429s, zero
+    non-200 responses, no data effect.** This is the FAIL-SAFE working, not a fault.
+  - **The group-of-4 shape is the diagnostic:** it is `CONCURRENCY 4` workers hitting the same expired
+    cached token simultaneously, so **four mint a replacement where one would do**. That is the only
+    pattern in the system that multiplies token-endpoint volume — the same endpoint behind the
+    2026-07-14 throttle above — but 11 mints/night is nowhere near the ~5-10/hr sustained rate that
+    caused it. **Not worth a deploy on its own** (piggyback rule). If it ever needs fixing, the lever is
+    the cache's ~10-min pre-expiry margin or single-flighting the refresh, not the retry.
 - **⚠ ZOHO GOES DOWN ORG-WIDE, AND A FUNCTION CAN BE A VICTIM RATHER THAN A CAUSE — TWICE NOW,
   2026-07-29 and 2026-07-30.** First occurrence: between **17:35–18:30 UTC every Zoho consumer failed
   identically** with
@@ -736,7 +764,12 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
     → five attempts, 21:55–23:55 IST (migrations `20260730000001` + `20260729000002`)
   - `invoices-sync-window` at `5,15,25 19-22 * * *` UTC → 00:35–03:55 IST, **twelve slots**
     (widened from eight on 2026-08-04, migration `20260804000002`, via `cron.alter_job` so the
-    POST command could not be disturbed — verified by md5)
+    POST command could not be disturbed — verified by md5). **Proven on its first night, 2026-08-05:**
+    12 firings → 12 `booted` → 12 edge rows, zero 429s, publish at **01:55:10 IST** vs 02:50 on eight
+    slots. The 55-min gain is **schedule arithmetic, not lighter volume** — both nights needed the same
+    6 working chunks, and `:35,:45,:55` avoids the 45-min wait that `:35,:50` forced to the next hour.
+    Steady state: **6 working invocations (8.8–21.0s) then 6 no-ops (~0.8s)** returning
+    `already_published`.
   - **`sku-floors-sync` at `5,55 23 * * *` UTC → 04:35 + 05:25 IST** (migration `20260731000001`) →
     the ops Google Sheet into `newSKUQty`. Body **MUST** carry `{"dryRun": false}`.
   - **`engine-run-nightly` at `15,45 0 * * *` UTC → 05:45 + 06:15 IST** (migration `20260731000002`) →
@@ -812,22 +845,43 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
   window to attribute logs per invocation. ⚠ **An `order by timestamp asc limit 1000` that HITS the cap
   truncates the END of the window silently** — a missing log line can be the cap, not a missing event.
   Prefer a `where event_message like '%429%'`-style filtered query when counting, so "zero" means zero.
-  - **⚠ "DID THE CRON FIRE?" IS ANSWERABLE WITHOUT ANY CODE CHANGE — use `function_edge_logs`, not
-    `function_logs`.** Unnest the metadata for `execution_time_ms` and the duration alone separates the
-    cases. Measured 07-30: `sync-stock` **1176ms / 1139ms** at 16:35/16:38 = fired-and-skipped, vs
-    **14425ms / 12085ms** at 16:41/16:44 = fired-and-did-the-work; `sync-catalogue` skips are ~**810ms**.
-    ```sql
-    select timestamp, req.url, resp.status_code, m.execution_time_ms from function_edge_logs
-    cross join unnest(metadata) as m cross join unnest(m.request) as req
-    cross join unnest(m.response) as resp order by timestamp asc
-    ```
-    This matters because **the skip paths log NOTHING**: `sync-stock`'s cooldown skip and its `busy`
-    exit, and `sync-catalogue`'s cooldown gate, all `return json(...)` with no `console.log`, so a
-    skipped invocation appears in `function_logs` as `booted` → `shutdown` with nothing between —
-    indistinguishable from a crash, or from the cron never firing. Adding those log lines was
-    **considered and rejected 2026-07-31** on the piggyback rule above: it would only add the *reason*
-    (cooldown vs busy vs foreign session), and the reason is usually inferable from the lease/cooldown
-    arithmetic. Don't redeploy two live functions for it.
+  - **⚠⚠ "DID THE CRON FIRE?" NEEDS BOTH LOG TABLES, AND THEY ANSWER DIFFERENT HALVES. `booted` in
+    `function_logs` COUNTS invocations; `function_edge_logs` CLASSIFIES them — and only the first is
+    complete.** An earlier version of this note said "use `function_edge_logs`, **not**
+    `function_logs`", which is wrong in the one case you reach for it.
+    - **HOW MANY TIMES DID IT RUN → `function_logs where event_message like 'booted%'`.** One line per
+      invocation, cheap to count, and it has never been observed to drop one.
+    - **DID IT WORK OR SKIP → `function_edge_logs.execution_time_ms`.** The duration alone separates the
+      cases. Measured 07-30: `sync-stock` **1176ms / 1139ms** at 16:35/16:38 = fired-and-skipped, vs
+      **14425ms / 12085ms** at 16:41/16:44 = fired-and-did-the-work; `sync-catalogue` skips are
+      ~**810ms**. Measured 08-05 on `sync-invoices`: working chunks **8.8–21.0s**, `already_published`
+      no-ops **0.72–0.88s**.
+      ```sql
+      select timestamp, req.url, resp.status_code, m.execution_time_ms from function_edge_logs
+      cross join unnest(metadata) as m cross join unnest(m.request) as req
+      cross join unnest(m.response) as resp order by timestamp asc
+      ```
+    - **⚠ `function_edge_logs` SILENTLY DROPS ROWS — a missing row is NOT evidence the cron did not
+      fire. Proven 2026-08-05.** On the night of 08-03 the cron fired 8 times (`cron.job_run_details`
+      all `succeeded`) but only **7** rows existed for `sync-invoices` in `function_edge_logs`; `01:35`
+      was absent. Re-queried two days later it was **still** absent, so not ingestion lag. Two
+      candidate artefacts were ruled out before blaming the table: the triple-`unnest` above drops any
+      row whose `response` array is empty (a request-only unnest still returned 7), and the 1000-row
+      cap was nowhere near. `function_logs` settled it — `booted (time: 33ms)` at `01:35:00` followed
+      by real Zoho work. **8 firings → 8 `booted` → 7 edge rows.** The next night, on 12 slots, all
+      three agreed: **12 = 12 = 12.**
+    - Why the older note preferred the edge table anyway, still true: **the skip paths log NOTHING**.
+      `sync-stock`'s cooldown skip and its `busy` exit, and `sync-catalogue`'s cooldown gate, all
+      `return json(...)` with no `console.log`, so a skipped invocation appears in `function_logs` as
+      `booted` → `shutdown` with nothing between — indistinguishable from a crash. That argues for
+      reading `execution_time_ms` to classify, **not** for counting in the incomplete table. Adding
+      those log lines was **considered and rejected 2026-07-31** on the piggyback rule above: it would
+      only add the *reason* (cooldown vs busy vs foreign session), usually inferable from the
+      lease/cooldown arithmetic. Don't redeploy two live functions for it.
+    - **Generalisable:** `cron.job_run_details.status = 'succeeded'` proves only that the `net.http_post`
+      **enqueue** succeeded — pg_net is asynchronous, so it is not evidence of delivery. Three
+      independent signals exist (cron enqueue → `booted` → edge row); when they disagree, the one that
+      can only under-report is the one to distrust.
   - **⚠ A BROWSER-HELD SESSION LEASE LOOKS EXACTLY LIKE A FAILED CRON.** `SESSION_TTL_MINS = 12` while
     the stock crons sit 3 min apart at `:35 :38 :41 :44`, so **one browser Sync Now / TO pull can block
     up to all four stock groups** for a cycle, silently (above). Worked example 07-30: a pull claimed
@@ -1023,12 +1077,23 @@ used.** Not a code change; a Zoho setting. Cheap, and it is the emergency path.
   revisited for three months. **Decide it: do it, or park it with a stated reason.**
 
 ### 25. The D-3 recheck re-fetches ~585 invoices to change ~2 rows
-**Half the runway problem is fixed; the waste is not.** Slots went 8 → 12 on 2026-08-04 (migration
-`20260804000002`), which carries N to 2,750 invoices/night ≈ **~1,375 orders/day** against ~600 today.
-That bought time, not a cure.
+**Half the runway problem is fixed AND NOW PROVEN; the waste is not.** Slots went 8 → 12 on 2026-08-04
+(migration `20260804000002`), which carries N to 2,750 invoices/night ≈ **~1,375 orders/day** against
+~600 today. Verified working on its first night (2026-08-05: 12/12, publish 01:55, zero 429s), so the
+runway is real — but it **bought time, not a cure**, and there is now slack in the window precisely
+because the publish finishes two hours before the last slot.
 
-**The waste, measured night 1:** the D-3 re-fetch consumed **1,175 of 2,408 detail calls — half the
-night — and corrected 2 rows.**
+**The waste, now measured on two nights, and it reproduced almost exactly:**
+
+| night | recheck date | detail calls | of total | rows corrected |
+|---|---|---|---|---|
+| 1 (08-04) | 07-31 | 1,175 | of 2,408 | **2** (2 lighter) |
+| 2 (08-05) | 08-01 | ~1,143 | of 2,431 | **1** (1 lighter) |
+
+Half the night's calls, both nights, to move 1–2 rows. Night 2's recheck cost is derived from the row
+arithmetic (`old 08-01 = 1,143`) and confirmed by the chunk logs, which show the 08-01 pass consuming
+three of the six working invocations on its own. **This is no longer a one-night anecdote — the ratio is
+stable, which is what makes the splice worth costing out.**
 
 - **⚠ THE RECHECK IS NOT OPTIONAL, and the reason is not voids.** It catches four things, and *three*
   are under-counts (the expensive direction): an invoice **created** after the pull, a **line item
@@ -1170,7 +1235,7 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
   16:00/:06/:12 UTC jobs, which were built on the false "invoices complete by 20:30 IST" premise.
   - **Why overnight:** the day must be **settled**, not merely closed (see the Zoho INVOICES API
     section — a 21:30 pull lost 27.7% of quantity to `partially_paid`/`sent`). The window is idle
-    (trading ends 20:00 IST, POs start ~06:00 IST) and clear of `:35–:50`.
+    (trading ends 20:00 IST, POs start ~07:30 IST) and clear of `:35–:50`.
   - **ATOMIC PUBLISH — the load-bearing safety property.** Chunks accumulate in
     `team_data/invoice_sync_buffer`; the target row is written **exactly once**, only when every planned
     date is fully pulled and both guards pass. IMS recomputes the engine client-side on every page load,

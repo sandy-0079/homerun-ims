@@ -241,7 +241,15 @@ nothing about the thing that will actually send.
 | 3 | `git push` — the `invValue` stamp (Vercel) | **prod deploy** | ✅ `3f5a878` |
 | 3b | Confirm `invValue` via `{"mode":"dry"}` | reads only | ✅ ₹7.9289Cr, matches the card |
 | 6 | Apply the cron migration | scheduled | ✅ `0 1 * * *` UTC |
-| **7** | **First unattended firing** | — | **🚧 2026-08-05 — see `docs/RUNBOOK-2026-08-05-MORNING.md`** |
+| **7** | **First unattended firing** | — | ✅ **2026-08-05 06:30:02 IST** — green, Inbox, 2,611ms, HTTP 200 |
+
+**Step 7 passed.** `digestStatus`: `ok:true · level:"green" · recorded:true · recipients:1`, all four
+checks green at their per-input healthy lags (invoices 1, catalogue 1, floors 0, engine 0) — confirming
+the per-input thresholds were right and that one shared baseline would have mislabelled the catalogue.
+The value line rendered as designed on its first outing: `Inv Value (Max) ₹7.99Cr — first reading, no
+prior day to compare (Min ₹5.60Cr)`, matching `toTargets.invValue` exactly, and `digestHistory` now
+holds one day so the delta begins 2026-08-06. The morning runbook that tracked this has been deleted;
+the durable findings are in CLAUDE.md.
 
 ⚠ **Deployed in a different order than planned, deliberately.** The new function went first, so the
 whole email pipeline was proven end-to-end while touching nothing that already existed; only then was

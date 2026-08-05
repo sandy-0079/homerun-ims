@@ -1080,6 +1080,12 @@ every other field in a `team_data` row.
 | Stop a misbehaving sync | `select cron.unschedule('<jobname>');` |
 | Revert the invoice target | `TARGET_ROW` → `"invoice_data_shadow"` in `sync-invoices/index.ts`, redeploy |
 
+⚠ **On that last one: `invoice_data_shadow` was DELETED 2026-08-04, so reverting recreates it EMPTY.**
+That is still the right rollback — the point is to stop the sync writing the live row, and `invoice_data`
+then simply **freezes at its last good content** while the engine keeps computing from it. What it is
+*not* is a way to recover data: nothing is copied back, and the shadow row will hold only whatever the
+sync pulls after the revert. To recover data, use the `invoice_data_backup_<date>` row above.
+
 **Emergency manual override:** the invoice CSV upload path still works exactly as before. It is a **full
 replace**, so use a **full-window** export, never a five-day one. And note item 19 — the Zoho export
 locale currently makes this path unusable until fixed.
