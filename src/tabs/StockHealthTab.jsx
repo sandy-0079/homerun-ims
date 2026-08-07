@@ -25,6 +25,11 @@ const DC_COLOR = { header: "#0077A8" };
 const DS_AND_DC = [...DS_LIST, "DC"];
 
 // Zoho Inventory deep-link base (org migrated from Books → Inventory 2026-07-06).
+// ⚠ TRANSFER ORDERS NEED THE `/inventory` SEGMENT: `#/inventory/transferorders/{id}`.
+// `#/transferorders/{id}` alone 404s — route pattern read off a real TO's address
+// bar on 2026-07-10 and pinned by a test in the homerun-to repo (`zohoToUrl` in
+// src/createTo.js). IMS carried the short form until 2026-08-07, so every TO Ref #
+// link on the DS tabs was dead. Purchase orders use the short form and work.
 const ZOHO_INV_URL = "https://inventory.zoho.in/app/60075214606#";
 
 const TC = {
@@ -90,15 +95,63 @@ function applyDCReqCovered(tag, { sku, ecs, min, res, activeStockData }) {
   return (condA || condB || condC) ? "dsReqCovered" : tag;
 }
 
+// Tolerates a MISSING stock record on purpose: since 2026-08-07 every active SKU
+// gets a row at every location, so "no record at this branch" must read as zero
+// stock rather than dropping the row. Otherwise a stock-sync gap would silently
+// shrink the table and the tab's denominator would stop being the SKU count.
 function getLive(live) {
-  const stockOnHand = live.stock_on_hand ?? 0;
-  const afs         = live.available_for_sale ?? 0;
+  const stockOnHand = live?.stock_on_hand ?? 0;
+  const afs         = live?.available_for_sale ?? 0;
   // ECS (effective current stock) tags on Stock-on-Hand, not AFS: stale historical
   // Sales Orders depress AFS even when the stock is physically present at the location.
   return { stockOnHand, afs, ecs: Math.max(0, stockOnHand) };
 }
 
+// ── Location universe — SHARED by dsSummary (tab-bar badges) and allSkuRows
+// (KPI cards + table) so the two can never diverge. They previously carried
+// duplicate copies of this filter, which is exactly how the DC tab-bar badge
+// once came to over-count Critical against its own KPI card.
+//
+// EVERY active, non-Supplier SKU belongs to EVERY DS tab, and every active
+// DC-inventorised SKU to the DC tab — whether or not it has a target there, and
+// whether or not stock is present. Before 2026-08-07 a SKU with Min=Max=0 was
+// dropped, which hid ~₹64L of stock that is 100% excess by definition and is
+// precisely what the DS team needs in order to send it back to the DC.
+//
+// Inactive / Confirmation Pending and Supplier SKUs stay excluded.
+function inLocationUniverse(meta, isDC) {
+  const invAt = (meta.inventorisedAt || "DS").toLowerCase();
+  if (invAt === "supplier") return false;
+  if ((meta.status || "Active").toLowerCase() !== "active") return false;
+  if (isDC && invAt !== "dc") return false;   // "ds" SKUs bypass the DC entirely
+  return true;
+}
+
 function pct(n, total) { return total > 0 ? Math.round((n / total) * 100) : 0; }
+
+// KPI cards need finer resolution than the nav. Every DS tab now shares a 2,093
+// denominator, so a handful of Critical SKUs is well under 1% and Math.round()
+// flattened it to "0%" — which reads as "none" when it means "a few". Sub-1%
+// values get 2 decimals so a NON-ZERO count can never render as zero; 1 decimal
+// above that. A genuine zero still prints a clean "0".
+function pctFine(n, total) {
+  if (!total || !n) return "0";
+  const v = (n / total) * 100;
+  return v < 1 ? v.toFixed(2) : v.toFixed(1);
+}
+
+// CSV field quoting. Item names carry commas and the odd embedded quote.
+const q = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+
+const downloadCsv = (csv, filename) => {
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 function dsAccent(ds) {
   const i = DS_LIST.indexOf(ds);
@@ -292,30 +345,22 @@ export default function StockHealthTab({
     if (!results) return s;
     for (const [sku, res] of Object.entries(results)) {
       const meta = res.meta || {};
-      const invAt = (meta.inventorisedAt || "DS").toLowerCase();
-      if (invAt === "supplier") continue;
-      if ((meta.status || "Active").toLowerCase() !== "active") continue;
       // DS tabs: both "ds" and "dc" inventorised SKUs are relevant
-      for (const ds of DS_LIST) {
-        const sr = res.stores?.[ds];
-        if (!sr || (!sr.min && !sr.max)) continue;
-        const live = activeStockData[sku]?.[ds];
-        if (!live) continue;
-        const { ecs } = getLive(live);
-        s[ds][getHealthTag(ecs, sr.min || 0, sr.max || 0, sr.dailyAvg || 0)]++;
-      }
-      // DC tab: only "dc" inventorised SKUs — "ds" SKUs bypass the DC entirely
-      if (invAt === "dc") {
-        const dc = res.dc;
-        if (dc?.min || dc?.max) {
-          const live = activeStockData[sku]?.["DC"];
-          if (!live) continue;
-          const { ecs } = getLive(live);
-          const dcRos = DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0);
-          let dcTag = getHealthTag(ecs, dc.min || 0, dc.max || 0, dcRos);
-          dcTag = applyDCReqCovered(dcTag, { sku, ecs, min: dc.min || 0, res, activeStockData });
-          s["DC"][dcTag]++;
+      if (inLocationUniverse(meta, false)) {
+        for (const ds of DS_LIST) {
+          const sr = res.stores?.[ds];
+          const { ecs } = getLive(activeStockData[sku]?.[ds]);
+          s[ds][getHealthTag(ecs, sr?.min || 0, sr?.max || 0, sr?.dailyAvg || 0)]++;
         }
+      }
+      // DC tab: only "dc" inventorised SKUs
+      if (inLocationUniverse(meta, true)) {
+        const dc = res.dc;
+        const { ecs } = getLive(activeStockData[sku]?.["DC"]);
+        const dcRos = DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0);
+        let dcTag = getHealthTag(ecs, dc?.min || 0, dc?.max || 0, dcRos);
+        dcTag = applyDCReqCovered(dcTag, { sku, ecs, min: dc?.min || 0, res, activeStockData });
+        s["DC"][dcTag]++;
       }
     }
     return s;
@@ -329,17 +374,15 @@ export default function StockHealthTab({
     const isDC = selectedDS === "DC";
     return Object.entries(results).flatMap(([sku, res]) => {
       const meta = res.meta || {};
+      if (!inLocationUniverse(meta, isDC)) return [];
       const invAt = (meta.inventorisedAt || "DS").toLowerCase();
-      if (invAt === "supplier") return [];
-      if ((meta.status || "Active").toLowerCase() !== "active") return [];
-      // DC tab only shows SKUs that flow through DC; DS tabs show both ds+dc inventorised
-      if (isDC && invAt !== "dc") return [];
 
-      const minMax = isDC ? res.dc : res.stores?.[selectedDS];
-      if (!minMax || (!minMax.min && !minMax.max)) return [];
-      const live = activeStockData[sku]?.[selectedDS];
-      if (!live) return [];
-      const { stockOnHand, afs, ecs } = getLive(live);
+      // NO min/max gate and NO stock-record gate: a SKU with Min=Max=0 that still
+      // holds stock must surface (it tags "excess" — 100% returnable), and one
+      // with Min=Max=0 and no stock tags "okay" (nothing to action). getHealthTag
+      // handles both without a new tag; see the universe comment above.
+      const minMax = (isDC ? res.dc : res.stores?.[selectedDS]) || {};
+      const { stockOnHand, afs, ecs } = getLive(activeStockData[sku]?.[selectedDS]);
       const min = minMax.min || 0;
       const max = minMax.max || 0;
       const ros = isDC
@@ -370,13 +413,54 @@ export default function StockHealthTab({
 
   allSkuRowsRef.current = allSkuRows;
 
+  // ── Reverse TO list rows — ALWAYS on ACCOUNTING stock ─────────────────────
+  // The DS team only ever counts against accounting stock, so this file must be
+  // identical whichever way the Accounting/Physical toggle is set. Deliberately
+  // NOT derived from `allSkuRows`: that follows the toggle, so on the Physical
+  // tab the Excess row SET is chosen from physical stock. Taking the row set
+  // from one basis and printing SoH from the other would be silently
+  // inconsistent — the sheet would list SKUs that are not excess on the basis
+  // the DS team is actually counting against.
+  //
+  // Falls back to physical only if accounting data is entirely absent, so a
+  // missing accounting sync produces a usable file rather than an empty one.
+  const reverseToRows = useMemo(() => {
+    if (!results || selectedDS === "DC") return [];
+    const store = Object.keys(stockDataAccounting || {}).length > 0 ? stockDataAccounting : stockData;
+    const out = [];
+    for (const [sku, res] of Object.entries(results)) {
+      const meta = res.meta || {};
+      if (!inLocationUniverse(meta, false)) continue;
+      const mm = res.stores?.[selectedDS] || {};
+      const { stockOnHand, ecs } = getLive(store?.[sku]?.[selectedDS]);
+      const min = mm.min || 0, max = mm.max || 0;
+      if (getHealthTag(ecs, min, max, mm.dailyAvg || 0) !== "excess") continue;
+      out.push({
+        sku,
+        name:     meta.name     || sku,
+        category: meta.category || "Uncategorized",
+        brand:    meta.brand    || "—",
+        movTag:   mm.mvTag      || "",
+        stockOnHand, max,
+      });
+    }
+    // Grouped for the physical walk — items in a category/brand tend to shelve together.
+    return out.sort((a, b) => a.category.localeCompare(b.category)
+                           || a.brand.localeCompare(b.brand)
+                           || a.name.localeCompare(b.name));
+  }, [results, selectedDS, stockDataAccounting, stockData]);
+
   // ── Per-category totals (for nav badges + KPI cards) ──────────────────────
   const catTotals = useMemo(() => {
     const map = {};
     for (const row of allSkuRows) {
-      if (!map[row.category]) map[row.category] = { total: 0, stocked: 0, ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0 };
+      if (!map[row.category]) map[row.category] = { total: 0, stocked: 0, withTarget: 0, ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0 };
       map[row.category].total++;
       if (row.ecs > 0) map[row.category].stocked++;
+      // `withTarget` = SKUs we actually intend to stock here. This is the nav's
+      // coverage numerator; `total` can no longer serve because every active SKU
+      // now has a row, which would make coverage read 100% everywhere.
+      if (row.min > 0 || row.max > 0) map[row.category].withTarget++;
       map[row.category][row.tag]++;
     }
     return map;
@@ -413,10 +497,11 @@ export default function StockHealthTab({
 
   // ── DS-level totals ────────────────────────────────────────────────────────
   const dsTotals = useMemo(() => {
-    const counts = { ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0, total: 0 };
+    const counts = { ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0, total: 0, withTarget: 0 };
     for (const row of allSkuRows) {
       counts[row.tag] = (counts[row.tag] || 0) + 1;
       counts.total++;
+      if (row.min > 0 || row.max > 0) counts.withTarget++;
     }
     return counts;
   }, [allSkuRows]);
@@ -648,19 +733,21 @@ export default function StockHealthTab({
         {/* All */}
         <NavItem
           label="All Categories"
-          subLabel={masterTotal > 0 ? `${dsTotals.total}/${masterTotal} · ${pct(dsTotals.total, masterTotal)}%` : `${dsTotals.total} SKUs`}
+          subLabel={masterTotal > 0 ? `${dsTotals.withTarget}/${masterTotal} · ${pct(dsTotals.withTarget, masterTotal)}%` : `${dsTotals.withTarget} SKUs`}
           ecCount={dsTotals.ec}
           critCount={dsTotals.critical}
           isSelected={selectedCat === null}
           onClick={() => setSelectedCat(null)}
         />
 
-        {/* Per-category */}
-        {navCategories.map(({ cat, ec, critical, total }) => {
+        {/* Per-category. Coverage uses `withTarget` (SKUs we intend to stock
+            here), NOT `total` — every active SKU has a row since 2026-08-07, so
+            `total` would read 100% for every category and lose the signal. */}
+        {navCategories.map(({ cat, ec, critical, withTarget }) => {
           const masterN = masterCatTotals[cat] || 0;
           const subLabel = masterN > 0
-            ? `${total}/${masterN} · ${pct(total, masterN)}%`
-            : `${total} SKUs`;
+            ? `${withTarget}/${masterN} · ${pct(withTarget, masterN)}%`
+            : `${withTarget} SKUs`;
           return (
             <NavItem
               key={cat}
@@ -763,7 +850,7 @@ export default function StockHealthTab({
             if (tag === "dsReqCovered" && selectedDS !== "DC") return null;
             const cfg   = TC[tag];
             const count = kpiTotals[tag] || 0;
-            const p     = pct(count, kpiTotals.total || 0);
+            const p     = pctFine(count, kpiTotals.total || 0);
             const isActive = filterTag === tag;
             return (
               <div key={tag} onClick={() => setFilterTag(isActive ? null : tag)}
@@ -950,13 +1037,7 @@ export default function StockHealthTab({
                   ];
                 });
                 const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-                const blob = new Blob([csv], { type: "text/csv" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `stock-health-${selectedDS}${selectedCat ? `-${selectedCat}` : ""}${filterTag ? `-${TC[filterTag].label}` : ""}.csv`;
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadCsv(csv, `stock-health-${selectedDS}${selectedCat ? `-${selectedCat}` : ""}${filterTag ? `-${TC[filterTag].label}` : ""}.csv`);
               }}
               style={{
                 display: "flex", alignItems: "center", gap: 4, cursor: "pointer",
@@ -965,7 +1046,64 @@ export default function StockHealthTab({
                 fontWeight: 600, whiteSpace: "nowrap", fontFamily: "inherit",
               }}
             >
-              ⬇ Download
+              ⬇ Download All SKUs
+            </button>
+          )}
+
+          {/* ── Reverse TO list — DS tabs only ────────────────────────────────
+              A reverse TO moves stock DS → DC, so the workflow has no meaning at
+              the DC itself. The file is a WORKSHEET: the DS team counts each SKU
+              on the shelf, types the count into "SoH Counted", and "Reverse TO
+              Qty" computes itself. Contents are identical on the Accounting and
+              Physical tabs — see `reverseToRows`. */}
+          {selectedDS !== "DC" && reverseToRows.length > 0 && (
+            <button
+              onClick={() => {
+                // ⚠ ALWAYS every Excess row at this location — deliberately
+                // IGNORES the category / brand / search / tag filters. This is a
+                // physical stock-return sweep; a filtered file would silently
+                // omit stock and nothing in the sheet would reveal the omission.
+                const headers = ["SKU", "Item Name", "Category", "Brand", "Movement Tag",
+                  "Stock Health", "SoH System", "SoH Counted", "Max", "Reverse TO Qty"];
+                const body = reverseToRows.map((r, i) => {
+                  const ln = i + 2; // +1 for the header row, +1 because rows are 1-based
+                  return [
+                    r.sku,
+                    q(r.name),
+                    q(r.category),
+                    r.brand !== "—" ? q(r.brand) : "",
+                    r.movTag,
+                    TC.excess.label,
+                    Math.max(0, r.stockOnHand),
+                    "",                       // SoH Counted — filled in at the DS
+                    r.max,
+                    // ⚠ Blank-guarded ON PURPOSE. Both Excel and Sheets treat an
+                    // empty cell as 0, so a bare MAX(0,H-I) would render "0" on
+                    // every row BEFORE anyone counts anything — reading as
+                    // "return nothing" when it actually means "not counted yet".
+                    // With the guard: blank = not counted, 0 = counted and
+                    // nothing to return. MAX(0,…) stops a negative when the
+                    // count comes in below Max.
+                    // Escaped via q(): the formula carries commas (which would
+                    // split the row) and quotes (which must be doubled).
+                    q(`=IF(H${ln}="","",MAX(0,H${ln}-I${ln}))`),
+                  ].join(",");
+                });
+                const today = new Date().toISOString().slice(0, 10);
+                // "Accounting" is a literal, not the toggle: this file is always
+                // built on accounting stock, and the name should say so on a
+                // sheet that outlives the download.
+                downloadCsv([headers.join(","), ...body].join("\n"),
+                  `Reverse_TO_List_${selectedDS}_Accounting_${today}.csv`);
+              }}
+              style={{
+                display: "flex", alignItems: "center", gap: 4, cursor: "pointer",
+                border: `1px solid ${TC.excess.borderColor}`, borderRadius: 5, padding: "3px 8px",
+                background: TC.excess.cardBg, color: TC.excess.cardText, fontSize: 10,
+                fontWeight: 700, whiteSpace: "nowrap", fontFamily: "inherit",
+              }}
+            >
+              ⬇ Download Reverse TO list
             </button>
           )}
         </div>
@@ -1189,7 +1327,7 @@ export default function StockHealthTab({
                               {/* Ref # — TO number, links to Zoho Books */}
                               <td style={{ padding: "2px 6px", borderTop: topBorder, fontSize: FS, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {to?.to_number ? (
-                                  <a href={`${ZOHO_INV_URL}/transferorders/${to.to_id}`}
+                                  <a href={`${ZOHO_INV_URL}/inventory/transferorders/${to.to_id}`}
                                      target="_blank" rel="noopener noreferrer"
                                      style={{ color: "#1D4ED8", textDecoration: "underline", fontWeight: 500 }}>
                                     {to.to_number}

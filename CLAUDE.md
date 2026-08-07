@@ -721,10 +721,40 @@ invoice sync:**
 
 **DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase). **Phase 2 (2026-07-06, now in `main`):** `DS_LIST` includes DS06 (Stock Health tab/KPIs/DC ROS/DS Req Covered follow automatically; 6th `DS_COLORS` entry added) + engine **DS Seed pass** gives DS06 Min/Max = avg(DS02, DS04) — see the DS Seed section. Both go-live steps are **done**: DS06 is in `newDSList`, and DS06 is in all four plywood brand matrices. **The DS Seed was sunset 2026-07-31** once pincode attribution gave DS06 a full 45-day catchment history — see the DS Seed section for the measurement and the reasoning. Review later: cluster assignment.
 
-**SKU filtering rules:**
-- Only `status = Active` SKUs (from SKU Master)
-- `Inventorised At = Supplier` → excluded entirely from all counts and table
+**SKU filtering rules — EVERY ACTIVE SKU GETS A ROW AT EVERY LOCATION (changed 2026-08-07):**
+- Only `status = Active` SKUs (from SKU Master). Inactive / Confirmation Pending are ignored.
+- `Inventorised At = Supplier` → excluded entirely from all counts and table.
 - DC tab: only `Inventorised At = DC` SKUs. DS tabs: both DS + DC inventorised SKUs.
+- **NO min/max gate and NO stock-record gate.** Every DS tab shows the same **2,093** rows and the
+  DC tab **2,080** (measured 2026-08-07); a missing stock record reads as zero rather than dropping
+  the row, so a stock-sync gap cannot silently shrink the table.
+
+**⚠⚠ WHY: A SKU WITH Min=Max=0 THAT STILL HOLDS STOCK IS 100% EXCESS, AND IT USED TO BE INVISIBLE.**
+The DS teams build **reverse TOs** (send excess back to the DC) off this table. A SKU stocked
+yesterday and zeroed today — demand fell out of the 45-day window, ops marked it Dead Stock, a floor
+was removed — was dropped by the old `if (!minMax.min && !minMax.max) return []`, so the units sitting
+on the shelf could not be seen or returned. **Measured before the fix: ₹64.0L across DS01–DS06** (828
+SKU×DS from targets falling to 0/0, 17 from Dead Stock), plus ₹5.4L on Supplier SKUs which stay
+excluded by design.
+- **No new tag was needed** — `getHealthTag` already handles both cases, and its branch order is what
+  makes this safe: `ecs > max` fires first (so `0/0` + stock → **Excess**), then `ecs === min === max`
+  (so `0/0` + empty → **Okay**).
+- **Critical and Low Stock counts are STRUCTURALLY unchanged** by this — verified identical before and
+  after at all six DSes (DS01 5→5, 271→271). A `0/0` row can never reach the `ecs <= min` branch
+  because the two earlier branches catch every zero-target case. Only Excess and Okay grew.
+- **"Okay" now means "no action needed", not "healthy stock level"** — it absorbed the 352–691
+  not-stocked-and-empty rows per store. Deliberate: a SKU we don't stock and don't hold needs nothing.
+- **⚠ `inLocationUniverse(meta, isDC)` is SHARED by `allSkuRows` and `dsSummary`.** They previously
+  carried duplicate copies of this filter, which is exactly how the DC tab-bar badge once came to
+  over-count Critical against its own KPI card. Keep both readers on the helper.
+- **⚠ THE NAV COVERAGE NUMERATOR IS `withTarget`, NOT `total`.** `dsTotals.total` is now 2,093 at
+  every store, so the old `total/masterTotal` would read **100% everywhere** and lose the assortment
+  signal. `withTarget` counts rows with `min > 0 || max > 0` and reproduces the previous figures
+  exactly (DS01 77% · DS02 67% · DS03 72% · DS04 62% · DS05 63% · DS06 64%). KPI cards keep using
+  `total`, so their denominator is a uniform 2,093 and their percentages are comparable across stores
+  for the first time.
+- KPI card percentages use **`pctFine`** (2dp below 1%, 1dp above) — with a 2,093 denominator
+  `Math.round` flattened a handful of Critical SKUs to a flat "0%", which reads as "none".
 
 **Order data shown per SKU type (DS tabs):**
 - `Inventorised At = DC` → TO columns (Ref #, Date, Rep. Qty, Rec Qty, Est. Delivery, Status: Picking/In Transit/Received). No PO shown.
@@ -758,7 +788,17 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 **PO data notes:**
 - `cf_purchase_type` must be "Replenishment" to be included. Ops mandate started 2026-05-13 — older POs may lack this field.
 - **PO status vocabulary is Inventory-native (post-migration):** the `status` field stored/displayed is `issued` / `partially_received` / `received` / `pending_approval` / `cancelled` — NOT Books' `open`/`partially_billed`. The edge-function query filter still uses `status=open` (a Zoho alias that returns issued+partially_received+received) + `pending_approval` + `partially_billed` — these are query keywords, distinct from the returned `status` value. Frontend `PO_STATUS_LABEL/BADGE/STYLE`, `getPoDisplayStatus` (Delayed derivation), the "Issued" KPI filter, and `PO_RANK` sort all key on the Inventory values (Books keys kept as harmless back-compat). Only `issued`/`pending_approval`/`delayed` actually render on DS tabs — `dsPoData` drops any PO with `received > 0`.
-- **Zoho deep-links:** Stock Health PO/TO Ref# links use `ZOHO_INV_URL = https://inventory.zoho.in/app/60075214606#` (`/purchaseorders/{id}`, `/transferorders/{id}`) — the Books org URL is retired.
+- **⚠⚠ Zoho deep-links — TRANSFER ORDERS NEED AN `/inventory` SEGMENT AND PURCHASE ORDERS DO NOT.**
+  `ZOHO_INV_URL = https://inventory.zoho.in/app/60075214606#` (the Books org URL is retired), then:
+  - TO → **`#/inventory/transferorders/{id}`** · PO → `#/purchaseorders/{id}`
+  - **`#/transferorders/{id}` alone 404s.** IMS carried the short form from the 2026-07-06 migration
+    until **2026-08-07**, so every TO Ref # link on the DS tabs was dead for a month while the PO
+    links beside them worked — which is why nobody spotted it sooner.
+  - **⚠ The correct pattern was already known, in the OTHER repo.** `homerun-to/src/createTo.js`
+    `zohoToUrl()` has carried it since 2026-07-10, read off a real TO's address bar, **with a test
+    pinning it** (`createTo.test.js`). The fix never propagated here. Same shape as the duplicated
+    Stock Health filter: two readers of one fact, only one of them corrected. **When a Zoho route is
+    verified in either repo, grep the other.**
 - `delivery` = `cf_confirmed_delivery_time` from `custom_fields[]` array (NOT top-level field). New-org format: `YYYY-MM-DD HH:mm` — sync-orders strips the time via `split(' ')[0]`.
 - 15-min cooldown enforced server-side (both cron and manual Sync Now).
 - **PO display rule:** `dsPoData` filters out any entry where `received > 0` before the frontend sees it. Latest PO per SKU already wins (sort by date DESC, first-assignment wins in sync-orders). If the latest PO has received > 0, stock already arrived — no PO shown regardless of older stale POs. Frontend-only change, no edge function impact.
@@ -1277,6 +1317,18 @@ The Stage 5 runbook's flat `< 800 rows ⇒ stop` false-alarmed on 08-02's 752 ro
 **second-busiest Sunday on record** (13 Sundays: min 382 / median 522 / max 760, vs non-Sunday median
 866). Compare against the same weekday's median. A guard that cries wolf on schedule gets ignored.
 
+### 27. `params/binLocations` is rot — 98.3% of it cannot be joined
+Measured 2026-08-07: **1,148 entries**, keyed by **pre-July SKU codes** (`HAR-TEL-HET-4732-SC-450`,
+`WIR-FRL-POL-250-BLU-300-1`). Only **20 (1.7%)** match a current `skuMaster` key — the rest were
+orphaned by the ~2026-07-01 Zoho re-code, the same event behind the invoice unknown-SKU story.
+**Nothing in `src/` reads the row**, so nothing is broken today; it is a trap for whoever finds it and
+assumes it is usable.
+- **The concrete loss:** the Reverse TO list (item 26) is a *physical walk* of the store, and sorting
+  it by bin would cut the walk substantially. It sorts Category → Brand → Item Name instead, purely
+  because bin data cannot be joined. This is the first real consumer bin locations would have had.
+- Either rebuild it against current SKU codes (an ops task, not a code one) or delete the row. Do not
+  wire anything to it first — **check the join rate before believing it**, which is the whole lesson.
+
 ### Later, not urgent
 - **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence
   structurally impossible and page loads much faster. Costs the "engine changes go live on next page
@@ -1309,6 +1361,38 @@ Columns: SoH, AFS, DC Stock, Min, Max, ROS, Req Qty, Rep. Qty, Rec Qty, Date, Es
   Caveat: on the **DC tab** the DC-level movement calc collapses Fast into Super Fast, so a bare "Fast"
   never appears there.
 - Picking pill: yellow (matching Pending Approval colour).
+- **TWO download buttons since 2026-08-07** — `⬇ Download All SKUs` (the file above, unchanged
+  behaviour and column order, renamed only) and **`⬇ Download Reverse TO list`** (DS tabs only; a
+  reverse TO moves stock DS → DC, so it has no meaning at the DC). See item 26.
+
+### 26. Reverse TO list — a count sheet, not a report ✅ Shipped (2026-08-07)
+`⬇ Download Reverse TO list` on every DS tab. **10 columns, position-stable:**
+`SKU · Item Name · Category · Brand · Movement Tag · Stock Health · SoH System · SoH Counted · Max ·
+Reverse TO Qty`. Sorted **Category → Brand → Item Name** so the physical walk groups shelf-neighbours.
+It is a **worksheet**: the DS team counts each SKU, types the count into `SoH Counted`, and
+`Reverse TO Qty` computes itself.
+- **⚠ ALWAYS BUILT ON ACCOUNTING STOCK, whatever the Accounting/Physical toggle says** — the DS teams
+  only ever count against accounting. `reverseToRows` is deliberately **not** derived from
+  `allSkuRows`, which follows the toggle. Taking the row SET from one basis and printing SoH from the
+  other would be silently inconsistent, and the gap is large: on 2026-08-07 DS01 showed **448 Excess
+  on Accounting vs 643 on Physical**, so ~195 rows would have sent people to shelves for stock that
+  is not over target on the basis they are counting against. Verified byte-identical on both toggles.
+  Falls back to physical only if accounting data is entirely absent.
+- **⚠ IGNORES the category / brand / search / tag filters, on purpose.** This is a stock-return sweep;
+  a filtered file would silently omit stock and nothing in the sheet would reveal the omission.
+- **⚠ The formula is BLANK-GUARDED: `=IF(H{n}="","",MAX(0,H{n}-I{n}))`.** Both Excel and Sheets treat
+  an empty cell as 0, so a bare `MAX(0,H-I)` renders **"0" on every row before anyone counts**, which
+  reads as "return nothing". With the guard, **blank = not yet counted** and **0 = counted, nothing to
+  return** — a distinction the sheet needs. `MAX(0,…)` stops a negative when a count comes in below Max.
+- **⚠ The formula carries BOTH commas and quotes**, so it goes through the same `q()` escaper as the
+  text fields — hand-escaping it would split the row and shift every column right of it. Verified by
+  parsing the generated file with an RFC4180 reader: **0 of 448 rows had anything other than 10
+  fields**, despite item names and categories containing commas.
+- Filename `Reverse_TO_List_<DS>_Accounting_<YYYY-MM-DD>.csv` — `Accounting` is a **literal**, not the
+  toggle, and the date is there because this gets run repeatedly and counts must not overwrite.
+- Every row reads `Excess` in Stock Health (kept for consistency with the other file). The distinction
+  that actually drives the decision is **`Max`**: `Max = 0` ⇒ not stocked here, return everything;
+  `Max > 0` ⇒ return the surplus.
 
 ### 9. DC Stock indicator in DS tabs ✅ Shipped (2026-05-21)
 DC Stock column added between Req Qty and Rep. Qty on DS tabs. Shows DC SoH for DC-inv SKUs, follows mode toggle, hidden on DC tab.
