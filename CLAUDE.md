@@ -1124,6 +1124,19 @@ the TO tool. ⚠ Zoho trap: `is_intransit_order:false` = instant full transfer (
 draft mechanism is the undocumented `status:'draft'` body field (captured from the UI's own network
 trace). Non-draft responses are auto-deleted in the same invocation. SKU→item_id map cached in
 `params/zohoItemIds`; audit in `params/toAudit`. Details: homerun-to spec 2026-07-10-task6b.
+- **TO Type = "Mid Mile" (custom field, live 2026-08-07, prod-verified TO-02821).** Zoho added a
+  `TO Type` dropdown (`cf_to_type`; options `Mid Mile` | `Order Fulfilment`, default
+  **Order Fulfilment**, NOT mandatory) and the DC team was flipping every tool-created TO by hand.
+  `create-to` now sends `custom_fields: [{ api_name: 'cf_to_type', value: 'Mid Mile' }]` — a
+  server-side constant, since every TO this endpoint creates is a DC→DS mid-mile restock; the tool
+  neither asks nor sends it, so **no homerun-to deploy was involved**. ⚠ Custom fields must go in
+  `custom_fields`; a top-level `cf_to_type` key would be silently ignored (same trap as `reason`
+  vs `description`) — and because the field has a *default*, a wrong api_name fails **invisibly**
+  as "Order Fulfilment", not as a blank. Hence the read-back check that logs the whole
+  `custom_fields` array on mismatch. **Safety valve:** on a `400` (Zoho validation ⇒ nothing
+  created) the POST is retried ONCE without the custom field, so a labelling nicety can never
+  block a transfer — worst case is the pre-2026-08-07 behaviour. Deliberately not retried on
+  5xx/timeout/429, where a TO may exist and a repeat would duplicate it.
 
 **Hook in this repo (in `main`):** `applyAndRun` in `App.jsx` serializes the DC-inv Active
 slice of engine results (`{name, category, brand, perDS:{ds:{min,max}}}`) to **`params/toTargets`** after

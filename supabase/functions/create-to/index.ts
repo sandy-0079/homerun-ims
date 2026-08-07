@@ -28,6 +28,28 @@ const BRANCHES: Record<string, string> = {
   DS06: '3915979000000118484',
 }
 const DS_ONLY = ['DS01', 'DS02', 'DS03', 'DS04', 'DS05', 'DS06']
+
+// ─── TO Type (Zoho custom field, added 2026-08-07) ───────────────────────────
+// Every TO this function creates is a DC→DS mid-mile restock, so the type is a
+// property of THIS ENDPOINT, not a user choice — the tool never asks and never
+// sends it. Zoho defaults the field to "Order Fulfilment" when it is absent,
+// which the DC team was flipping by hand on every tool-created TO.
+//
+// ⚠ Custom fields MUST go in `custom_fields` — a top-level `to_type` key would be
+// silently ignored, exactly as a standalone `reason` key is (the UI's "Reason" is
+// really `description`; live-verified 2026-07-10). A wrong api_name therefore
+// fails SILENTLY: the TO is created and Zoho applies its default, so it reads
+// "Order Fulfilment" — indistinguishable from the old behaviour except by the
+// read-back check below.
+//
+// Field config, read off Zoho Settings → Transfer Orders → Edit Field, 2026-08-07:
+//   Label "TO Type" · Dropdown · options exactly "Mid Mile" | "Order Fulfilment"
+//   (British single-l Fulfilment) · Default "Order Fulfilment" · Is Mandatory NO.
+// Not mandatory is what makes the retry-without-it path below safe by config, not
+// just by inference.
+const TO_TYPE_API_NAME = 'cf_to_type' // confirmed: Zoho's "API Field Name"
+const TO_TYPE_VALUE = 'Mid Mile'      // must match the dropdown option EXACTLY
+
 const ITEM_MAP_TTL_HOURS = 24
 const AUDIT_KEEP = 200
 const SNAPSHOT_KEEP = 48 // ~8 batches × 6 DSes — comfortably covers the last-2 compare
@@ -176,7 +198,8 @@ Deno.serve(async (req) => {
     // to our own signed-in users).
     const org = Deno.env.get('ZOHO_ORG_ID')
     if (body.dryRun) {
-      return json({ ok: true, dryRun: true, toDsId, date, description, reason, lines: resolved, zohoOrgId: org })
+      return json({ ok: true, dryRun: true, toDsId, date, description, reason, lines: resolved,
+        zohoOrgId: org, toType: TO_TYPE_VALUE })
     }
 
     // ── Create the DRAFT transfer order ───────────────────────────────────────
@@ -185,7 +208,7 @@ Deno.serve(async (req) => {
     // is_intransit_order is NOT a draft toggle — false means "direct transfer",
     // which executes the full stock movement instantly (learned the hard way,
     // TO-00539 incident 2026-07-10).
-    const res = await zohoFetchWithRetry(supabase, (token) => fetch(
+    const postTO = (withType: boolean) => zohoFetchWithRetry(supabase, (token) => fetch(
       `https://www.zohoapis.in/inventory/v1/transferorders?organization_id=${org}`,
       {
         method: 'POST',
@@ -197,10 +220,45 @@ Deno.serve(async (req) => {
           line_items: resolved.map(({ item_id, name, quantity_transfer }) => ({ item_id, name, quantity_transfer })),
           status: 'draft', // DRAFT — the only mode this function supports
           description,
+          ...(withType
+            ? { custom_fields: [{ api_name: TO_TYPE_API_NAME, value: TO_TYPE_VALUE }] }
+            : {}),
         }),
       },
     ), { retry429: false })
-    const data = await res.json()
+
+    let res = await postTO(true)
+    let data = await res.json()
+    let toTypeWarning: string | null = null
+
+    // ── Safety valve: TO Type must never block a transfer ─────────────────────
+    // Before 2026-08-07 this field could not fail a create at all (Zoho just
+    // applied its default), so setting it is the FIRST thing here that can 400.
+    // On a 400 — Zoho's validation layer, which means nothing was created, the
+    // same reasoning the numbering self-heal relies on — retry ONCE without the
+    // custom field. Worst case is then exactly the old behaviour: TO created,
+    // type "Order Fulfilment", flipped by hand.
+    // Deliberately NOT retried on 5xx/timeout/429: there a TO may in fact have
+    // been created, and a blind repeat would duplicate it (why writes carry
+    // retry429:false in the first place).
+    if (!res.ok && res.status === 400) {
+      const firstErr = data.message ?? JSON.stringify(data)
+      console.error(`create-to: 400 with ${TO_TYPE_API_NAME} — retrying without it: ${firstErr}`)
+      const retryRes = await postTO(false)
+      const retryData = await retryRes.json()
+      if (retryRes.ok && retryData.transfer_order) {
+        res = retryRes
+        data = retryData
+        toTypeWarning = `TO Type NOT set — Zoho rejected ${TO_TYPE_API_NAME}="${TO_TYPE_VALUE}" (${firstErr}). ` +
+          `The TO was created with Zoho's default; set the type manually.`
+        console.error(`create-to: ${toTypeWarning}`)
+      } else {
+        // Surface the ORIGINAL error: if the 400 was really about numbering or
+        // locations, that message is far more useful than the retry's.
+        return json({ ok: false, error: `Zoho create failed (400): ${firstErr}` }, 502)
+      }
+    }
+
     if (!res.ok || !data.transfer_order) {
       return json({ ok: false, error: `Zoho create failed (${res.status}): ${data.message ?? JSON.stringify(data)}` }, 502)
     }
@@ -220,6 +278,21 @@ Deno.serve(async (req) => {
           (del.ok ? 'deleted immediately; no changes persisted.' :
             `NOT deletable (HTTP ${del.status}) — DELETE IT MANUALLY IN ZOHO NOW: ${to.transfer_order_number}`),
       }, 502)
+    }
+
+    // ── Read the TO Type back off the created TO ──────────────────────────────
+    // The create response carries the same `custom_fields` array sync-orders reads,
+    // so this turns a SILENT no-op (wrong api_name → Zoho's default silently wins)
+    // into something visible. Never fatal: a mislabelled draft is a data-quality
+    // issue, not a stock one, and the draft is worth far more than the label.
+    // The full array is logged because it is also how the real api_name is
+    // discovered if the constant above is ever wrong.
+    const cfList = Array.isArray(to.custom_fields) ? to.custom_fields : []
+    const toTypeActual = cfList.find((f: any) => f.api_name === TO_TYPE_API_NAME)?.value ?? null
+    if (!toTypeWarning && toTypeActual !== TO_TYPE_VALUE) {
+      toTypeWarning = `TO Type reads ${JSON.stringify(toTypeActual)} not "${TO_TYPE_VALUE}" — ` +
+        `api_name "${TO_TYPE_API_NAME}" is probably wrong; Zoho ignored it and applied its default.`
+      console.error(`create-to: ${toTypeWarning} custom_fields=${JSON.stringify(cfList)}`)
     }
 
     // ── Audit (additive params row; best-effort) ──────────────────────────────
@@ -261,7 +334,10 @@ Deno.serve(async (req) => {
       } catch (e) { console.error('toSnapshots write failed (non-fatal):', e) }
     }
 
-    console.log(`create-to: DRAFT ${to.transfer_order_number} → ${toDsId}, ${resolved.length} lines, by ${by}`)
+    console.log(`create-to: DRAFT ${to.transfer_order_number} → ${toDsId}, ${resolved.length} lines, ` +
+      `by ${by}, TO Type ${JSON.stringify(toTypeActual)}`)
+    // toType/toTypeWarning are additive: the tool ignores unknown keys today (no
+    // frontend change shipped with this), but they make the state inspectable.
     return json({
       ok: true,
       transfer_order_id: to.transfer_order_id,
@@ -270,6 +346,8 @@ Deno.serve(async (req) => {
       toDsId,
       lines: resolved,
       zohoOrgId: org,
+      toType: toTypeActual,
+      ...(toTypeWarning ? { toTypeWarning } : {}),
     })
   } catch (err) {
     console.error('create-to error:', err)
