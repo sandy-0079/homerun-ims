@@ -32,6 +32,14 @@
 > healthy system reported as broken. Generalisable: derive a check's expected value from the **write
 > semantics** (last successful run wins), not from the schedule.
 >
+> ⚠ **AND FROM THE CURRENT DATA, NOT A SNAPSHOT — the same rule's second half, learned 2026-08-15.**
+> A runbook written that afternoon told the reader to expect `G9NYZ DS01 = 0/0`; the operator replaced
+> the ceiling test file an hour later and the correct answer became `1/1`. **The check was stale before
+> anyone read it, and nothing about it looked wrong.** Any expectation drawn from an input a human can
+> edit must be regenerated at check time, not written down — for ceilings that is one read-only
+> command (`scripts/dryrun-sku-ceiling.mjs`), and every input has an equivalent. Hardcode only what
+> the *code* guarantees; derive everything the *data* decides.
+>
 > ⚠ **The 12-slot gain is schedule arithmetic, not luck — 55 minutes, reproducible.** Publish moved
 > `02:50 → 01:55:10 IST`. Both nights needed the same **6 working chunks**; volume did not change the
 > chunk count. The old `:35,:50` layout forced a 45-min wait to the next hour (6 chunks → 02:50), the
