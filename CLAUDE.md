@@ -487,6 +487,16 @@ exactly where a manual floor is usually the thing setting the number, i.e. where
   DC branch that follows the cap; **81 do not** (₹4.4L of ₹290L). Known, pinned by a test, not fixed.
 - **⚠ DS Seed runs LATER** and would lift a seeded store back over its cap. Inert today (`dsSeed = {}`)
   and deliberately untouched — re-enabling the seed must revisit this.
+- **✅ PLYWOOD / Network Design IS capped at DS level** — verified 2026-08-15 on `TJSTU`/DS01
+  (ArchidPly, `strategyTag: network_design`): **12/15 → 2/2**, tagged and audited. 395 network-design
+  cells are cappable. This only works because the four-writers fix put the clamp in that bypass; it
+  did NOT work in the morning's first implementation.
+  - **⚠ But the plywood DC does NOT follow the cap** (measured: `30/39 → 30/39` with
+    `isFlooredSKU: true`). `computePlywoodNetworkResults` derives the DC from UNCAPPED DS mins before
+    the clamp runs, and the floored-DC calc there is `Math.max(_dcMin, round(sumMin × mult))` — a
+    FLOOR on top of the network DC, not a replacement — so a smaller sum cannot pull it down. Same
+    direction as the rate-based gap: DC over-stocked, never under. Not biting (no plywood SKU is
+    capped yet); fixing it means teaching the plywood engine about ceilings, not reordering.
 
 **✅ PROVEN ON THE NIGHTLY PATH, not just in the browser.** `POST /api/run-engine {"mode":"dry"}`
 runs the entire production path and writes nothing (`wroteTo: null`) — the way to test the 05:45 cron
@@ -1440,6 +1450,10 @@ Shipped without these, deliberately. Listed so they are decisions, not omissions
   stay as empty as ops leaves it. `scripts/dryrun-sku-ceiling.mjs` and a days-of-cover sort are the
   manual substitutes. ⚠ This is the item most likely to make the feature quietly unused.
 - **The rate-based DC gap** — 81 SKUs, ₹4.4L. See the ceiling section.
+- **The plywood DC gap** — a capped Network Design SKU keeps its uncapped DC. See the ceiling section.
+- **No automated test for the Network Design ceiling path.** It was verified live on `TJSTU` but the
+  suite does not cover it, which is uncomfortable given that path was the one silently missed for
+  half a day. Needs a plywood network fixture.
 - **A DOC cap for Fixed Unit Floor.** PCT has `pctDocCap`/`pctDocCapLow`, plywood has `maxCap: 20`,
   Fixed Unit Floor has **nothing** — which is why all 10 top ceiling candidates are Fixed Unit Floor
   Finolex wire at 42–62 days of cover. One parameter would clear today's crop with no ops maintenance.
