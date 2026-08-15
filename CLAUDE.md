@@ -431,7 +431,7 @@ trusting either this entry or the calendar. Re-enabling it needs a fresh measure
 - **DC re-derived treating the seeded DS as a real sixth store** (deliberate transition overstock — sources are never reduced; both self-correct as carved-out demand leaves source history ~45 days post-go-live): rate-based SKUs add a synthetic rate `max(0, avg(source rates) − organic DS06 rate)` into `sumDailyAvg`; floored SKUs add the seed deltas into Σ DS sums; Network Design adds `ceil(ΔMin × brand dcMult)`. DC never decreases. Audit: `dcDetails.dsSeedAug`.
 - Tests: `src/engine/__tests__/dsSeed.test.js` (18).
 
-### SKU × DS Ceiling — the ops override for outliers (SHIPPED 2026-08-15)
+### SKU × DS Ceiling — the ops override for outliers (SHIPPED + PROVEN LIVE 2026-08-15)
 An absolute cap on Min/Max at a store, whatever the strategy computed.
 `team_data/global.skuCeiling = {sku: {DS: cap}}`, sixth `BROWSER_OWNED_KEY`, CSV upload on Upload Data.
 Engine: `src/engine/skuCeiling.js` (`capFor` / `clampToCeiling`), parse+write `src/skuCeilingCsv.js`.
@@ -458,14 +458,42 @@ Measured across all 8,033 floor cells against a no-floor run: **73.3% genuinely 
 floor is *stickier* than the outlier — if demand later falls, the floor holds the old high number
 forever. A cap below a floor is legal but usually a typo, so the upload preview lists them.
 
-**⚠ IN-LOOP, NOT A FINAL PASS — placement is load-bearing.** `sumMin`/`sumMax` are accumulated after it
-and feed the FLOORED DC branch (`round(sumMin × 0.2)`), so capping in-loop is what lets a DS cap reach
-the DC. A final pass over `res` would cap the stores and leave the DC sized for uncapped demand.
+**⚠⚠ `runEngine` WRITES `stores[dsId]` FROM FOUR PLACES, AND THE FIRST IMPLEMENTATION CLAMPED ONE.**
+Shipped 2026-08-15 morning, found in production the same afternoon. The per-DS loop has a **NO-DATA
+path that `return`s early** with three sub-branches (new-DS floor / manual floor / neither), plus the
+**Network Design bypass** builds its own `_stores` entirely separately. Clamping inside the HAS-DATA
+branch therefore did nothing at any store where the SKU had **no sales in the window** — which is
+exactly where a manual floor is usually the thing setting the number, i.e. where a ceiling matters most.
+- Symptom: `G9NYZ` capped at **0** for DS01 still read **Min=Max=1**, because DS01 had zero demand and
+  a 1/1 floor. Blank and non-zero caps looked fine, so it presented as "0 doesn't work".
+- **The tell is `postBlendSteps`:** every store built by the main loop has `[]`; the NO-DATA branches
+  never create the key at all, so it reads `undefined`. **A differing shape means a different code
+  path** — the fastest way to find this class of bug in this engine.
+- Why testing missed it: the cap was verified on `UVVJB`/DS01 and `HZKY8`/DS01 and **both had demand**.
+  The zero-demand case was never constructed.
+- **Fix: ONE `applyCeilingToStores()` helper applied to the FINISHED `stores` map**, called at the two
+  structural sites (main path, Network Design bypass) immediately before each derives its DC. Four
+  copies of a clamp would have been the same bug waiting to recur.
+- **⚠ It must run BEFORE the DC and the sums must come from `stores`.** `sumMin`/`sumMax` feed the
+  floored DC branch (`round(sumMin × 0.2)`); they used to be push-as-you-go arrays filled *before* the
+  clamp, so they now derive from `stores`. Verified inert: pre-fix vs post-fix with no ceilings,
+  **0 of 2,273 SKUs differing across all six stores AND the DC**.
+- **Generalisable, and this is the THIRD instance in one day** (the others: the floor sheet's parser vs
+  `handleNSQ` on duplicates, and the digest reading `change.reason` while the reason lived at the top
+  level). When you add behaviour to a value, **grep for every place that value is CONSTRUCTED, not just
+  where it is read.**
 - **⚠ It does NOT reach the rate-based DC branch** (`ceil(sumDailyAvg × (leadTime+1))`), which derives
   from raw demand. Measured: **1,405 of 1,486 candidate SKUs (94.5%) carry a floor** and so are on the
   DC branch that follows the cap; **81 do not** (₹4.4L of ₹290L). Known, pinned by a test, not fixed.
 - **⚠ DS Seed runs LATER** and would lift a seeded store back over its cap. Inert today (`dsSeed = {}`)
   and deliberately untouched — re-enabling the seed must revisit this.
+
+**✅ PROVEN ON THE NIGHTLY PATH, not just in the browser.** `POST /api/run-engine {"mode":"dry"}`
+runs the entire production path and writes nothing (`wroteTo: null`) — the way to test the 05:45 cron
+without waiting for it or touching `toTargets`. ⚠ The proof is **`invValue`**, not
+`inputs.skuCeiling`: that stamp counts `team_data.skuCeiling` directly and reads the same whether or
+not the engine was actually handed the map. Live check agreed to 4 dp across three independent paths
+(browser KPI, local engine, Vercel dry run).
 
 **⚠ ONLY EVER REDUCES, which is the rollout property.** A 0/0 cell with a cap of 5 stays 0/0. With
 `skuCeiling` absent the engine is provably a no-op: verified against live data,

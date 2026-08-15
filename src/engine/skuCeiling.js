@@ -53,3 +53,45 @@ export function clampToCeiling(min, max, cap) {
   if (min <= cap && max <= cap) return { min, max, applied: false };
   return { min: Math.min(min, cap), max: Math.min(max, cap), applied: true };
 }
+
+/**
+ * Clamp every store in a `stores` map to its ceiling, in place. Returns how many
+ * cells moved.
+ *
+ * ⚠⚠ THIS EXISTS BECAUSE `runEngine` WRITES `stores[dsId]` FROM FOUR PLACES, and
+ * the first implementation of the ceiling only touched one of them. The per-DS loop
+ * has a NO-DATA path that `return`s early with three sub-branches (new-DS floor,
+ * manual floor, nothing), and the Network Design bypass builds its own `_stores`
+ * entirely separately. Capping inside the HAS-DATA branch therefore did nothing at
+ * any store where the SKU had no sales in the window — which is precisely where a
+ * manual floor is usually the thing setting the number.
+ *
+ * Found in production 2026-08-15: G9NYZ capped at 0 for DS01 still read Min=Max=1,
+ * because DS01 had zero demand and a 1/1 floor. The tell was `postBlendSteps:
+ * undefined` on that store while every working store had `[]`.
+ *
+ * So: ONE implementation, applied to the finished map. Call it immediately before
+ * the DC is derived — the DC's floored branch is `round(sumMin x 0.2)` over these
+ * same stores, so clamping first is what lets a DS cap reach the DC.
+ */
+export function applyCeilingToStores(stores, ceilings, skuId, dsList) {
+  if (!ceilings || !stores) return 0;
+  let applied = 0;
+  for (const dsId of dsList) {
+    const st = stores[dsId];
+    if (!st) continue;
+    const cap = capFor(ceilings, skuId, dsId);
+    if (cap === null) continue;
+    const c = clampToCeiling(st.min, st.max, cap);
+    if (!c.applied) continue;
+    // The no-data branches never create this array, hence the ??=.
+    (st.postBlendSteps ??= []).push({ rule: "SKU Ceiling", cap, beforeMin: st.min, beforeMax: st.max });
+    st.min = c.min;
+    st.max = c.max;
+    // ⚠ Dead Stock must keep its tag: it already forced 0/0 and a cap cannot lower
+    // that further, so `applied` is false there and we never reach this line.
+    st.logicTag = "SKU Ceiling";
+    applied++;
+  }
+  return applied;
+}

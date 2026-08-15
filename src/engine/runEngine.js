@@ -10,7 +10,7 @@ import { getPriceTag, getMovTag, getSpikeTag, computeStats } from "./utils.js";
 import { standardStrategy } from "./strategies/standard.js";
 import { applyDSSeed } from "./dsSeed.js";
 import { applyAttribution } from "./attribution.js";
-import { capFor, clampToCeiling } from "./skuCeiling.js";
+import { applyCeilingToStores } from "./skuCeiling.js";
 import { percentileCoverStrategy } from "./strategies/percentileCover.js";
 import { fixedUnitFloorStrategy } from "./strategies/fixedUnitFloor.js";
 import { computePlywoodNetworkResults } from "./strategies/plywoodNetwork.js";
@@ -164,6 +164,10 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
           postBlendSteps: [],
         };
       });
+      // Same clamp, same reason — this bypass builds its own `_stores` and would
+      // otherwise ignore every ceiling on a plywood network-design SKU.
+      applyCeilingToStores(_stores, ceilings, skuId, DS_LIST);
+
       const _dc = networkResult.dcResult;
       let _dcMin = _isDead ? 0 : _dc.min;
       let _dcMax = _isDead ? 0 : Math.max(_dc.max, _dc.min);
@@ -202,7 +206,7 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
     const prTag = getPriceTag(pd[skuId] || 0, priceTiers),
       t150Tag = t150[skuId] || "No",
       isDead = deadStockSet.has(skuId);
-    const dsMinArr = [], dsMaxArr = [], dsDailyAvgs = [], stores = {};
+    const dsDailyAvgs = [], stores = {};
 
     let strategy = resolveStrategy(meta.category, p.categoryStrategies);
     // network_design is handled via pre-computed results above; any SKU that reaches here
@@ -232,14 +236,14 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
           }
           if (isDead) { nm = 0; nx = 0; logicTag = "Dead Stock"; }
           stores[dsId] = { min: nm, max: nx, preFloorMin, preFloorMax, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag, strategyTag: "standard" };
-          dsMinArr.push(nm); dsMaxArr.push(nx); dsDailyAvgs.push(0);
+          dsDailyAvgs.push(0);
         } else if (nsq && nsq[skuId]) {
           const fl = nsq[skuId][dsId];
           const fMin = !fl ? 0 : typeof fl === "number" ? fl : (fl.min || 0);
           const fMax = !fl ? 0 : typeof fl === "number" ? fl : (fl.max || fMin);
           const logicTag = fMin > 0 ? "SKU Floor" : "Base Logic";
           stores[dsId] = { min: fMin, max: Math.max(fMin, fMax), preFloorMin: 0, preFloorMax: 0, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag, strategyTag: "standard" };
-          dsMinArr.push(fMin); dsMaxArr.push(Math.max(fMin, fMax)); dsDailyAvgs.push(0);
+          dsDailyAvgs.push(0);
         } else {
           stores[dsId] = { min: 0, max: 0, preFloorMin: 0, preFloorMax: 0, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag: "Base Logic", strategyTag: "standard" };
           dsDailyAvgs.push(0);
@@ -361,32 +365,6 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
         }
       }
 
-      // 4. SKU Ceiling — an absolute cap, and it deliberately BEATS the floor
-      // above it: a cap a floor can overrule is not a cap. A conflict (floor 5,
-      // ceiling 3) is almost always a data-entry mistake, so it is reported by the
-      // upload preview rather than silently resolved.
-      //
-      // ⚠ IN-LOOP, NOT A FINAL PASS, and that placement is load-bearing: `sumMin`/
-      // `sumMax` are accumulated below and feed the FLOORED DC branch
-      // (`round(sumMin x 0.2)`), so capping here is what lets a DS cap reach the DC.
-      // A final pass over `res` would cap the stores and leave the DC sized for
-      // uncapped demand.
-      //
-      // ⚠ Only ever reduces — see skuCeiling.js. `cap !== null` because 0 is a real
-      // cap; a falsy test would silently ignore every "stock nothing here".
-      //
-      // ⚠ DS Seed runs LATER, as its own pass over `res`, and would lift a seeded
-      // store back above its cap. Inert today (`dsSeed = {}`, sunset 2026-07-31) and
-      // deliberately left alone — but re-enabling the seed must revisit this.
-      const ceilCap = capFor(ceilings, skuId, dsId);
-      if (ceilCap !== null) {
-        const c = clampToCeiling(minQty, maxQty, ceilCap);
-        if (c.applied) {
-          postBlendSteps.push({ rule: "SKU Ceiling", cap: ceilCap, beforeMin: minQty, beforeMax: maxQty });
-          minQty = c.min; maxQty = c.max; logicTag = "SKU Ceiling";
-        }
-      }
-
       // Dead stock overrides everything — Min=Max=0, no replenishment at any DS
       if (isDead) { minQty = 0; maxQty = 0; logicTag = "Dead Stock"; }
 
@@ -399,12 +377,24 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
         logicTag, strategyTag,
         strategyDetails, postBlendSteps,
       };
-      dsMinArr.push(Math.round(minQty)); dsMaxArr.push(Math.round(maxQty));
       dsDailyAvgs.push(s90.dailyAvg);
     });
 
-    const sumMin = dsMinArr.reduce((a, b) => a + b, 0),
-      sumMax = dsMaxArr.reduce((a, b) => a + b, 0);
+    // ── SKU Ceiling ─────────────────────────────────────────────────────────
+    // ⚠ HERE, not inside the loop above. `stores[dsId]` is written from FOUR places
+    // — this loop's HAS-DATA branch, its three NO-DATA branches (which `return`
+    // early), and the Network Design bypass — and the first implementation clamped
+    // only the first, so a cap did nothing at any store with no sales in the window.
+    // Applying it to the finished map is the only shape that cannot miss a branch.
+    //
+    // ⚠ BEFORE the sums below, which feed the floored DC branch
+    // (`round(sumMin x 0.2)`). That ordering is what lets a DS cap reach the DC.
+    applyCeilingToStores(stores, ceilings, skuId, DS_LIST);
+
+    // Derived from `stores` rather than the push-as-you-go arrays, which were filled
+    // before the clamp — and which the third NO-DATA branch never pushed to at all.
+    const sumMin = DS_LIST.reduce((a, ds) => a + (stores[ds]?.min ?? 0), 0),
+      sumMax = DS_LIST.reduce((a, ds) => a + (stores[ds]?.max ?? 0), 0);
     // Pre-floor DS sums for DC "before" calculation
     const sumPreFloorMin = DS_LIST.reduce((s, ds) => s + (stores[ds]?.preFloorMin ?? stores[ds]?.min ?? 0), 0);
     const sumPreFloorMax = DS_LIST.reduce((s, ds) => s + (stores[ds]?.preFloorMax ?? stores[ds]?.max ?? 0), 0);

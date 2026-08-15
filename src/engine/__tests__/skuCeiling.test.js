@@ -144,3 +144,62 @@ describe("SKU ceiling through runEngine", () => {
     expect(after.dcDetails.sumMin).toBeLessThan(before.dcDetails.sumMin);
   });
 });
+
+// ⚠⚠ REGRESSION, 2026-08-15. The first implementation clamped only inside the
+// HAS-DATA path of the per-DS loop. `runEngine` writes `stores[dsId]` from FOUR
+// places, and three of them are the NO-DATA path (which `return`s early) plus the
+// Network Design bypass. So a cap was silently ignored at any store where the SKU
+// had no sales in the window — which is exactly where a manual floor is most likely
+// to be the thing setting the number.
+//
+// Found in production: G9NYZ capped at 0 for DS01 kept reading Min=Max=1, because
+// DS01 had zero demand and a 1/1 floor. The tell was `postBlendSteps: undefined`
+// on that store while every working store had `[]` — different code path.
+//
+// Same shape as the duplicated Stock Health filter and the TO deep-link fixed in
+// one repo but not the other: ONE fact, SEVERAL readers, only one of them corrected.
+describe("SKU ceiling on stores with NO demand — the four-writers regression", () => {
+  const S = "NODEMAND";
+  const master = () => ({
+    [S]: { name: "Thing", category: "Cement", brand: "X", status: "active", inventorisedAt: "DC" },
+  });
+  // Sales at DS02 only. DS01 has no rows at all, so it takes the NO-DATA path.
+  const inv = () => Array.from({ length: 20 }, (_, i) => ({
+    date: `2026-07-${String(i + 1).padStart(2, "0")}`,
+    ds: "DS02", pin: "560002", qty: 10, shopifyOrder: `o${i}`, sku: S,
+  }));
+  const prm = (over = {}) => ({ ...DEFAULT_PARAMS, overallPeriod: 45, newDSList: [], dsSeed: {}, ...over });
+
+  it("caps a no-demand store that is held up by a manual floor", () => {
+    const nsq = { [S]: { DS01: { min: 1, max: 1 } } };
+    const bare = runEngine(inv(), master(), {}, {}, new Set(), nsq, prm(), {});
+    expect(bare.stores?.DS01 ?? bare[S].stores.DS01).toMatchObject({ min: 1, max: 1, logicTag: "SKU Floor" });
+
+    const capped = runEngine(inv(), master(), {}, {}, new Set(), nsq, prm(), { [S]: { DS01: 0 } });
+    expect(capped[S].stores.DS01).toMatchObject({ min: 0, max: 0, logicTag: "SKU Ceiling" });
+  });
+
+  it("caps a no-demand store on the NEW DS floor branch too", () => {
+    // isNewDS + eligible: min/max come from minReqQty, a different branch again.
+    const mrq = { [S]: 8 };
+    const p = prm({ newDSList: ["DS01"], newDSFloorTopN: 250 });
+    const bare = runEngine(inv(), master(), mrq, {}, new Set(), {}, p, {});
+    const capped = runEngine(inv(), master(), mrq, {}, new Set(), {}, p, { [S]: { DS01: 2 } });
+    expect(bare[S].stores.DS01.max).toBeGreaterThan(2);
+    expect(capped[S].stores.DS01.max).toBeLessThanOrEqual(2);
+  });
+
+  it("a cap on an empty, unfloored store stays 0/0 rather than going negative", () => {
+    const capped = runEngine(inv(), master(), {}, {}, new Set(), {}, prm(), { [S]: { DS01: 0 } });
+    expect(capped[S].stores.DS01).toMatchObject({ min: 0, max: 0 });
+  });
+
+  it("the DC follows a cap applied on a NO-DEMAND store", () => {
+    // sumMin/sumMax must be derived AFTER the clamp, or the DC keeps sizing for the
+    // uncapped floor even though the store itself was capped.
+    const nsq = { [S]: { DS01: { min: 6, max: 9 } } };
+    const before = runEngine(inv(), master(), {}, {}, new Set(), nsq, prm(), {});
+    const after = runEngine(inv(), master(), {}, {}, new Set(), nsq, prm(), { [S]: { DS01: 1 } });
+    expect(after[S].dc.max).toBeLessThan(before[S].dc.max);
+  });
+});

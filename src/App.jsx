@@ -4174,8 +4174,15 @@ const outputFreshness = useMemo(
               <span style={{fontSize:12,fontWeight:700,color:"#7A5800"}}>Set by ops, by hand</span>
               <span style={{fontSize:10,color:HR.muted}}>judgement calls, not Zoho data — these will never auto-sync</span>
             </div>
-          {/* ── New DS Floor Qty + Dead Stock ── */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
+          {/* ── New DS Floor Qty + Dead Stock + SKU Ceilings ──
+              ⚠ DERIVED from the card count, not hardcoded. This was `repeat(2,1fr)`
+              from when there were exactly two cards, so adding SKU Ceilings wrapped
+              the third onto its own row while the AUTO bucket sat on one line. Same
+              class as the PO CSV column indices: a literal that silently stops
+              matching the thing it describes. `minmax(0,1fr)` rather than `1fr`
+              because `1fr` is `minmax(auto,1fr)` — a long unbreakable card title
+              would otherwise widen its column and overflow the row. */}
+          <div style={{display:"grid",gridTemplateColumns:`repeat(${opsCards.length},minmax(0,1fr))`,gap:12}}>
             {opsCards.map(renderUploadCard)}
           </div>
           </div>
