@@ -16,11 +16,15 @@
 export type Floor = { min: number; max: number };
 export type FloorMap = Record<string, Record<string, Floor>>;
 
+// ⚠ `duplicate_sku` WAS a reason here and is deliberately gone (2026-08-15). It
+// refused two nights running, and re-uploading the very same sheet by hand fixed
+// it — because `App.jsx handleNSQ` resolves duplicates by last-row-wins and says
+// nothing. Two writers of `newSKUQty` disagreeing about which row is live is the
+// real defect; the sync now mirrors the browser. See the append-rule note below.
 export type ParseReason =
   | "ok"
   | "header_mismatch"
   | "unknown_ds"
-  | "duplicate_sku"
   | "invalid_value"
   | "empty";
 
@@ -30,7 +34,10 @@ export type ParseResult = {
   floors: FloorMap;
   skuCount: number;
   unknownDs: string[];
+  /** SKUs that appeared more than once; resolved to their LAST row, reported for cleanup. */
   duplicateSkus: string[];
+  /** Superseded ROWS, not SKUs — 96 rows across 95 SKUs on the live sheet 2026-08-15. */
+  duplicateRows: number;
   invalid: { sku: string; column: string; value: string }[];
   blankSkuRows: number;
 };
@@ -46,7 +53,7 @@ const splitRow = (line: string) => line.split(",").map((c) => c.trim());
 export function parseFloorSheet(csv: string, dsList: string[]): ParseResult {
   const base: ParseResult = {
     ok: false, reason: "header_mismatch", floors: {}, skuCount: 0,
-    unknownDs: [], duplicateSkus: [], invalid: [], blankSkuRows: 0,
+    unknownDs: [], duplicateSkus: [], duplicateRows: 0, invalid: [], blankSkuRows: 0,
   };
 
   const lines = csv.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim() !== "");
@@ -80,14 +87,22 @@ export function parseFloorSheet(csv: string, dsList: string[]): ParseResult {
   const duplicateSkus: string[] = [];
   const invalid: ParseResult["invalid"] = [];
   let blankSkuRows = 0;
+  let duplicateRows = 0;
 
   for (const line of lines.slice(1)) {
     const cells = splitRow(line);
     const sku = (cells[skuIdx] ?? "").trim();
     if (!sku) { blankSkuRows++; continue; }
+    // ⚠ THE APPEND RULE: note there is NO `continue` here. Ops revises a floor by
+    // appending a row rather than editing in place, so the last occurrence is the
+    // current one and must overwrite — including when it zeroes a DS, which is how
+    // ops removes a floor. This mirrors `App.jsx handleNSQ` (`nsq[s]={}` per row)
+    // exactly, so the sheet sync and the manual CSV fallback can never resolve the
+    // same sheet differently. Recorded, never silent: reporting is what refusing
+    // used to buy us.
     if (Object.prototype.hasOwnProperty.call(floors, sku)) {
+      duplicateRows++;
       if (!duplicateSkus.includes(sku)) duplicateSkus.push(sku);
-      continue;
     }
 
     const vals: Record<string, { min: number; max: number }> = {};
@@ -115,15 +130,15 @@ export function parseFloorSheet(csv: string, dsList: string[]): ParseResult {
   // then write `{}` over every live floor. Parse validation is the layer `force`
   // cannot reach: it overrides POLICY, never CORRECTNESS.
   if (skuCount === 0) {
-    return { ...base, reason: "empty", floors, skuCount, invalid, blankSkuRows };
-  }
-  if (duplicateSkus.length) {
-    return { ...base, reason: "duplicate_sku", floors, skuCount, duplicateSkus, invalid, blankSkuRows };
+    return { ...base, reason: "empty", floors, skuCount, duplicateSkus, duplicateRows, invalid, blankSkuRows };
   }
   if (invalid.length) {
-    return { ...base, reason: "invalid_value", floors, skuCount, invalid, blankSkuRows };
+    return { ...base, reason: "invalid_value", floors, skuCount, duplicateSkus, duplicateRows, invalid, blankSkuRows };
   }
-  return { ok: true, reason: "ok", floors, skuCount, unknownDs: [], duplicateSkus: [], invalid: [], blankSkuRows };
+  return {
+    ok: true, reason: "ok", floors, skuCount, unknownDs: [],
+    duplicateSkus, duplicateRows, invalid: [], blankSkuRows,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

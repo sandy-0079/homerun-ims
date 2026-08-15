@@ -37,6 +37,15 @@
 // re-asserts over on its next run — reported as `overrodeManualUpload` rather
 // than silently reverted.
 //
+// ⚠ AND THE TWO WRITERS MUST RESOLVE A DUPLICATE ROW THE SAME WAY. They did not,
+// until 2026-08-15: the browser took the last row silently, this sync refused the
+// sheet outright (`duplicate_sku`). So the fallback path SUCCEEDED on a sheet the
+// primary path REJECTED, which is the worst possible arrangement — it reads as "the
+// sync is broken" and trains everyone to reach for the manual upload, the one path
+// with no guards at all. Both now follow the ops append rule (last row wins) and
+// this one reports the duplicates it collapsed. Generalisable: when two writers
+// share a key, they must agree on the AMBIGUOUS inputs, not just the clean ones.
+//
 // Body: { dryRun?, force? }
 //   dryRun  default TRUE  — assess and report, write nothing at all
 //   force   bypasses the once-per-night gate, the burst cooldown AND the change
@@ -142,7 +151,8 @@ Deno.serve(async (req) => {
     if (!p.ok) {
       const stats = {
         reason: p.reason, bytes: csv.length, skuCount: p.skuCount,
-        unknownDs: p.unknownDs, duplicateSkus: cap(p.duplicateSkus), invalid: cap(p.invalid),
+        unknownDs: p.unknownDs, invalid: cap(p.invalid),
+        duplicates: { rows: p.duplicateRows, skus: cap(p.duplicateSkus), skuTotal: p.duplicateSkus.length },
       };
       console.error(`sync-sku-floors: parse refused — ${p.reason}`);
       if (!dryRun) await setStatus({ ...stats, ok: false });
@@ -187,6 +197,12 @@ Deno.serve(async (req) => {
       skuCount: p.skuCount,
       withFloors: change.parsedWithFloors,
       blankSkuRows: p.blankSkuRows,
+      // Sheet rot, not a fault: duplicates are resolved by the append rule (last row
+      // wins) so they cannot change what the engine gets. But they GROW — one
+      // duplicated SKU on 2026-08-14 was 95 by 08-15 — and a human reading the sheet
+      // cannot tell which of two conflicting rows is live. Reported so ops can delete
+      // them; the sync has no write access to the sheet and deliberately never will.
+      duplicates: { rows: p.duplicateRows, skus: cap(p.duplicateSkus), skuTotal: p.duplicateSkus.length },
       change: {
         safe: change.safe, reason: change.reason,
         dropPct: Number(change.dropPct.toFixed(2)),
@@ -224,7 +240,8 @@ Deno.serve(async (req) => {
 
     console.log(
       `sync-sku-floors: ${dryRun ? "DRY RUN" : "ok"} — ${p.skuCount} SKUs, ` +
-      `+${change.added.length}/-${change.removed.length}/~${change.changed.length}, ${stats.elapsedSec}s`,
+      `+${change.added.length}/-${change.removed.length}/~${change.changed.length}, ` +
+      `${p.duplicateRows} duplicate row(s) superseded, ${stats.elapsedSec}s`,
     );
     return json({ ok: true, ...stats });
   } catch (e) {

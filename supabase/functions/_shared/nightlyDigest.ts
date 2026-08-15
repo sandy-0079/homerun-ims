@@ -32,6 +32,9 @@ const DAY = 86_400_000;
 const IST_OFFSET_MS = 5.5 * 3_600_000;
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
+/** How many duplicated SKU codes the email names before saying "+N more". */
+const DUP_NAMES_SHOWN = 12;
+
 /** Calendar date in Asia/Kolkata. The chain straddles midnight IST, so a UTC read is wrong. */
 export function istDateOf(ms: number): string {
   return new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10);
@@ -140,6 +143,29 @@ function modeFor(row: any): Mode {
   return row?.ok === false ? "refused" : "silent";
 }
 
+/**
+ * Why a status row refused. Two places carry it and BOTH must be read.
+ *
+ * ⚠ `change.reason` FIRST because it is the more specific of the two: sync-catalogue
+ * stamps a generic top-level `change_guard_failed` and puts the real verdict
+ * (`active_share_shift`, `row_collapse`) in `change`. Preferring the top level loses it.
+ *
+ * ⚠ But the top level MUST be the fallback. Only a change-guard rejection has a
+ * `change` object at all — a parse failure, a fetch failure or an exception has none,
+ * and reading `change.reason` alone printed "refused: reason not stated" on the nights
+ * of 2026-08-14 and 08-15 while `reason: "duplicate_sku"` sat in the row, naming the
+ * ops sheet exactly. Two mornings lost to a field the email declined to read.
+ *
+ * Generalisable, and the same shape as `autoAtFor`: when a value has two homes, a
+ * reader that knows only one of them fails silently on precisely the case that matters.
+ */
+function reasonOf(row: any): string | null {
+  const specific = row?.change?.reason;
+  if (typeof specific === "string" && specific) return specific;
+  const general = row?.reason;
+  return typeof general === "string" && general ? general : null;
+}
+
 type Input = {
   now: number;
   invoices: any;
@@ -228,7 +254,7 @@ export function assessNight(input: Input) {
       `published through ${publishedThrough}`),
 
     build("catalogue", typeof input.catalogue?.lastOkNight === "string" ? input.catalogue.lastOkNight : null,
-      input.catalogue, input.catalogue?.change?.reason ?? null,
+      input.catalogue, reasonOf(input.catalogue),
       (missed, mode) => ({
         detail: `${nights(missed)} — new SKUs are invisible to the engine, and any floor added for one of them cannot take effect`,
         remedy: mode === "refused"
@@ -238,7 +264,7 @@ export function assessNight(input: Input) {
       `last synced ${input.catalogue?.lastOkNight}`),
 
     build("floors", typeof input.floors?.lastOkNight === "string" ? input.floors.lastOkNight : null,
-      input.floors, input.floors?.change?.reason ?? null,
+      input.floors, reasonOf(input.floors),
       (missed, mode) => ({
         detail: `${nights(missed)} — any floor added to the ops sheet since then is NOT live, and nothing will backfill it`,
         remedy: mode === "refused"
@@ -283,6 +309,40 @@ export function assessNight(input: Input) {
       key: "unknownSku",
       level: "amber",
       detail: `unknown-SKU rate ${unknownPct}% is over half the 1% refusal threshold — check for a Zoho re-code`,
+    });
+  }
+
+  // ⚠ GREEN, and that is the whole design of it. Since 2026-08-15 duplicate rows are
+  // resolved by the ops append rule (last row wins) and so cannot change what the
+  // engine receives — they are housekeeping, not a fault. But they GROW (1 duplicated
+  // SKU on 08-14, 95 by 08-15), a human reading the sheet cannot tell which of two
+  // conflicting rows is live, and this sync has NO write access to the sheet by
+  // deliberate choice. So this email is the only mechanism that will ever get them
+  // cleaned up, which is why it names the SKUs rather than just counting them.
+  //
+  // ⚠ It must not raise amber. Nobody has measured how often ops legitimately
+  // appends, so any threshold would be guessed — the Sunday-row-count mistake, and a
+  // note that goes amber every morning until someone tidies a spreadsheet would
+  // discredit the reds sharing the email. Informational, exactly like invValue.
+  const dupSkus: string[] = Array.isArray(input.floors?.duplicates?.skus) ? input.floors.duplicates.skus : [];
+  const dupRows = num(input.floors?.duplicates?.rows);
+  if (dupRows !== null && dupRows > 0) {
+    // ⚠ NAMES ARE TRUNCATED HARD, and rendering the real thing is what showed why:
+    // the live sheet has 95 duplicated SKUs, and joining even the status row's 60
+    // produced a single unbroken wall of codes in Gmail that nobody would read. A
+    // list you scroll past is worth less than a count plus a handful of examples —
+    // the full set is in params/skuFloorSyncStatus and in the dry-run script.
+    // `skuTotal` is the untruncated count; fall back to the list length for a row
+    // written before that field existed.
+    const total = num(input.floors?.duplicates?.skuTotal) ?? dupSkus.length;
+    const shown = dupSkus.slice(0, DUP_NAMES_SHOWN);
+    const names = shown.length
+      ? `${shown.join(", ")}${total > shown.length ? ` … (+${total - shown.length} more)` : ""}`
+      : "(names unavailable)";
+    flags.push({
+      key: "sheetDuplicates",
+      level: "green",
+      detail: `${dupRows} duplicate row(s) across ${total} SKU(s) in the ops floor sheet — the LAST row of each won, per the append rule, so floors are correct. Worth deleting the older rows: ${names}`,
     });
   }
 
@@ -345,6 +405,11 @@ export function assessNight(input: Input) {
       pricesRetained: num(input.catalogue?.prices?.merged?.retained),
       floors: num(input.floors?.skuCount) ?? num(input.targets?.inputs?.newSKUQty),
       floorsIneffective: num(input.floors?.ineffective?.total),
+      // ⚠ ROWS, not SKUs — the two differ and ops needs the row count (how much to
+      // delete) alongside the names (what to search for). 96 rows / 95 SKUs on
+      // 2026-08-15. Reported only; see the flag below for why it never alerts.
+      floorDuplicateRows: num(input.floors?.duplicates?.rows),
+      floorDuplicateSkus: Array.isArray(input.floors?.duplicates?.skus) ? input.floors.duplicates.skus : [],
       targets: num(input.engine?.targets),
       // Free, already computed by assessTargetsChange. Arguably the sharpest change
       // signal available: a SKU entering or leaving the stocked set matters more than
@@ -377,8 +442,15 @@ export function renderDigest(v: Verdict): { subject: string; text: string } {
     // ⚠ A flag-only amber must NOT say "check inputs" or name a stage — every stage ran.
     // Sending the reader hunting for a broken stage that does not exist is how a signal
     // loses credibility.
+    // ⚠ Only NON-GREEN flags may name the subject. A green flag (the floor-sheet
+    // duplicate note) can never raise the level, so if it appeared here it would ride
+    // into an amber subject caused by something else entirely and read as a second
+    // fault. Reaching this branch at all guarantees `bad` or a non-green flag exists,
+    // so the join is never empty.
     : `[IMS] ${ICON[v.level]} nightly — ${
-      bad.length ? bad.map((c) => c.label).join(", ") : v.flags.map((fl) => FLAG_LABEL[fl.key] ?? fl.key).join(", ")
+      bad.length
+        ? bad.map((c) => c.label).join(", ")
+        : v.flags.filter((fl) => fl.level !== "green").map((fl) => FLAG_LABEL[fl.key] ?? fl.key).join(", ")
     }`;
 
   const f = v.facts;
@@ -399,7 +471,13 @@ export function renderDigest(v: Verdict): { subject: string; text: string } {
   lines.push(`master ${fmt(f.master)}  (${fmt(f.active)} active · → Supplier: ${
     v.flags.find((x) => x.key === "toSupplier") ? "SEE BELOW" : "none"
   })  ·  prices ${fmt(f.prices)} (${fmt(f.pricesRetained)} retained)`);
-  lines.push(`floors ${fmt(f.floors)}  (${fmt(f.floorsIneffective)} ineffective)  ·  targets ${fmt(f.targets)}${
+  // Appended, never a placeholder: on a clean sheet the phrase is absent entirely
+  // rather than reading "0 duplicate rows", which invites the reader to wonder what
+  // it means. Same rule as the inventory-value line being omitted when unstamped.
+  const dupes = f.floorDuplicateRows && f.floorDuplicateRows > 0
+    ? ` · ${fmt(f.floorDuplicateRows)} duplicate row${f.floorDuplicateRows === 1 ? "" : "s"} superseded`
+    : "";
+  lines.push(`floors ${fmt(f.floors)}  (${fmt(f.floorsIneffective)} ineffective${dupes})  ·  targets ${fmt(f.targets)}${
     f.targetsAdded === null || f.targetsRemoved === null ? "" : ` (${f.targetsAdded} added, ${f.targetsRemoved} removed)`
   }`);
 

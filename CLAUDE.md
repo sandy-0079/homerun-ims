@@ -207,6 +207,11 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
     - **The remaining exposure is intentional and bounded:** a human CSV upload overrides the sync,
       and the sync re-asserts on its next run. That is the fallback path working, not a conflict.
       `sync-sku-floors` reports it as `overrodeManualUpload` rather than reverting silently.
+    - **⚠ BUT TWO WRITERS MUST ALSO AGREE ON MALFORMED INPUT, WHICH IS EASY TO MISS.** For `newSKUQty`
+      they did not until 2026-08-15: on a sheet with duplicate SKU rows the browser silently took the
+      last row while `sync-sku-floors` refused the whole file, so the **unguarded fallback succeeded
+      where the guarded primary failed**. Both now follow the ops append rule. When auditing a
+      two-writer key, check the AMBIGUOUS cases, not just that the happy paths match — see Stage 8.
     - Deliberately absent: `invoiceData` (own row; back here takes the payload
     ~1-2MB → ~7MB and re-exhausts the Disk IO burst), `stockData`/`stockDataAccounting`/
     `stockUploadedAt*` (sync-stock owns them — the browser only ever READS stock, `setStockData` is
@@ -1138,7 +1143,8 @@ Three bugs in this work **all passed `npm run build` cleanly** and would each ha
 
 esbuild does not resolve undefined identifiers, so `npm run build` says nothing about them. What caught
 all three was **`npx eslint src/ | grep no-undef`** plus actually loading the page. Run both before any
-frontend push. (Lint baseline is **79 problems** — an earlier note here said 68, which was stale.)
+frontend push. (Lint baseline `npx eslint src/` is **75 problems**, measured 2026-08-15; this line has
+said 68 and 79 at different times, so **re-measure rather than trusting it**. `scripts/` is clean.)
 
 ---
 
@@ -1328,6 +1334,17 @@ assumes it is usable.
   because bin data cannot be joined. This is the first real consumer bin locations would have had.
 - Either rebuild it against current SKU codes (an ops task, not a code one) or delete the row. Do not
   wire anything to it first — **check the join rate before believing it**, which is the whole lesson.
+
+### 28. A browser Apply strips `toTargets.invValue`, so the digest loses its ₹ line
+Measured 2026-08-15: `params/toTargets.invValue` was **null** with `refreshedAt` at 06:38 IST — a
+browser **Apply & Re-run Model**, not either nightly slot. `api/run-engine.js` stamps `invValue`
+(`computeInvValue`); `applyAndRun` in `App.jsx` imports `computeInvValue` for the Overview KPI card but
+does **not** write it into the row. So any daytime Apply blanks it until the next 05:45 engine run.
+- Self-healing within a night and purely cosmetic — the digest omits the value line rather than
+  printing a wrong one, which is the designed behaviour.
+- Same shape as the Stage 8 duplicate bug: **two writers of one row, one of them silently dropping a
+  field the other maintains.** Fix is one line in `applyAndRun`; worth doing next time `App.jsx` is
+  open rather than on its own.
 
 ### Later, not urgent
 - **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence
@@ -1643,6 +1660,32 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
   - **Stricter than the browser on purpose:** `2.5`, `-1`, `abc` are REJECTED, not coerced —
     `parseFloat` turning a typo into `0` is indistinguishable from ops deliberately removing a floor.
     A blank cell is still `0`. An unknown DS column (DS07 before `DS_LIST` gains it) is a **hard stop**.
+  - **⚠⚠ DUPLICATE SKU ROWS FOLLOW THE OPS APPEND RULE — LAST ROW WINS (changed 2026-08-15). It used
+    to be a hard stop, and that cost two nights.** `duplicate_sku` refused the nights of 08-14 and
+    08-15; ops downloaded the sheet, re-uploaded it through Upload Data, and it **worked** — because
+    `App.jsx handleNSQ` does `nsq[s]={}` per row, so a duplicate silently overwrites and the last
+    occurrence wins. Verified: `S8UHR` sat at sheet lines 125/1383/1566 with three different value
+    sets, and the stored row was exactly line 1566.
+    - **The defect was never the parser's strictness — it was TWO WRITERS DISAGREEING ABOUT AN
+      AMBIGUOUS INPUT.** They agreed perfectly on every clean sheet. Worse, the disagreement ran the
+      wrong way: the **fallback** path (browser, no guards) succeeded on a sheet the **primary** path
+      refused, which reads as "the sync is broken" and trains everyone toward the unguarded path.
+      **Generalisable: when two writers share a key, make them agree on the AMBIGUOUS inputs, not just
+      the clean ones** — and prefer aligning the guarded writer to the fallback's behaviour over making
+      the emergency path harder to use.
+    - Ops revises a floor by **appending a row, not editing in place** (confirmed with the operator
+      2026-08-15), so the last occurrence is genuinely current. Every one of the 95 duplicated SKUs had
+      *conflicting* values; **zero were exact copies** — the newer row generally raising a `0,0` to a
+      real floor. So last-row-wins is ops intent, not a coin toss.
+    - **It grows fast: 1 duplicated SKU on 08-14 was 95 (96 rows) by 08-15.** Reported, never fixed
+      automatically: `skuFloorSyncStatus.duplicates = {rows, skus (capped 60), skuTotal}`, and the
+      digest names them. **The sync has NO write access to the sheet and deliberately never will** —
+      the URL we hold is a `/d/e/2PACX-1v…/pub` *publish token*, not a spreadsheet ID, and there are no
+      Google credentials in the project at all. Deleting rows would need a service account, Editor
+      access to an ops-owned document, and an unattended destructive write at 04:35 IST. Considered and
+      **rejected 2026-08-15**; the email is the cleanup mechanism.
+    - `invalid_value`, `unknown_ds`, `empty` and `header_mismatch` remain hard stops, so `force` still
+      overrides POLICY and never CORRECTNESS.
   - **⚠ THE GUARD NEEDS TWO DIMENSIONS.** Ops removes a floor either by deleting the row OR by setting
     it `0,0`; the second leaves the SKU key in place, so a key-count guard alone reads a **0% drop** and
     would wave through a bad formula that zeroed every value column — 1,148 rows in, 1,148 out, every
@@ -1746,6 +1789,23 @@ plus `toTargets`, mails one summary, green or red. Pure logic in `_shared/nightl
 - **⚠ `send` DEFAULTS TO TRUE**, deliberately inverting `sync-sku-floors` (`dryRun`) and `run-engine`
   (`mode`). For a writer a silent no-op is safe; for a watchdog it is the exact failure being fixed.
   Dry runs pass `{"send": false}`.
+- **⚠⚠ THE REFUSAL REASON LIVES IN TWO PLACES AND BOTH MUST BE READ — `reasonOf()`, fixed 2026-08-15.**
+  It read `row.change.reason` only, but **only a change-guard rejection has a `change` object at all**;
+  a parse failure, a fetch failure or an exception has none. So on the nights of 08-14 and 08-15 the
+  email printed `refused: reason not stated` while `reason: "duplicate_sku"` — the word naming the ops
+  sheet exactly — sat in the row. **Two mornings lost to a field the email declined to read.**
+  `change.reason` is still preferred (sync-catalogue stamps a generic top-level `change_guard_failed`
+  and puts the real verdict in `change`), with the top level as fallback. Same class as `autoAtFor`:
+  **a reader that knows only one of a value's two homes fails silently on exactly the case it exists
+  to catch.**
+- **Floor-sheet duplicates are reported GREEN and never move the alert level** (2026-08-15). Since the
+  append rule resolves them they cannot change what the engine gets — housekeeping, not a fault — and
+  nobody has measured how often ops legitimately appends, so any threshold would be guessed (the
+  Sunday-row-count mistake). A note that goes amber every morning until a spreadsheet is tidied would
+  discredit the reds beside it. Names are truncated to **12** with `+N more`; **rendering the real
+  email is what caught that** — 60 codes joined into one line is an unreadable wall in Gmail, and every
+  test passed. ⚠ A green flag must also be **filtered out of the subject line**, or it rides into an
+  amber subject caused by something else and reads as a second fault.
 - **⚠ "Refused" is judged on `ok === false`, NEVER on how recent the row is.** A cron that never fired
   leaves the PREVIOUS successful row in place — recent *and* `ok:true` — so a recency test printed
   `refused: ok` and pointed at the wrong remedy. Same class as the `autoAtFor` bug: a proxy signal

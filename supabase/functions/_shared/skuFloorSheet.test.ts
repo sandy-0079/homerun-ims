@@ -41,6 +41,66 @@ describe("parseFloorSheet — shape must match the browser uploader exactly", ()
   });
 });
 
+// ⚠ THE APPEND RULE, agreed with the operator 2026-08-15 after `duplicate_sku`
+// refused two nights running (08-14, 08-15). Ops revises a floor by APPENDING a new
+// row rather than editing the existing one, so the LAST occurrence is the current
+// one — which is what `App.jsx handleNSQ` already did by accident (`nsq[s]={}` per
+// row overwrites), and why re-uploading the same sheet by hand "worked" while the
+// sync refused it. Two writers must not disagree about which row is live, so the
+// sync now mirrors the browser rather than the browser being made strict: the
+// browser is the emergency fallback and must never be the harder path to use.
+//
+// The duplicates are still COUNTED and REPORTED — they are sheet rot that grows
+// (1 duplicated SKU on 08-14 became 95 by 08-15) and ops needs the names to clean
+// them up. Reporting is the whole safety mechanism now that refusing is gone.
+describe("parseFloorSheet — duplicate rows follow the append rule", () => {
+  it("resolves a duplicate SKU to the LAST row, mirroring the browser uploader", () => {
+    const r = parseFloorSheet(sheet(row("DUP", [1, 2]), row("DUP", [5, 6])), DS);
+    expect(r.ok).toBe(true);
+    expect(r.reason).toBe("ok");
+    expect(r.floors.DUP).toEqual({ DS01: { min: 5, max: 6 } });
+  });
+
+  it("counts superseded ROWS and names the SKUs", () => {
+    // Rows and SKUs are different numbers and both matter: on the live sheet
+    // 2026-08-15 it was 96 superseded rows across 95 SKUs. Ops wants the row count
+    // (how much to delete) and the names (what to search for).
+    const r = parseFloorSheet(sheet(row("A", [1, 1]), row("DUP", [1, 2]), row("DUP", [5, 6])), DS);
+    expect(r.duplicateRows).toBe(1);
+    expect(r.duplicateSkus).toEqual(["DUP"]);
+  });
+
+  it("counts a third occurrence as a second superseded row, still one SKU", () => {
+    const r = parseFloorSheet(sheet(row("DUP", [1, 1]), row("DUP", [2, 2]), row("DUP", [3, 3])), DS);
+    expect(r.duplicateRows).toBe(2);
+    expect(r.duplicateSkus).toEqual(["DUP"]);
+    expect(r.floors.DUP).toEqual({ DS01: { min: 3, max: 3 } });
+  });
+
+  it("lets a later row REMOVE a floor the earlier row set", () => {
+    // The dangerous direction, pinned deliberately. `0,0` is how ops removes a
+    // floor, so a later all-zero row must win exactly like a later non-zero one —
+    // and must leave the SKU present-but-empty, not absent.
+    const r = parseFloorSheet(sheet(row("DUP", [4, 9]), row("DUP", [0, 0])), DS);
+    expect(r.floors.DUP).toEqual({});
+    expect(r.skuCount).toBe(1);
+  });
+
+  it("counts DISTINCT SKUs, not rows, so the change guard is not fooled", () => {
+    // skuCount feeds assessFloorChange. If duplicates inflated it, a sheet losing
+    // real SKUs while gaining duplicate rows would read as flat and slip the guard.
+    const r = parseFloorSheet(sheet(row("A", [1, 1]), row("B", [1, 1]), row("A", [2, 2])), DS);
+    expect(r.skuCount).toBe(2);
+  });
+
+  it("still fails closed on a bad VALUE inside a duplicated row", () => {
+    // Duplicates stopped being a correctness problem; typos did not.
+    const r = parseFloorSheet(sheet(row("DUP", [1, 2]), row("DUP", ["abc", 6])), DS);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("invalid_value");
+  });
+});
+
 describe("parseFloorSheet — fails closed on anything it does not understand", () => {
   it("rejects an HTML error page from a revoked publish", () => {
     const r = parseFloorSheet("<!DOCTYPE html><html><body>Sorry, unavailable</body></html>", DS);
@@ -61,13 +121,6 @@ describe("parseFloorSheet — fails closed on anything it does not understand", 
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("unknown_ds");
     expect(r.unknownDs).toEqual(["DS07"]);
-  });
-
-  it("rejects a duplicate SKU rather than silently letting one win", () => {
-    const r = parseFloorSheet(sheet(row("DUP", [1, 2]), row("DUP", [5, 6])), DS);
-    expect(r.ok).toBe(false);
-    expect(r.reason).toBe("duplicate_sku");
-    expect(r.duplicateSkus).toEqual(["DUP"]);
   });
 
   it("rejects a non-integer value — a typo must not become a silent floor removal", () => {

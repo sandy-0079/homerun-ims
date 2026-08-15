@@ -336,6 +336,117 @@ describe("'ran and refused' is a different red from 'never ran'", () => {
   });
 });
 
+// The 2026-08-15 incident: `sync-sku-floors` refused two nights with
+// `reason: "duplicate_sku"` and the email said "refused: reason not stated",
+// because this module read `floors.change.reason` and a PARSE failure has no
+// `change` object at all. The word that pointed straight at the ops sheet sat in
+// the status row for two mornings.
+describe("refusal reason — a parse failure names itself", () => {
+  it("falls back to the top-level reason when there is no change guard object", () => {
+    const i = healthy();
+    i.floors = { ok: false, at: "2026-08-03T23:55:02.765Z", lastOkNight: "2026-08-02", reason: "invalid_value" } as any;
+    const c = check(assessNight(i), "floors");
+    expect(c.mode).toBe("refused");
+    expect(c.detail).toContain("invalid_value");
+    expect(c.detail).not.toContain("reason not stated");
+  });
+
+  it("still prefers change.reason, which is the more specific of the two", () => {
+    // sync-catalogue stamps a generic top-level `change_guard_failed` and puts the
+    // real verdict in `change.reason`. Preferring the top level would lose it.
+    const i = healthy();
+    i.catalogue = {
+      ok: false, at: "2026-08-03T16:25:21.017Z", lastOkNight: "2026-08-01",
+      reason: "change_guard_failed", change: { reason: "active_share_shift" },
+    } as any;
+    const c = check(assessNight(i), "catalogue");
+    expect(c.detail).toContain("active_share_shift");
+  });
+
+  it("still says 'reason not stated' when the row genuinely carries neither", () => {
+    const i = healthy();
+    i.floors = { ok: false, at: "2026-08-03T23:55:02.765Z", lastOkNight: "2026-08-02" } as any;
+    expect(check(assessNight(i), "floors").detail).toContain("reason not stated");
+  });
+});
+
+// Duplicate rows stopped being a failure on 2026-08-15 (the sync now follows the
+// ops append rule, last row wins). They are still sheet rot that GROWS — one
+// duplicated SKU became 95 in a single day — and the sync has no write access to
+// the sheet, so this email is the only thing that will ever tell ops to clean up.
+describe("duplicate sheet rows — reported, never alerting", () => {
+  const withDupes = () => {
+    const i = healthy();
+    (i.floors as any).duplicates = { rows: 96, skus: ["S8UHR", "289QJ", "3FKU2"] };
+    return i;
+  };
+
+  it("carries the superseded ROW count, which is not the SKU count", () => {
+    const v = assessNight(withDupes());
+    expect(v.facts.floorDuplicateRows).toBe(96);
+  });
+
+  it("prints the count on the floors line", () => {
+    const { text } = renderDigest(assessNight(withDupes()));
+    expect(text).toMatch(/96 duplicate row/);
+  });
+
+  it("names the SKUs, because ops has to find them in the sheet by hand", () => {
+    const { text } = renderDigest(assessNight(withDupes()));
+    expect(text).toContain("S8UHR");
+  });
+
+  it("NEVER moves the alert level — the append rule makes them harmless to the engine", () => {
+    // Same reasoning as the inventory-value line: nobody has measured how often ops
+    // legitimately appends, so a threshold here would be guessed. A red that fires
+    // on schedule discredits the reds beside it.
+    const v = assessNight(withDupes());
+    expect(v.level).toBe("green");
+    expect(check(v, "floors").level).toBe("green");
+  });
+
+  it("says nothing at all when there are none", () => {
+    const { text } = renderDigest(assessNight(healthy()));
+    expect(text).not.toMatch(/duplicate row/);
+  });
+
+  it("truncates the SKU list and says how many more there are", () => {
+    // 95 duplicated SKUs joined into one line is a wall of codes in Gmail. Found by
+    // rendering the real email, not by any assertion — the house lesson.
+    const i = healthy();
+    (i.floors as any).duplicates = {
+      rows: 96,
+      skus: Array.from({ length: 60 }, (_, n) => `SKU${n}`),
+      skuTotal: 95,
+    };
+    const { text } = renderDigest(assessNight(i));
+    expect(text).toContain("SKU0");
+    expect(text).not.toContain("SKU59");
+    expect(text).toMatch(/\+83 more/);
+  });
+
+  it("falls back to the list length when skuTotal is absent", () => {
+    // A status row written by the previous deploy has no `skuTotal`. It must still
+    // render rather than print "+NaN more".
+    const i = healthy();
+    (i.floors as any).duplicates = { rows: 2, skus: ["AAA", "BBB"] };
+    const { text } = renderDigest(assessNight(i));
+    expect(text).toContain("AAA, BBB");
+    expect(text).not.toMatch(/NaN|more/);
+  });
+
+  it("stays out of an amber subject raised by something else", () => {
+    // A green flag rides alongside a real amber one. If it leaked into the subject
+    // it would read as a second fault — and `sheetDuplicates` has no FLAG_LABEL, so
+    // the raw key would have been printed to the reader.
+    const i = withDupes();
+    i.invoices.coverage = { unknownPct: 0.7 };
+    const { subject } = renderDigest(assessNight(i));
+    expect(subject).toMatch(/unknown-SKU rate rising/);
+    expect(subject).not.toMatch(/sheetDuplicates|duplicate/i);
+  });
+});
+
 describe("composition flags — what the guards let through", () => {
   it("raises amber and names every SKU that became Supplier", () => {
     const i = healthy();

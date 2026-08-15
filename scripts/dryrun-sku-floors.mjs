@@ -40,7 +40,13 @@ const p = parseFloorSheet(csv, DS_LIST);
 console.log(`\nPARSE  (DS_LIST = ${DS_LIST.join(",")})`);
 console.log(`  ok=${p.ok} reason=${p.reason} · ${p.skuCount} SKUs · ${p.blankSkuRows} blank-SKU rows skipped`);
 if (p.unknownDs.length) console.log(`  ✗ unknown DS columns: ${p.unknownDs.join(", ")} — DS_LIST must gain them first`);
-if (p.duplicateSkus.length) console.log(`  ✗ duplicate SKUs: ${list(p.duplicateSkus)}`);
+// Not a failure since 2026-08-15 — the append rule resolves them to the last row,
+// mirroring the browser uploader. Still printed, because they are sheet rot that
+// grows and nothing but a human deleting rows will ever clear them.
+if (p.duplicateRows) {
+  console.log(`  ⚠ ${p.duplicateRows} duplicate row(s) superseded across ${p.duplicateSkus.length} SKU(s) — last row won`);
+  console.log(`      ${list(p.duplicateSkus)}`);
+}
 if (p.invalid.length) {
   console.log(`  ✗ ${p.invalid.length} invalid values:`);
   for (const v of p.invalid.slice(0, 10)) console.log(`      ${v.sku} · ${v.column} = "${v.value}"`);
