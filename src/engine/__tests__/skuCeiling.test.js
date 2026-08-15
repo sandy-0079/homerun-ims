@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { runEngine } from "../index.js";
 import { capFor, clampToCeiling } from "../skuCeiling.js";
-import { DEFAULT_PARAMS } from "../constants.js";
+import { DEFAULT_PARAMS, PLYWOOD_NETWORK_CONFIG_DEFAULT } from "../constants.js";
 
 describe("capFor — lookup", () => {
   const c = { G9NYZ: { DS05: 5, DS01: 0 } };
@@ -201,5 +201,77 @@ describe("SKU ceiling on stores with NO demand — the four-writers regression",
     const before = runEngine(inv(), master(), {}, {}, new Set(), nsq, prm(), {});
     const after = runEngine(inv(), master(), {}, {}, new Set(), nsq, prm(), { [S]: { DS01: 1 } });
     expect(after[S].dc.max).toBeLessThan(before[S].dc.max);
+  });
+});
+
+// The Network Design bypass is a wholly separate branch that builds its own
+// `_stores` and its own DC. It was the path silently missed for half a day on
+// 2026-08-15, so it gets its own end-to-end coverage rather than a live spot-check.
+describe("SKU ceiling on the Network Design (plywood) path", () => {
+  const PLY = "PLYSKU";
+  const CAT = "Plywood, MDF & HDHMR";
+  const master = () => ({
+    [PLY]: { name: "ArchidPly 18mm Board", category: CAT, brand: "ArchidPly", status: "active", inventorisedAt: "DC" },
+  });
+  // Enough distinct order-days to land in the Frequent zone (NZD >= sparseNZD).
+  const inv = () => Array.from({ length: 25 }, (_, i) => ({
+    date: `2026-07-${String(i + 1).padStart(2, "0")}`,
+    ds: "DS01", pin: "560001", qty: 6, shopifyOrder: `n${i}`, sku: PLY,
+  }));
+  const params = () => ({
+    ...DEFAULT_PARAMS,
+    overallPeriod: 45, newDSList: [], dsSeed: {},
+    categoryStrategies: { [CAT]: "network_design" },
+    plywoodNetworkConfig: {
+      ...PLYWOOD_NETWORK_CONFIG_DEFAULT,
+      brands: { ArchidPly: { nodes: { DS01: { covers: ["DS01"] } }, dcMultMin: 0.75, dcMultMax: 1.0 } },
+    },
+  });
+  const go = (ceilings, nsq = {}) =>
+    runEngine(inv(), master(), {}, {}, new Set(), nsq, params(), ceilings)[PLY];
+
+  it("routes through the network path at all (guards the fixture)", () => {
+    const st = go({}).stores.DS01;
+    expect(st.strategyTag).toBe("network_design");
+    expect(st.max).toBeGreaterThan(2);
+  });
+
+  it("caps a network-design store", () => {
+    const st = go({ [PLY]: { DS01: 2 } }).stores.DS01;
+    expect(st).toMatchObject({ min: 2, max: 2, logicTag: "SKU Ceiling" });
+  });
+
+  it("pulls the network DC down with it", () => {
+    // The DC here is `dcP95 + ceil(sumMin x dcMult)` computed inside the plywood
+    // engine from UNCAPPED mins, and the floored-SKU calc downstream is a Math.max
+    // FLOOR on top — so before 2026-08-15 a capped plywood SKU kept its full DC.
+    const before = go({}).dc;
+    const after = go({ [PLY]: { DS01: 2 } }).dc;
+    expect(after.max).toBeLessThan(before.max);
+  });
+
+  it("leaves the DC untouched when no ceiling applies", () => {
+    // The re-derivation runs unconditionally, so it must reproduce the plywood
+    // engine's own number exactly. Verified live at 0 of 2,273 SKUs differing.
+    expect(go({}).dc).toEqual(go({ [PLY]: { DS01: 999 } }).dc);
+  });
+
+  it("uses the PRE-FLOOR node basis, not the floored store min", () => {
+    // The bug found while building this: summing `_stores[ds].min` includes the SKU
+    // floor lift, while the network's own sumMin is the PRE-floor basis. Summing the
+    // wrong one inflated every plywood DC (measured: TJSTU 30 -> 39 with nothing
+    // capped at all).
+    //
+    // A floor DOES legitimately raise the DC — but through the SEPARATE floored-SKU
+    // multiplier (`Math.max(dc, round(sumWithFloors x mult))`), not through the
+    // network term. Zeroing those multipliers disables that path and leaves the
+    // network term alone, which is the thing under test: it must be floor-blind.
+    const noFloorMults = { skuFloorDCMultMin: 0, skuFloorDCMultMax: 0 };
+    const p = { ...params(), ...noFloorMults };
+    const run = (nsq) => runEngine(inv(), master(), {}, {}, new Set(), nsq, p, {})[PLY].dc;
+    // Compare the NUMBERS only: `dcDetails.isFlooredSKU` correctly differs between
+    // the two runs, and asserting on the whole object would be testing the audit.
+    const num = (d) => ({ min: d.min, max: d.max });
+    expect(num(run({ [PLY]: { DS01: 18 } }))).toEqual(num(run({})));
   });
 });

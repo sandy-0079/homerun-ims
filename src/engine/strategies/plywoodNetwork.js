@@ -393,7 +393,13 @@ export function computePlywoodNetworkResults(inv, skuM, params) {
     results[skuId] = {
       brand,
       storeResults,
-      dcResult: { min: dcMin, max: dcMax },
+      // ⚠ `dcP95` and `sumMin` are EXPOSED so runEngine can re-derive this DC after a
+      // SKU Ceiling clamps the stores. Without them the DC stayed sized for uncapped
+      // demand (measured 2026-08-15: TJSTU capped 12/15 -> 2/2 while its DC sat at
+      // 30/39), because the floored-DC calc downstream is a `Math.max` FLOOR on top of
+      // this number, not a replacement — so a smaller store sum could never pull it down.
+      // Formula, kept in one place: dcMin = dcP95 + ceil(sumMin x dcMultMin).
+      dcResult: { min: dcMin, max: dcMax, dcP95, sumMin },
       dcMultMin, dcMultMax,
     };
   }

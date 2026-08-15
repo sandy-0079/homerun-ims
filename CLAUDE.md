@@ -491,12 +491,22 @@ exactly where a manual floor is usually the thing setting the number, i.e. where
   (ArchidPly, `strategyTag: network_design`): **12/15 → 2/2**, tagged and audited. 395 network-design
   cells are cappable. This only works because the four-writers fix put the clamp in that bypass; it
   did NOT work in the morning's first implementation.
-  - **⚠ But the plywood DC does NOT follow the cap** (measured: `30/39 → 30/39` with
-    `isFlooredSKU: true`). `computePlywoodNetworkResults` derives the DC from UNCAPPED DS mins before
-    the clamp runs, and the floored-DC calc there is `Math.max(_dcMin, round(sumMin × mult))` — a
-    FLOOR on top of the network DC, not a replacement — so a smaller sum cannot pull it down. Same
-    direction as the rate-based gap: DC over-stocked, never under. Not biting (no plywood SKU is
-    capped yet); fixing it means teaching the plywood engine about ceilings, not reordering.
+  - **✅ AND THE PLYWOOD DC NOW FOLLOWS TOO (fixed same day).** It did not at first: the DC is
+    `dcP95 + ceil(sumMin × dcMult)` computed inside `computePlywoodNetworkResults` from UNCAPPED
+    mins, and the floored-SKU calc downstream is a `Math.max` FLOOR on top of it — never a
+    replacement — so a smaller store sum could not pull it down (`TJSTU` capped 12/15 → 2/2 while
+    its DC sat at 30/39). Fix: `dcResult` now exposes **`dcP95` and `sumMin`**, and `runEngine`
+    re-derives the DC from the clamped stores. `TJSTU` → **DC 30/39 → 25/33**.
+  - **⚠⚠ THE SUM MUST BE `min(preFloorMin, min)`, NOT `min` — and getting this wrong inflated EVERY
+    plywood DC.** `_stores[ds].min` carries the SKU FLOOR lift; the network's own `sumMin` is the
+    **pre-floor node basis**. Summing the floored value took `TJSTU` from 30 to **39 with nothing
+    capped at all**. A floor only ever raises, so the lower of the two is the node basis when
+    uncapped and the capped value once a ceiling bites — which makes the re-derivation reduce to
+    `sumMin` exactly. **Verified: 0 of 2,273 SKUs differing (all six stores AND the DC) with no
+    ceilings.** The re-derivation runs unconditionally for that reason: making it conditional would
+    hide a formula drift instead of failing loudly.
+  - ⚠ A floor still raises the DC through the **separate** floored-SKU multiplier
+    (`Math.max(dc, round(sumWithFloors × mult))`). That path is unchanged and is not the network term.
 
 **✅ PROVEN ON THE NIGHTLY PATH, not just in the browser.** `POST /api/run-engine {"mode":"dry"}`
 runs the entire production path and writes nothing (`wroteTo: null`) — the way to test the 05:45 cron
@@ -1450,10 +1460,6 @@ Shipped without these, deliberately. Listed so they are decisions, not omissions
   stay as empty as ops leaves it. `scripts/dryrun-sku-ceiling.mjs` and a days-of-cover sort are the
   manual substitutes. ⚠ This is the item most likely to make the feature quietly unused.
 - **The rate-based DC gap** — 81 SKUs, ₹4.4L. See the ceiling section.
-- **The plywood DC gap** — a capped Network Design SKU keeps its uncapped DC. See the ceiling section.
-- **No automated test for the Network Design ceiling path.** It was verified live on `TJSTU` but the
-  suite does not cover it, which is uncomfortable given that path was the one silently missed for
-  half a day. Needs a plywood network fixture.
 - **A DOC cap for Fixed Unit Floor.** PCT has `pctDocCap`/`pctDocCapLow`, plywood has `maxCap: 20`,
   Fixed Unit Floor has **nothing** — which is why all 10 top ceiling candidates are Fixed Unit Floor
   Finolex wire at 42–62 days of cover. One parameter would clear today's crop with no ops maintenance.

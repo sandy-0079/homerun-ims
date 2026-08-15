@@ -168,9 +168,40 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
       // otherwise ignore every ceiling on a plywood network-design SKU.
       applyCeilingToStores(_stores, ceilings, skuId, DS_LIST);
 
+      // ── Re-derive the network DC from the (possibly capped) stores ──────────
+      // ⚠ The plywood DC is `dcP95 + ceil(sumMin x dcMult)` computed inside
+      // computePlywoodNetworkResults from UNCAPPED store mins, and the floored-SKU
+      // calc below is a `Math.max` FLOOR on top of it — never a replacement. So
+      // without this, a capped plywood SKU kept its full DC (measured 2026-08-15:
+      // TJSTU 12/15 -> 2/2 at DS01 while its DC sat unchanged at 30/39).
+      //
+      // ⚠ `dcP95` is deliberately NOT re-derived: it is the DC's own direct-serve
+      // demand, which a DS cap does not change.
+      //
+      // ⚠ Runs unconditionally, not only when a cap fired. With no ceilings the
+      // recomputation reproduces `dcResult` exactly — verified across every plywood
+      // network SKU — so making it conditional would only hide a formula drift.
       const _dc = networkResult.dcResult;
-      let _dcMin = _isDead ? 0 : _dc.min;
-      let _dcMax = _isDead ? 0 : Math.max(_dc.max, _dc.min);
+      // ⚠ `min(preFloorMin, min)`, NOT `min`. `_stores[ds].min` carries the SKU FLOOR
+      // lift, while the network's own `sumMin` is the PRE-floor node basis — summing
+      // the former inflated every plywood DC (measured: TJSTU 30 -> 39 with nothing
+      // capped). A floor only ever raises, so the lower of the two is the node basis
+      // when uncapped and the capped value when a ceiling has bitten. That makes this
+      // reduce to `sumMin` exactly when no cap fires, which is the property below.
+      const _ceilSumMin = DS_LIST.reduce((a, ds) => {
+        const st = _stores[ds];
+        if (!st) return a;
+        return a + Math.min(st.preFloorMin ?? st.min ?? 0, st.min ?? 0);
+      }, 0);
+      const _reMin = typeof _dc.dcP95 === "number"
+        ? _dc.dcP95 + Math.ceil(_ceilSumMin * networkResult.dcMultMin)
+        : _dc.min;
+      const _reMax = typeof _dc.dcP95 === "number"
+        ? Math.max(_dc.dcP95 + Math.ceil(_ceilSumMin * networkResult.dcMultMax), _reMin)
+        : _dc.max;
+
+      let _dcMin = _isDead ? 0 : _reMin;
+      let _dcMax = _isDead ? 0 : Math.max(_reMax, _reMin);
       const _isFlooredSKU = !!(nsq && nsq[skuId]);
       let _floorDcDetails = null;
       if (!_isDead && _isFlooredSKU) {
