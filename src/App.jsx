@@ -3782,7 +3782,12 @@ const outputFreshness = useMemo(
                 <div style={{marginTop:4,fontFamily:"monospace",fontSize:10}}>{ceilPreview.conflicts.slice(0,6).join("  \u00B7  ")}{ceilPreview.conflicts.length>6?`  \u2026 (+${ceilPreview.conflicts.length-6} more)`:""}</div>
               </div>)}
             <div style={{display:"flex",gap:8,marginTop:18}}>
-              <button onClick={applyCeilingUpload} style={{flex:1,background:HR.yellow,color:HR.black,border:"none",padding:"10px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:13}}>\u2713 Apply Ceilings</button>
+              {/* ⚠ A LITERAL GLYPH, NOT the escape sequence. JSX children are not a JS string
+                  literal, so an escape sequence there renders as six characters —
+                  which is exactly what shipped and what the screenshot caught. The
+                  five other escapes in this modal sit inside JS strings/templates
+                  and are fine. Neither the build nor any test reads rendered text. */}
+              <button onClick={applyCeilingUpload} style={{flex:1,background:HR.yellow,color:HR.black,border:"none",padding:"10px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:13}}>✓ Apply Ceilings</button>
               <button onClick={()=>setCeilPreview(null)} style={{flex:1,background:HR.white,color:HR.muted,border:`1px solid ${HR.border}`,padding:"10px",borderRadius:6,cursor:"pointer",fontWeight:600,fontSize:13}}>Cancel</button>
             </div>
           </div>
