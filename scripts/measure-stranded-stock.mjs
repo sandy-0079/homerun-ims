@@ -66,6 +66,7 @@ const res = runEngine(
   deadStock,
   team?.newSKUQty ?? {},
   activeParams,
+  team?.skuCeiling ?? {},
 );
 
 // ECS = max(0, stock_on_hand) — Stock Health uses SoH, not AFS (switched 2026-06-30).

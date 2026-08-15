@@ -7,6 +7,7 @@ import { summariseInputs } from "./inputSummary";
 import { mergeCoreOverrides, buildToTargets, buildInputsStamp } from "./toTargets";
 import { buildPoTargetsCsv, poCsvFilename, PO_CSV_HEADERS } from "./poTargetsCsv";
 import { normaliseStatus } from "./skuStatus";
+import { parseSkuCeilingCsv, buildSkuCeilingCsv } from "./skuCeilingCsv";
 import { computeInvValue } from "./invValue";
 
 import {
@@ -1857,7 +1858,7 @@ function AdminLoginModal({onClose,onSuccess}){
   );
 }
 
-function ImpactPreviewPanel({ params, savedParams, invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData, hasChanges }) {
+function ImpactPreviewPanel({ params, savedParams, invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData, skuCeiling, hasChanges }) {
   const [status, setStatus] = useState("idle");
   const [diff,   setDiff]   = useState(null);
   const prevParamsRef = useRef(null);
@@ -1877,8 +1878,8 @@ function ImpactPreviewPanel({ params, savedParams, invoiceData, skuMaster, minRe
     setStatus("running");
     setTimeout(() => {
       try {
-        const baseRes = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, savedParams);
-        const newRes  = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, params);
+        const baseRes = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, savedParams, skuCeiling);
+        const newRes  = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, params, skuCeiling);
         let skusImpacted = 0;
         let baseInvMin = 0, newInvMin = 0, baseInvMax = 0, newInvMax = 0;
         const byMov = {};
@@ -1913,7 +1914,7 @@ function ImpactPreviewPanel({ params, savedParams, invoiceData, skuMaster, minRe
         setStatus("done");
       } catch (err) { console.error(err); setStatus("error"); }
     }, 60);
-  }, [params, savedParams, invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData]);
+  }, [params, savedParams, invoiceData, skuMaster, minReqQty, newSKUQty, deadStock, priceData, skuCeiling]);
 
   const MOV_ORDER = ["Super Fast", "Fast", "Moderate", "Slow", "Super Slow"];
   const noData = !invoiceData.length;
@@ -2861,6 +2862,13 @@ export default function App(){
   const [invoiceData,setInv]=useState([]),[skuMaster,setSKU]=useState({});
   const [minReqQty,setMRQ]=useState({}),[newSKUQty,setNSQ]=useState({});
   const [deadStock,setDead]=useState(new Set()),[priceData,setPrice]=useState({});
+  // SKU x DS ceilings — an absolute cap on Min/Max, whatever the strategy said.
+  const [skuCeiling,setCeil]=useState({});
+  // Parsed-but-not-yet-saved ceiling upload, awaiting confirmation. Per the
+  // operator 2026-08-15 there is no hard guard on this input, so this preview IS
+  // the protection: it is the only thing standing between a bad formula and every
+  // Min/Max in the network.
+  const [ceilPreview,setCeilPreview]=useState(null);
   const [results,setResults]=useState(null),[loading,setLoading]=useState(false),[dataLoaded,setLoaded]=useState(false);
   const allUploaded=invoiceData.length>0&&Object.keys(skuMaster).length>0&&Object.keys(priceData).length>0&&Object.keys(minReqQty).length>0&&Object.keys(newSKUQty).length>0&&deadStock.size>0;
   /* Old dashboard filter state removed — old Dashboard tab code was removed */
@@ -2966,7 +2974,7 @@ export default function App(){
             DS_LIST.map(ds => [ds, { thick: configs[ds]?.thick?.capacity || 0, thin: configs[ds]?.thin?.capacity || 0 }])
           );
           const activeParams = { ...params, dsCapacities };
-          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, activeParams);
+          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, activeParams, skuCeiling || {});
           const merged = { ...raw };
           Object.entries(coreOverrides || {}).forEach(([skuId, dsList]) => {
             if (!merged[skuId]) return;
@@ -2982,7 +2990,7 @@ export default function App(){
         setLoading(false);
       }, 100);
     }
-  }, [params, invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, coreOverrides]);
+  }, [params, invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, skuCeiling, coreOverrides]);
 
   // ── handleSavePlywoodNetworkConfig: saves plywood network design config ──────
   // Not wrapped in useCallback so it always captures latest state — called only on
@@ -3000,7 +3008,7 @@ export default function App(){
         try {
           const dsCapacities = buildDSCapacities(networkConfigs);
           const runParams = dsCapacities ? { ...newParams, dsCapacities } : newParams;
-          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, runParams);
+          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, runParams, skuCeiling || {});
           const merged = { ...raw };
           Object.entries(coreOverrides || {}).forEach(([skuId, dsList]) => {
             if (!merged[skuId]) return;
@@ -3032,7 +3040,7 @@ export default function App(){
         try {
           const dsCapacities = buildDSCapacities(networkConfigs);
           const runParams = dsCapacities ? { ...newParams, dsCapacities } : newParams;
-          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, runParams);
+          const raw = runEngine(invoiceData, skuMaster, minReqQty || {}, priceData || {}, deadStock || new Set(), newSKUQty || {}, runParams, skuCeiling || {});
           const merged = { ...raw };
           Object.entries(coreOverrides || {}).forEach(([skuId, dsList]) => {
             if (!merged[skuId]) return;
@@ -3081,6 +3089,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   if(sbData.newSKUQty)setNSQ(sbData.newSKUQty);
   if(sbData.deadStock)setDead(new Set(sbData.deadStock));
   if(sbData.priceData)setPrice(sbData.priceData);
+  if(sbData.skuCeiling)setCeil(sbData.skuCeiling);
   if(sbData.stockData)setStockData(sbData.stockData);
   if(sbData.stockUploadedAt)setStockUploadedAt(new Date(sbData.stockUploadedAt));
   if(sbData.stockUploadedAtPerDS)setStockUploadedAtPerDS(sbData.stockUploadedAtPerDS);
@@ -3099,7 +3108,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
 
   setTimeout(()=>{
     try{
-      const raw=runEngine(sbInvoiceData,sbData.skuMaster,sbData.minReqQty||{},sbData.priceData||{},new Set(sbData.deadStock||[]),sbData.newSKUQty||{},activeParams);
+      const raw=runEngine(sbInvoiceData,sbData.skuMaster,sbData.minReqQty||{},sbData.priceData||{},new Set(sbData.deadStock||[]),sbData.newSKUQty||{},activeParams,sbData.skuCeiling||{});
       setResults(raw);
     }catch(err){console.error("Auto-run error:",err);}
   },100);
@@ -3116,6 +3125,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
       if(bundle.newSKUQty)setNSQ(bundle.newSKUQty);
       if(bundle.deadStock)setDead(new Set(bundle.deadStock));
       if(bundle.priceData)setPrice(bundle.priceData);
+      if(bundle.skuCeiling)setCeil(bundle.skuCeiling);
       setLoaded(true);
 
       // Load params first, then run engine with correct params
@@ -3128,7 +3138,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
 
       setTimeout(()=>{
         try{
-          const raw=runEngine(bundle.invoiceData,bundle.skuMaster,bundle.minReqQty||{},bundle.priceData||{},new Set(bundle.deadStock||[]),bundle.newSKUQty||{},activeParams);
+          const raw=runEngine(bundle.invoiceData,bundle.skuMaster,bundle.minReqQty||{},bundle.priceData||{},new Set(bundle.deadStock||[]),bundle.newSKUQty||{},activeParams,bundle.skuCeiling||{});
           setResults(raw);
         }catch(err){console.error("Auto-run error:",err);}
       },100);
@@ -3214,8 +3224,8 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   // Canonical counts — one implementation, shared with the Overview card so the two
   // cannot disagree. See inputSummary.js for why each definition is what it is.
   const inputSummaries = useMemo(
-    () => summariseInputs({ invoiceData, skuMaster, priceData, minReqQty, newSKUQty, deadStock }),
-    [invoiceData, skuMaster, priceData, minReqQty, newSKUQty, deadStock],
+    () => summariseInputs({ invoiceData, skuMaster, priceData, minReqQty, newSKUQty, deadStock, skuCeiling }),
+    [invoiceData, skuMaster, priceData, minReqQty, newSKUQty, deadStock, skuCeiling],
   );
 
   // Which write produced each value.
@@ -3313,7 +3323,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
       try{
         const dsCapacities = buildDSCapacities(networkConfigs);
         const runParams = dsCapacities ? { ...p, dsCapacities } : p;
-        const raw=runEngine(inv,sku,mrq,pd,ds,nsq,runParams);
+        const raw=runEngine(inv,sku,mrq,pd,ds,nsq,runParams,skuCeiling||{});
         const merged={...raw};
         Object.entries(coreOverrides).forEach(([skuId,dsList])=>{
           if(!merged[skuId])return;
@@ -3416,6 +3426,66 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   },[invoiceData,minReqQty,newSKUQty,deadStock,priceData,params,saveTeamData]);
 
   const handleMRQ=useCallback(async(e)=>{const file=e.target.files[0];if(!file)return;setUploading("minReqQty");const rows=parseCSV(await file.text());const mrq={};rows.forEach(r=>{if(r["SKU"])mrq[r["SKU"]]=parseFloat(r["Qty"]||0);});setMRQ(mrq);LS.set("minReqQty",JSON.stringify(mrq));await saveTeamData({minReqQty:mrq});setModelDirty(true);setUploadedFiles(prev=>({...prev,minReqQty:file.name}));addChange(`New DS Floor Qty uploaded: ${Object.keys(mrq).length} SKUs`);setUploading(null);e.target.value="";},[saveTeamData,setModelDirty,addChange]);
+  // ── SKU x DS Ceilings ──────────────────────────────────────────────────────
+  // ⚠ THE ONLY UPLOADER THAT DOES NOT WRITE ON DROP. Every other input here
+  // auto-saves the moment a file is chosen. This one parses, RUNS THE ENGINE BOTH
+  // WAYS and shows what would actually change, because a ceiling only ever reduces
+  // and does so network-wide: an export that turned blank cells into zeros would
+  // silently zero every capped store. The operator chose a confirmation over a
+  // guessed percentage threshold (2026-08-15), so nothing else catches that.
+  const handleCeiling=useCallback(async(e)=>{
+    const file=e.target.files[0];if(!file)return;
+    setUploading("skuCeiling");
+    try{
+      const parsed=parseSkuCeilingCsv(await file.text(),DS_LIST);
+      if(!parsed.ok){
+        const why={header_mismatch:"No SKU column, or no 'DSxx Cap' columns. Is this the SKU Floors file by mistake?",
+          unknown_ds:`Unknown store column(s): ${parsed.unknownDs.join(", ")}`,
+          invalid_value:`Only whole numbers are allowed. Blank = no cap, 0 = stock nothing.\n\n`+
+            parsed.invalid.slice(0,8).map(v=>`  ${v.sku} · ${v.column} = "${v.value}"`).join("\n"),
+          empty:"The file has a valid header but no SKU rows."}[parsed.reason]||parsed.reason;
+        alert(`SKU Ceiling upload rejected — nothing was saved.\n\n${why}`);
+        return;
+      }
+      // Both runs use CURRENT params, so the only variable is the ceiling map.
+      const before=runEngine(invoiceData,skuMaster,minReqQty,priceData,deadStock,newSKUQty,params,skuCeiling);
+      const after =runEngine(invoiceData,skuMaster,minReqQty,priceData,deadStock,newSKUQty,params,parsed.ceilings);
+      let cellsMoved=0;
+      for(const sku of Object.keys(after)){
+        for(const ds of DS_LIST){
+          const a=before[sku]?.stores?.[ds],b=after[sku]?.stores?.[ds];
+          if(a&&b&&(a.min!==b.min||a.max!==b.max))cellsMoved++;
+        }
+      }
+      // A cap below an existing floor is legal — the ceiling wins on purpose — but
+      // it is nearly always a typo, so it is surfaced rather than silently applied.
+      const conflicts=[];
+      for(const [sku,caps] of Object.entries(parsed.ceilings)){
+        for(const [ds,cap] of Object.entries(caps)){
+          const fl=newSKUQty?.[sku]?.[ds];
+          const fMin=typeof fl==="number"?fl:Number(fl?.min||0);
+          if(fl&&fMin>cap)conflicts.push(`${sku} · ${ds} (floor ${fMin} > cap ${cap})`);
+        }
+      }
+      setCeilPreview({parsed,fileName:file.name,cellsMoved,conflicts,
+        before:computeInvValue(before,priceData,DS_LIST),
+        after:computeInvValue(after,priceData,DS_LIST)});
+    }catch(err){
+      alert(`SKU Ceiling upload failed — nothing was saved.\n\n${err.message}`);
+    }finally{ setUploading(null); e.target.value=""; }
+  },[invoiceData,skuMaster,minReqQty,priceData,deadStock,newSKUQty,params,skuCeiling]);
+
+  const applyCeilingUpload=useCallback(async()=>{
+    if(!ceilPreview)return;
+    const {parsed,fileName}=ceilPreview;
+    setCeil(parsed.ceilings);LS.set("skuCeiling",JSON.stringify(parsed.ceilings));
+    await saveTeamData({skuCeiling:parsed.ceilings});
+    setModelDirty(true);
+    setUploadedFiles(prev=>({...prev,skuCeiling:fileName}));
+    addChange(`SKU Ceilings uploaded: ${parsed.skuCount} SKUs, ${parsed.capCells} caps (${parsed.zeroCells} at zero)`);
+    setCeilPreview(null);
+  },[ceilPreview,saveTeamData]);
+
   const handleNSQ=useCallback(async(e)=>{
     const file=e.target.files[0];if(!file)return;
     setUploading("newSKUQty");
@@ -3461,7 +3531,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
   const clearData=useCallback(async(key)=>{
     setModelDirty(true);
     setUploadedFiles(prev=>({...prev,[key]:null}));
-    const labels={"invoiceData":"Invoice data","skuMaster":"SKU Master","priceData":"Purchase Prices","minReqQty":"New DS Floor Qty","newSKUQty":"SKU Floors","deadStock":"Dead Stock list"};
+    const labels={"invoiceData":"Invoice data","skuMaster":"SKU Master","priceData":"Purchase Prices","minReqQty":"New DS Floor Qty","newSKUQty":"SKU Floors","deadStock":"Dead Stock list","skuCeiling":"SKU Ceilings"};
     addChange(`${labels[key]||key} cleared`);
     if(key==="invoiceData"){setInv([]);LS.delete("invoiceData");setLoaded(false);setResults(null);saveTeamData({invoiceData:[]});}
     if(key==="skuMaster"){setSKU({});LS.delete("skuMaster");setLoaded(false);setResults(null);saveTeamData({skuMaster:{}});}
@@ -3469,6 +3539,8 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     if(key==="minReqQty"){setMRQ({});LS.delete("minReqQty");saveTeamData({minReqQty:{}});}
     if(key==="newSKUQty"){setNSQ({});LS.delete("newSKUQty");saveTeamData({newSKUQty:{}});}
     if(key==="deadStock"){setDead(new Set());LS.delete("deadStock");saveTeamData({deadStock:new Set()});}
+    // `{}` is a DELIBERATE clear, not "unchanged" — see teamDataBundle.js.
+    if(key==="skuCeiling"){setCeil({});LS.delete("skuCeiling");saveTeamData({skuCeiling:{}});}
   },[saveTeamData]);
 
   const saveParams=p=>{setParams(p);setModelDirty(true);addChange("Logic Tweaker params changed");};
@@ -3503,7 +3575,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
         try {
           const dsCapacities = buildDSCapacities(networkConfigs);
           const engineParams = dsCapacities ? { ...np, dsCapacities } : np;
-          const raw = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, engineParams);
+          const raw = runEngine(invoiceData, skuMaster, minReqQty, priceData, deadStock, newSKUQty, engineParams, skuCeiling);
           // Shared with api/run-engine.js — see src/toTargets.js. Was inline here,
           // which made the nightly headless run a second implementation of a filter
           // whose drift shows up as wrong transfer quantities found by ops.
@@ -3526,7 +3598,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
               engineCommit: __ENGINE_COMMIT__,
               inputs: buildInputsStamp({
                 invoiceData, skuMaster, priceData, newSKUQty, minReqQty, deadStock,
-                coreOverrides, params: engineParams,
+                skuCeiling, coreOverrides, params: engineParams,
               }),
             })
               // Re-read the header pills from the row that was actually written, rather
@@ -3673,6 +3745,49 @@ const outputFreshness = useMemo(
           </div>
         </div>
       )}
+
+      {/* SKU Ceiling upload — parsed, engine run BOTH ways, nothing written yet. */}
+      {ceilPreview&&(()=>{
+        const p=ceilPreview.parsed;
+        const dMax=ceilPreview.after.max-ceilPreview.before.max;
+        const pctMax=ceilPreview.before.max?(dMax/ceilPreview.before.max)*100:0;
+        const cr=(n)=>`\u20B9${(n/1e7).toFixed(2)}Cr`;
+        const lakh=(n)=>`${n<0?"-":"+"}\u20B9${(Math.abs(n)/1e5).toFixed(1)}L`;
+        const row=(k,v,color)=>(
+          <div key={k} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"3px 0"}}>
+            <span style={{color:HR.muted}}>{k}</span><span style={{fontWeight:700,color:color||HR.text}}>{v}</span>
+          </div>);
+        return (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}}>
+          <div style={{background:HR.white,padding:26,borderRadius:10,border:`2px solid ${HR.yellow}`,maxWidth:520,width:"92%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
+            <div style={{fontSize:16,fontWeight:800,color:HR.yellowDark,marginBottom:2}}>Apply SKU Ceilings?</div>
+            <div style={{fontSize:11,color:HR.muted,marginBottom:14}}>{ceilPreview.fileName} — nothing has been saved yet.</div>
+            {row("SKUs in file",p.skuCount.toLocaleString())}
+            {row("Caps set (SKU \u00D7 DS cells)",p.capCells.toLocaleString())}
+            {/* Broken out on purpose: a cap of 0 is the destructive kind, and an
+                export that turned blanks into zeros is the failure this catches. */}
+            {row("\u2014 of which cap at ZERO (stock nothing)",p.zeroCells.toLocaleString(),p.zeroCells?"#B91C1C":HR.text)}
+            {row("Min/Max cells that change",ceilPreview.cellsMoved.toLocaleString())}
+            <div style={{height:1,background:HR.border,margin:"10px 0"}}/>
+            {row("Inv Value (Max) now",cr(ceilPreview.before.max))}
+            {row("after applying",cr(ceilPreview.after.max),dMax<0?"#B91C1C":HR.text)}
+            {row("change",`${lakh(dMax)} (${pctMax>=0?"+":""}${pctMax.toFixed(1)}%)`,dMax<0?"#B91C1C":HR.text)}
+            {p.duplicateRows>0&&(
+              <div style={{fontSize:11,color:HR.muted,marginTop:10}}>
+                {p.duplicateRows} duplicate row(s) across {p.duplicateSkus.length} SKU(s) — the LAST row of each won, same append rule as the floor sheet.
+              </div>)}
+            {ceilPreview.conflicts.length>0&&(
+              <div style={{fontSize:11,color:"#92400E",background:"#FEF3C7",border:"1px solid #FDE68A",borderRadius:6,padding:"8px 10px",marginTop:10}}>
+                <strong>{ceilPreview.conflicts.length} cap(s) sit BELOW an existing SKU floor.</strong> The ceiling wins by design, but this is usually a typo:
+                <div style={{marginTop:4,fontFamily:"monospace",fontSize:10}}>{ceilPreview.conflicts.slice(0,6).join("  \u00B7  ")}{ceilPreview.conflicts.length>6?`  \u2026 (+${ceilPreview.conflicts.length-6} more)`:""}</div>
+              </div>)}
+            <div style={{display:"flex",gap:8,marginTop:18}}>
+              <button onClick={applyCeilingUpload} style={{flex:1,background:HR.yellow,color:HR.black,border:"none",padding:"10px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:13}}>\u2713 Apply Ceilings</button>
+              <button onClick={()=>setCeilPreview(null)} style={{flex:1,background:HR.white,color:HR.muted,border:`1px solid ${HR.border}`,padding:"10px",borderRadius:6,cursor:"pointer",fontWeight:600,fontSize:13}}>Cancel</button>
+            </div>
+          </div>
+        </div>);
+      })()}
 
       {loading&&(
         <div style={{position:"fixed",inset:0,background:"rgba(255,255,255,0.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}>
@@ -3826,6 +3941,11 @@ const outputFreshness = useMemo(
             const rows=Object.entries(priceData).map(([s,p])=>`"${s}",${p}`);
             return h.join(",")+"\n"+rows.join("\n");
           }
+          if(key==="skuCeiling"){
+            if(!Object.keys(skuCeiling).length) return null;
+            // Shared writer, pinned by a round-trip test against parseSkuCeilingCsv.
+            return buildSkuCeilingCsv(skuCeiling,DS_LIST);
+          }
           if(key==="minReqQty"){
             if(!Object.keys(minReqQty).length) return null;
             const h=["SKU","Qty"];
@@ -3859,6 +3979,9 @@ const outputFreshness = useMemo(
           minReqQty:  {file:"New_DS_Floor_Template.csv",headers:["SKU","Qty"],rows:[["SKU001",10],["SKU002",5]]},
           newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU",...DS_LIST.flatMap(ds=>[`${ds} Min`,`${ds} Max`])],rows:[["SKU001",3,5,2,3,0,0,5,7,0,0,0,0],["SKU002",0,0,1,2,2,3,0,0,3,4,1,2]]},
           deadStock:  {file:"Dead_Stock_Template.csv",  headers:["Dead Stock"],rows:[["SKU001"],["SKU002"]]},
+          // ⚠ BLANK = no cap, 0 = stock nothing here. The template shows both so the
+          // difference is visible before anyone fills it in; they are opposites.
+          skuCeiling: {file:"SKU_Ceilings_Template.csv",headers:["SKU",...DS_LIST.map(ds=>`${ds} Cap`)],rows:[["SKU001","","","","",5,""],["SKU002",0,0,0,"","",""]]},
         };
         // ⚠ Counts come from inputSummary.js, never from Object.keys() inline. Two of
         // these were counting the wrong thing before 2026-07-30 — New DS Floor Qty
@@ -3885,6 +4008,9 @@ const outputFreshness = useMemo(
           {label:"Dead Stock List",desc:"Column: Dead Stock (SKU list)",handler:handleDead,key:"deadStock",required:false,
            note:"Ops judgement — never auto-synced",
            count:`${sum.deadStock.count.toLocaleString()} ${sum.deadStock.unit}`,hasData:sum.deadStock.total>0},
+          {label:"SKU Ceilings - DS Level",desc:"Hard cap on Min/Max per store, whatever the strategy computed. Columns: SKU, DS01 Cap, ..., DS06 Cap. Blank = no cap, 0 = stock nothing there.",handler:handleCeiling,key:"skuCeiling",required:false,
+           note:"Ops judgement — never auto-synced. Shows an impact preview before saving.",
+           count:`${sum.skuCeiling.count.toLocaleString()} ${sum.skuCeiling.unit}`,hasData:sum.skuCeiling.total>0},
         ];
 
         // One card body, rendered for BOTH buckets so the two groups cannot

@@ -26,6 +26,7 @@
 //   minReqQty    Object {sku: number}                  <- flat, 0 means "no floor"
 //   newSKUQty    Object {sku: {DS: {min, max}}}        <- per-DS, NOT flat
 //   deadStock    Array  ["SKU", ...]                   <- array, not a map
+//   skuCeiling   Object {sku: {DS: cap}}                <- per-DS; 0 is a REAL cap
 
 const isMap = (v) => v && typeof v === "object" && !Array.isArray(v);
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -101,6 +102,27 @@ export function skuFloorSummary(newSKUQty) {
   return { count, unit: "SKUs with floors", label: "SKU Floors", total: Object.keys(m).length };
 }
 
+/** SKU x DS ceilings: `{sku: {DS: cap}}`, where a DS key is present ONLY when capped.
+ *
+ *  ⚠ COUNTS PRESENCE, NOT TRUTHINESS — the opposite of `dsFloorSummary`, and the
+ *  difference is the whole semantics of the input. There a `0` means "no floor", so
+ *  zeros are excluded. Here `0` is a REAL cap meaning "stock nothing at this DS", so
+ *  `Object.values(perDS).filter(v => v > 0)` would hide exactly the most severe
+ *  entries and report "0 SKUs capped" for a file that zeroed six stores. */
+export function skuCeilingSummary(skuCeiling) {
+  const m = isMap(skuCeiling) ? skuCeiling : {};
+  let count = 0, cells = 0, zeroCells = 0;
+  for (const perDS of Object.values(m)) {
+    if (!isMap(perDS)) continue;
+    const caps = Object.values(perDS).filter((v) => typeof v === "number" && Number.isFinite(v));
+    if (!caps.length) continue;
+    count++;
+    cells += caps.length;
+    zeroCells += caps.filter((v) => v === 0).length;
+  }
+  return { count, unit: "SKUs capped", label: "SKU Ceilings", total: Object.keys(m).length, cells, zeroCells };
+}
+
 /** Dead stock is stored as an ARRAY of SKU codes, not a map. */
 export function deadStockSummary(deadStock) {
   const n = Array.isArray(deadStock) ? new Set(deadStock.filter(Boolean)).size
@@ -110,7 +132,7 @@ export function deadStockSummary(deadStock) {
 
 /** Everything, keyed the same way `saveTeamData`'s overrides are, so a caller can
  *  look up a summary by the key it just wrote. */
-export function summariseInputs({ invoiceData, skuMaster, priceData, minReqQty, newSKUQty, deadStock }) {
+export function summariseInputs({ invoiceData, skuMaster, priceData, minReqQty, newSKUQty, deadStock, skuCeiling }) {
   return {
     invoiceData: invoiceSummary(invoiceData),
     skuMaster:   skuMasterSummary(skuMaster),
@@ -118,5 +140,6 @@ export function summariseInputs({ invoiceData, skuMaster, priceData, minReqQty, 
     minReqQty:   dsFloorSummary(minReqQty),
     newSKUQty:   skuFloorSummary(newSKUQty),
     deadStock:   deadStockSummary(deadStock),
+    skuCeiling:  skuCeilingSummary(skuCeiling),
   };
 }

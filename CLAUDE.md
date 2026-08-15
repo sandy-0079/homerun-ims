@@ -195,8 +195,8 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
   - **Symptom is maximally confusing:** `params/catalogueSyncStatus` still reads `ok:true` with
     `lastOkNight` set. The sync really did succeed and was overwritten afterwards, so it looks like a
     sync failure that isn't one.
-  - `BROWSER_OWNED_KEYS` = `skuMaster`, `minReqQty`, `newSKUQty`, `deadStock`, `priceData` — the only
-    keys the browser may write. **Adding a key there grants permission to clobber it.**
+  - `BROWSER_OWNED_KEYS` = `skuMaster`, `minReqQty`, `newSKUQty`, `deadStock`, `priceData`,
+    **`skuCeiling`** (2026-08-15) — the only keys the browser may write. **Adding a key there grants permission to clobber it.**
     - **⚠ THREE OF THE FIVE NOW HAVE AN EDGE-FUNCTION WRITER TOO** — `skuMaster` and `priceData`
       (`sync-catalogue`, from 2026-07-29) and **`newSKUQty` (`sync-sku-floors`, from 2026-07-31)**.
       An earlier version of this line said "only add one no edge function writes"; that ship has
@@ -310,7 +310,10 @@ PCT key decisions: percentile by price (Premium=75, High=80, Medium=85, Low/Supe
 - **Floored SKUs:** `Σ DS Mins × 0.2` / `Σ DS Maxes × 0.3`
 - **Dead Stock:** Min=Max=0 at all DS and DC locations (overrides all floors)
 
-Post-blend order (strict): New DS Floor → SKU Floor Override → Dead Stock cap → Rounding → **DS Seed** → **Inventorised-At normalization**
+Post-blend order (strict), **re-derived from `runEngine.js` 2026-08-15 — the older line here had
+Rounding in the wrong place**: New DS Floor → Rounding (`Math.ceil`, and `preFloor*` captured here) →
+SKU Floor Override → **SKU Ceiling** → Dead Stock cap · then, as later passes over `res`:
+**DS Seed** → **Active-only** → **Inventorised-At normalization**
 
 **New DS Floor blend is per-field max (changed 2026-07-06):** when the floor beats the strategy Min, Min = floor but Max keeps the strategy's value when higher (`max(strategyMax, floor)`). Previously the floor clobbered both (Min=Max=floor), discarding demand-informed Max headroom. Applies to every DS in `newDSList`.
 
@@ -427,6 +430,60 @@ trusting either this entry or the calendar. Re-enabling it needs a fresh measure
 - Runs after all strategies/floors, **before Inventorised-At normalization** — Supplier/DS-inv zeroing still wins; Dead Stock propagates (0+0→0).
 - **DC re-derived treating the seeded DS as a real sixth store** (deliberate transition overstock — sources are never reduced; both self-correct as carved-out demand leaves source history ~45 days post-go-live): rate-based SKUs add a synthetic rate `max(0, avg(source rates) − organic DS06 rate)` into `sumDailyAvg`; floored SKUs add the seed deltas into Σ DS sums; Network Design adds `ceil(ΔMin × brand dcMult)`. DC never decreases. Audit: `dcDetails.dsSeedAug`.
 - Tests: `src/engine/__tests__/dsSeed.test.js` (18).
+
+### SKU × DS Ceiling — the ops override for outliers (SHIPPED 2026-08-15)
+An absolute cap on Min/Max at a store, whatever the strategy computed.
+`team_data/global.skuCeiling = {sku: {DS: cap}}`, sixth `BROWSER_OWNED_KEY`, CSV upload on Upload Data.
+Engine: `src/engine/skuCeiling.js` (`capFor` / `clampToCeiling`), parse+write `src/skuCeilingCsv.js`.
+
+**WHY, with the case that prompted it.** `G9NYZ` (Finolex 300m coil, ₹6,269) came out **19/29 at DS05**
+off two order-days — **20 units on 07-09, 1 on 07-29**. Fixed Unit Floor's P90 of `[20,1]` is 18.1; its
+order-days gate needs `NZD >= 2` and NZD was exactly 2; its spike cap needs **≥3 orders** and there were
+2. Both guardrails correctly declined. ₹1.82L of wire at one dark store. **This is the "2-order spike"
+CLAUDE.md logged as a consciously accepted gap in July** — the doc predicted the shape a month before it
+bit. The decision was a blunt manual cap rather than a fourth guardrail for the fifth outlier to slip past.
+
+**⚠⚠ BLANK AND 0 ARE OPPOSITES, and this is the one place NOT to copy `parseFloorSheet`.** That parser
+folds a blank cell into 0 because for a FLOOR they say the same thing. Here: **blank = no cap**,
+**0 = stock nothing at this DS**. Fold them and a mostly-blank sheet zeroes the network. 0 is a wanted
+case — Dead Stock zeroes every location *including the DC*, so it cannot express "none at DS01–03,
+normal at DS04–06". `capFor` returns `null` (never `undefined`) for "no cap" so `if (cap)` can never
+silently drop a zero-cap; the same trap made `skuCeilingSummary` count presence, not truthiness.
+
+**⚠ THE CEILING BEATS THE SKU FLOOR, deliberately** — a cap a floor can overrule is not a cap. Not
+theoretical: **7 of the top 10 candidates have an ops floor exactly equal to the engine's own output**
+(19/29, 10/15, 3/5 …), so for those the ceiling is overriding the *floor sheet*, not the strategy.
+Measured across all 8,033 floor cells against a no-floor run: **73.3% genuinely lift the strategy,
+14.1% (1,132) are identical to it, 12.6% sit below it.** 161 of the echoes are at Max ≥ 10. An echoed
+floor is *stickier* than the outlier — if demand later falls, the floor holds the old high number
+forever. A cap below a floor is legal but usually a typo, so the upload preview lists them.
+
+**⚠ IN-LOOP, NOT A FINAL PASS — placement is load-bearing.** `sumMin`/`sumMax` are accumulated after it
+and feed the FLOORED DC branch (`round(sumMin × 0.2)`), so capping in-loop is what lets a DS cap reach
+the DC. A final pass over `res` would cap the stores and leave the DC sized for uncapped demand.
+- **⚠ It does NOT reach the rate-based DC branch** (`ceil(sumDailyAvg × (leadTime+1))`), which derives
+  from raw demand. Measured: **1,405 of 1,486 candidate SKUs (94.5%) carry a floor** and so are on the
+  DC branch that follows the cap; **81 do not** (₹4.4L of ₹290L). Known, pinned by a test, not fixed.
+- **⚠ DS Seed runs LATER** and would lift a seeded store back over its cap. Inert today (`dsSeed = {}`)
+  and deliberately untouched — re-enabling the seed must revisit this.
+
+**⚠ ONLY EVER REDUCES, which is the rollout property.** A 0/0 cell with a cap of 5 stays 0/0. With
+`skuCeiling` absent the engine is provably a no-op: verified against live data,
+`diff-headless-totargets.mjs` **0 of 2,072 SKUs differing**. So the code shipped ahead of any data.
+Dead Stock still wins over a cap (0 ≤ any cap).
+
+**⚠ THE ONLY UPLOADER THAT DOES NOT WRITE ON DROP.** Per the operator there is **no hard guard** on this
+input, so the confirm modal IS the protection: it parses, runs the engine BOTH ways and shows cells
+capped / **zero-caps broken out separately** / Inv Value before→after / floor conflicts. Nothing is
+written until Apply. Rollback is the card's `🗑 Clear` (writes `{}` — a deliberate clear, not
+"unchanged"). Duplicate rows follow the **append rule**, identical to the floor sheet.
+Read-only measurement without touching prod: `npx vite-node scripts/dryrun-sku-ceiling.mjs <file.csv>`.
+
+**⚠ `runEngine` gained an 8th positional arg (`ceilings = {}`) and the default is a silent no-op.** A
+call site that forgets it publishes UNCAPPED targets with nothing looking wrong — the
+`loadParamConfigRows` trap. All 9 App.jsx sites, `api/run-engine.js` and 4 scripts were updated
+together, and `toTargets.inputs.skuCeiling` is stamped as the DETECTOR: that count next to a non-empty
+`team_data/global.skuCeiling` is how you would catch a missed writer.
 
 ### Active-only normalization (final engine override, LIVE 2026-07-30)
 **Only SKUs `active` in the SKU Master get non-zero targets.** Runs immediately before the
@@ -1345,6 +1402,20 @@ does **not** write it into the row. So any daytime Apply blanks it until the nex
 - Same shape as the Stage 8 duplicate bug: **two writers of one row, one of them silently dropping a
   field the other maintains.** Fix is one line in `applyAndRun`; worth doing next time `App.jsx` is
   open rather than on its own.
+
+### 29. SKU Ceiling follow-ups, all consciously descoped 2026-08-15
+Shipped without these, deliberately. Listed so they are decisions, not omissions.
+- **Google Sheet sync.** CSV upload first, on the Stage 8 pattern — a sheet + published URL + sync all
+  landing at once, the day after a sheet sync broke, was not worth it. When it arrives it inherits the
+  `newSKUQty` situation: two writers that MUST agree on ambiguous input (append rule, blank vs 0).
+- **An outlier discovery report.** Nothing surfaces ceiling candidates in the app, so the input will
+  stay as empty as ops leaves it. `scripts/dryrun-sku-ceiling.mjs` and a days-of-cover sort are the
+  manual substitutes. ⚠ This is the item most likely to make the feature quietly unused.
+- **The rate-based DC gap** — 81 SKUs, ₹4.4L. See the ceiling section.
+- **A DOC cap for Fixed Unit Floor.** PCT has `pctDocCap`/`pctDocCapLow`, plywood has `maxCap: 20`,
+  Fixed Unit Floor has **nothing** — which is why all 10 top ceiling candidates are Fixed Unit Floor
+  Finolex wire at 42–62 days of cover. One parameter would clear today's crop with no ops maintenance.
+  Ceiling first was the right call (it generalises), but this is cheap and still open.
 
 ### Later, not urgent
 - **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence

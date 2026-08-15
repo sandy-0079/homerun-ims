@@ -88,6 +88,7 @@ const raw = runEngine(
   new Set(team?.deadStock ?? []),
   team?.newSKUQty ?? {},
   activeParams,
+  team?.skuCeiling ?? {},
 );
 const engineMs = Date.now() - tEngine;
 console.log(`\nENGINE\n  ${engineMs}ms · ${Object.keys(raw).length} SKUs in result`);

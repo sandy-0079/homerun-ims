@@ -120,6 +120,10 @@ export default async function handler(req, res) {
       team?.minReqQty ?? {}, team?.priceData ?? {},
       new Set(team?.deadStock ?? []), team?.newSKUQty ?? {},
       params,
+      // ⚠ 8th arg. Absent = no ceilings = a no-op; a nightly run that silently
+      // dropped this would publish UNCAPPED transfer targets while IMS showed
+      // capped ones. Same class as the pincodeConfig omission.
+      team?.skuCeiling ?? {},
     );
     const built = buildToTargets(mergeCoreOverrides(raw, sbOverrides), DS_LIST);
     const engineMs = Date.now() - tEngine;
@@ -155,6 +159,7 @@ export default async function handler(req, res) {
       invoiceData, skuMaster,
       priceData: team?.priceData, newSKUQty: team?.newSKUQty,
       minReqQty: team?.minReqQty, deadStock: team?.deadStock,
+      skuCeiling: team?.skuCeiling,
       coreOverrides: sbOverrides, params,
       lastSyncs: {
         invoices: invStat?.publishedAt ?? invStat?.at ?? null,

@@ -10,6 +10,7 @@ import { getPriceTag, getMovTag, getSpikeTag, computeStats } from "./utils.js";
 import { standardStrategy } from "./strategies/standard.js";
 import { applyDSSeed } from "./dsSeed.js";
 import { applyAttribution } from "./attribution.js";
+import { capFor, clampToCeiling } from "./skuCeiling.js";
 import { percentileCoverStrategy } from "./strategies/percentileCover.js";
 import { fixedUnitFloorStrategy } from "./strategies/fixedUnitFloor.js";
 import { computePlywoodNetworkResults } from "./strategies/plywoodNetwork.js";
@@ -45,7 +46,17 @@ function collectOrderQtys(inv, skuId, dsId) {
 
 /* ── Main engine ─────────────────────────────────────────────────────────── */
 
-export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
+/**
+ * @param ceilings  SKU x DS ceilings, `{[sku]: {[ds]: cap}}`. Defaults to `{}`,
+ *   which is provably a NO-OP — that default is what let the engine ship ahead of
+ *   any ceiling data, verified byte-identical against live `toTargets`.
+ *   ⚠ A call site that forgets to pass it silently ignores every ceiling. That is
+ *   the `loadParamConfigRows` trap, where 2 of 3 rebuild sites missed
+ *   `pincodeConfig` and page loads silently reverted attribution for weeks. Every
+ *   caller in `src/`, `api/` and `scripts/` was updated together; if you add one,
+ *   pass it.
+ */
+export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {}) {
   // Resolve which DS each sale is credited to BEFORE anything reads `inv`.
   // Doing it here rather than at CSV-parse time keeps the raw pincode in the
   // stored rows, so switching attribution is a re-run, not a re-upload.
@@ -347,6 +358,32 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p) {
           if (fMax > maxQty) maxQty = fMax;
           maxQty = Math.max(maxQty, minQty);
           logicTag = "SKU Floor";
+        }
+      }
+
+      // 4. SKU Ceiling — an absolute cap, and it deliberately BEATS the floor
+      // above it: a cap a floor can overrule is not a cap. A conflict (floor 5,
+      // ceiling 3) is almost always a data-entry mistake, so it is reported by the
+      // upload preview rather than silently resolved.
+      //
+      // ⚠ IN-LOOP, NOT A FINAL PASS, and that placement is load-bearing: `sumMin`/
+      // `sumMax` are accumulated below and feed the FLOORED DC branch
+      // (`round(sumMin x 0.2)`), so capping here is what lets a DS cap reach the DC.
+      // A final pass over `res` would cap the stores and leave the DC sized for
+      // uncapped demand.
+      //
+      // ⚠ Only ever reduces — see skuCeiling.js. `cap !== null` because 0 is a real
+      // cap; a falsy test would silently ignore every "stock nothing here".
+      //
+      // ⚠ DS Seed runs LATER, as its own pass over `res`, and would lift a seeded
+      // store back above its cap. Inert today (`dsSeed = {}`, sunset 2026-07-31) and
+      // deliberately left alone — but re-enabling the seed must revisit this.
+      const ceilCap = capFor(ceilings, skuId, dsId);
+      if (ceilCap !== null) {
+        const c = clampToCeiling(minQty, maxQty, ceilCap);
+        if (c.applied) {
+          postBlendSteps.push({ rule: "SKU Ceiling", cap: ceilCap, beforeMin: minQty, beforeMax: maxQty });
+          minQty = c.min; maxQty = c.max; logicTag = "SKU Ceiling";
         }
       }
 

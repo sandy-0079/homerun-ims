@@ -89,7 +89,7 @@ if (argv.includes("--with-value")) {
   const prm = { ...DEFAULT_PARAMS, ...(p || {}) };
   Object.assign(prm, (await loadParamConfigRows((id) => tRow("params", id), DS_LIST)).extra);
   const res = runEngine(inv?.invoiceData ?? [], team?.skuMaster ?? {}, team?.minReqQty ?? {},
-    team?.priceData ?? {}, new Set(team?.deadStock ?? []), team?.newSKUQty ?? {}, prm);
+    team?.priceData ?? {}, new Set(team?.deadStock ?? []), team?.newSKUQty ?? {}, prm, team?.skuCeiling ?? {});
   targets.invValue = computeInvValue(res, team?.priceData ?? {}, DS_LIST);
   console.log(`  invValue Max ₹${(targets.invValue.max / 1e7).toFixed(4)}Cr · Min ₹${(targets.invValue.min / 1e7).toFixed(4)}Cr`);
   if (!history.length) {

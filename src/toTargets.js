@@ -73,7 +73,7 @@ export function mergeCoreOverrides(results, overrides) {
 // make people stop trusting it. One builder, one key set, whoever writes.
 export function buildInputsStamp({
   invoiceData, skuMaster, priceData, newSKUQty, minReqQty, deadStock,
-  coreOverrides, params, lastSyncs,
+  skuCeiling, coreOverrides, params, lastSyncs,
 }) {
   // MAX date, not the last row — stored invoice rows are not sorted.
   let through = null;
@@ -90,6 +90,11 @@ export function buildInputsStamp({
     newSKUQty: count(newSKUQty),
     minReqQty: count(minReqQty),
     deadStock: count(deadStock),
+    // ⚠ Stamped mainly as a DETECTOR. `runEngine`'s ceilings argument is optional
+    // and defaults to a no-op, so a writer that forgot to pass it would publish
+    // uncapped targets with nothing looking wrong. This count next to a non-empty
+    // `team_data/global.skuCeiling` is how you would catch that.
+    skuCeiling: count(skuCeiling),
     coreOverrides: count(coreOverrides),
     attributionMode: params?.pincodeConfig?.mode ?? null,
     // The browser does not read the sync status rows (not worth the extra I/O on

@@ -98,8 +98,21 @@ describe("buildTeamDataBundle", () => {
     // Guard rail: adding a key here means the browser can clobber it, so it must
     // be a key no edge function writes. Change deliberately, not incidentally.
     expect([...BROWSER_OWNED_KEYS].sort()).toEqual(
-      ["deadStock", "minReqQty", "newSKUQty", "priceData", "skuMaster"],
+      ["deadStock", "minReqQty", "newSKUQty", "priceData", "skuCeiling", "skuMaster"],
     );
+  });
+
+  it("writes skuCeiling only when the caller passed it", () => {
+    // The whole point of the 96a1bf4 rewrite: an unrelated save must not rewrite
+    // ceilings from whatever React state happened to be holding.
+    expect(build({ minReqQty: { A: 1 } }).skuCeiling).toBeUndefined();
+    expect(build({ skuCeiling: { G9NYZ: { DS05: 5 } } }).skuCeiling).toEqual({ G9NYZ: { DS05: 5 } });
+  });
+
+  it("treats an empty skuCeiling as a deliberate clear, not as 'unchanged'", () => {
+    // The Upload Data clear button passes `{}`. Testing falsiness here would make
+    // "remove every ceiling" silently impossible.
+    expect(build({ skuCeiling: {} }).skuCeiling).toEqual({});
   });
 
   it("tolerates a missing/empty existing payload", () => {

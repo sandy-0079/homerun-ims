@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   invoiceSummary, skuMasterSummary, priceSummary,
-  dsFloorSummary, skuFloorSummary, deadStockSummary, summariseInputs,
+  dsFloorSummary, skuFloorSummary, deadStockSummary, skuCeilingSummary, summariseInputs,
 } from "./inputSummary.js";
 
 describe("invoiceSummary — invoices, not rows", () => {
@@ -127,9 +127,10 @@ describe("summariseInputs", () => {
       skuMaster: { A: { status: "active" } },
       priceData: { A: 1 }, minReqQty: { A: 1 }, minReqQtyIgnored: 1,
       newSKUQty: { A: { DS01: { min: 1, max: 1 } } }, deadStock: ["Z"],
+      skuCeiling: { A: { DS01: 5 } },
     });
     expect(Object.keys(s).sort()).toEqual(
-      ["deadStock", "invoiceData", "minReqQty", "newSKUQty", "priceData", "skuMaster"],
+      ["deadStock", "invoiceData", "minReqQty", "newSKUQty", "priceData", "skuCeiling", "skuMaster"],
     );
     for (const v of Object.values(s)) expect(v.count).toBe(1);
   });
@@ -137,5 +138,30 @@ describe("summariseInputs", () => {
   it("returns zeroed summaries for a totally empty state rather than throwing", () => {
     const s = summariseInputs({});
     for (const v of Object.values(s)) expect(v.count).toBe(0);
+  });
+});
+
+// ⚠ The counting rule here is the INVERSE of dsFloorSummary's, and getting it
+// backwards would hide the most severe entries in the file.
+describe("skuCeilingSummary — 0 is a real cap, not an absent one", () => {
+  it("counts a SKU capped at 0 as capped", () => {
+    const s = skuCeilingSummary({ A: { DS01: 0, DS02: 0 } });
+    expect(s.count).toBe(1);
+    expect(s.cells).toBe(2);
+    expect(s.zeroCells).toBe(2);
+  });
+
+  it("does not count a SKU with no caps at all", () => {
+    expect(skuCeilingSummary({ A: {} }).count).toBe(0);
+  });
+
+  it("separates zero-caps from ordinary caps", () => {
+    const s = skuCeilingSummary({ A: { DS01: 0, DS02: 7 }, B: { DS03: 3 } });
+    expect({ count: s.count, cells: s.cells, zeroCells: s.zeroCells }).toEqual({ count: 2, cells: 3, zeroCells: 1 });
+  });
+
+  it("survives junk without throwing", () => {
+    expect(skuCeilingSummary(null).count).toBe(0);
+    expect(skuCeilingSummary({ A: "nope" }).count).toBe(0);
   });
 });

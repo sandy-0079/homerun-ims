@@ -53,6 +53,11 @@ export const BROWSER_OWNED_KEYS = Object.freeze([
   "newSKUQty",
   "deadStock",
   "priceData",
+  // SKU x DS ceilings (2026-08-15). Browser-only today — no edge function writes
+  // it, so it is the one clean case for this list. A sheet sync is a deliberate
+  // non-goal for now; when one arrives it inherits the `newSKUQty` situation and
+  // both writers must agree on ambiguous input (append rule, blank vs 0).
+  "skuCeiling",
 ]);
 
 /**

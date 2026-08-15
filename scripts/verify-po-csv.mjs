@@ -53,7 +53,7 @@ console.log(`LOAD  invoiceData ${invoiceData.length.toLocaleString()} rows throu
 
 const results = runEngine(
   invoiceData, skuMaster, team?.minReqQty ?? {}, team?.priceData ?? {},
-  new Set(team?.deadStock ?? []), team?.newSKUQty ?? {}, activeParams,
+  new Set(team?.deadStock ?? []), team?.newSKUQty ?? {}, activeParams, team?.skuCeiling ?? {},
 );
 console.log(`ENGINE  ${Object.keys(results).length} SKUs\n`);
 
