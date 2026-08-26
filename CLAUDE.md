@@ -318,10 +318,48 @@ PCT key decisions: percentile by price (Premium=75, High=80, Medium=85, Low/Supe
 - **Floored SKUs:** `Σ DS Mins × 0.2` / `Σ DS Maxes × 0.3`
 - **Dead Stock:** Min=Max=0 at all DS and DC locations (overrides all floors)
 
-Post-blend order (strict), **re-derived from `runEngine.js` 2026-08-15 — the older line here had
-Rounding in the wrong place**: New DS Floor → Rounding (`Math.ceil`, and `preFloor*` captured here) →
-SKU Floor Override → **SKU Ceiling** → Dead Stock cap · then, as later passes over `res`:
-**DS Seed** → **Active-only** → **Inventorised-At normalization**
+Post-blend order (strict), **re-derived from `runEngine.js` 2026-08-26.** Inside the per-DS loop:
+New DS Floor → Rounding (`Math.ceil`, and `preFloor*` captured here) → SKU Floor Override. Then as
+passes over the **FINISHED `stores` map**, before the DC is derived from it: **SKU Ceiling** →
+**Dead Stock**. Then as later passes over `res`: **DS Seed** → **Active-only** →
+**Inventorised-At normalization**.
+- ⚠ **The two `stores`-map passes are NOT steps in the blend, and that distinction IS the bug below.**
+  An earlier version of this line ran them together as inline steps; Rounding was also in the wrong
+  place until 2026-08-15.
+- **Generalisable: a rule that only ever REDUCES a value belongs in ONE pass over the finished object,
+  never inline in the branch that computed it.** `applyCeilingToStores`, `applyDeadStockToStores`,
+  Active-only and Inventorised-At are all this shape. Dead Stock was the odd one out and it broke.
+
+### Dead Stock — Min=Max=0 everywhere (`src/engine/deadStock.js`)
+`team_data/global.deadStock` (SKU array, ops-maintained, manual **by design**). Outranks every strategy,
+floor and ceiling; zeroes all six DSes **and the DC**. Touches `min`/`max` only — `preFloor*` is left for
+audit, same convention as Active-only and Inventorised-At.
+
+**⚠⚠ IT WAS APPLIED INLINE IN THREE OF THE FOUR BRANCHES THAT BUILD `stores[dsId]` — fixed 2026-08-26,
+commit `80cda31`.** The branch missed was NO-DATA-with-a-manual-floor, so a Dead Stock SKU with a
+`newSKUQty` floor at a store **outside `newDSList`** and no sales there kept the floor as its Min/Max.
+- Measured live: **6 SKUs, 12 cells, ₹0.86L** — `4BK45 EDUNK RYNJT RU5YU WUZUF Y8SCD`, each with an
+  identical `1/1` floor at all six stores, reading `1/1` at **DS01/DS02** and `0/0` at DS03–DS06. Live
+  `newDSList` is `["DS04","DS05","DS06","DS03"]`, so DS01/DS02 are the **only** stores that reach that
+  branch. One SKU, one floor, two answers — the leak's signature is a store disagreeing with its siblings.
+- **The DC was never affected** (`if (isDead)` already sat on the finished-map side), so those SKUs read
+  DC `0/0` beside a non-zero DS — incoherent state the **TO tool acts on**, proposing DC→DS transfers
+  against a DC target of zero.
+- Present since `54e2b08` (2026-05-23): the missed branch already existed at line 206 that day.
+- **⚠ WHY TESTS DIDN'T CATCH IT — the reusable part.** `skuCeiling.test.js` has a "Dead Stock still wins"
+  case that **passed throughout**: its DS01 has demand, so it took a branch that worked. Identical to the
+  ceiling post-mortem's own note — *the zero-demand case was never constructed*. And there was **no
+  `deadStock.test.js` at all**, for the rule with the widest blast radius in the engine. Now
+  `src/engine/__tests__/deadStock.test.js` (11) covers all four branches; 3 failed before the fix.
+- **✅ DS Seed CANNOT reintroduce it — verified 2026-08-26, and this DIFFERS from the ceiling.** Dead
+  Stock is SKU-wide, so every source store is 0 and `max(0, ceil(avg(0,0)))` is 0 (measured with
+  `dsSeed:{DS06:["DS02","DS04"]}`: 48/64 seeded when live, `0/0` at DS02/DS06/DC when dead). A **ceiling**
+  is per-DS and genuinely can be lifted back by a seed — do not copy that warning across.
+- Read-only re-check: `npx vite-node scripts/audit-deadstock-leak.mjs` — runs the real engine and reports
+  which of the four branches each non-zero Dead Stock cell came from.
+- **Inertness proof for a change of this shape:** old vs new engine over live data, **2,375 SKUs →
+  exactly 12 min/max changes, 0 DC changes, 0 logic-tag-only changes.** A `git stash` of the one engine
+  file gets you the "before"; dump both to JSON and diff.
 
 **New DS Floor blend is per-field max (changed 2026-07-06):** when the floor beats the strategy Min, Min = floor but Max keeps the strategy's value when higher (`max(strategyMax, floor)`). Previously the floor clobbered both (Min=Max=floor), discarding demand-informed Max headroom. Applies to every DS in `newDSList`.
 
@@ -1473,6 +1511,19 @@ Shipped without these, deliberately. Listed so they are decisions, not omissions
   Finolex wire at 42–62 days of cover. One parameter would clear today's crop with no ops maintenance.
   Ceiling first was the right call (it generalises), but this is cheap and still open.
 
+### 30. Two floor-sheet reader gaps found while cleaning the floors CSV (2026-08-26)
+Both latent, both the invoice-round-trip shape — a writer and a reader that disagree, failing `ok: true`.
+- **`scripts/dryrun-sku-floors.mjs` under-reports ineffective floors:** it counts "absent from
+  `skuMaster`" and "not Active" but **not Dead Stock**, whose floor equally can never take effect.
+  Measured live: of **1,798** floors carrying a value, **34 are ineffective — 4 absent + 24 not Active
+  (14 of those also Dead Stock) + 6 Active-but-Dead-Stock**. Those 6 are exactly the SKUs from the Dead
+  Stock bug, so the script called them healthy on the morning they were wrong.
+- **⚠ `App.jsx buildDataCSV("newSKUQty")` QUOTES the SKU cell; `parseFloorSheet` never strips quotes.**
+  Verified: feeding the app's own floors download to the sync's parser returns **`ok: true` with keys
+  like `"\"ATGRU\""`** — every SKU matching nothing, reported as success. Harmless today (the sync reads
+  only the Google Sheet; the browser's `parseCSV` strips quotes) but it is the exact shape of the invoice
+  `⬇ Data` bug. **Emit floors CSVs UNQUOTED** — SKUs are plain alphanumeric; assert it before writing.
+
 ### Later, not urgent
 - **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence
   structurally impossible and page loads much faster. Costs the "engine changes go live on next page
@@ -1804,6 +1855,9 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
       2026-08-15), so the last occurrence is genuinely current. Every one of the 95 duplicated SKUs had
       *conflicting* values; **zero were exact copies** — the newer row generally raising a `0,0` to a
       real floor. So last-row-wins is ops intent, not a coin toss.
+    - ⚠ **The duplicates live in the SHEET ONLY.** `newSKUQty` is an object keyed by SKU (**1,800**
+      keys live 2026-08-26), so anything built from the stored row is deduped by construction — don't
+      go looking for a dedupe step that cannot exist.
     - **It grows fast: 1 duplicated SKU on 08-14 was 95 (96 rows) by 08-15.** Reported, never fixed
       automatically: `skuFloorSyncStatus.duplicates = {rows, skus (capped 60), skuTotal}`, and the
       digest names them. **The sync has NO write access to the sheet and deliberately never will** —
