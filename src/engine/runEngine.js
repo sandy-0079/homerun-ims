@@ -11,6 +11,7 @@ import { standardStrategy } from "./strategies/standard.js";
 import { applyDSSeed } from "./dsSeed.js";
 import { applyAttribution } from "./attribution.js";
 import { applyCeilingToStores } from "./skuCeiling.js";
+import { applyDeadStockToStores } from "./deadStock.js";
 import { percentileCoverStrategy } from "./strategies/percentileCover.js";
 import { fixedUnitFloorStrategy } from "./strategies/fixedUnitFloor.js";
 import { computePlywoodNetworkResults } from "./strategies/plywoodNetwork.js";
@@ -152,8 +153,6 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
             logicTag = 'SKU Floor';
           }
         }
-        // Dead stock overrides everything — Min=Max=0, no replenishment
-        if (_isDead) { storeMin = 0; storeMax = 0; logicTag = 'Dead Stock'; }
         _stores[dsId] = {
           min: storeMin, max: storeMax,
           preFloorMin: min, preFloorMax: max,
@@ -167,6 +166,10 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
       // Same clamp, same reason — this bypass builds its own `_stores` and would
       // otherwise ignore every ceiling on a plywood network-design SKU.
       applyCeilingToStores(_stores, ceilings, skuId, DS_LIST);
+      // Dead Stock last — it outranks the strategy, the floor and the ceiling. Same
+      // reason it lives here and not in the loop above: one rule, one application
+      // site, so a branch added later cannot silently escape it. See deadStock.js.
+      applyDeadStockToStores(_stores, _isDead, DS_LIST);
 
       // ── Re-derive the network DC from the (possibly capped) stores ──────────
       // ⚠ The plywood DC is `dcP95 + ceil(sumMin x dcMult)` computed inside
@@ -265,7 +268,6 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
             const fMax = typeof fl === "number" ? fl : (fl.max || fMin);
             if (fMin > 0) { nm = Math.max(nm, fMin); nx = Math.max(nx, fMax); logicTag = "SKU Floor"; }
           }
-          if (isDead) { nm = 0; nx = 0; logicTag = "Dead Stock"; }
           stores[dsId] = { min: nm, max: nx, preFloorMin, preFloorMax, dailyAvg: 0, abq: 0, mvTag: "Super Slow", spTag: "No Spike", logicTag, strategyTag: "standard" };
           dsDailyAvgs.push(0);
         } else if (nsq && nsq[skuId]) {
@@ -396,9 +398,6 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
         }
       }
 
-      // Dead stock overrides everything — Min=Max=0, no replenishment at any DS
-      if (isDead) { minQty = 0; maxQty = 0; logicTag = "Dead Stock"; }
-
       stores[dsId] = {
         min: Math.round(minQty), max: Math.round(maxQty),
         preFloorMin, preFloorMax,
@@ -421,6 +420,19 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
     // ⚠ BEFORE the sums below, which feed the floored DC branch
     // (`round(sumMin x 0.2)`). That ordering is what lets a DS cap reach the DC.
     applyCeilingToStores(stores, ceilings, skuId, DS_LIST);
+
+    // ── Dead Stock ──────────────────────────────────────────────────────────
+    // ⚠ HERE for the same reason as the ceiling above, and it was the SAME BUG:
+    // this rule was applied inline in three of the four branches that build
+    // `stores[dsId]`, and the NO-DATA-with-a-floor branch had no check at all. A
+    // Dead Stock SKU with a floor and no sales at a store outside `newDSList`
+    // therefore kept its floor — six SKUs, DS01 and DS02 only, found 2026-08-26.
+    // See deadStock.js for the full case.
+    //
+    // ⚠ AFTER the ceiling: Dead Stock outranks a cap (0 <= any cap, so the order
+    // is not load-bearing arithmetically, but it states the precedence).
+    // ⚠ BEFORE the sums below, for the same reason the ceiling is.
+    applyDeadStockToStores(stores, isDead, DS_LIST);
 
     // Derived from `stores` rather than the push-as-you-go arrays, which were filled
     // before the clamp — and which the third NO-DATA branch never pushed to at all.
