@@ -803,10 +803,36 @@ Brand-DS assignments editable in config matrix (brand×DS checkboxes + covers). 
     unknown to `assessCoverage` — the guard that refuses to write invoice data — silently coupling the
     two syncs. Retaining gives the no-Min/Max outcome while keeping `category`, which drives strategy
     dispatch. Reported as `report.absentFromZoho`.
-  - **`assessMasterChange` now guards the active share too** (`reason: "active_share_shift"`). It
-    previously watched only the `inventorisedAt` mix and the row count — and a pull that flipped SKUs to
-    inactive changes *neither*, so it passed every check while zeroing their Min/Max. With ~99.8% of the
-    catalogue active, that was most of the master riding on an unguarded field.
+  - **⚠⚠ `assessMasterChange` MEASURES the active share and DELIBERATELY DOES NOT BLOCK ON IT
+    (changed 2026-08-29, commit `e599d1f`). It blocked from 2026-07-29 to 2026-08-29 —
+    `reason: "active_share_shift"` — and that reason can no longer occur.** It was added because a
+    pull flipping SKUs to inactive changes *neither* the `inventorisedAt` mix nor the row count, so it
+    passed every other check while zeroing their Min/Max.
+    - **Why it was reversed: ops uses Zoho's `status` as a TEMPORARY OPERATIONAL LEVER, not a stable
+      statement about whether we stock something.** On 2026-08-28 they deactivated **334 SKUs** and
+      re-activated them the same day, because **Zoho will not transact an inactive item and the DC team
+      could not raise TOs**. Active share moved **93.55% → 79.70%, a 13.85pp swing against the 5pp
+      `CHANGE_LIMIT_PCT`**; all five slots refused, the catalogue went stale, and nothing self-healed
+      until ops reverted by hand. A bulk flip of that size is routine here, so a threshold treating it
+      as an emergency is a threshold that blocks normal work.
+    - **⚠ THE COST WAS ACCEPTED KNOWINGLY, not overlooked.** A transient flip now reaches targets the
+      same night. Measured on the 25 SKUs that had been recorded: **23 moved, 161 SKU×DS cells zeroed**,
+      ~2,150 extrapolated to the full 334 — which then reverse the next night.
+    - **⚠ INV VALUE CANNOT DETECT THIS.** All 25 were **unpriced**, so the rupee figure moved **₹0.00
+      while 161 cells went to zero**. Watch the cell count and `statusChanged`, never the money. An
+      unpriced SKU is *also* stocked at the 95th percentile under PCT, so it is the worst case to miss.
+    - **The rejected alternative, recorded so it is a decision and not an oversight: HYSTERESIS** —
+      apply a deactivation only after N consecutive nights, apply a re-activation **immediately**
+      (asymmetric, because that is the direction that broke TOs). It absorbs a same-day reversal with
+      **zero** downstream movement, and it is the better design if the whipsaw ever bites. The
+      discriminator it exploits is the real one: **not magnitude, but persistence** — 334 in a day looks
+      identical whether it is a real discontinuation or a same-day flip, and only elapsed time separates
+      them. Rejected for now as more machinery than "Zoho owns status" taken literally.
+    - **⚠ The `inventorisedAt` guard is UNCHANGED and must stay.** Supplier zeroes Min/Max at every
+      location including the DC, DS zeroes the DC — and unlike `status`, nobody flips those as a daily
+      lever, so a mass move there is always a mistake or a bad pull. Pinned by a test.
+    - Live active share is **93.6%** (2,306 of 2,463, 2026-08-29), not the ~99.8% this line used to
+      claim — the inactive tail has grown and the old figure would make any share-based reasoning wrong.
 - `reports/purchasesbyitem` **does** exist on `/inventory/v1/`. `average_price` is Zoho-computed over
   the requested window — not something we derive.
 - **⚠ PRICES MUST MERGE, NEVER REPLACE.** That report only sees purchases made in *this* org, i.e.
@@ -1259,6 +1285,15 @@ disagree. Measured live 2026-08-03, `skuMaster.status` held **four spellings at 
 `=IF(E2="Active", …)` matched **zero rows** and `="active"` missed one. Output is now
 `Active` / `Inactive` / `Confirmation Pending`; a status Zoho adds later arrives readable
 (`on_hold` → `On Hold`) rather than raw.
+- **✅ USE THE SPELLING TO TELL WHICH WRITER LAST WROTE `skuMaster` — a free diagnostic on a two-writer
+  key.** Capitalised (`Active` / `Confirmation Pending`) is `normaliseStatus`, i.e. a **browser CSV
+  upload**; lowercase snake_case (`active` / `confirmation_pending`) is **`sync-catalogue`**, i.e. Zoho
+  verbatim. Live on 2026-08-29 the master was *entirely* capitalised — 2,306 `Active` / 144 `Inactive` /
+  13 `Confirmation Pending` — which said a human upload, not the nightly sync, had written it last.
+  ⚠ Harmless to the engine (every filter lowercases and compares to `"active"`), but it makes
+  `sync-catalogue`'s change detector report phantom transitions: its `norm()` lowercases without
+  folding **space vs underscore**, so `Confirmation Pending` → `confirmation_pending` shows up as 13
+  fake `statusChanged` entries until the sync writes once and both sides agree.
 - **⚠ NOT for engine logic.** Three call sites still read the raw lowercase value for counting, and the
   engine gates Min/Max on an allowlist of exactly `"active"`. **A display transform must never decide
   whether a SKU gets stocked** — leave those alone.
@@ -1894,7 +1929,33 @@ deployed surfaces, and most of the ⚠s are the reasons the current shape is wha
     return `already_ran_tonight` after one Supabase read and zero Zoho calls — same shape as
     `sync-invoices`' `already_published`. **A FAILED run does not close the gate**, which is the entire
     point. `COOLDOWN_MS` (15 min) remains a separate anti-hammering guard and does not block the 30-min
-    slot spacing. ⚠ A manual daytime run consumes that night's slot — by design.
+    slot spacing. ⚠ A manual daytime run consumes that night's slot — by design. **A `dryRun` does
+    NOT**: every write in the function sits behind `if (!dryRun)` and `lastOkNight` is set only on a
+    successful live write, so `{"dryRun": true}` is a free, safe way to see exactly what tonight would
+    do. Verified 2026-08-29 — after a dry run, `at`, `lastOkNight`, `skuMaster` and `priceData` were all
+    byte-unchanged. **It is also the only way to prove a deploy actually RUNS**: the tests transpile
+    with esbuild under vitest, which is not Deno.
+  - **⚠ PRICES ARE WRITTEN EVEN WHEN THE MASTER GUARD REFUSES (2026-08-29).** They do not share the
+    master's failure mode — `mergePrices` merges over the STORED set and only takes
+    `average_price > 0`, so it can add or update but never lose a SKU, and a short or broken pull
+    degrades to "no change" rather than data loss. The coupling was pure collateral damage: on
+    2026-08-28 a master rejection silently discarded **253 price updates and 11 price-tag moves, 10 of
+    them `No Price → priced`** — and `No Price` sits at the **95th percentile** in PCT, so each was
+    over-stocking a SKU for as long as it was held back. `lastOkNight` stays unset on that path, so the
+    master still retries and prices may be written up to 5× on a rejection night; the merge is
+    idempotent, and the catalogue slots (`:25`/`:55`) never collide with the stock (`:35`–`:44`) or
+    orders (`:50`) writers of `team_data/global`. Reported as `pricesWritten`.
+  - **⚠⚠ `statusChanged` IS STORED IN FULL, NOT `slice(0, 25)` (2026-08-29) — and the 25-row version
+    cost a real investigation.** On 2026-08-28, 349 changes were recorded as a count plus 25 names; by
+    the morning ops had reverted the flip in Zoho, so **no later pull could name the other 324 and they
+    existed nowhere else** — not in the status row, not in `function_logs` (the guard-failure line dumps
+    `change`, which holds only percentages). **The report said how big the change was and refused to say
+    what it was**, which is the one fact needed to act on it. Cost of fixing: **47 bytes an entry —
+    +16 KB that night, ~118 KB if every SKU flipped**, on a row written 1–5× a *night*, against
+    `team_data/global` at 4.3 MB written ~12× an *hour*. Now carries `count`, `byTransition`,
+    `toInactive` (broken out — it is the consequential direction) and `all`. **Generalisable: sample a
+    report only when the full thing is expensive AND reproducible later. This was neither.**
+    Same principle as `invAtChanged.toSupplier`, which was already in full.
   - **`syncNightKey()` shifts 3h before taking the IST date rather than using the plain calendar date.**
     No slot crosses midnight IST today, so it is insurance — but a post-midnight slot on a plain-date
     key would re-pull AND then poison the FOLLOWING night's gate into skipping entirely while reporting
@@ -1970,6 +2031,21 @@ plus `toTargets`, mails one summary, green or red. Pure logic in `_shared/nightl
 - **⚠ `send` DEFAULTS TO TRUE**, deliberately inverting `sync-sku-floors` (`dryRun`) and `run-engine`
   (`mode`). For a writer a silent no-op is safe; for a watchdog it is the exact failure being fixed.
   Dry runs pass `{"send": false}`.
+- **⚠⚠ THE SUMMARY LINE MUST DESCRIBE THE STORED CATALOGUE, NOT THE ATTEMPTED PULL — fixed 2026-08-29.**
+  It read `catalogue.change.after` / `statusMix.after.active`, which are what the sync *wanted* to
+  write; on a night the guard refuses, that write is **discarded and the stored master is untouched**.
+  Measured that morning: the email said **`master 2,473 (1,971 active)`** while the live master was
+  **2,463 / 2,306** — i.e. it reported 334 deactivations that **had not happened**, on precisely the
+  night a reader most needs the truth. Now `after` when the run wrote, `before` when it refused.
+  **Same class as the `refused: ok` bug below: a convenient field standing in for the true one, and
+  the two diverge on exactly the case the report exists to catch.** Pinned by tests both ways.
+- **A deactivation count is appended to that line, reported GREEN, and never moves the alert level**
+  (2026-08-29). Ops flips `status` in bulk as an operational lever — 334 on 2026-08-28, reverted the
+  same day — and **nobody has measured what a normal night looks like**, so any amber threshold would
+  be a guess that fires on routine work and discredits the reds beside it. Identical reasoning to
+  floor-sheet duplicates and to the inventory value never setting a level; the phrase is **omitted
+  entirely** when the count is zero rather than printing "0 deactivated". Revisit once `digestHistory`
+  has a few weeks of it.
 - **⚠⚠ THE REFUSAL REASON LIVES IN TWO PLACES AND BOTH MUST BE READ — `reasonOf()`, fixed 2026-08-15.**
   It read `row.change.reason` only, but **only a change-guard rejection has a `change` object at all**;
   a parse failure, a fetch failure or an exception has none. So on the nights of 08-14 and 08-15 the
