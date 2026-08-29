@@ -568,3 +568,71 @@ describe("renderDigest", () => {
     expect(text).not.toContain("stage(s)");
   });
 });
+
+// ⚠⚠ THE SUMMARY LINE MUST DESCRIBE THE STORED CATALOGUE, NOT THE ATTEMPTED PULL.
+// Found 2026-08-29. `change.after` / `statusMix.after` are what the sync WANTED to
+// write; on a night the guard refuses, that write is discarded and the stored master
+// is untouched. The email read "master 2,473 (1,971 active)" while the live master
+// was 2,463 / 2,306 — i.e. it reported 334 deactivations that had not happened, on
+// the one night a reader most needs the truth. Same class as the `refused: ok` bug.
+describe("the master line reports what is STORED, not what was refused", () => {
+  const withCatalogue = (over: any) => {
+    const i: any = healthy();
+    i.catalogue = { ...i.catalogue, ...over };
+    return renderDigest(assessNight(i)).text;
+  };
+
+  it("uses change.after when the run actually wrote", () => {
+    const t = withCatalogue({
+      ok: true,
+      change: { safe: true, reason: "ok", before: 2464, after: 2473 },
+      statusMix: { before: { active: 2305 }, after: { active: 1971 } },
+    });
+    expect(t).toContain("master 2,473");
+    expect(t).toContain("1,971 active");
+  });
+
+  it("uses change.before when the guard REFUSED — the pull never landed", () => {
+    const t = withCatalogue({
+      ok: false, reason: "change_guard_failed",
+      change: { safe: false, reason: "master_shrank", before: 2464, after: 2473 },
+      statusMix: { before: { active: 2305 }, after: { active: 1971 } },
+    });
+    expect(t).toContain("master 2,464");
+    expect(t).toContain("2,305 active");
+    expect(t).not.toContain("1,971 active");
+  });
+});
+
+// Reported, never alerting: ops flips status in bulk as an operational lever (334 on
+// 2026-08-28, reverted the same day), and nobody has measured a normal night — so an
+// amber here would be a guessed threshold that fires on routine work and discredits
+// the reds beside it. Same treatment as floor-sheet duplicates.
+describe("deactivation count is reported and never changes the alert level", () => {
+  const withDeact = (toInactive: string[]) => {
+    const i: any = healthy();
+    i.catalogue = { ...i.catalogue, statusChanged: { count: toInactive.length, toInactive } };
+    const v = assessNight(i);
+    return { v, text: renderDigest(v).text };
+  };
+
+  it("names the count on the master line when SKUs were deactivated", () => {
+    const { text } = withDeact(Array.from({ length: 334 }, (_, i) => `S${i}`));
+    expect(text).toContain("334 deactivated in Zoho");
+  });
+
+  it("stays GREEN on a large deactivation — it is ops activity, not a fault", () => {
+    const { v } = withDeact(Array.from({ length: 334 }, (_, i) => `S${i}`));
+    expect(v.level).toBe("green");
+  });
+
+  it("says nothing at all when none were deactivated, rather than '0 deactivated'", () => {
+    const { text } = withDeact([]);
+    expect(text).not.toContain("deactivated");
+  });
+
+  it("omits the phrase entirely when the sync never reported the field", () => {
+    const text = renderDigest(assessNight(healthy() as any)).text;
+    expect(text).not.toContain("deactivated");
+  });
+});

@@ -156,39 +156,65 @@ export function assessMasterChange(
   };
   const dBefore = dist(oldMaster), dAfter = dist(newMaster);
 
-  if (after === 0) return { safe: false, reason: "empty_result", before, after, dBefore, dAfter };
-  if (before === 0) return { safe: true, reason: "first_run", before, after, dBefore, dAfter };
-
-  if (after < before * (1 - thresholdPct / 100)) {
-    return { safe: false, reason: "master_shrank", before, after, dBefore, dAfter };
-  }
-
-  // Status guard, added 2026-07-29 with the "Zoho owns status" decision.
+  // ⚠⚠ THE ACTIVE SHARE IS MEASURED AND REPORTED, AND DELIBERATELY DOES NOT BLOCK
+  // (changed 2026-08-29). It blocked from 2026-07-29 until then, at `thresholdPct`.
   //
-  // Until now this function watched only the inventorisedAt mix and the row count. A
-  // pull that flipped SKUs to inactive changes NEITHER, so it passed every check and
-  // silently zeroed their Min/Max. With 2,084 of 2,092 currently active, that is
-  // most of the catalogue riding on an unguarded field. Compared case-insensitively
-  // because the CSV path writes "Active" and Zoho writes "active".
+  // WHY IT WAS ADDED: once Zoho owned `status`, a pull flipping SKUs to inactive
+  // changed neither the inventorisedAt mix nor the row count, so it passed every
+  // check and silently zeroed their Min/Max.
+  //
+  // WHY IT NO LONGER BLOCKS: ops uses Zoho's status as a TEMPORARY OPERATIONAL
+  // LEVER, not a stable statement about whether we stock something. On 2026-08-28
+  // they deactivated 334 SKUs (active share 93.55% -> 79.70%, a 13.85pp move against
+  // a 5pp limit) and re-activated them the same day because Zoho will not transact
+  // an inactive item and the DC team could not raise TOs. The guard refused all five
+  // slots, the catalogue went stale, and nothing self-healed until ops reverted.
+  // A bulk flip of this size is routine here, so a threshold that treats it as an
+  // emergency is a threshold that blocks normal work.
+  //
+  // ⚠ THE COST IS REAL AND WAS ACCEPTED KNOWINGLY. A transient flip now propagates
+  // the same night: measured on the 25 SKUs that were recorded, 23 moved and 161
+  // SKU x location cells zeroed, extrapolating to ~2,150 cells for the full 334 —
+  // which then reverse the next night. The alternative considered was HYSTERESIS
+  // (apply a deactivation only after N consecutive nights, apply a re-activation
+  // immediately), which absorbs a same-day reversal with no downstream movement.
+  // That remains the better design if the whipsaw ever bites; this is the simpler
+  // one, chosen because it matches "Zoho owns status" literally.
+  //
+  // ⚠ Inv Value cannot be used to notice this. All 25 recorded SKUs were UNPRICED,
+  // so the rupee figure moved Rs0.00 while 161 cells went to zero. Watch the cell
+  // count and `statusChanged`, never the money.
+  //
+  // Compared case-insensitively: the CSV path writes "Active", Zoho writes "active".
   const activePct = (m: Record<string, any>, n: number) =>
     n === 0 ? 0 : Object.values(m || {})
       .filter((v: any) => (v?.status || "").toString().trim().toLowerCase() === "active").length / n * 100;
-  const aBefore = activePct(oldMaster, before), aAfter = activePct(newMaster, after);
-  if (Math.abs(aAfter - aBefore) > thresholdPct) {
-    return {
-      safe: false, reason: "active_share_shift",
-      activePctBefore: +aBefore.toFixed(2), activePctAfter: +aAfter.toFixed(2),
-      before, after, dBefore, dAfter,
-    };
+  // Returned on EVERY path, success included — it used to be attached only to the
+  // rejection, so the one night it mattered was the one night you could read it.
+  const share = {
+    activePctBefore: +activePct(oldMaster, before).toFixed(2),
+    activePctAfter: +activePct(newMaster, after).toFixed(2),
+  };
+  const base = { before, after, dBefore, dAfter, ...share };
+
+  if (after === 0) return { safe: false, reason: "empty_result", ...base };
+  if (before === 0) return { safe: true, reason: "first_run", ...base };
+
+  if (after < before * (1 - thresholdPct / 100)) {
+    return { safe: false, reason: "master_shrank", ...base };
   }
+
   // Compare each bucket as a share of the whole, so growth doesn't trip it.
+  // ⚠ STILL BLOCKS, and must. Supplier zeroes Min/Max at every location including
+  // the DC, DS zeroes the DC — and unlike `status`, nobody flips these as a daily
+  // operational lever, so a mass move here is always either a mistake or a bad pull.
   for (const k of new Set([...Object.keys(dBefore), ...Object.keys(dAfter)])) {
     const pb = (dBefore[k] || 0) / before * 100, pa = (dAfter[k] || 0) / after * 100;
     if (Math.abs(pa - pb) > thresholdPct) {
-      return { safe: false, reason: `inventorisedAt_shift:${k}`, before, after, dBefore, dAfter };
+      return { safe: false, reason: `inventorisedAt_shift:${k}`, ...base };
     }
   }
-  return { safe: true, reason: "ok", before, after, dBefore, dAfter };
+  return { safe: true, reason: "ok", ...base };
 }
 
 // How many SKUs will actually see their targets move because of a price refresh?

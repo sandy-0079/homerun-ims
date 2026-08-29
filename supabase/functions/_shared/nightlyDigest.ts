@@ -399,8 +399,24 @@ export function assessNight(input: Input) {
       invoiceRows: num(input.targets?.inputs?.invoiceRows) ?? num(input.invoices?.merge?.rowsAfter),
       invoiceDates: num(input.invoices?.merge?.datesAfter),
       unknownPct,
-      master: num(input.catalogue?.change?.after) ?? num(input.targets?.inputs?.skuMaster),
-      active: num(input.catalogue?.statusMix?.after?.active),
+      // ⚠⚠ `after` IS THE PULL, NOT THE CATALOGUE. On a night the guard REFUSES, the
+      // pull is discarded and the stored master is unchanged — so reporting `after`
+      // states a rejected write as fact. Measured 2026-08-29: the email read
+      // "master 2,473 (1,971 active)" while the live master was 2,463 / 2,306. Read
+      // literally it said 334 SKUs had been deactivated. They had not.
+      // So: `after` when the run wrote, `before` when it refused.
+      // Same class as the `refused: ok` bug — a convenient field standing in for the
+      // true one, diverging on exactly the night the report exists for.
+      master: num(input.catalogue?.ok === false
+        ? input.catalogue?.change?.before
+        : input.catalogue?.change?.after) ?? num(input.targets?.inputs?.skuMaster),
+      active: num(input.catalogue?.ok === false
+        ? input.catalogue?.statusMix?.before?.active
+        : input.catalogue?.statusMix?.after?.active),
+      // Reported, never alerting — see the render below.
+      deactivated: Array.isArray(input.catalogue?.statusChanged?.toInactive)
+        ? input.catalogue.statusChanged.toInactive.length
+        : null,
       prices: num(input.catalogue?.prices?.merged?.total),
       pricesRetained: num(input.catalogue?.prices?.merged?.retained),
       floors: num(input.floors?.skuCount) ?? num(input.targets?.inputs?.newSKUQty),
@@ -468,7 +484,16 @@ export function renderDigest(v: Verdict): { subject: string; text: string } {
   // ⚠ Composition, not volume. Volume is what the guards already refuse on; these are
   // the numbers that move without tripping anything.
   lines.push(`demand through ${f.demandThrough ?? "—"}  ·  ${fmt(f.invoiceRows)} rows  ·  ${f.unknownPct ?? "—"}% unknown SKU`);
-  lines.push(`master ${fmt(f.master)}  (${fmt(f.active)} active · → Supplier: ${
+  // ⚠ Appended only when non-zero, and it NEVER changes the alert level. Zoho's
+  // `status` is an ops lever here — 334 SKUs were flipped and reverted inside a day
+  // on 2026-08-28 — and nobody has measured what a normal night looks like, so any
+  // amber threshold would be a guess. A line that goes amber on routine ops activity
+  // discredits the reds beside it. Same rule as floor-sheet duplicates, and the same
+  // reason the inventory value never sets a level. Revisit once digestHistory has data.
+  const deact = f.deactivated && f.deactivated > 0
+    ? ` · ${fmt(f.deactivated)} deactivated in Zoho`
+    : "";
+  lines.push(`master ${fmt(f.master)}  (${fmt(f.active)} active${deact} · → Supplier: ${
     v.flags.find((x) => x.key === "toSupplier") ? "SEE BELOW" : "none"
   })  ·  prices ${fmt(f.prices)} (${fmt(f.pricesRetained)} retained)`);
   // Appended, never a placeholder: on a clean sheet the phrase is absent entirely

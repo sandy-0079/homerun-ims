@@ -207,7 +207,27 @@ Deno.serve(async (req) => {
       // Price feeds getPriceTag -> PCT percentile / FUF gate / DOC caps, so a refresh
       // moves Min/Max on unchanged demand. This counts the SKUs that actually re-tier.
       priceTags: assessPriceTagChanges(currentPrices, prices, priceTiers),
-      statusChanged: { count: statusChanged.length, sample: statusChanged.slice(0, 25) },
+      // ⚠⚠ THE FULL LIST, NOT A 25-ROW SAMPLE (changed 2026-08-29). On 2026-08-28 a
+      // 349-change night stored 25 and the other 324 were UNRECOVERABLE by morning:
+      // ops had already reverted the flip in Zoho, so no later pull could name them
+      // and the identities existed nowhere else. The guard told us how big the change
+      // was and refused to say what it was — the one fact needed to act on it.
+      // Cost measured: 47 bytes an entry, +16 KB for that night, ~118 KB if every SKU
+      // flipped, on a row written 1-5x a NIGHT. Not worth sampling to save.
+      // Same principle as `invAtChanged.toSupplier` below, which was already in full.
+      statusChanged: {
+        count: statusChanged.length,
+        byTransition: statusChanged.reduce((d: Record<string, number>, c) => {
+          const k = `${norm(c.from)} -> ${norm(c.to)}`;
+          d[k] = (d[k] || 0) + 1;
+          return d;
+        }, {}),
+        // Broken out because it is the consequential direction: anything leaving
+        // `active` gets Min=Max=0 everywhere from the engine's active-only pass.
+        toInactive: statusChanged.filter((c) => norm(c.from) === "active" && norm(c.to) !== "active")
+          .map((c) => c.sku),
+        all: statusChanged,
+      },
       // inventorisedAt is the highest-consequence field in the master: Supplier zeroes
       // Min/Max at EVERY location, DS zeroes the DC. The distribution alone can hide a
       // swap (58 SKUs leaving Supplier while 58 others join it nets to zero), so report
@@ -237,12 +257,35 @@ Deno.serve(async (req) => {
     };
 
     if (!change.safe) {
-      console.error("sync-catalogue: CHANGE GUARD FAILED — not writing", JSON.stringify(change));
+      console.error("sync-catalogue: CHANGE GUARD FAILED — not writing master", JSON.stringify(change));
+      // ⚠ PRICES ARE STILL WRITTEN. They do not share the master's failure mode:
+      // `mergePrices` merges over the STORED set and only takes average_price > 0, so
+      // it can add or update but never lose a SKU — a short or broken pull degrades to
+      // "no change", not to data loss. Coupling them cost real work on 2026-08-28,
+      // when a master rejection silently discarded 253 price updates and 11 price-tag
+      // moves, 10 of them `No Price -> priced`. `No Price` sits at the 95th percentile
+      // in PCT, so each of those was over-stocking a SKU for as long as it was held.
+      //
+      // ⚠ `lastOkNight` is deliberately NOT set here, so the remaining slots retry the
+      // master — which means prices may be written up to 5x on a rejection night. The
+      // merge is idempotent so that is harmless, and the catalogue slots (:25/:55) do
+      // not collide with the stock (:35-:44) or orders (:50) writers of this row.
+      let pricesWritten = false;
+      if (!dryRun && Object.keys(prices).length) {
+        // FRESH read immediately before writing — same rule as the success path.
+        const fresh = await supabase.from("team_data").select("payload").eq("id", "global").maybeSingle();
+        await supabase.from("team_data").upsert({
+          id: "global",
+          payload: { ...(fresh.data?.payload || {}), priceData: prices },
+        });
+        pricesWritten = true;
+        console.log(`sync-catalogue: master refused, prices written anyway — ${Object.keys(prices).length} priced`);
+      }
       // `at` is written (it feeds the 15-min burst cooldown) but `lastOkNight` is
       // carried over UNCHANGED from the previous success — a guard rejection must
       // leave tonight's retry slots open, and must not erase when we last won.
-      if (!dryRun) await setStatus({ ...stats, ok: false, reason: "change_guard_failed" });
-      return json({ ok: false, reason: "change_guard_failed", ...stats });
+      if (!dryRun) await setStatus({ ...stats, ok: false, reason: "change_guard_failed", pricesWritten });
+      return json({ ok: false, reason: "change_guard_failed", pricesWritten, ...stats });
     }
 
     if (!dryRun) {

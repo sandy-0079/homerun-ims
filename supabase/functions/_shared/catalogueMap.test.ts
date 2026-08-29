@@ -172,25 +172,73 @@ describe("assessMasterChange", () => {
     expect(assessMasterChange(m(100, "DC"), {}, 5).safe).toBe(false);
   });
 
-  // Added 2026-07-29. Once Zoho owns `status`, it decides whether a SKU is stocked at
-  // all — but this guard only ever watched the inventorisedAt mix and the row count.
-  // A pull that flipped SKUs to inactive changes NEITHER, so it passed every check
-  // and silently zeroed their Min/Max. 2,084 of 2,092 are active, so the exposure is
-  // most of the catalogue.
-  it("FAILS a mass flip of active SKUs to inactive", () => {
-    const many = (n: number, status: string, from = 0) =>
-      Object.fromEntries(Array.from({ length: n }, (_, i) => [`S${i + from}`, { status, inventorisedAt: "DC" }]));
+  // ⚠⚠ THIS ASSERTION WAS REVERSED ON 2026-08-29, deliberately. From 2026-07-29 it
+  // read "FAILS a mass flip of active SKUs to inactive" and blocked the write.
+  //
+  // It blocked real work. Ops uses Zoho's `status` as a temporary operational lever:
+  // on 2026-08-28 they deactivated 334 SKUs and re-activated them the same day,
+  // because Zoho will not transact an inactive item and the DC team could not raise
+  // TOs. The active share moved 93.55% -> 79.70%, a 13.85pp swing against a 5pp
+  // limit; all five slots refused, the catalogue went stale for a night, and nothing
+  // recovered until ops reverted by hand.
+  //
+  // The trade accepted with it: a transient flip now reaches targets the same night.
+  // Measured on the 25 SKUs that had been recorded, 23 moved and 161 SKU x location
+  // cells zeroed. HYSTERESIS — apply a deactivation only after N consecutive nights,
+  // apply a re-activation immediately — was considered and is the better design if
+  // that whipsaw ever bites. This is the simpler one and matches "Zoho owns status".
+  const many = (n: number, status: string, from = 0) =>
+    Object.fromEntries(Array.from({ length: n }, (_, i) => [`S${i + from}`, { status, inventorisedAt: "DC" }]));
+
+  it("ALLOWS a mass flip of active SKUs to inactive — it reports, it does not block", () => {
     const before = many(100, "Active");
     const after = { ...many(80, "Active"), ...many(20, "Inactive", 80) };
-    expect(assessMasterChange(before, after, 5).safe).toBe(false);
+    expect(assessMasterChange(before, after, 5).safe).toBe(true);
   });
 
-  it("allows a small, ordinary status change", () => {
-    const many = (n: number, status: string, from = 0) =>
-      Object.fromEntries(Array.from({ length: n }, (_, i) => [`S${i + from}`, { status, inventorisedAt: "DC" }]));
+  it("reproduces the 2026-08-28 night: a 13.85pp active-share drop is now SAFE", () => {
+    const before = { ...many(2305, "active"), ...many(159, "inactive", 2305) };
+    const after = { ...many(1971, "active"), ...many(502, "inactive", 1971) };
+    const r = assessMasterChange(before, after, 5);
+    expect(r.safe).toBe(true);
+    expect(r.reason).toBe("ok");
+  });
+
+  it("still REPORTS the active share on a passing run, not only on a rejection", () => {
+    // It used to be attached to the failure object alone, so the one night it
+    // mattered was the one night you could read it. The digest needs it either way.
+    const before = many(100, "Active");
+    const after = { ...many(80, "Active"), ...many(20, "Inactive", 80) };
+    const r = assessMasterChange(before, after, 5);
+    expect(r.activePctBefore).toBe(100);
+    expect(r.activePctAfter).toBe(80);
+  });
+
+  it("reports the active share on a REJECTION too, so the reason is diagnosable", () => {
+    const r = assessMasterChange(many(100, "Active"), many(50, "Active"), 5);
+    expect(r.safe).toBe(false);
+    expect(r.reason).toBe("master_shrank");
+    expect(r.activePctBefore).toBe(100);
+    expect(r.activePctAfter).toBe(100);
+  });
+
+  it("a small, ordinary status change is also fine", () => {
     const before = many(100, "Active");
     const after = { ...many(98, "Active"), ...many(2, "Inactive", 98) };
     expect(assessMasterChange(before, after, 5).safe).toBe(true);
+  });
+
+  it("⚠ a mass move to Supplier STILL BLOCKS — status was relaxed, inventorisedAt was not", () => {
+    // The distinction that makes dropping the status block safe: nobody flips
+    // inventorisedAt as a daily operational lever, and Supplier zeroes Min/Max at
+    // every location INCLUDING the DC. Deactivating this too would be the real risk.
+    const before = Object.fromEntries(Array.from({ length: 100 },
+      (_, i) => [`S${i}`, { status: "active", inventorisedAt: "DC" }]));
+    const after = Object.fromEntries(Array.from({ length: 100 },
+      (_, i) => [`S${i}`, { status: "active", inventorisedAt: i < 80 ? "DC" : "Supplier" }]));
+    const r = assessMasterChange(before, after, 5);
+    expect(r.safe).toBe(false);
+    expect(r.reason).toContain("inventorisedAt_shift");
   });
 
   it("treats Active and active as the same status when measuring the shift", () => {
