@@ -1369,6 +1369,46 @@ trace). Non-draft responses are auto-deleted in the same invocation. SKU→item_
   created) the POST is retried ONCE without the custom field, so a labelling nicety can never
   block a transfer — worst case is the pre-2026-08-07 behaviour. Deliberately not retried on
   5xx/timeout/429, where a TO may exist and a repeat would duplicate it.
+- **⚠⚠ INACTIVE SKUs ARE DROPPED, NOT FATAL (live 2026-08-29, commit `e1c33c5`).** Zoho refuses the
+  **ENTIRE** transfer order if any line names an item marked inactive or deleted — *"Transfer Order
+  cannot be raised for item &lt;name&gt; that has been deleted or marked as inactive"*, nothing created.
+  So one bad SKU blocked a 94-line TO. On **2026-08-28** ops deactivated 334 SKUs mid-afternoon and
+  **the DC team could not raise a single TO** until they reverted the flip in Zoho by hand.
+  - **⚠ THE ENGINE CANNOT PREVENT THIS AND NEVER WILL.** `buildToTargets` already emits only SKUs
+    whose master status is `active` — but `skuMaster` is a **nightly** copy, so it is *structurally
+    blind* to a same-day flip. Only Zoho knows. Don't "fix" this upstream in the engine.
+  - Pure logic in **`_shared/toLineFilter.ts`** (19 tests): `partitionInactive` splits the requested
+    SKUs, `skipSetGrew` is the retry condition. A **missing** status counts as active (**fails OPEN**)
+    so an older cached item map behaves exactly as before. A SKU **absent** from the map is left alone
+    — `badSkus` owns that and *refuses*; two owners for one fact is how the Stock Health filter and the
+    TO deep link both drifted.
+  - **⚠⚠ `ITEM_MAP_TTL_HOURS` 24 → 0.5, AND THE TTL IS A CORRECTNESS PARAMETER, NOT A PERFORMANCE
+    ONE.** It decides whether validation can *see* a same-day deactivation: at 24h the map called
+    yesterday's flipped SKUs active, the pre-flight passed, and only the POST discovered otherwise.
+    ~12 TOs/day in two windows ⇒ roughly **2 refreshes/day**; the first TO of a session pays ~8s
+    (surfaced in the tool's existing `validating` stage), the rest are instant.
+  - **⚠ A REFRESH FAILURE FALLS BACK TO THE CACHED MAP, never throws.** At a 24h TTL almost every TO
+    was served from cache and never touched `/items`; at 30 min most TOs refresh, which would newly
+    expose the whole DC TO path to Zoho being slow or 429'd. This is the guard that stops a latency
+    change from becoming an availability change.
+  - **⚠⚠ A SKIP PROPOSED FROM A CACHED MAP IS NEVER ACTED ON — refresh and re-ask first.** The cache
+    is stale in **both** directions and the second is worse: *"says inactive, actually active"* would
+    **silently drop good lines**. Not hypothetical — on 2026-08-29 ops reactivated 334 SKUs, and a map
+    from the previous evening would have skipped every one of them while the screen calmly read
+    "90 of 94 items". Costs nothing on a clean TO, because `buildToTargets` already emits active-only.
+  - **Reactive backstop:** after the TO Type valve, a 400 triggers one forced refresh + re-partition,
+    and retries **once only if the skip set GREW**. ⚠ That condition is the whole safety of the branch
+    and is why we do **not parse Zoho's message**: a numbering or location 400 produces no new skips,
+    so nothing is retried and the original error is surfaced untouched. **Zoho names exactly ONE item
+    per 400**, so parsing would cost one write attempt per bad SKU (four attempts for four SKUs) and
+    would only ever yield the item *name*, not the SKU. Re-partitioning catches all of them in one
+    pass. Gated strictly on `400`; never 5xx/timeout/429.
+  - **An empty TO is refused, never created** — a zero-line draft in Zoho is worse than a clear error.
+  - Response and `params/toAudit` gain `skipped` + `requested`. **The nightly digest names them; the
+    ground team sees only a COUNT** — an inactive SKU is a Zoho catalogue problem they cannot act on,
+    and a list would invite chasing stock that was never sent. Admin-only **by construction** (one
+    recipient), no new UI and no new gate. Reported **green**: a dropped line means the TO *succeeded*
+    where it used to fail. Deduped by SKU across TOs — one bad SKU in six transfers is one thing to fix.
 
 **Hook in this repo (in `main`):** `applyAndRun` in `App.jsx` serializes the DC-inv Active
 slice of engine results (`{name, category, brand, perDS:{ds:{min,max}}}`) to **`params/toTargets`** after
@@ -2046,6 +2086,11 @@ plus `toTargets`, mails one summary, green or red. Pure logic in `_shared/nightl
   floor-sheet duplicates and to the inventory value never setting a level; the phrase is **omitted
   entirely** when the count is zero rather than printing "0 deactivated". Revisit once `digestHistory`
   has a few weeks of it.
+- **TO lines skipped as inactive are named here, and ONLY here** (2026-08-29). `summariseToSkips`
+  reads `params/toAudit` — the one row the digest borrows rather than owns, so every access is
+  defensive and a malformed row degrades to "no line", never throws. Deduped by SKU across TOs, capped
+  at 12 names, **green and never in the subject**. ⚠ `scripts/dryrun-nightly-digest.mjs` had to learn
+  to read `toAudit` too, or the preview tool could never preview the block it exists to preview.
 - **⚠⚠ THE REFUSAL REASON LIVES IN TWO PLACES AND BOTH MUST BE READ — `reasonOf()`, fixed 2026-08-15.**
   It read `row.change.reason` only, but **only a change-guard rejection has a `change` object at all**;
   a parse failure, a fetch failure or an exception has none. So on the nights of 08-14 and 08-15 the
