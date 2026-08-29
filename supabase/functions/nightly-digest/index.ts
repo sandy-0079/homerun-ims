@@ -70,17 +70,22 @@ Deno.serve(async (req) => {
     const now = body.now ? Date.parse(body.now) : Date.now();
     if (!Number.isFinite(now)) return json({ ok: false, error: "unparseable `now`" }, 400);
 
-    const [invoices, catalogue, floors, engine, targets, historyRow] = await Promise.all([
+    // ⚠ `toAudit` is added for the TO-skip line only, and it is the one row here
+    // this function does not own OR gate on: create-to writes it, and a read failure
+    // must never affect the four stage verdicts. It stays a small params row (200
+    // entries), so it does not break the "small rows only" property in the header.
+    const [invoices, catalogue, floors, engine, targets, historyRow, toAudit] = await Promise.all([
       readRow("invoiceSyncStatus"),
       readRow("catalogueSyncStatus"),
       readRow("skuFloorSyncStatus"),
       readRow("engineRunStatus"),
       readRow("toTargets"),
       readRow(HISTORY_ROW),
+      readRow("toAudit"),
     ]);
 
     const history = Array.isArray(historyRow?.days) ? historyRow.days : [];
-    const verdict = assessNight({ now, invoices, catalogue, floors, engine, targets, history });
+    const verdict = assessNight({ now, invoices, catalogue, floors, engine, targets, history, toAudit });
     const { subject, text } = renderDigest(verdict);
 
     // ── Record today's inventory value, for tomorrow's delta ──────────────────

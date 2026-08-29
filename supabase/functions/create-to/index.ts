@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { zohoFetchWithRetry } from '../_shared/zohoClient.ts'
+import { partitionInactive, skipSetGrew, type SkippedLine } from '../_shared/toLineFilter.ts'
 
 // ─── create-to — creates Zoho Transfer Orders as DRAFTS, and nothing else ─────
 // Spec: homerun-to/docs/superpowers/specs/2026-07-10-task6b-draft-to-design.md
@@ -11,11 +12,16 @@ import { zohoFetchWithRetry } from '../_shared/zohoClient.ts'
 //    action in Zoho after cross-checking.
 //  - Destination must be a DS (never DC); source is always DC.
 //  - Every SKU must resolve to a Zoho item_id or the WHOLE request fails before
-//    anything is created — no partial TOs.
+//    anything is created.
+//  - ⚠ ONE EXCEPTION, added 2026-08-29: a SKU that resolves but is INACTIVE in
+//    Zoho is DROPPED and the rest of the TO proceeds. Zoho refuses the entire
+//    order if any line names an inactive item, so "all or nothing" here meant
+//    "nothing" — on 2026-08-28 the DC team could not raise a single TO. The drop
+//    is reported to the caller (`skipped`) and recorded in params/toAudit.
 //  - Caller must be a signed-in Supabase Auth user (the anon key alone is
 //    rejected); the audit trail records the verified token's email.
 //
-// Zoho calls: GET /items (read-only, SKU→item_id map, cached 24h in
+// Zoho calls: GET /items (read-only, SKU→item_id+status map, cached 30 MIN in
 // params/zohoItemIds), POST /transferorders (one draft). Nothing else.
 
 const BRANCHES: Record<string, string> = {
@@ -50,7 +56,13 @@ const DS_ONLY = ['DS01', 'DS02', 'DS03', 'DS04', 'DS05', 'DS06']
 const TO_TYPE_API_NAME = 'cf_to_type' // confirmed: Zoho's "API Field Name"
 const TO_TYPE_VALUE = 'Mid Mile'      // must match the dropdown option EXACTLY
 
-const ITEM_MAP_TTL_HOURS = 24
+// ⚠ 30 MINUTES, not 24 hours (changed 2026-08-29). The TTL is what decides whether
+// validation can SEE a same-day deactivation. At 24h the map called yesterday's 334
+// flipped SKUs active, so the pre-flight passed and only the Zoho POST discovered
+// otherwise. At 30 min the first TO of a session refreshes (~8s, surfaced in the
+// tool's existing "validating" stage) and the rest of that session is instant.
+// ~12 TOs/day raised in two windows => roughly 2 refreshes/day.
+const ITEM_MAP_TTL_HOURS = 0.5
 const AUDIT_KEEP = 200
 const SNAPSHOT_KEEP = 48 // ~8 batches × 6 DSes — comfortably covers the last-2 compare
 
@@ -70,7 +82,11 @@ function json(body: Record<string, unknown>, status = 200): Response {
 // never auto-repeated. (Root cause of the 2026-07-15 TO 401 incident.)
 
 // ─── SKU → {id, name, rate} map, cached in params/zohoItemIds ────────────────
-type ItemInfo = { id: string; name: string; rate: number }
+// `status` added 2026-08-29. It rides the SAME /items response we already page
+// through, so storing it costs no extra Zoho call — and it is the only way to
+// know a SKU was deactivated TODAY. `skuMaster` is a nightly copy and is
+// structurally blind to a same-day flip; see _shared/toLineFilter.ts.
+type ItemInfo = { id: string; name: string; rate: number; status?: string }
 
 // Two Zoho items sharing one SKU code would bind a TO line to whichever the map
 // saw last — collect duplicates so validation can refuse those SKUs instead.
@@ -90,7 +106,7 @@ async function fetchItemMap(supabase: any): Promise<{ map: Record<string, ItemIn
       const sku = (it.sku ?? '').trim()
       if (!sku) continue
       if (map[sku]) dupSet.add(sku)
-      map[sku] = { id: it.item_id, name: it.name, rate: it.rate ?? 0 }
+      map[sku] = { id: it.item_id, name: it.name, rate: it.rate ?? 0, status: it.status ?? '' }
     }
     if (!data.page_context?.has_more_page) break
     page++
@@ -99,25 +115,46 @@ async function fetchItemMap(supabase: any): Promise<{ map: Record<string, ItemIn
 }
 
 async function getItemMap(
-  supabase: any, requiredSkus: string[],
-): Promise<{ map: Record<string, ItemInfo>; dups: string[] }> {
+  supabase: any, requiredSkus: string[], force = false,
+): Promise<{ map: Record<string, ItemInfo>; dups: string[]; fresh: boolean }> {
   const { data } = await supabase.from('params').select('payload').eq('id', 'zohoItemIds').maybeSingle()
   const cached = data?.payload
   const ageH = cached?.refreshedAt
     ? (Date.now() - new Date(cached.refreshedAt).getTime()) / 3_600_000 : Infinity
   const missing = requiredSkus.some((s) => !cached?.map?.[s])
-  // dups was added 2026-07-10 — an older cached payload without it forces a refresh.
-  if (cached?.map && Array.isArray(cached.dups) && ageH < ITEM_MAP_TTL_HOURS && !missing) {
-    return { map: cached.map, dups: cached.dups }
+  // dups was added 2026-07-10, status 2026-08-29 — an older cached payload
+  // without either forces one refresh rather than reasoning from a field that
+  // is not there.
+  const hasStatus = !!cached?.map &&
+    Object.values(cached.map as Record<string, ItemInfo>).some((v) => v?.status !== undefined)
+  if (!force && cached?.map && Array.isArray(cached.dups) && hasStatus &&
+      ageH < ITEM_MAP_TTL_HOURS && !missing) {
+    return { map: cached.map, dups: cached.dups, fresh: false }
   }
 
-  const { map, dups } = await fetchItemMap(supabase)
+  // ⚠ A REFRESH FAILURE MUST NOT BLOCK A TRANSFER ORDER. Before 2026-08-29 the TTL
+  // was 24h, so almost every TO was served from cache and never touched /items at
+  // all; at 30 minutes most TOs now refresh, which would newly expose the whole DC
+  // TO path to Zoho being slow or rate-limited. Falling back to the cached map
+  // degrades to exactly the old behaviour — a possibly stale status, which the
+  // reactive retry below then recovers — instead of failing the transfer outright.
+  let fetched: { map: Record<string, ItemInfo>; dups: string[] }
+  try {
+    fetched = await fetchItemMap(supabase)
+  } catch (e) {
+    if (cached?.map && !missing) {
+      console.error(`create-to: item map refresh failed, falling back to ${ageH.toFixed(1)}h-old cache: ${e}`)
+      return { map: cached.map, dups: cached.dups ?? [], fresh: false }
+    }
+    throw e   // no usable cache — the existing badSkus path is the right failure
+  }
+
   await supabase.from('params').upsert({
     id: 'zohoItemIds',
-    payload: { refreshedAt: new Date().toISOString(), map, dups },
+    payload: { refreshedAt: new Date().toISOString(), map: fetched.map, dups: fetched.dups },
     updated_at: new Date().toISOString(),
   })
-  return { map, dups }
+  return { ...fetched, fresh: true }
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
@@ -160,7 +197,7 @@ Deno.serve(async (req) => {
     const skus = lines.map((l: any) => l.sku.trim())
     if (new Set(skus).size !== skus.length) return json({ ok: false, error: 'duplicate SKUs in lines' }, 400)
 
-    const { map: itemMap, dups } = await getItemMap(supabase, skus)
+    let { map: itemMap, dups, fresh } = await getItemMap(supabase, skus)
     const badSkus = skus.filter((s: string) => !itemMap[s])
     if (badSkus.length > 0) {
       return json({ ok: false, error: 'SKUs not found in Zoho items', badSkus }, 400)
@@ -174,12 +211,47 @@ Deno.serve(async (req) => {
       }, 400)
     }
 
-    const resolved = lines.map((l: any) => ({
-      sku: l.sku.trim(),
-      item_id: itemMap[l.sku.trim()].id,
-      name: itemMap[l.sku.trim()].name,
-      quantity_transfer: l.qty,
-    }))
+    // ── Drop lines Zoho will not accept ───────────────────────────────────────
+    // Zoho refuses the WHOLE transfer order if any line names an inactive item, so
+    // one deactivated SKU blocks a 94-line TO. See _shared/toLineFilter.ts.
+    let skipped: SkippedLine[] = partitionInactive(skus, itemMap).skipped
+
+    // ⚠⚠ NEVER SKIP ON STALE DATA — this guard matters more than the skip itself.
+    // The cache is stale in BOTH directions. "Says active, actually inactive" is the
+    // bug being fixed. "Says inactive, actually active" would SILENTLY DROP GOOD
+    // LINES, which is strictly worse — and it is not hypothetical: on 2026-08-29 ops
+    // reactivated 334 SKUs, and a map from the previous evening would have skipped
+    // every one of them while the screen calmly reported "90 of 94 items".
+    // So a skip proposed from a cached map is never acted on: refresh and re-ask.
+    // Costs nothing on a clean TO, because `buildToTargets` already emits only
+    // SKUs that were active at the last engine run.
+    if (skipped.length > 0 && !fresh) {
+      console.log(`create-to: ${skipped.length} skip(s) proposed from a cached item map — refreshing before acting`)
+      const re = await getItemMap(supabase, skus, true)
+      itemMap = re.map; fresh = re.fresh
+      skipped = partitionInactive(skus, itemMap).skipped
+      console.log(`create-to: after refresh, ${skipped.length} skip(s) confirmed`)
+    }
+
+    const skippedSet = new Set(skipped.map((s) => s.sku))
+    let resolved = lines
+      .filter((l: any) => !skippedSet.has(l.sku.trim()))
+      .map((l: any) => ({
+        sku: l.sku.trim(),
+        item_id: itemMap[l.sku.trim()].id,
+        name: itemMap[l.sku.trim()].name,
+        quantity_transfer: l.qty,
+      }))
+
+    // ⚠ An empty TO is refused, never created. If every line is inactive there is
+    // nothing to transfer, and a zero-line draft in Zoho is worse than a clear
+    // error: someone would have to find and delete it.
+    if (resolved.length === 0) {
+      return json({
+        ok: false, skipped,
+        error: `No transferable lines — all ${skus.length} SKU(s) are inactive or deleted in Zoho`,
+      }, 400)
+    }
 
     // IST date (Zoho org runs on IST)
     const date = new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10)
@@ -198,8 +270,11 @@ Deno.serve(async (req) => {
     // to our own signed-in users).
     const org = Deno.env.get('ZOHO_ORG_ID')
     if (body.dryRun) {
+      // `skipped` rides the DRY RUN so the tool can show the drop on its existing
+      // confirm screen — the user approves a plan that already reflects it, rather
+      // than discovering "90 of 94" after the TO exists.
       return json({ ok: true, dryRun: true, toDsId, date, description, reason, lines: resolved,
-        zohoOrgId: org, toType: TO_TYPE_VALUE })
+        skipped, requested: skus.length, zohoOrgId: org, toType: TO_TYPE_VALUE })
     }
 
     // ── Create the DRAFT transfer order ───────────────────────────────────────
@@ -253,9 +328,57 @@ Deno.serve(async (req) => {
           `The TO was created with Zoho's default; set the type manually.`
         console.error(`create-to: ${toTypeWarning}`)
       } else {
-        // Surface the ORIGINAL error: if the 400 was really about numbering or
-        // locations, that message is far more useful than the retry's.
-        return json({ ok: false, error: `Zoho create failed (400): ${firstErr}` }, 502)
+        // ── Last resort: was a SKU deactivated since our item map was built? ────
+        // The pre-flight above uses a map up to ITEM_MAP_TTL_HOURS old, so a SKU
+        // deactivated inside that window still reaches Zoho and 400s here. Refresh,
+        // re-partition, and retry ONCE — but only if the skip set actually GREW.
+        //
+        // ⚠ That condition is the whole safety of this branch, and it is why we do
+        // NOT parse Zoho's message. A 400 about numbering or locations produces no
+        // new skips, so nothing is retried and the original error is surfaced
+        // untouched. Reading the English sentence would also only ever give us the
+        // item NAME, and only ONE of them — four bad SKUs would cost four attempts.
+        // Re-partitioning catches all of them in a single pass.
+        //
+        // ⚠ Reached only on status === 400 — Zoho's validation layer, which means
+        // NOTHING WAS CREATED. Never on 5xx/timeout/429, where a TO may exist and a
+        // repeat would duplicate it. Same rule as the TO Type valve above.
+        let recovered = false
+        try {
+          const re = await getItemMap(supabase, skus, true)
+          const after = partitionInactive(skus, re.map).skipped
+          if (skipSetGrew(skipped, after)) {
+            const grew = after.filter((s) => !skipped.some((p) => p.sku === s.sku)).map((s) => s.sku)
+            console.error(`create-to: 400 recovered — newly inactive since the item map was built: ${grew.join(', ')}`)
+            skipped = after
+            itemMap = re.map
+            const nowSkipped = new Set(after.map((s) => s.sku))
+            resolved = lines
+              .filter((l: any) => !nowSkipped.has(l.sku.trim()))
+              .map((l: any) => ({
+                sku: l.sku.trim(),
+                item_id: re.map[l.sku.trim()].id,
+                name: re.map[l.sku.trim()].name,
+                quantity_transfer: l.qty,
+              }))
+            if (resolved.length > 0) {
+              const finalRes = await postTO(true)
+              const finalData = await finalRes.json()
+              if (finalRes.ok && finalData.transfer_order) {
+                res = finalRes
+                data = finalData
+                recovered = true
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`create-to: inactive-SKU recovery failed, surfacing the original 400: ${e}`)
+        }
+        if (!recovered) {
+          // Surface the ORIGINAL error: if the 400 was really about numbering or
+          // locations, that message is far more useful than the retry's.
+          return json({ ok: false, skipped, error: `Zoho create failed (400): ${firstErr}` }, 502)
+        }
       }
     }
 
@@ -303,6 +426,10 @@ Deno.serve(async (req) => {
         at: new Date().toISOString(), by, toDsId,
         lineCount: resolved.length,
         units: resolved.reduce((a: number, l: any) => a + l.quantity_transfer, 0),
+        // Only when something was actually dropped — an empty array on every entry
+        // would be noise on a row the nightly digest reads. The digest names these
+        // for the admin; the ground team only ever sees a count.
+        ...(skipped.length ? { requested: skus.length, skipped } : {}),
         transfer_order_id: to.transfer_order_id,
         transfer_order_number: to.transfer_order_number,
       })
@@ -334,8 +461,9 @@ Deno.serve(async (req) => {
       } catch (e) { console.error('toSnapshots write failed (non-fatal):', e) }
     }
 
-    console.log(`create-to: DRAFT ${to.transfer_order_number} → ${toDsId}, ${resolved.length} lines, ` +
-      `by ${by}, TO Type ${JSON.stringify(toTypeActual)}`)
+    console.log(`create-to: DRAFT ${to.transfer_order_number} → ${toDsId}, ${resolved.length} of ` +
+      `${skus.length} lines, by ${by}, TO Type ${JSON.stringify(toTypeActual)}` +
+      (skipped.length ? ` — SKIPPED ${skipped.length} inactive: ${skipped.map((s) => s.sku).join(', ')}` : ''))
     // toType/toTypeWarning are additive: the tool ignores unknown keys today (no
     // frontend change shipped with this), but they make the state inspectable.
     return json({
@@ -346,6 +474,10 @@ Deno.serve(async (req) => {
       toDsId,
       lines: resolved,
       zohoOrgId: org,
+      // Always present so the tool can render "90 of 94" without inferring, and
+      // `skipped` is always an array so a caller can read `.length` unguarded.
+      requested: skus.length,
+      skipped,
       toType: toTypeActual,
       ...(toTypeWarning ? { toTypeWarning } : {}),
     })

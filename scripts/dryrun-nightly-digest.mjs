@@ -40,7 +40,7 @@ const row = async (id, select = "payload") => {
   return j ? (j.payload ?? j) : null;
 };
 
-const [invoices, catalogue, floors, engine, targets, historyRow] = await Promise.all([
+const [invoices, catalogue, floors, engine, targets, historyRow, toAudit] = await Promise.all([
   row("invoiceSyncStatus"),
   row("catalogueSyncStatus"),
   row("skuFloorSyncStatus"),
@@ -48,11 +48,14 @@ const [invoices, catalogue, floors, engine, targets, historyRow] = await Promise
   // Three tiny selects off the ~695KB row rather than the row itself.
   row("toTargets", "payload->refreshedAt,payload->inputs,payload->invValue"),
   row("digestHistory"),
+  // create-to's audit — read only for the skipped-TO-lines block. Without it the
+  // dry run could never preview that block, i.e. a preview tool that lies by omission.
+  row("toAudit"),
 ]);
 
 const history = Array.isArray(historyRow?.days) ? historyRow.days : [];
-const bytes = JSON.stringify({ invoices, catalogue, floors, engine, targets, history }).length;
-console.log(`READ  6 params values · ${bytes.toLocaleString()} bytes total · zero writes, zero Zoho calls`);
+const bytes = JSON.stringify({ invoices, catalogue, floors, engine, targets, history, toAudit }).length;
+console.log(`READ  7 params values · ${bytes.toLocaleString()} bytes total · zero writes, zero Zoho calls`);
 console.log(`      invValue stamped: ${targets?.invValue ? "yes" : "NO — run-engine not redeployed yet, the value line will be omitted"}`);
 console.log(`      history: ${history.length} day(s) recorded`);
 console.log(`NOW   ${new Date(AT).toISOString()}  (${argv.includes("--at") ? "simulated" : "live clock"})\n`);
@@ -99,7 +102,7 @@ if (argv.includes("--with-value")) {
   }
 }
 
-const live = assessNight({ now: AT, invoices, catalogue, floors, engine, targets, history });
+const live = assessNight({ now: AT, invoices, catalogue, floors, engine, targets, history, toAudit });
 show("LIVE — what would be sent right now", live);
 
 console.log(`VERDICT  ${live.level.toUpperCase()}`);

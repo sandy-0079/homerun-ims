@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assessNight, renderDigest, istDateOf, appendHistory } from "./nightlyDigest.ts";
+import { assessNight, renderDigest, istDateOf, appendHistory, summariseToSkips } from "./nightlyDigest.ts";
 
 // The digest fires at 06:30 IST = 01:00 UTC.
 const NOW = Date.parse("2026-08-04T01:00:00.000Z");
@@ -634,5 +634,110 @@ describe("deactivation count is reported and never changes the alert level", () 
   it("omits the phrase entirely when the sync never reported the field", () => {
     const text = renderDigest(assessNight(healthy() as any)).text;
     expect(text).not.toContain("deactivated");
+  });
+});
+
+// TO lines Zoho refuses because the item is inactive. create-to drops them so the
+// rest of the transfer can be created; before 2026-08-29 one such line failed the
+// WHOLE order and the DC team was hard-blocked (2026-08-28, 334 SKUs).
+// The ground team sees only a count in the tool — the NAMES come here, to the one
+// person who can fix them in Zoho. Admin-only by construction: one recipient.
+describe("summariseToSkips", () => {
+  const NOWMS = Date.parse("2026-08-29T01:00:00.000Z");
+  const at = (hoursAgo: number) => new Date(NOWMS - hoursAgo * 3_600_000).toISOString();
+  const sk = (sku: string, name?: string) => ({ sku, name: name ?? `${sku} thing`, status: "inactive" });
+
+  it("returns null when nothing was skipped — the line is omitted, not printed as 0", () => {
+    expect(summariseToSkips({ entries: [{ at: at(2), lineCount: 90 }] }, NOWMS)).toBe(null);
+  });
+
+  it("returns null on a missing or malformed row rather than throwing", () => {
+    // A reporting nicety must never break the watchdog it rides in.
+    expect(summariseToSkips(null, NOWMS)).toBe(null);
+    expect(summariseToSkips({}, NOWMS)).toBe(null);
+    expect(summariseToSkips({ entries: "nope" }, NOWMS)).toBe(null);
+    expect(summariseToSkips({ entries: [{ at: "garbage", skipped: [sk("A")] }] }, NOWMS)).toBe(null);
+  });
+
+  it("names the skipped SKUs with their Zoho item names", () => {
+    const r = summariseToSkips({ entries: [
+      { at: at(3), transfer_order_number: "TO-04578", skipped: [sk("H7M3N", "LOCTITE Sealant, White")] },
+    ] }, NOWMS);
+    expect(r!.total).toBe(1);
+    expect(r!.names).toEqual(["LOCTITE Sealant, White (H7M3N)"]);
+    expect(r!.tos).toEqual(["TO-04578"]);
+  });
+
+  it("⚠ DEDUPES by SKU across TOs — one bad SKU in six transfers is ONE thing to fix", () => {
+    const r = summariseToSkips({ entries: [
+      { at: at(1), transfer_order_number: "TO-1", skipped: [sk("A"), sk("B")] },
+      { at: at(2), transfer_order_number: "TO-2", skipped: [sk("A")] },
+    ] }, NOWMS);
+    expect(r!.total).toBe(2);
+    expect(r!.skus.sort()).toEqual(["A", "B"]);
+    // ...but the transfers it touched stay visible, so the blast radius is not hidden.
+    expect(r!.tos.sort()).toEqual(["TO-1", "TO-2"]);
+  });
+
+  it("ignores entries older than the window — this is a DAILY digest", () => {
+    const r = summariseToSkips({ entries: [
+      { at: at(30), transfer_order_number: "TO-OLD", skipped: [sk("OLD")] },
+      { at: at(5), transfer_order_number: "TO-NEW", skipped: [sk("NEW")] },
+    ] }, NOWMS);
+    expect(r!.skus).toEqual(["NEW"]);
+  });
+
+  it("ignores a future-dated entry rather than trusting a bad clock", () => {
+    expect(summariseToSkips({ entries: [{ at: at(-5), skipped: [sk("A")] }] }, NOWMS)).toBe(null);
+  });
+
+  it("skips a malformed skipped[] member without losing its siblings", () => {
+    const r = summariseToSkips({ entries: [
+      { at: at(1), transfer_order_number: "TO-1", skipped: [{ nope: true }, sk("GOOD")] },
+    ] }, NOWMS);
+    expect(r!.skus).toEqual(["GOOD"]);
+  });
+});
+
+describe("the TO-skip block in the rendered email", () => {
+  const withAudit = (entries: any[]) => {
+    const i: any = healthy();
+    i.toAudit = { entries };
+    const v = assessNight(i);
+    return { v, text: renderDigest(v).text };
+  };
+  const recent = new Date(NOW - 3_600_000).toISOString();
+  const sk = (sku: string) => ({ sku, name: `${sku} thing`, status: "inactive" });
+
+  it("prints the SKUs and the TOs they were dropped from", () => {
+    const { text } = withAudit([{ at: recent, transfer_order_number: "TO-04578", skipped: [sk("H7M3N")] }]);
+    expect(text).toContain("TO lines skipped (inactive in Zoho): 1");
+    expect(text).toContain("H7M3N thing (H7M3N)");
+    expect(text).toContain("TO-04578");
+  });
+
+  it("⚠ stays GREEN — a dropped line means the TO SUCCEEDED where it used to fail", () => {
+    const { v } = withAudit([{ at: recent, transfer_order_number: "TO-1", skipped: [sk("A"), sk("B")] }]);
+    expect(v.level).toBe("green");
+  });
+
+  it("⚠ never reaches the SUBJECT line — it is housekeeping, not a fault", () => {
+    const { text } = withAudit([{ at: recent, transfer_order_number: "TO-1", skipped: [sk("A")] }]);
+    const subject = renderDigest(assessNight({ ...(healthy() as any), toAudit: { entries: [
+      { at: recent, transfer_order_number: "TO-1", skipped: [sk("A")] }] } })).subject;
+    expect(subject).not.toContain("skipped");
+    expect(text).toContain("TO lines skipped");
+  });
+
+  it("truncates a long list — 60 codes in one line is an unreadable wall in Gmail", () => {
+    const many = Array.from({ length: 40 }, (_, i) => sk(`S${i}`));
+    const { text } = withAudit([{ at: recent, transfer_order_number: "TO-1", skipped: many }]);
+    expect(text).toContain("TO lines skipped (inactive in Zoho): 40");
+    expect(text).toContain("+28 more");
+  });
+
+  it("says nothing at all when no line was skipped", () => {
+    const { text } = withAudit([{ at: recent, transfer_order_number: "TO-1", lineCount: 90 }]);
+    expect(text).not.toContain("TO lines skipped");
   });
 });

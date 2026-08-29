@@ -35,6 +35,52 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 /** How many duplicated SKU codes the email names before saying "+N more". */
 const DUP_NAMES_SHOWN = 12;
 
+/** How many skipped TO SKUs the email names. Same cap, same reason: 60 codes joined
+ *  into one line is an unreadable wall in Gmail, and every test still passes. */
+const SKIP_NAMES_SHOWN = 12;
+
+/**
+ * TO lines dropped in the last 24h because Zoho has the item inactive.
+ *
+ * ⚠ WHY THIS IS IN THE EMAIL AT ALL: the ground team sees only a COUNT on the TO
+ * tool ("90 of 94 items"), deliberately — an inactive SKU is a Zoho catalogue
+ * problem they cannot act on. The names belong to whoever can fix them, and the
+ * digest already goes to exactly that person. No new UI, no new admin gate.
+ *
+ * ⚠ Deduped by SKU across TOs: one deactivated SKU appearing in six DS transfers
+ * is ONE thing to fix, not six. `tos` still counts the transfers it touched, so
+ * the blast radius stays visible.
+ *
+ * ⚠ Reads `params/toAudit`, which create-to owns and this function only borrows.
+ * Every access is defensive: a malformed or absent row must degrade to "no line",
+ * never throw — this is a reporting nicety riding in a watchdog.
+ */
+export function summariseToSkips(toAudit: any, now: number, windowMs = DAY): {
+  skus: string[]; names: string[]; tos: string[]; total: number;
+} | null {
+  const entries = Array.isArray(toAudit?.entries) ? toAudit.entries : [];
+  const seen = new Map<string, string>();
+  const tos = new Set<string>();
+  for (const e of entries) {
+    const at = Date.parse(String(e?.at ?? ""));
+    if (!Number.isFinite(at) || now - at > windowMs || at > now) continue;
+    const skipped = Array.isArray(e?.skipped) ? e.skipped : [];
+    for (const sk of skipped) {
+      const sku = typeof sk?.sku === "string" ? sk.sku : null;
+      if (!sku) continue;
+      if (!seen.has(sku)) seen.set(sku, typeof sk?.name === "string" && sk.name ? sk.name : sku);
+      if (e?.transfer_order_number) tos.add(String(e.transfer_order_number));
+    }
+  }
+  if (seen.size === 0) return null;
+  return {
+    skus: [...seen.keys()],
+    names: [...seen.entries()].map(([sku, name]) => `${name} (${sku})`),
+    tos: [...tos],
+    total: seen.size,
+  };
+}
+
 /** Calendar date in Asia/Kolkata. The chain straddles midnight IST, so a UTC read is wrong. */
 export function istDateOf(ms: number): string {
   return new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10);
@@ -175,6 +221,8 @@ type Input = {
   targets: any;
   /** params/digestHistory — the digest's own record. Absent on the first ever run. */
   history?: unknown;
+  /** params/toAudit — written by create-to. Read ONLY for the skipped-line summary. */
+  toAudit?: any;
 };
 
 export function assessNight(input: Input) {
@@ -417,6 +465,12 @@ export function assessNight(input: Input) {
       deactivated: Array.isArray(input.catalogue?.statusChanged?.toInactive)
         ? input.catalogue.statusChanged.toInactive.length
         : null,
+      // ⚠ TO lines Zoho refused because the item is inactive. create-to now DROPS
+      // these so the rest of the transfer can be created — before 2026-08-29 one
+      // such line failed the WHOLE order and the DC team was hard-blocked. The
+      // ground team deliberately sees only a count on screen; the SKU names come
+      // here, to the one recipient who can fix them in Zoho.
+      toSkipped: summariseToSkips(input.toAudit, now),
       prices: num(input.catalogue?.prices?.merged?.total),
       pricesRetained: num(input.catalogue?.prices?.merged?.retained),
       floors: num(input.floors?.skuCount) ?? num(input.targets?.inputs?.newSKUQty),
@@ -514,6 +568,26 @@ export function renderDigest(v: Verdict): { subject: string; text: string } {
       ? `${d.absMax > 0 ? "▲" : d.absMax < 0 ? "▼" : "="} ${move(d.absMax)} (${d.pctMax >= 0 ? "+" : ""}${d.pctMax.toFixed(1)}%) vs ${d.prevDate}`
       : "— first reading, no prior day to compare";
     lines.push(`Inv Value (Max) ${money(f.invValue.max)}   ${trend}    (Min ${money(f.invValue.min)})`);
+  }
+  // ── TO lines dropped because Zoho has the item inactive ────────────────────
+  // ⚠ ADMIN-ONLY BY CONSTRUCTION, not by a permission check: this email has one
+  // recipient, and that is the entire access-control story. The ground team sees a
+  // COUNT on the TO tool and nothing more — an inactive SKU is a Zoho catalogue
+  // problem they cannot act on, and putting a SKU list in front of them would only
+  // invite chasing stock that was never sent.
+  //
+  // ⚠ GREEN. It never moves the alert level, for the same reason as the deactivation
+  // count and the floor duplicates: a dropped line means the TO SUCCEEDED where it
+  // used to fail outright, so it is good news with a chore attached. An amber here
+  // would fire on every mass-deactivation afternoon and train the reader to skim.
+  if (f.toSkipped) {
+    lines.push("");
+    const t = f.toSkipped;
+    lines.push(`TO lines skipped (inactive in Zoho): ${t.total}`);
+    for (const n of t.names.slice(0, SKIP_NAMES_SHOWN)) lines.push(`    ${n}`);
+    if (t.names.length > SKIP_NAMES_SHOWN) lines.push(`    +${t.names.length - SKIP_NAMES_SHOWN} more`);
+    if (t.tos.length) lines.push(`  on ${t.tos.join(", ")}`);
+    lines.push("  Reactivate in Zoho, or leave them out of the plan.");
   }
   lines.push("");
 
