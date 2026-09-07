@@ -7,13 +7,12 @@ import {
 } from "./constants.js";
 
 import { getPriceTag, getMovTag, getSpikeTag, computeStats } from "./utils.js";
-import { standardStrategy } from "./strategies/standard.js";
 import { applyDSSeed } from "./dsSeed.js";
 import { applyAttribution } from "./attribution.js";
-import { applyCeilingToStores } from "./skuCeiling.js";
+import { applyCeilingToStores, capFor, clampToCeiling } from "./skuCeiling.js";
 import { applyDeadStockToStores } from "./deadStock.js";
-import { percentileCoverStrategy } from "./strategies/percentileCover.js";
-import { fixedUnitFloorStrategy } from "./strategies/fixedUnitFloor.js";
+import { dispatchStrategy } from "./strategyDispatch.js";
+import { policyOf } from "../skuPolicy.js";
 import { computePlywoodNetworkResults } from "./strategies/plywoodNetwork.js";
 import { computePlywoodNetworkV2Results } from "./strategies/plywoodV2/index.js";
 
@@ -80,12 +79,27 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
   const invSliced = inv.filter(r => allDates.includes(r.date));
 
   const qMap = {}, oMap = {};
+  // qAll/oAll — TOTAL demand per SKU across every location, for the DC-only branch.
+  //
+  // ⚠ NOT the sum of the per-DS series. Attribution only RELABELS rows, so summing
+  // per-DS dailyAvg silently misses the DC-fulfilled rows whose pincode is not in the
+  // map: those keep ds="DC01", and `tags90` only ever reads DS_LIST, so that demand
+  // vanishes from every location's Min/Max. Summing every row sidesteps attribution
+  // entirely — which is the CORRECT basis here, because attribution answers "which
+  // DS's catchment", a question with no meaning when there is one selling location.
+  //
+  // Folded into this same pass rather than a second forEach: invSliced is ~95,000
+  // rows and this loop is already the hottest thing in the engine.
+  const qAll = {}, oAll = {};
   invSliced.forEach(r => {
     const k = `${r.sku}||${r.ds}`;
     if (!qMap[k]) qMap[k] = {};
     if (!oMap[k]) oMap[k] = {};
     qMap[k][r.date] = (qMap[k][r.date] || 0) + r.qty;
     oMap[k][r.date] = (oMap[k][r.date] || 0) + 1;
+    if (!qAll[r.sku]) { qAll[r.sku] = {}; oAll[r.sku] = {}; }
+    qAll[r.sku][r.date] = (qAll[r.sku][r.date] || 0) + r.qty;
+    oAll[r.sku][r.date] = (oAll[r.sku][r.date] || 0) + 1;
   });
 
   const skuTotals = {};
@@ -131,7 +145,15 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
     // SKU Floor Override applied post-network (e.g. for new SKUs with no sales history).
     // Dead Stock cap still applied. All other categories unaffected.
     const networkResult = plywoodNetworkResults[skuId];
-    if (networkResult) {
+    // ⚠ A DC-ONLY SKU MUST NOT TAKE THIS BYPASS. Network Design is entirely about
+    // WHICH DS NODES stock a brand — meaningless when no DS stocks it at all, and its
+    // DC term is `dcP95 + ceil(sum DS_Min x dcMult)`, which collapses to the P95 alone
+    // once every store is zero. Falling through puts the SKU on the main path, where
+    // `strategy` is reassigned to `plywoodNonNetworkStrategy` and the DC-only branch
+    // runs THAT against total demand. A DC-only SKU absent from skuM is impossible:
+    // policyOf(undefined) yields invAt "ds", so `move` is vacuous and forced true.
+    const _dcOnlyBypass = (() => { const q = policyOf(skuM[skuId]); return q.invAt === "dc" && !q.move; })();
+    if (networkResult && !_dcOnlyBypass) {
       // status "Unknown", not "Active" — see the note on the main path below.
       const _meta = skuM[skuId] || { sku: skuId, name: skuId, category: 'Plywood, MDF & HDHMR', brand: '', status: 'Unknown' };
       const _isDead = deadStockSet.has(skuId);
@@ -288,77 +310,17 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
       const s90 = computeStats(q90, o90, op, p.spikeMultiplier);
       const mvTag90 = tags90[k].mvTag;
 
-      let minQty, maxQty;
-      let strategyTag = strategy;
-      let strategyDetails = {};
-
-      // Price-tag-aware NZD threshold:
-      // Premium/High require pctMinNZD (default 2) — 1 observation insufficient for a reliable distribution
-      // Medium/Low/Super Low/No Price use 1 — cheap items stocked aggressively even with sparse history
-      const HIGH_PCT_TAGS = ["Premium", "High"];
-      const LOW_PCT_TAGS = ["Medium", "Low", "Super Low", "No Price"];
-      const nzdThreshold = HIGH_PCT_TAGS.includes(prTag) ? (p.pctMinNZD || 2) : 1;
-
-      if (strategy === "percentile_cover" && s90.nonZeroDays >= nzdThreshold) {
-        const r = percentileCoverStrategy({ q90, prTag, mvTag90, params: p });
-        ({ minQty, maxQty } = r);
-        strategyDetails = r.details || {};
-        // DOC cap — Premium/High use pctDocCap; Medium/Low/Super Low/No Price use pctDocCapLow
-        const isHighTag = HIGH_PCT_TAGS.includes(prTag);
-        const capDays = isHighTag ? (p.pctDocCap ?? 30) : (p.pctDocCapLow ?? 60);
-        const capApplies = isHighTag ? true : LOW_PCT_TAGS.includes(prTag);
-        if (capDays > 0 && capApplies && s90.dailyAvg > 0) {
-          const capMin = Math.ceil(s90.dailyAvg * capDays);
-          if (minQty > capMin) {
-            const uncappedMin = minQty, uncappedMax = maxQty;
-            minQty = capMin;
-            maxQty = Math.ceil(capMin + s90.dailyAvg * (p.maxDaysBuffer || 2));
-            strategyDetails.docCap = { applied: true, capDays, priceTag: prTag, uncappedMin, uncappedMax, cappedMin: minQty, cappedMax: maxQty };
-          } else {
-            strategyDetails.docCap = { applied: false, capDays, priceTag: prTag };
-          }
-        }
-      } else if (strategy === "percentile_cover" && s90.nonZeroDays < nzdThreshold) {
-        // PCT assigned but NZD below threshold — fall back to standard
-        const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
-        ({ minQty, maxQty } = r);
-        strategyDetails = r.details || {};
-        strategyDetails.pctFallback = { reason: "NZD", nzd: s90.nonZeroDays, threshold: nzdThreshold };
-        strategyTag = "standard";
-      } else if (strategy === "fixed_unit_floor") {
-        // Order-days gate (mirrors PCT's NZD gate): Premium/High need >= fufMinNZD distinct
-        // order-days before a single-order size percentile is trusted — one contractor
-        // bulk-buy can't establish a size distribution. Below threshold → fall back to
-        // Standard. Cheap tags keep threshold 1 (stock aggressively). fufMinNZD=1 = gate off.
-        const fufMinNZD = HIGH_PCT_TAGS.includes(prTag) ? (p.fixedUnitFloor?.minNZD ?? 2) : 1;
-        if (s90.nonZeroDays < fufMinNZD) {
-          const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
-          ({ minQty, maxQty } = r);
-          minQty = Math.max(1, minQty); // demand-bearing SKU (HAS DATA path) → stock at least 1
-          maxQty = Math.max(maxQty, minQty);
-          strategyDetails = r.details || {};
-          strategyDetails.fufFallback = { reason: "NZD", nzd: s90.nonZeroDays, threshold: fufMinNZD };
-          strategyTag = "standard";
-        } else {
-          const result = fixedUnitFloorStrategy({ orderQtys: collectOrderQtys(invSliced, skuId, dsId), params: p });
-          if (result) {
-            ({ minQty, maxQty } = result);
-            strategyDetails = result.details || {};
-          } else {
-            // Null — fall back to standard
-            const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
-            ({ minQty, maxQty } = r);
-            strategyDetails = r.details || {};
-            strategyTag = "standard";
-          }
-        }
-      } else {
-        // "standard", "manual", or unknown — use standard blend
-        const r = standardStrategy({ qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p });
-        ({ minQty, maxQty } = r);
-        strategyDetails = r.details || {};
-        strategyTag = "standard";
-      }
+      // Strategy dispatch — EXTRACTED to strategyDispatch.js so the DC-only branch
+      // can run the SAME dispatch against total SKU demand rather than one store's.
+      // ⚠ getOrderQtys stays LAZY: collecting order quantities is a full linear scan
+      // of invSliced, and eager evaluation would run it ~15,000 times instead of a
+      // few hundred.
+      const dispatched = dispatchStrategy({
+        strategy, s90, q90, qLong, oLong, qRecent, oRecent, prTag, mvTag90, params: p,
+        getOrderQtys: () => collectOrderQtys(invSliced, skuId, dsId),
+      });
+      let minQty = dispatched.minQty, maxQty = dispatched.maxQty;
+      const { strategyTag, strategyDetails } = dispatched;
 
       // ── Post-blend adjustments (strict order preserved) ────────────────
       const strategyMin = minQty, strategyMax = maxQty;
@@ -449,11 +411,57 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
     let dcMin, dcMax, preFloorDcMin, preFloorDcMax;
     let dcDetails;
     const isFlooredSKU = !!(nsq && nsq[skuId]);
+    const pol = policyOf(meta);
+    // DC-only: bought at the DC and sold from the DC, never transferred to a store.
+    const isDCOnly = pol.invAt === "dc" && !pol.move;
 
     if (isDead) {
       dcMin = 0; dcMax = 0;
       preFloorDcMin = 0; preFloorDcMax = 0;
       dcDetails = { isDead: true, sumDailyAvg, leadTime };
+    } else if (isDCOnly) {
+      // ⚠⚠ THIS BRANCH MUST PRECEDE `isFlooredSKU`, AND THAT IS NOT COSMETIC.
+      // `isFlooredSKU` tests PRESENCE OF THE SKU KEY in nsq, not whether any location
+      // carries a value — so the moment a DC-only SKU is given a DC floor it would
+      // otherwise land on `round(sumMin x 0.2)`, i.e. 20% of that SKU's *DS* mins.
+      // Worse, those mins are still un-zeroed here (the Move=No pass runs later, over
+      // the finished `res`), so the number would look plausible and be meaningless.
+      //
+      // The DC is the single selling location, so it gets the SKU's own category
+      // strategy — PCT / Fixed Unit Floor / Standard — rather than the rate formula.
+      // The rate branch is a REPLENISHMENT BUFFER sized off store demand, and open
+      // item #8 already records that it understocks erratic demand; a DC-only item has
+      // no store to fall back on when it does.
+      const qm = qAll[skuId] || {}, om = oAll[skuId] || {};
+      const q90dc = allDates.map(d => qm[d] || 0), o90dc = allDates.map(d => om[d] || 0);
+      if (q90dc.some(v => v > 0)) {
+        const sAll = computeStats(q90dc, o90dc, op, p.spikeMultiplier);
+        const d = dispatchStrategy({
+          strategy,
+          s90: sAll,
+          q90: q90dc,
+          qLong: dLong.map(x => qm[x] || 0), oLong: dLong.map(x => om[x] || 0),
+          qRecent: dRecent.map(x => qm[x] || 0), oRecent: dRecent.map(x => om[x] || 0),
+          prTag,
+          mvTag90: getMovTag(sAll.nonZeroDays, op, intervals),
+          params: p,
+          // Every order line for this SKU at ANY location — one selling point, so the
+          // whole order-size distribution belongs to it. Lazy: this is a full scan.
+          getOrderQtys: () => invSliced.filter(r => r.sku === skuId && r.qty > 0).map(r => r.qty),
+        });
+        dcMin = Math.ceil(d.minQty);
+        dcMax = Math.ceil(Math.max(d.maxQty, d.minQty));
+        dcDetails = {
+          isDead: false, dcOnly: true, strategyTag: d.strategyTag, strategyDetails: d.strategyDetails,
+          nonZeroDays: sAll.nonZeroDays, dailyAvg: sAll.dailyAvg, sumDailyAvg, leadTime,
+        };
+      } else {
+        // No demand anywhere in the window. 0/0, which a DC floor may then lift — the
+        // reason a DC floor exists at all is a brand-new delicate item with no history.
+        dcMin = 0; dcMax = 0;
+        dcDetails = { isDead: false, dcOnly: true, noData: true, sumDailyAvg, leadTime };
+      }
+      preFloorDcMin = dcMin; preFloorDcMax = dcMax;
     } else if (isFlooredSKU) {
       // SKU has manual DS floors — use configurable multipliers instead of movement-based DC calc
       const multMin = p.skuFloorDCMultMin ?? 0.2;
@@ -469,6 +477,44 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
       preFloorDcMin = Math.ceil(sumDailyAvg * (leadTime + 1));
       preFloorDcMax = preFloorDcMin + Math.ceil(sumDailyAvg * 2);
       dcDetails = { isDead: false, isFlooredSKU: false, sumMin, sumMax, sumDailyAvg, leadTime };
+    }
+
+    // ── DC Floor, then DC Cap ────────────────────────────────────────────────
+    // Applies to EVERY SKU, not just DC-only ones: symmetric with the DS columns, and
+    // a column whose meaning depends on another field is how things drift here.
+    // Provably inert until ops fills it — `nsq[sku].DC` cannot exist until the floor
+    // parser learns the column, and `capFor(..., "DC")` returns null while no ceiling
+    // row carries a DC key.
+    //
+    // ⚠ ORDER IS LOAD-BEARING: the floor lifts, then the cap clamps, because "a cap a
+    // floor can overrule is not a cap." Both are skipped for Dead Stock, which
+    // outranks them. Purchase=No beats a stale DC floor for FREE, because the policy
+    // pass is a single later pass over the finished `res` — the exact property the
+    // Dead Stock post-mortem bought ("a rule that only ever REDUCES a value belongs in
+    // ONE pass over the finished object, never inline in the branch that computed it").
+    if (!isDead) {
+      const dcFloor = nsq && nsq[skuId] ? nsq[skuId].DC : undefined;
+      if (dcFloor) {
+        const fMin = typeof dcFloor === "number" ? dcFloor : (dcFloor.min || 0);
+        const fMax = typeof dcFloor === "number" ? dcFloor : (dcFloor.max || fMin);
+        // Per-field max, matching the New DS Floor change of 2026-07-06: the floor
+        // lifts Min, but Max keeps the strategy's demand-informed headroom when higher.
+        if (fMin > dcMin || fMax > dcMax) {
+          const beforeMin = dcMin, beforeMax = dcMax;
+          if (fMin > dcMin) dcMin = fMin;
+          if (fMax > dcMax) dcMax = fMax;
+          dcMax = Math.max(dcMax, dcMin);
+          dcDetails = { ...dcDetails, dcFloor: { fMin, fMax, beforeMin, beforeMax } };
+        }
+      }
+      // capFor returns null (never undefined) for "no cap", so a legitimate cap of 0
+      // can never be dropped by a falsy test — blank and 0 are OPPOSITES here.
+      const dcCap = capFor(ceilings, skuId, "DC");
+      if (dcCap !== null) {
+        const c = clampToCeiling(dcMin, dcMax, dcCap);
+        if (c.applied) dcDetails = { ...dcDetails, dcCap: { cap: dcCap, beforeMin: dcMin, beforeMax: dcMax } };
+        dcMin = c.min; dcMax = c.max;
+      }
     }
 
     res[skuId] = {
@@ -512,6 +558,51 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
       r.stores[ds].min = 0; r.stores[ds].max = 0; r.stores[ds].logicTag = "Not Active";
     });
     if (r.dc) { r.dc.min = 0; r.dc.max = 0; if (r.dc.dcDetails) r.dc.dcDetails.zeroedReason = reason; }
+  });
+
+  // ── Purchase / Move policy pass ─────────────────────────────────────────────
+  // Commercial policy, from two Zoho fields. Sits HERE — one pass over the finished
+  // `res`, after every strategy, floor, cap, Dead Stock and DS Seed — which is what
+  // makes it outrank all of them without a single inline check. Same shape as the
+  // Active-only pass above and the Inventorised-At pass below.
+  //
+  //   Purchase = No  →  zero the INBOUND target: the DC for a DC-inventorised SKU,
+  //                     the DS columns for a DS-inventorised one (its PO is raised at
+  //                     the store, so the DS number IS the inbound target).
+  //   Move     = No  →  zero all six DS. Only meaningful for DC-inventorised SKUs;
+  //                     `policyOf` already forces `move` true elsewhere, so no caller
+  //                     has to remember that.
+  //
+  // ⚠ TOPOLOGY OUTRANKS POLICY: Supplier ignores both flags and returns early. It is
+  // already 0/0 everywhere via the Inventorised-At pass, and letting policy write a
+  // reason string over it would replace the durable explanation with a transient one.
+  //
+  // ⚠ KNOWN AND ACCEPTED, 13 SKUs: for a DS-inventorised SKU, Purchase=No necessarily
+  // also stops it selling, because the same DS number drives both the PO and the
+  // shelf. "Sell till stock lasts" is therefore inexpressible there. A third `Sell`
+  // flag would NOT have fixed it — same number, same conflict.
+  //
+  // ⚠ Touches min/max only. `preFloor*` is left intact for audit, matching Dead Stock,
+  // Active-only and Inventorised-At.
+  Object.values(res).forEach(r => {
+    const q = policyOf(r.meta);
+    if (q.invAt === "supplier") return;
+    if (!q.purchase) {
+      if (q.invAt === "dc") {
+        if (r.dc) { r.dc.min = 0; r.dc.max = 0; if (r.dc.dcDetails) r.dc.dcDetails.zeroedReason = "Purchase = No"; }
+      } else {
+        DS_LIST.forEach(ds => {
+          if (!r.stores[ds]) return;
+          r.stores[ds].min = 0; r.stores[ds].max = 0; r.stores[ds].logicTag = "Purchase = No";
+        });
+      }
+    }
+    if (!q.move) {
+      DS_LIST.forEach(ds => {
+        if (!r.stores[ds]) return;
+        r.stores[ds].min = 0; r.stores[ds].max = 0; r.stores[ds].logicTag = "Move = No";
+      });
+    }
   });
 
   // ── Inventorised-At normalization (final override, after all strategies & floors) ──
