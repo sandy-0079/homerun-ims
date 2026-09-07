@@ -345,3 +345,105 @@ describe("mergePrices", () => {
     expect(mergePrices({ A: 100 }, {}).prices).toEqual({ A: 100 });
   });
 });
+
+// ── Purchase / Move ──────────────────────────────────────────────────────────
+describe("mapItemsToMaster — Purchase / Move policy", () => {
+  const it_ = (o: Record<string, unknown> = {}) => item({ sku: "A", ...o });
+
+  it("defaults both to Yes when Zoho is blank — the overwhelming normal state", () => {
+    // ⚠ Blank means YES, the OPPOSITE of the status rule. All ~2,573 existing items
+    // are blank; fail-closed would zero the whole network on the first nightly sync.
+    const { master, report } = mapItemsToMaster([it_()], {});
+    expect(master.A.purchase).toBe("Yes");
+    expect(master.A.move).toBe("Yes");
+    expect(report.policyFromZoho).toEqual({ purchase: 0, move: 0 });
+    expect(report.policyFromStored).toEqual({ purchase: 0, move: 0 });
+    expect(report.policyNo).toEqual({ purchase: 0, move: 0 });
+  });
+
+  it("reads Purchase's ON/OFF vocabulary from cf_purchase_status", () => {
+    // The label is "Purchase" but the api_name is cf_purchase_status — not guessable.
+    expect(mapItemsToMaster([it_({ cf_purchase_status: "OFF" })], {}).master.A.purchase).toBe("No");
+    expect(mapItemsToMaster([it_({ cf_purchase_status: "ON" })], {}).master.A.purchase).toBe("Yes");
+    // The name someone would guess from the label must NOT work — if it did, a typo
+    // would look like it worked.
+    expect(mapItemsToMaster([it_({ cf_purchase: "OFF" })], {}).master.A.purchase).toBe("Yes");
+  });
+
+  it("reads Move's Yes/No vocabulary from cf_move and canonicalises both", () => {
+    const { master, report } = mapItemsToMaster([it_({ cf_move: "No", cf_purchase_status: "OFF" })], {});
+    expect(master.move).toBeUndefined();
+    expect(master.A.move).toBe("No");
+    expect(master.A.purchase).toBe("No");     // OFF canonicalised to No
+    expect(report.policyFromZoho).toEqual({ purchase: 1, move: 1 });
+    expect(report.policyNo).toEqual({ purchase: 1, move: 1 });
+  });
+
+  it("⚠ falls back to the STORED value when Zoho is blank", () => {
+    // This is what stops sync-catalogue STRIPPING a flag set by hand through the SKU
+    // Master CSV before Zoho has been populated. Without it, a manual flag would
+    // survive only until the next nightly run.
+    const current = { A: { sku: "A", purchase: "No", move: "No" } };
+    const { master, report } = mapItemsToMaster([it_()], current);
+    expect(master.A.purchase).toBe("No");
+    expect(master.A.move).toBe("No");
+    expect(report.policyFromStored).toEqual({ purchase: 1, move: 1 });
+    expect(report.policyFromZoho).toEqual({ purchase: 0, move: 0 });
+  });
+
+  it("lets a Zoho value override a stored one", () => {
+    const current = { A: { sku: "A", purchase: "No", move: "No" } };
+    const { master } = mapItemsToMaster([it_({ cf_purchase_status: "ON", cf_move: "Yes" })], current);
+    expect(master.A.purchase).toBe("Yes");
+    expect(master.A.move).toBe("Yes");
+  });
+
+  it("reports an unrecognised value IN FULL and treats it as Yes", () => {
+    // A checkbox would send "false". Fail open (inert) rather than closed (network
+    // zeroed), and report it so the misconfiguration is visible in the data.
+    const { master, report } = mapItemsToMaster([it_({ cf_move: "false" })], {});
+    expect(master.A.move).toBe("Yes");
+    expect(report.policyUnrecognised).toEqual([{ sku: "A", field: "move", value: "false" }]);
+  });
+
+  it("lists DC-only SKUs — inventorisedAt DC plus Move=No", () => {
+    const items = [
+      item({ sku: "DCONLY", cf_inventorised_at: "DC", cf_move: "No" }),
+      item({ sku: "NORMAL", cf_inventorised_at: "DC" }),
+    ];
+    expect(mapItemsToMaster(items, {}).report.dcOnly).toEqual(["DCONLY"]);
+  });
+
+  it("⚠ flags Move=No where the DC->DS arc does not exist — the RED case", () => {
+    // Someone intended DC-only; because the SKU is DS-direct, Move is vacuous and they
+    // will instead get six dark stores stocked. No legitimate reason to set it.
+    const items = [
+      item({ sku: "DSINV", cf_inventorised_at: "DS", cf_move: "No" }),
+      item({ sku: "SUPP", cf_inventorised_at: "Supplier", cf_move: "No" }),
+    ];
+    const { report } = mapItemsToMaster(items, {});
+    expect(report.policyIncoherent).toEqual([
+      { sku: "DSINV", invAt: "DS" },
+      { sku: "SUPP", invAt: "Supplier" },
+    ]);
+    expect(report.dcOnly).toEqual([]);
+  });
+
+  it("does NOT flag it when Purchase is also No — intent and outcome agree", () => {
+    // With both off the SKU is 0/0 everywhere regardless of topology, so nothing is
+    // harmed and there is nothing to warn about.
+    const items = [item({ sku: "DSINV", cf_inventorised_at: "DS", cf_move: "No", cf_purchase_status: "OFF" })];
+    expect(mapItemsToMaster(items, {}).report.policyIncoherent).toEqual([]);
+  });
+
+  it("carries policy forward for a SKU absent from the Zoho pull", () => {
+    // The retention path must not drop the flags — a partial /items response is
+    // indistinguishable from a deletion, and losing the flags would silently
+    // re-enable purchasing on a withdrawn SKU.
+    const current = { GONE: { sku: "GONE", inventorisedAt: "DC", purchase: "No", move: "No" } };
+    const { master, report } = mapItemsToMaster([it_()], current);
+    expect(report.absentFromZoho).toEqual(["GONE"]);
+    expect(master.GONE.purchase).toBe("No");
+    expect(master.GONE.move).toBe("No");
+  });
+});

@@ -43,11 +43,18 @@
 //      no-Min/Max outcome while keeping category (which drives strategy dispatch).
 const NOT_ACTIVE = "Inactive"; // matches the live master's spelling
 
+import {
+  CF_PURCHASE, CF_MOVE, POLICY_YES, POLICY_NO,
+  isPolicyNo, isUnrecognisedPolicy, normalisePolicy,
+} from "./skuPolicy.ts";
+
 const CF_INVENTORISED_AT = "cf_inventorised_at";
 const DEFAULT_INV_AT = "DC"; // 96% of the live master
 
 export type MasterEntry = {
   sku: string; name: string; category: string; brand: string; status: string; inventorisedAt: string;
+  // Commercial policy, canonicalised to "Yes"/"No" whichever vocabulary Zoho used.
+  purchase: string; move: string;
 };
 
 // Zoho exposes item custom fields in THREE different shapes depending on the
@@ -78,6 +85,46 @@ export function mapItemsToMaster(items: any[], currentMaster: Record<string, any
   let invAtFromZoho = 0, invAtFromStored = 0;
   const newSkusDefaulted: string[] = [];
 
+  // ── Purchase / Move accounting ──────────────────────────────────────────────
+  // ⚠ `policyFromZoho` IS THE api_name DETECTOR AND IS NOT OPTIONAL. Both fields
+  // carry a Zoho DEFAULT (ON / Yes), so a wrong api_name fails INVISIBLY as that
+  // default rather than as a blank — the cf_to_type trap verbatim. If these counts
+  // read 0 while ops believes they have set values, the api_name is wrong, not the
+  // data. There is no other way to tell those two states apart.
+  const policyFromZoho = { purchase: 0, move: 0 };
+  const policyFromStored = { purchase: 0, move: 0 };
+  const policyNo = { purchase: 0, move: 0 };
+  // Present but outside both vocabularies. Stored IN FULL, not sampled: it should be
+  // empty, so if it is not, every entry matters (the statusChanged lesson — sample
+  // only when the full thing is expensive AND reproducible later; this is neither).
+  const policyUnrecognised: { sku: string; field: string; value: string }[] = [];
+  const dcOnly: string[] = [];
+  // ⚠ THE RED CASE: Move=No where the DC->DS arc does not exist. `Move` governs that
+  // arc, so it is VACUOUS for a DS-direct or Supplier SKU — meaning someone intended
+  // "DC-only" and will instead get six dark stores stocked (DS-inv) or nothing at all
+  // (Supplier). Anomalous by construction: there is no legitimate reason to set it, so
+  // it can essentially never fire spuriously, which is what earns a first-occurrence
+  // red rather than an amber.
+  const policyIncoherent: { sku: string; invAt: string }[] = [];
+
+  // Zoho value -> stored value -> "Yes". The stored fallback matters: it is what stops
+  // `sync-catalogue` STRIPPING a flag set by hand through the SKU Master CSV before
+  // Zoho has been populated. Same cascade as inventorisedAt above, for the same reason.
+  const resolvePolicy = (
+    sku: string, field: "purchase" | "move", fromZoho: string | null, stored: unknown,
+  ): string => {
+    if (fromZoho !== null && isUnrecognisedPolicy(fromZoho)) {
+      policyUnrecognised.push({ sku, field, value: fromZoho });
+    }
+    let out: string;
+    if (fromZoho !== null) { out = normalisePolicy(fromZoho); policyFromZoho[field]++; }
+    else if (stored !== undefined && stored !== null && String(stored).trim() !== "") {
+      out = normalisePolicy(stored); policyFromStored[field]++;
+    } else out = POLICY_YES;
+    if (out === POLICY_NO) policyNo[field]++;
+    return out;
+  };
+
   for (const it of items || []) {
     const sku = (it?.sku || "").toString().trim();
     if (!sku) continue;
@@ -97,7 +144,18 @@ export function mapItemsToMaster(items: any[], currentMaster: Record<string, any
       // Zoho verbatim, but a missing status is not active — see STATUS OWNERSHIP.
       status: (it.status ?? "").toString().trim() || NOT_ACTIVE,
       inventorisedAt,
+      purchase: resolvePolicy(sku, "purchase", customField(it, CF_PURCHASE), currentMaster?.[sku]?.purchase),
+      move: resolvePolicy(sku, "move", customField(it, CF_MOVE), currentMaster?.[sku]?.move),
     };
+
+    const invAtLower = inventorisedAt.toString().trim().toLowerCase();
+    const moveIsNo = isPolicyNo(master[sku].move);
+    if (moveIsNo && invAtLower === "dc") dcOnly.push(sku);
+    // Only flagged when Purchase is still Yes: with Purchase=No too, the SKU is 0/0
+    // everywhere anyway, so intent and outcome agree and nothing is harmed.
+    if (moveIsNo && invAtLower !== "dc" && !isPolicyNo(master[sku].purchase)) {
+      policyIncoherent.push({ sku, invAt: inventorisedAt });
+    }
   }
 
   // Carry forward anything Zoho did not return, marked not-active. Never drop.
@@ -114,6 +172,8 @@ export function mapItemsToMaster(items: any[], currentMaster: Record<string, any
       items: Object.keys(master).length,
       invAtFromZoho, invAtFromStored, newSkusDefaulted,
       absentFromZoho,
+      policyFromZoho, policyFromStored, policyNo, policyUnrecognised,
+      dcOnly, policyIncoherent,
     },
   };
 }

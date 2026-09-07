@@ -55,6 +55,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { zohoFetchWithRetry } from "../_shared/zohoClient.ts";
 import { mapItemsToMaster, mapPricesReport, assessMasterChange, mergePrices, assessPriceTagChanges } from "../_shared/catalogueMap.ts";
+import { normalisePolicy } from "../_shared/skuPolicy.ts";
 import { shouldRun, alreadyRanTonight } from "../_shared/syncCooldown.ts";
 
 const BASE = "https://www.zohoapis.in/inventory/v1";
@@ -188,6 +189,25 @@ Deno.serve(async (req) => {
     // literal comparison reports all ~2,092 SKUs as changed and buries the handful
     // that MEANINGFULLY changed. Downstream filters all lowercase anyway.
     const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
+    // ── Purchase / Move transitions ────────────────────────────────────────
+    // ⚠ COMPARED THROUGH `normalisePolicy` ON BOTH SIDES, and that is what stops the
+    // FIRST run after deploy reporting ~2,573 phantom transitions. Before this ships,
+    // no stored entry has these fields at all; `normalisePolicy(undefined)` is "Yes"
+    // and the new value is "Yes", so they compare equal and nothing is reported. A
+    // literal comparison would have flagged every SKU as changed and buried any real
+    // move — the same failure as this function's own `norm()` reporting 13 fake
+    // `Confirmation Pending` transitions because it folded case but not space vs
+    // underscore.
+    const policyChanged = (["purchase", "move"] as const).flatMap((field) =>
+      Object.keys(master)
+        .filter((sku) => currentMaster[sku] &&
+          normalisePolicy(currentMaster[sku][field]) !== normalisePolicy(master[sku][field]))
+        .map((sku) => ({
+          sku, field,
+          from: normalisePolicy(currentMaster[sku][field]),
+          to: normalisePolicy(master[sku][field]),
+        })));
+
     const statusChanged = Object.keys(master)
       .filter((s) => currentMaster[s] && norm(currentMaster[s].status) !== norm(master[s].status))
       .map((s) => ({ sku: s, from: currentMaster[s].status, to: master[s].status }));
@@ -232,6 +252,37 @@ Deno.serve(async (req) => {
       // Min/Max at EVERY location, DS zeroes the DC. The distribution alone can hide a
       // swap (58 SKUs leaving Supplier while 58 others join it nets to zero), so report
       // the actual per-SKU transitions.
+      // ⚠ Purchase/Move decide whether a SKU is purchased and distributed at all, so
+      // this is reported with the same seriousness as statusChanged and invAtChanged:
+      // per-SKU, IN FULL, never sampled. `toNo` is broken out because that is the
+      // consequential direction — it removes a target.
+      //
+      // ⚠ REPORTED, NEVER BLOCKING. Ops will legitimately flip these in bulk at
+      // end-of-season, and the 2026-08-28 active-share block is the standing lesson
+      // that a threshold treating routine bulk work as an emergency is a threshold
+      // that blocks normal work. `fromZoho` is the counter that matters most: both
+      // Zoho fields have DEFAULTS, so a wrong api_name fails invisibly as that
+      // default, and a 0 here while ops believes they have set values IS the bug.
+      policy: {
+        fromZoho: itemReport.policyFromZoho,
+        fromStored: itemReport.policyFromStored,
+        no: itemReport.policyNo,
+        unrecognised: itemReport.policyUnrecognised,
+        dcOnly: itemReport.dcOnly,
+        // Move=No where the DC->DS arc does not exist — anomalous by construction,
+        // so the digest treats a non-empty list as RED on first occurrence.
+        incoherent: itemReport.policyIncoherent,
+        changed: {
+          count: policyChanged.length,
+          byTransition: policyChanged.reduce((d: Record<string, number>, c) => {
+            const k = `${c.field}: ${c.from} -> ${c.to}`;
+            d[k] = (d[k] || 0) + 1;
+            return d;
+          }, {}),
+          toNo: policyChanged.filter((c) => c.to === "No").map((c) => `${c.sku}:${c.field}`),
+          all: policyChanged,
+        },
+      },
       invAtChanged: (() => {
         const ch = Object.keys(master)
           .filter((sku) => currentMaster[sku] &&
