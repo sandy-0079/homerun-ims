@@ -394,6 +394,80 @@ export function assessNight(input: Input) {
     });
   }
 
+  // ── Purchase / Move ────────────────────────────────────────────────────────
+  // ⚠⚠ RED ON FIRST OCCURRENCE, and the reasoning is the floors-miss reasoning, not
+  // taste: `Move` governs the DC->DS arc, so setting it to No on a SKU that is not
+  // DC-inventorised is VACUOUS. Somebody meant "DC-only" and will instead get six
+  // dark stores stocked with an item meant to sit at the DC (DS-inv), or nothing at
+  // all (Supplier). There is no legitimate reason to set that combination, so it is
+  // anomalous BY CONSTRUCTION and can essentially never fire spuriously — which is
+  // exactly what earns a first-occurrence red rather than a threshold.
+  //
+  // It is also the only signal for this class of mistake: the flags themselves do
+  // nothing wrong, the engine does nothing wrong, and the resulting Min/Max looks
+  // entirely ordinary. Nothing else in the chain would ever mention it.
+  const incoherent = input.catalogue?.policy?.incoherent;
+  if (Array.isArray(incoherent) && incoherent.length) {
+    flags.push({
+      key: "policyIncoherent",
+      level: "red",
+      detail: `${incoherent.length} SKU(s) have Move=No but are not DC-inventorised, so Move does nothing — ` +
+        `they will be stocked at the dark stores anyway. Fix Inventorised At in Zoho: ` +
+        incoherent.map((c: any) => `${c?.sku} (${c?.invAt})`).join(", "),
+    });
+  }
+
+  // ⚠ AMBER: a value outside BOTH Zoho vocabularies (Purchase is ON/OFF, Move is
+  // Yes/No). It is treated as Yes — fail open, so nothing is zeroed — but it means a
+  // field was created as the wrong type or an option was renamed, and the flag is
+  // silently doing nothing. Amber rather than red because the outcome is inert.
+  const unrecognised = input.catalogue?.policy?.unrecognised;
+  if (Array.isArray(unrecognised) && unrecognised.length) {
+    flags.push({
+      key: "policyUnrecognised",
+      level: "amber",
+      detail: `${unrecognised.length} unreadable Purchase/Move value(s) — read as Yes, so nothing was zeroed, ` +
+        `but the flag is inert until fixed: ` +
+        unrecognised.slice(0, 10).map((u: any) => `${u?.sku}.${u?.field}="${u?.value}"`).join(", "),
+    });
+  }
+
+  // ⚠ GREEN, and it never moves the level — same reasoning as the deactivation count
+  // and the floor-sheet duplicates. Ops flips these deliberately and nobody has
+  // measured what a normal night looks like, so any amber threshold would be a guess
+  // that fires on routine work and discredits the reds beside it. Revisit once
+  // digestHistory has a few weeks of it.
+  //
+  // ⚠ Emitted ONLY when there is something to say. Before ops populates Zoho every
+  // count is zero, and a line reading "0 from Zoho, 0 No" every morning is noise.
+  // Once it is populated, `fromZoho` is the api_name detector: both fields carry a
+  // Zoho DEFAULT, so a wrong api_name fails invisibly as that default — a 0 here on a
+  // morning after ops has set values IS the bug.
+  const pol = input.catalogue?.policy;
+  const polNo = pol?.no ?? {};
+  const polZoho = pol?.fromZoho ?? {};
+  const polChanged = num(pol?.changed?.count) ?? 0;
+  const dcOnlyList: string[] = Array.isArray(pol?.dcOnly) ? pol.dcOnly : [];
+  const anyPolicy = (num(polNo.purchase) ?? 0) + (num(polNo.move) ?? 0) + polChanged
+    + (num(polZoho.purchase) ?? 0) + (num(polZoho.move) ?? 0);
+  if (anyPolicy > 0) {
+    const toNo: string[] = Array.isArray(pol?.changed?.toNo) ? pol.changed.toNo : [];
+    const bits = [
+      `Purchase=No ${num(polNo.purchase) ?? 0}`,
+      `Move=No ${num(polNo.move) ?? 0}`,
+      `DC-only ${dcOnlyList.length}`,
+      `read from Zoho ${num(polZoho.purchase) ?? 0}/${num(polZoho.move) ?? 0} (purchase/move)`,
+    ];
+    const changedBit = polChanged > 0
+      ? ` · ${polChanged} changed overnight${toNo.length ? `, turned off: ${toNo.slice(0, 12).join(", ")}${toNo.length > 12 ? ` … (+${toNo.length - 12} more)` : ""}` : ""}`
+      : "";
+    flags.push({
+      key: "policy",
+      level: "green",
+      detail: `policy — ${bits.join(" · ")}${changedBit}`,
+    });
+  }
+
   // The engine ran, but on older demand than what is published.
   if (demandThrough && publishedThrough && demandThrough < publishedThrough) {
     flags.push({
@@ -497,6 +571,8 @@ const ICON: Record<Level, string> = { green: "✅", amber: "🟡", red: "🔴" }
 /** Subject-line wording for a flag, for the case where no stage failed. */
 const FLAG_LABEL: Record<string, string> = {
   toSupplier: "SKUs moved to Supplier",
+  policyIncoherent: "Move=No on a non-DC SKU",
+  policyUnrecognised: "unreadable Purchase/Move value",
   unknownSku: "unknown-SKU rate rising",
   targetsBehind: "targets behind published demand",
 };

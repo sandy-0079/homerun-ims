@@ -130,6 +130,43 @@ console.log("\n\n" + "=".repeat(78));
 console.log("SYNTHETIC — these are NOT the live state, they show what a bad morning reads like");
 console.log("=".repeat(78) + "\n");
 
+// ⚠ The preview tool has to learn about each new block, or it can never preview the
+// block it exists to preview — the same gap that had to be closed for `toAudit`.
+// Policy fields are absent from the live status row until sync-catalogue has run with
+// them, so these are the only way to READ the rendered wording before it is mailed.
+scenario("P1. Move=No on a non-DC SKU (RED — the flag does nothing, six DSes get stocked)", (s) => {
+  s.catalogue.policy = {
+    no: { purchase: 1, move: 4 },
+    fromZoho: { purchase: 6, move: 6 },
+    dcOnly: ["G9NYZ", "TJSTU", "KSK9H"],
+    incoherent: [{ sku: "2TUYR", invAt: "DS" }, { sku: "T9QCX", invAt: "Supplier" }],
+    changed: { count: 5, toNo: ["G9NYZ:move", "TJSTU:move", "KSK9H:move", "22R5S:purchase"] },
+  };
+});
+
+scenario("P2. An unreadable Purchase/Move value (amber — inert, not destructive)", (s) => {
+  s.catalogue.policy = {
+    no: { purchase: 0, move: 0 },
+    fromZoho: { purchase: 0, move: 2540 },
+    dcOnly: [],
+    unrecognised: [
+      { sku: "22R5S", field: "purchase", value: "false" },
+      { sku: "236JR", field: "purchase", value: "false" },
+    ],
+    changed: { count: 0, toNo: [] },
+  };
+});
+
+scenario("P3. A healthy morning with policy in use (all GREEN — the steady state)", (s) => {
+  s.catalogue.policy = {
+    no: { purchase: 2, move: 7 },
+    fromZoho: { purchase: 2573, move: 2573 },
+    dcOnly: ["G9NYZ", "TJSTU", "KSK9H", "VSE36", "DBQC2", "5PDDQ", "KSK9H"],
+    incoherent: [],
+    changed: { count: 1, toNo: ["VSE36:move"] },
+  };
+});
+
 scenario("A. Floors missed one night (red on first miss, cron never fired)", (s) => {
   const d = new Date(Date.parse(`${s.floors.lastOkNight}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
   s.floors.lastOkNight = d;

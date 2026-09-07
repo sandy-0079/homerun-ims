@@ -741,3 +741,75 @@ describe("the TO-skip block in the rendered email", () => {
     expect(text).not.toContain("TO lines skipped");
   });
 });
+
+// ── Purchase / Move ──────────────────────────────────────────────────────────
+describe("Purchase / Move policy flags", () => {
+  it("is silent before ops populates Zoho — no line at all", () => {
+    // Every count is zero until ops sets a value, and a green line reading
+    // "0 from Zoho, 0 No" every single morning is noise that dilutes the reds.
+    const v = assessNight(healthy());
+    expect(v.flags.some((f: any) => f.key === "policy")).toBe(false);
+    expect(v.level).toBe("green");
+  });
+
+  it("⚠ goes RED on the FIRST Move=No on a non-DC SKU", () => {
+    // Anomalous by construction: Move governs the DC->DS arc, so on a DS-direct or
+    // Supplier SKU it does nothing and the person who set it will get six dark stores
+    // stocked instead of a DC-only item. Nothing else in the chain mentions it, and
+    // the resulting Min/Max looks entirely ordinary.
+    const i = healthy();
+    i.catalogue.policy = { incoherent: [{ sku: "ABC12", invAt: "DS" }] };
+    const v = assessNight(i);
+    expect(v.level).toBe("red");
+    const flag = v.flags.find((f: any) => f.key === "policyIncoherent");
+    expect(flag.level).toBe("red");
+    expect(flag.detail).toContain("ABC12");
+    expect(flag.detail).toContain("DS");
+    // It must reach the subject line, or a red nobody sees is not a red.
+    expect(renderDigest(v).subject).toContain("Move=No on a non-DC SKU");
+  });
+
+  it("raises amber for a value outside both vocabularies, without zeroing anything", () => {
+    const i = healthy();
+    i.catalogue.policy = { unrecognised: [{ sku: "ABC12", field: "move", value: "false" }] };
+    const v = assessNight(i);
+    expect(v.level).toBe("amber");
+    const flag = v.flags.find((f: any) => f.key === "policyUnrecognised");
+    expect(flag.detail).toContain('ABC12.move="false"');
+    expect(flag.detail).toContain("read as Yes");
+  });
+
+  it("reports real policy state GREEN and never moves the level", () => {
+    // Same reasoning as the deactivation count and the floor-sheet duplicates: ops
+    // flips these deliberately, nobody has measured a normal night, so any threshold
+    // would be a guess that fires on routine work.
+    const i = healthy();
+    i.catalogue.policy = {
+      no: { purchase: 3, move: 2 },
+      fromZoho: { purchase: 5, move: 5 },
+      dcOnly: ["DCON1", "DCON2"],
+      changed: { count: 2, toNo: ["ABC12:move", "XYZ99:purchase"] },
+    };
+    const v = assessNight(i);
+    expect(v.level).toBe("green");
+    const flag = v.flags.find((f: any) => f.key === "policy");
+    expect(flag.level).toBe("green");
+    expect(flag.detail).toContain("Purchase=No 3");
+    expect(flag.detail).toContain("Move=No 2");
+    expect(flag.detail).toContain("DC-only 2");
+    expect(flag.detail).toContain("read from Zoho 5/5");
+    expect(flag.detail).toContain("ABC12:move");
+    // ⚠ A green flag must be filtered OUT of the subject, or it rides into an amber
+    // subject caused by something else and reads as a second fault.
+    expect(renderDigest(v).subject).not.toContain("policy");
+  });
+
+  it("survives a malformed policy block rather than throwing", () => {
+    // The digest borrows these rows; a malformed one must degrade to "no line".
+    for (const bad of [null, undefined, "nope", 7, { incoherent: "x", unrecognised: 3, no: null }]) {
+      const i = healthy();
+      i.catalogue.policy = bad;
+      expect(() => assessNight(i)).not.toThrow();
+    }
+  });
+});
