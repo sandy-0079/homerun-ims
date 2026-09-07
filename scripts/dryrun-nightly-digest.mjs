@@ -134,12 +134,12 @@ console.log("=".repeat(78) + "\n");
 // block it exists to preview — the same gap that had to be closed for `toAudit`.
 // Policy fields are absent from the live status row until sync-catalogue has run with
 // them, so these are the only way to READ the rendered wording before it is mailed.
-scenario("P1. Move=No on a non-DC SKU (RED — the flag does nothing, six DSes get stocked)", (s) => {
+scenario("P1. Move=No on a non-DC SKU (GREEN — informational; ops sets these deliberately)", (s) => {
   s.catalogue.policy = {
     no: { purchase: 1, move: 4 },
     fromZoho: { purchase: 6, move: 6 },
     dcOnly: ["G9NYZ", "TJSTU", "KSK9H"],
-    incoherent: [{ sku: "2TUYR", invAt: "DS" }, { sku: "T9QCX", invAt: "Supplier" }],
+    moveNoEffect: [{ sku: "2TUYR", invAt: "DS" }, { sku: "T9QCX", invAt: "Supplier" }],
     changed: { count: 5, toNo: ["G9NYZ:move", "TJSTU:move", "KSK9H:move", "22R5S:purchase"] },
   };
 });
@@ -162,7 +162,7 @@ scenario("P3. A healthy morning with policy in use (all GREEN — the steady sta
     no: { purchase: 2, move: 7 },
     fromZoho: { purchase: 2573, move: 2573 },
     dcOnly: ["G9NYZ", "TJSTU", "KSK9H", "VSE36", "DBQC2", "5PDDQ", "KSK9H"],
-    incoherent: [],
+    moveNoEffect: [],
     changed: { count: 1, toNo: ["VSE36:move"] },
   };
 });

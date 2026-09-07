@@ -614,10 +614,20 @@ expressed itself as the zeroes the other two already produce.
 arcs we use*. So `Supplier` ignores both, and a **DS-inventorised SKU ignores `Move`** — that flag
 governs the DC→DS arc and the arc does not exist there. **One arc, one switch.** `policyOf()` forces
 `move` true wherever it cannot act, so no caller has to remember the rule.
-- Consequence, and it bit on the very first bulk file: **12 DS-inv SKUs were given `Move=No`**. It does
-  nothing, they stay stocked at all six stores, and the resulting Min/Max looks entirely ordinary. The
-  digest goes **RED on the first occurrence** — anomalous by construction, so it can essentially never
-  fire spuriously (the floors-miss reasoning). **Leave `Move` blank on DS-inv and Supplier SKUs.**
+- **⚠⚠ THIS WAS SHIPPED AS A RED ALERT AND THAT WAS WRONG — corrected the same day, and the mistake is
+  worth more than the fix.** The argument was the floors-miss argument: *"`Move=No` on a non-DC SKU is
+  anomalous BY CONSTRUCTION, there is no legitimate reason to set it, so it can essentially never fire
+  spuriously — which earns a first-occurrence red."* **The very first real dataset falsified it: ops had
+  set 11 deliberately.** `Move` genuinely does not matter for a DS-direct SKU whichever way it is set.
+  - **And the dangerous case is INDISTINGUISHABLE from the benign one.** "Meant DC-only, got
+    `inventorisedAt` wrong" and "set `Move=No` on a DS-inv SKU, which does nothing" look identical in
+    the data; only a human knows the intent. A nightly red nobody can action except by editing Zoho to
+    silence it is the **Sunday-row-count mistake**, and it would discredit the reds beside it.
+  - Now **green and informational** (`policy.moveNoEffect`), still listed because it is the only place a
+    mis-set `inventorisedAt` would ever surface. **Generalisable: "no legitimate reason to set this" is
+    a claim about OPS BEHAVIOUR, not about the code — so it cannot be asserted from the code, and it is
+    exactly the kind of claim the first real dataset can refute.** Prefer green until measured.
+  - Still worth doing: **leave `Move` blank on DS-inv and Supplier SKUs** — it does nothing there.
 - `Purchase=No` on a DS-inv SKU necessarily also stops it selling — one number drives both the PO and
   the shelf. **13 SKUs, accepted limitation.** A `Sell` flag would not have fixed it.
 

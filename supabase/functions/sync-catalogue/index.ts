@@ -269,9 +269,10 @@ Deno.serve(async (req) => {
         no: itemReport.policyNo,
         unrecognised: itemReport.policyUnrecognised,
         dcOnly: itemReport.dcOnly,
-        // Move=No where the DC->DS arc does not exist — anomalous by construction,
-        // so the digest treats a non-empty list as RED on first occurrence.
-        incoherent: itemReport.policyIncoherent,
+        // Move=No where the DC->DS arc does not exist, so the flag has no effect.
+        // INFORMATIONAL — ops sets these deliberately (11 on day one), so the digest
+        // reports it green. See catalogueMap.ts for why it is not an alert.
+        moveNoEffect: itemReport.policyMoveNoEffect,
         changed: {
           count: policyChanged.length,
           byTransition: policyChanged.reduce((d: Record<string, number>, c) => {

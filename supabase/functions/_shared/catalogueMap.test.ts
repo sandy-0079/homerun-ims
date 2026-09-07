@@ -414,7 +414,11 @@ describe("mapItemsToMaster — Purchase / Move policy", () => {
     expect(mapItemsToMaster(items, {}).report.dcOnly).toEqual(["DCONLY"]);
   });
 
-  it("⚠ flags Move=No where the DC->DS arc does not exist — the RED case", () => {
+  it("lists Move=No where the DC->DS arc does not exist — informational, not a fault", () => {
+    // ⚠ Called "the RED case" until 2026-09-07, when the first real dataset had 11 set
+    // deliberately. Move genuinely does not matter for a DS-direct SKU either way, so
+    // this is reported green. The list is still worth having: it is the only place a
+    // mis-set inventorisedAt would surface.
     // Someone intended DC-only; because the SKU is DS-direct, Move is vacuous and they
     // will instead get six dark stores stocked. No legitimate reason to set it.
     const items = [
@@ -422,18 +426,18 @@ describe("mapItemsToMaster — Purchase / Move policy", () => {
       item({ sku: "SUPP", cf_inventorised_at: "Supplier", cf_move: "No" }),
     ];
     const { report } = mapItemsToMaster(items, {});
-    expect(report.policyIncoherent).toEqual([
+    expect(report.policyMoveNoEffect).toEqual([
       { sku: "DSINV", invAt: "DS" },
       { sku: "SUPP", invAt: "Supplier" },
     ]);
     expect(report.dcOnly).toEqual([]);
   });
 
-  it("does NOT flag it when Purchase is also No — intent and outcome agree", () => {
+  it("does NOT list it when Purchase is also No — intent and outcome agree", () => {
     // With both off the SKU is 0/0 everywhere regardless of topology, so nothing is
     // harmed and there is nothing to warn about.
     const items = [item({ sku: "DSINV", cf_inventorised_at: "DS", cf_move: "No", cf_purchase_status: "OFF" })];
-    expect(mapItemsToMaster(items, {}).report.policyIncoherent).toEqual([]);
+    expect(mapItemsToMaster(items, {}).report.policyMoveNoEffect).toEqual([]);
   });
 
   it("carries policy forward for a SKU absent from the Zoho pull", () => {

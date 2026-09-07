@@ -752,21 +752,31 @@ describe("Purchase / Move policy flags", () => {
     expect(v.level).toBe("green");
   });
 
-  it("⚠ goes RED on the FIRST Move=No on a non-DC SKU", () => {
-    // Anomalous by construction: Move governs the DC->DS arc, so on a DS-direct or
-    // Supplier SKU it does nothing and the person who set it will get six dark stores
-    // stocked instead of a DC-only item. Nothing else in the chain mentions it, and
-    // the resulting Min/Max looks entirely ordinary.
+  it("reports Move=No on a non-DC SKU GREEN, never as an alert", () => {
+    // ⚠ This was RED for ~20 minutes on 2026-09-07. The argument — "anomalous by
+    // construction, so it can never fire spuriously" — was falsified by the first real
+    // dataset, which had 11 set deliberately. `Move` genuinely does not matter for a
+    // DS-direct SKU either way, and the dangerous case ("meant DC-only, got
+    // inventorisedAt wrong") is INDISTINGUISHABLE from the benign one here.
     const i = healthy();
-    i.catalogue.policy = { incoherent: [{ sku: "ABC12", invAt: "DS" }] };
+    i.catalogue.policy = { moveNoEffect: [{ sku: "ABC12", invAt: "DS" }] };
     const v = assessNight(i);
-    expect(v.level).toBe("red");
-    const flag = v.flags.find((f: any) => f.key === "policyIncoherent");
-    expect(flag.level).toBe("red");
+    expect(v.level).toBe("green");
+    const flag = v.flags.find((f: any) => f.key === "policyMoveNoEffect");
+    expect(flag.level).toBe("green");
     expect(flag.detail).toContain("ABC12");
-    expect(flag.detail).toContain("DS");
-    // It must reach the subject line, or a red nobody sees is not a red.
-    expect(renderDigest(v).subject).toContain("Move=No on a non-DC SKU");
+    expect(flag.detail).toContain("no effect");
+    // A green flag must never name the subject, or it rides into someone else's amber.
+    expect(renderDigest(v).subject).not.toContain("ABC12");
+    expect(renderDigest(v).subject).not.toContain("Move=No");
+  });
+
+  it("truncates the name list, because 11+ codes joined is a wall in Gmail", () => {
+    const i = healthy();
+    i.catalogue.policy = { moveNoEffect: Array.from({ length: 20 }, (_, n) => ({ sku: `S${n}`, invAt: "DS" })) };
+    const flag = assessNight(i).flags.find((f: any) => f.key === "policyMoveNoEffect");
+    expect(flag.detail).toContain("more)");
+    expect(flag.detail).not.toContain("S19");
   });
 
   it("raises amber for a value outside both vocabularies, without zeroing anything", () => {
@@ -806,7 +816,7 @@ describe("Purchase / Move policy flags", () => {
 
   it("survives a malformed policy block rather than throwing", () => {
     // The digest borrows these rows; a malformed one must degrade to "no line".
-    for (const bad of [null, undefined, "nope", 7, { incoherent: "x", unrecognised: 3, no: null }]) {
+    for (const bad of [null, undefined, "nope", 7, { moveNoEffect: "x", unrecognised: 3, no: null }]) {
       const i = healthy();
       i.catalogue.policy = bad;
       expect(() => assessNight(i)).not.toThrow();

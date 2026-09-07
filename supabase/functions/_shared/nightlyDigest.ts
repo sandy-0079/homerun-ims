@@ -395,25 +395,36 @@ export function assessNight(input: Input) {
   }
 
   // ── Purchase / Move ────────────────────────────────────────────────────────
-  // ⚠⚠ RED ON FIRST OCCURRENCE, and the reasoning is the floors-miss reasoning, not
-  // taste: `Move` governs the DC->DS arc, so setting it to No on a SKU that is not
-  // DC-inventorised is VACUOUS. Somebody meant "DC-only" and will instead get six
-  // dark stores stocked with an item meant to sit at the DC (DS-inv), or nothing at
-  // all (Supplier). There is no legitimate reason to set that combination, so it is
-  // anomalous BY CONSTRUCTION and can essentially never fire spuriously — which is
-  // exactly what earns a first-occurrence red rather than a threshold.
+  // ⚠⚠ THIS WAS RED FOR ~20 MINUTES ON 2026-09-07 AND THAT WAS WRONG. Recorded
+  // because the mistake is instructive. The argument was the floors-miss argument —
+  // "Move=No on a non-DC SKU is anomalous BY CONSTRUCTION, there is no legitimate
+  // reason to set it, so it can essentially never fire spuriously, which earns a
+  // first-occurrence red." The very first real dataset falsified it: ops had set
+  // **11** deliberately, and `Move` genuinely does not matter for a DS-direct SKU
+  // whichever way it is set.
   //
-  // It is also the only signal for this class of mistake: the flags themselves do
-  // nothing wrong, the engine does nothing wrong, and the resulting Min/Max looks
-  // entirely ordinary. Nothing else in the chain would ever mention it.
-  const incoherent = input.catalogue?.policy?.incoherent;
-  if (Array.isArray(incoherent) && incoherent.length) {
+  // ⚠ AND THE TWO CASES ARE INDISTINGUISHABLE FROM THE DATA. "Meant DC-only, got
+  // `inventorisedAt` wrong" and "set Move=No on a DS-inv SKU, which does nothing" look
+  // identical here; only a human knows the intent. A nightly red nobody can action
+  // except by editing Zoho to silence it is the Sunday-row-count mistake, and it would
+  // discredit the reds sharing the email.
+  //
+  // So: GREEN and informational. Still reported, because it is the only place a
+  // mis-set `inventorisedAt` would ever surface — the flags do nothing wrong, the
+  // engine does nothing wrong, and the resulting Min/Max looks entirely ordinary.
+  // The engine already ignores the flag (`policyOf` forces move=true off the DC arc),
+  // so nothing is mis-stocked by it either way.
+  const noEffect = input.catalogue?.policy?.moveNoEffect;
+  if (Array.isArray(noEffect) && noEffect.length) {
+    const shown = noEffect.slice(0, DUP_NAMES_SHOWN);
     flags.push({
-      key: "policyIncoherent",
-      level: "red",
-      detail: `${incoherent.length} SKU(s) have Move=No but are not DC-inventorised, so Move does nothing — ` +
-        `they will be stocked at the dark stores anyway. Fix Inventorised At in Zoho: ` +
-        incoherent.map((c: any) => `${c?.sku} (${c?.invAt})`).join(", "),
+      key: "policyMoveNoEffect",
+      level: "green",
+      detail: `${noEffect.length} SKU(s) have Move=No where it has no effect — Move only governs the ` +
+        `DC->DS arc, and these are not DC-inventorised, so they are stocked at the dark stores as ` +
+        `normal. Harmless; if you meant DC-only, set Inventorised At = DC in Zoho: ` +
+        shown.map((c: any) => `${c?.sku} (${c?.invAt})`).join(", ") +
+        (noEffect.length > shown.length ? ` … (+${noEffect.length - shown.length} more)` : ""),
     });
   }
 
@@ -571,7 +582,7 @@ const ICON: Record<Level, string> = { green: "✅", amber: "🟡", red: "🔴" }
 /** Subject-line wording for a flag, for the case where no stage failed. */
 const FLAG_LABEL: Record<string, string> = {
   toSupplier: "SKUs moved to Supplier",
-  policyIncoherent: "Move=No on a non-DC SKU",
+  // policyMoveNoEffect is GREEN and so never names the subject — see the flag.
   policyUnrecognised: "unreadable Purchase/Move value",
   unknownSku: "unknown-SKU rate rising",
   targetsBehind: "targets behind published demand",

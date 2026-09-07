@@ -99,13 +99,17 @@ export function mapItemsToMaster(items: any[], currentMaster: Record<string, any
   // only when the full thing is expensive AND reproducible later; this is neither).
   const policyUnrecognised: { sku: string; field: string; value: string }[] = [];
   const dcOnly: string[] = [];
-  // ⚠ THE RED CASE: Move=No where the DC->DS arc does not exist. `Move` governs that
-  // arc, so it is VACUOUS for a DS-direct or Supplier SKU — meaning someone intended
-  // "DC-only" and will instead get six dark stores stocked (DS-inv) or nothing at all
-  // (Supplier). Anomalous by construction: there is no legitimate reason to set it, so
-  // it can essentially never fire spuriously, which is what earns a first-occurrence
-  // red rather than an amber.
-  const policyIncoherent: { sku: string; invAt: string }[] = [];
+  // Move=No where the DC->DS arc does not exist, so the flag has NO EFFECT. Reported
+  // because it is the only place a mis-set `inventorisedAt` would surface, but purely
+  // INFORMATIONAL — see the digest for why it is not an alert.
+  //
+  // ⚠ IT WAS RED FOR ~20 MINUTES ON 2026-09-07 AND THAT WAS WRONG. The argument was
+  // "no legitimate reason to set it, so it can never fire spuriously" — falsified by
+  // the very first real dataset, which had 11 set deliberately. The dangerous case
+  // ("meant DC-only, got inventorisedAt wrong") and the benign one are INDISTINGUISHABLE
+  // from the data, so only a human can tell them apart. A nightly red nobody can
+  // action without editing Zoho to silence it is the Sunday-row-count mistake.
+  const policyMoveNoEffect: { sku: string; invAt: string }[] = [];
 
   // Zoho value -> stored value -> "Yes". The stored fallback matters: it is what stops
   // `sync-catalogue` STRIPPING a flag set by hand through the SKU Master CSV before
@@ -151,10 +155,11 @@ export function mapItemsToMaster(items: any[], currentMaster: Record<string, any
     const invAtLower = inventorisedAt.toString().trim().toLowerCase();
     const moveIsNo = isPolicyNo(master[sku].move);
     if (moveIsNo && invAtLower === "dc") dcOnly.push(sku);
-    // Only flagged when Purchase is still Yes: with Purchase=No too, the SKU is 0/0
-    // everywhere anyway, so intent and outcome agree and nothing is harmed.
+    // Only listed when Purchase is still Yes: with Purchase=No too the SKU is 0/0
+    // everywhere anyway, so intent and outcome agree and there is nothing to say.
+    // That exclusion is why the live 58 Supplier SKUs (both flags off) never appear.
     if (moveIsNo && invAtLower !== "dc" && !isPolicyNo(master[sku].purchase)) {
-      policyIncoherent.push({ sku, invAt: inventorisedAt });
+      policyMoveNoEffect.push({ sku, invAt: inventorisedAt });
     }
   }
 
@@ -173,7 +178,7 @@ export function mapItemsToMaster(items: any[], currentMaster: Record<string, any
       invAtFromZoho, invAtFromStored, newSkusDefaulted,
       absentFromZoho,
       policyFromZoho, policyFromStored, policyNo, policyUnrecognised,
-      dcOnly, policyIncoherent,
+      dcOnly, policyMoveNoEffect,
     },
   };
 }
