@@ -22,6 +22,15 @@ function runSim(invoiceData, results, overrides, simDates) {
   Object.entries(results).forEach(([skuId, res]) => {
     // Supplier-inventorised SKUs are never stocked in our network — don't simulate OOS for them.
     if ((res.meta?.inventorisedAt || "DS").toLowerCase() === "supplier") return;
+    // ⚠ DC-only SKUs (Move=No) are stocked at the DC alone, so all six DS read 0/0.
+    // Simulating them would score every store as permanently out of stock and drag
+    // the service level down for items no store is meant to carry. Same reasoning as
+    // the Supplier skip above, and independent of the engine's zeroing.
+    // Inlined rather than importing skuPolicy.js for the same reason DS_LIST is
+    // duplicated at the top of this file: it is a Web Worker and cannot use module
+    // imports. Keep in step with policyOf() by hand.
+    if ((res.meta?.inventorisedAt || "DS").toLowerCase() === "dc"
+        && String(res.meta?.move ?? "").trim().toLowerCase() === "no") return;
     DS_LIST.forEach(dsId => {
       const toolMin = res.stores[dsId]?.min || 0;
       const toolMax = res.stores[dsId]?.max || 0;
@@ -97,6 +106,15 @@ function runActualStockSim(invoiceData, results, openingStock, singleDate) {
   Object.entries(results).forEach(([skuId, res]) => {
     // Supplier-inventorised SKUs are never stocked in our network — don't simulate OOS for them.
     if ((res.meta?.inventorisedAt || "DS").toLowerCase() === "supplier") return;
+    // ⚠ DC-only SKUs (Move=No) are stocked at the DC alone, so all six DS read 0/0.
+    // Simulating them would score every store as permanently out of stock and drag
+    // the service level down for items no store is meant to carry. Same reasoning as
+    // the Supplier skip above, and independent of the engine's zeroing.
+    // Inlined rather than importing skuPolicy.js for the same reason DS_LIST is
+    // duplicated at the top of this file: it is a Web Worker and cannot use module
+    // imports. Keep in step with policyOf() by hand.
+    if ((res.meta?.inventorisedAt || "DS").toLowerCase() === "dc"
+        && String(res.meta?.move ?? "").trim().toLowerCase() === "no") return;
     DS_LIST.forEach(dsId => {
       const toolMin = res.stores[dsId]?.min || 0;
       const toolMax = res.stores[dsId]?.max || 0;

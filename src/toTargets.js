@@ -136,6 +136,20 @@ export function assessTargetsChange({ built, live, maxDropPct = MAX_TARGETS_DROP
  * @param merged  engine results AFTER mergeCoreOverrides
  * @param dsList  DS_LIST — controls which stores appear, and their order
  */
+// ⚠⚠ NEVER PUT A `DC` KEY IN `perDS`. Verified in homerun-to on 2026-09-07:
+// `solver.js` does `const dsIds = Object.keys(perDS)` — it iterates the KEYS, not a
+// hardcoded DS list — so a DC entry would make the TO tool render a DC row and try to
+// allocate a DC->DC transfer. That was inert until the DC became a first-class
+// location for floors (`newSKUQty[sku].DC`) and ceilings (`DC Cap`), so the instinct
+// to "add DC everywhere for symmetry" now reaches it. `dsList` must stay DS-only.
+//
+// ⚠ A DC-only SKU (Move=No) is still EMITTED here, with every perDS entry at 0/0, and
+// that is correct rather than an oversight: it is byte-identical to how Dead Stock
+// SKUs have been published since May 2026, and the solver handles it — `triggered =
+// cur <= min` with min 0 gives `req = max(0, 0 - cur - it) = 0`, and `cur > 0` does not
+// trigger at all. Filtering them out instead would shrink the target count into
+// assessTargetsChange's >20% collapse guard, which exists to catch an INPUT that
+// failed to load, not a policy change.
 export function buildToTargets(merged, dsList) {
   const targets = {};
   for (const [sku, r] of Object.entries(merged || {})) {

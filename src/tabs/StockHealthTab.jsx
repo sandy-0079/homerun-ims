@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { DS_LIST } from "../engine/index.js";
+import { policyOf } from "../skuPolicy.js";
 import { supabase } from "../supabase.js";
 
 const SYNC_COOLDOWN_MINS = 15;
@@ -79,6 +80,16 @@ function getHealthTag(ecs, min, max, ros) {
 // never diverge — the override must live in exactly one place.
 function applyDCReqCovered(tag, { sku, ecs, min, res, activeStockData }) {
   if (tag !== "ec" && tag !== "critical") return tag;
+  // ⚠⚠ A DC-ONLY SKU CAN NEVER BE "DS Req Covered", and without this it ALWAYS was.
+  // With all six DS at 0/0 the tag fires down BOTH paths below: where a DS stock
+  // record exists, `dsEcs <= dsMin` is 0 <= 0, so hasShortDS is true with
+  // dsReorderSum 0 and condB (`ecs >= 0`) is unconditionally true; where no record
+  // exists, `continue` skips all six and condA (`!hasShortDS`) is true. So the DC
+  // team would never see Critical for a delicate item that had run out — the one
+  // SKU class where the DC is the ONLY place it can be sold. No DS can cover a DC
+  // that sells direct.
+  const pol = policyOf(res?.meta);
+  if (pol.invAt === "dc" && !pol.move) return tag;
   let dsExcessSum = 0, dsReorderSum = 0, hasShortDS = false;
   for (const ds of DS_LIST) {
     const dsLive = activeStockData[sku]?.[ds];
@@ -385,8 +396,15 @@ export default function StockHealthTab({
       const { stockOnHand, afs, ecs } = getLive(activeStockData[sku]?.[selectedDS]);
       const min = minMax.min || 0;
       const max = minMax.max || 0;
+      // ⚠ For a DC-only SKU the DC target comes from TOTAL SKU demand, so the ROS
+      // beside it must share that basis. Summing per-DS dailyAvg would understate it:
+      // attribution leaves DC-fulfilled rows with an unmapped pincode labelled
+      // "DC01", and `tags90` never reads those, so they are missing from every DS
+      // series. The engine already stored the right rate on dcDetails.
       const ros = isDC
-        ? DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0)
+        ? (minMax.dcDetails?.dcOnly
+            ? (minMax.dcDetails.dailyAvg || 0)
+            : DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0))
         : (res.stores?.[selectedDS]?.dailyAvg || 0);
       let tag = getHealthTag(ecs, min, max, ros);
       // DC tab only: reclassify Critical/Low-Stock to "DS Req Covered" when no supplier PO is needed.
