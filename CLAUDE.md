@@ -162,6 +162,12 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
   - Both functions do a **fresh read immediately before writing** to prevent race condition from parallel runs.
   - Sync functions only read/write `team_data/global`. They never touch `team_data/invoice_data`.
 - **team_data row separation:** `invoiceData` lives in `team_data/invoice_data` (written once on CSV upload). All other app data + sync data lives in `team_data/global`. This keeps the global payload ~1-2MB vs ~7MB, preventing Supabase Disk IO budget exhaustion from hourly syncs.
+- **⚠ Input sizes drift fast — measured live 2026-09-07, and several figures below are older.**
+  `invoiceData` **94,819 rows · 90 dates · 2026-06-09 → 2026-09-06** · `skuMaster` **2,573** ·
+  `newSKUQty` **1,869** · `priceData` **2,185** · `skuCeiling` **815** (0 at ship on 2026-08-15 — ops
+  adoption has been strong) · `deadStock` **20** · `coreOverrides` **0** · attribution `shippingCode`.
+  Re-measure with `scripts/snapshot-engine-inputs.mjs` rather than trusting any number in this file;
+  it prints all of them and freezes them for a diff.
 - **Row inventory (verified live 2026-08-05).** `team_data` — **8 rows**: `global` (4.3MB), `invoice_data`
   (8.6MB), `invoice_sync_buffer` (in-flight chunks for the 1–2 dates being pulled, keyed
   `date|round|offset` so a re-run of a chunk is idempotent; **nothing else reads it** — sits at **32
@@ -175,7 +181,9 @@ HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool c
   night until ~28 Sep 2026), **`sku_floors_backup_20260731`** (159KB, taken at the Stage 8 cutover),
   `catalogue_backup_20260729`
   (skuMaster/priceData — **matters more than the invoice backup**, see Stage 7). `params`: `global`,
-  `paramsBackup`, `plywoodNetworkConfig`, `plywoodNetworkV2Config`, `networkConfigs`, `pincodeMap`
+  `paramsBackup`, `plywoodNetworkConfig`, `plywoodNetworkV2Config`, `networkConfigs`, `pincodeMap`,
+  **`dsCapacities`** (a FIFTH own-row config this list omitted until 2026-09-07 — `loadParamConfigRows`
+  attaches it, so verify against that function rather than this list)
   (attribution), `toTargets`, `toAudit`, `toSnapshots`, `zohoItemIds`, `binLocations`, `syncLock`,
   `invoiceSyncStatus`, `invoiceSyncCursor`, `uploadProvenance` (**new 2026-07-30** — when each input was
   last set BY HAND; the browser is its only writer, syncs record their own times in their own status
@@ -322,7 +330,12 @@ Post-blend order (strict), **re-derived from `runEngine.js` 2026-08-26.** Inside
 New DS Floor → Rounding (`Math.ceil`, and `preFloor*` captured here) → SKU Floor Override. Then as
 passes over the **FINISHED `stores` map**, before the DC is derived from it: **SKU Ceiling** →
 **Dead Stock**. Then as later passes over `res`: **DS Seed** → **Active-only** →
-**Inventorised-At normalization**.
+**Purchase/Move policy** → **Inventorised-At normalization**.
+
+**The DC cell has its own ladder** (2026-09-07): branch (Dead Stock / **DC-only** / floored / rate /
+network) → **DC Floor** (per-field max) → **DC Cap** (clamps both) → DS-Seed augmentation → **policy
+(`Purchase=No` ⇒ 0)** → Inventorised-At. ⚠ **The DC-only branch MUST precede `isFlooredSKU`** — see
+the Purchase/Move section.
 - ⚠ **The two `stores`-map passes are NOT steps in the blend, and that distinction IS the bug below.**
   An earlier version of this line ran them together as inline steps; Rounding was also in the wrong
   place until 2026-08-15.
@@ -578,6 +591,145 @@ call site that forgets it publishes UNCAPPED targets with nothing looking wrong 
 `loadParamConfigRows` trap. All 9 App.jsx sites, `api/run-engine.js` and 4 scripts were updated
 together, and `toTargets.inputs.skuCeiling` is stamped as the DETECTOR: that count next to a non-empty
 `team_data/global.skuCeiling` is how you would catch a missed writer.
+
+### Purchase / Move — commercial policy (SHIPPED 2026-09-07)
+Two item-level Zoho dropdowns that answer what `status` and `inventorisedAt` could not: *may we buy
+more*, and *may the dark stores hold it*. `src/skuPolicy.js` (+ a Deno mirror, below).
+
+**The 2x2 is COMPLETE and has NO invalid states, which is why there is no third `Sell` flag:**
+
+| Purchase | Move | means | DC target | DS targets |
+|---|---|---|---|---|
+| Y | Y | normal | as today | as today |
+| Y | **N** | **DC-only** — buy at the DC, sell from the DC, never transfer | **category strategy on TOTAL demand** | 0/0 ⇒ no TO |
+| **N** | Y | winding down, still distributing | 0/0 ⇒ no PO | as today ⇒ TOs keep pulling |
+| **N** | **N** | withdrawn | 0/0 | 0/0 |
+
+A `Sell` flag was considered and dropped: it added three *incoherent* combinations (`Sell=No,
+Purchase=Yes` = buy stock for something you don't sell) needing a master-switch derivation and a
+guard, and it had **no actuator** — IMS does not control Shopify listing, so it could only ever have
+expressed itself as the zeroes the other two already produce.
+
+**⚠ TOPOLOGY OUTRANKS POLICY.** `inventorisedAt` is *which arcs exist*; the flags are *which existing
+arcs we use*. So `Supplier` ignores both, and a **DS-inventorised SKU ignores `Move`** — that flag
+governs the DC→DS arc and the arc does not exist there. **One arc, one switch.** `policyOf()` forces
+`move` true wherever it cannot act, so no caller has to remember the rule.
+- Consequence, and it bit on the very first bulk file: **12 DS-inv SKUs were given `Move=No`**. It does
+  nothing, they stay stocked at all six stores, and the resulting Min/Max looks entirely ordinary. The
+  digest goes **RED on the first occurrence** — anomalous by construction, so it can essentially never
+  fire spuriously (the floors-miss reasoning). **Leave `Move` blank on DS-inv and Supplier SKUs.**
+- `Purchase=No` on a DS-inv SKU necessarily also stops it selling — one number drives both the PO and
+  the shelf. **13 SKUs, accepted limitation.** A `Sell` flag would not have fixed it.
+
+**⚠⚠ THE ZOHO FIELDS USE DIFFERENT VOCABULARIES AND THE api_name IS NOT GUESSABLE.** From the live
+field definitions:
+
+| label | api_name | options | default |
+|---|---|---|---|
+| Purchase | **`cf_purchase_status`** | **`ON` / `OFF`** | ON |
+| Move | `cf_move` | `Yes` / `No` | Yes |
+
+- Both are **Dropdown**, not checkbox — which is what avoids the `"false"` catastrophe below.
+- **Both carry a DEFAULT, so a wrong api_name fails INVISIBLY as that default rather than as a blank**
+  — the `cf_to_type` trap verbatim. `catalogueSyncStatus.policy.fromZoho` is the ONLY way to tell
+  "nobody has set a value" from "we are reading the wrong field". A test pins both names and asserts
+  `cf_purchase` (what you'd guess from the label) is **not** it.
+- Both vocabularies are accepted (`no`/`off` ⇒ No) and **canonicalised to Yes/No** for storage, so the
+  PO CSV never shows two spellings — the `normaliseStatus` lesson.
+
+**⚠⚠ BLANK MEANS YES — the OPPOSITE of the `status` rule, deliberately.** `status` follows *"absent
+data is not evidence"*; here absence is the overwhelming normal state (all ~2,573 items blank, ~12 new
+SKUs blank daily), so fail-closed would zero the entire network on night one and silently un-stock
+every new SKU after. **`"false"` is NOT No**: `customField()` stringifies before its empty-check, so an
+unchecked checkbox returns the *string* `"false"` — counting that as No is the catastrophe. Anything
+outside both vocabularies is treated as Yes and **reported** (`policy.unrecognised`, amber).
+
+**⚠⚠ THE DC-ONLY BRANCH MUST PRECEDE `isFlooredSKU`, AND THAT IS NOT COSMETIC.**
+`isFlooredSKU = !!(nsq && nsq[skuId])` tests **presence of the SKU key**, not any value — so the moment
+a DC-only SKU is given a DC floor it would otherwise land on `round(sumMin × 0.2)`, i.e. 20% of its own
+**DS** mins, which are still un-zeroed at that point because the `Move=No` pass runs later over the
+finished `res`. Plausible-looking and meaningless. Measured on `DBQC2`: **7/12 → 10/13**.
+
+**Why the DC runs a STRATEGY rather than the rate formula.** The rate branch is a *replenishment
+buffer* sized off store demand, and open item #8 already records that it understocks erratic demand —
+which a DC-only item has no store to fall back on for. So the SKU's own category strategy (PCT / Fixed
+Unit Floor / Standard) runs against **total demand**, summed from every row rather than from per-DS
+`dailyAvg`: attribution only *relabels* rows, so unmapped-pincode DC sales keep `ds="DC01"` and
+`tags90` never reads them. Same counterfactual as attribution's static map — *"what if this had always
+been sold only from the DC"*.
+- **Network Design is skipped for DC-only SKUs** — it is entirely about *which DS nodes* stock a brand,
+  and its DC term collapses to the P95 once every store is zero. They take
+  `plywoodNonNetworkStrategy` instead. Measured on `5PDDQ`: **24/31 → 67/89**.
+- **⚠ Flagging a Rare-zone SKU DC-only can START stocking it.** `KSK9H` (GreenPly, 3 order-days split
+  across DS02/DS05) is **Rare at every plywood node** (NZD < `minNZD`) so it reads 0/0 everywhere
+  today; pooled into one location NZD is 3, above the PCT gate, giving **DC 5/6**. Inv value goes *up*
+  for that class. Set a `DC Cap` alongside the first few.
+
+**DC is now a floor and a ceiling location.** Floors gain **two** columns (`DC Min`, `DC Max` — a floor
+is two-sided); the ceiling gains **one** (`DC Cap` — `clampToCeiling` applies a single absolute cap to
+both). Both apply to **every** SKU, not only DC-only ones: symmetric with the DS columns, and a column
+whose meaning depends on another field is how things drift here. Provably inert until filled.
+- **⚠ A DC-only SKU with no demand and no DC floor is stocked NOWHERE.** Measured on the first real
+  file: **3 of 19** had zero demand in 90 days. That is what the DC floor is *for*.
+- **⚠ The floor column had to change in the SHEET parser too, not just the browser.** The sheet
+  replaces `newSKUQty` **wholesale at 04:35 IST**, so a DC floor the sync ignored would be dropped
+  every night while reporting `ok: true`. **Put DC floors in the Google Sheet, not only in a CSV.**
+- Ladder: **floor lifts → cap clamps → Dead Stock → policy.** *A cap a floor can overrule is not a
+  cap*; and policy beats a stale floor **for free**, because it is one later pass over the finished
+  `res` — exactly the property the Dead Stock post-mortem bought.
+
+**⚠ `_shared/skuPolicy.ts` DUPLICATES `src/skuPolicy.js`** because Deno cannot import from `src/`.
+`skuPolicy.agreement.test.ts` imports **both** and asserts they answer identically across 34 values
+including every ambiguous one. The invoice `⬇ Data` bug, the floor-sheet duplicate incident and the TO
+deep link were all two sides agreeing on the happy path and diverging on an ambiguous input — this
+makes that mechanical rather than a matter of discipline.
+
+**⚠ NO new `runEngine` argument.** The flags ride on `skuMaster`, already passed, arriving as
+`r.meta.purchase` / `r.meta.move`. That avoids the whole failure class the ceiling had, where an 8th
+positional arg defaulting to a no-op meant a forgetful call site published uncapped targets.
+
+**⚠ `policyChanged` compares NORMALISED values on both sides.** That is what stops the first run after
+deploy reporting ~2,573 phantom transitions — no stored entry has these fields yet, and
+`normalisePolicy(undefined) === "Yes"` equals the new value. A literal comparison would have flagged
+every SKU and buried any real move (the same failure as `norm()` reporting 13 fake `Confirmation
+Pending` transitions). **Reported, never blocking**, and stored in full.
+
+**⚠ `toTargets` still EMITS DC-only SKUs, with all-zero `perDS`** — byte-identical to how Dead Stock
+SKUs have been published since May 2026, and `homerun-to`'s solver handles it (`triggered = cur <= min`
+with min 0 gives `req = max(0, 0 − cur − it) = 0`). Filtering them would shrink the target count into
+`assessTargetsChange`'s >20% collapse guard, which exists to catch an **input** that failed to load,
+not a policy change. **`homerun-to` needed no deploy.**
+- **⚠⚠ NEVER PUT A `DC` KEY IN `perDS`.** Verified in `homerun-to`: `solver.js` does
+  `Object.keys(perDS)`, iterating the KEYS rather than a hardcoded DS list, so a DC entry would render
+  a DC row and attempt a **DC→DC transfer**. Inert until the DC became a first-class location for
+  floors and ceilings — so the instinct to "add DC everywhere for symmetry" now reaches it.
+
+**Inertness proof, and the harness that produces it.** `scripts/snapshot-engine-inputs.mjs` →
+`dump-engine-output.mjs` → `diff-engine-dumps.mjs`: **0 of 18,046 cells differing across 2,578 SKUs**,
+Inv Value identical to 4 dp, re-verified after every step.
+- **⚠ THE SNAPSHOT IS THE POINT.** Prod inputs move nightly (sliding window, retention trim, catalogue
+  sync, floors re-read), so "dump today, dump again after the change" shows differences from the
+  **clock**, not the code — and those look exactly like a regression. The diff **refuses** to compare
+  dumps from different snapshots, and counts min/max changes separately from **tag/branch-only**
+  changes, because identical numbers arriving via a different code path is how both the four-writers
+  ceiling bug and the Dead Stock branch bug presented.
+- **Inertness says nothing about whether the feature WORKS** — a policy pass that never fired would
+  pass it perfectly. `scripts/dryrun-sku-policy.mjs` asserts the outcome of all four combinations
+  against five real SKU classes, **using the real `ON`/`OFF` + `Yes`/`No` values**: testing with
+  Yes/No on both would pass while `Purchase = OFF` silently meant Yes in production.
+
+**⚠ `scripts/dryrun-sku-master.mjs` exists because THE SKU MASTER UPLOAD REPLACES ENTIRELY AND HAS NO
+GUARD** — floors, invoices and ceilings all have one. A file short by 200 rows silently deletes 200
+SKUs, and `inventorisedAt` alone decides whether a SKU is stocked anywhere. It parses with the **real**
+`parseCSV` and reproduces `handleSKU`'s mapping, which is how the first bulk file's **`Item Name`**
+header was caught: IMS reads **`Name`**, so all 2,573 item names would have been blanked — including on
+the Reverse TO list, where the name is how the DS team finds the item on the shelf.
+
+**⚠ INV VALUE CANNOT VERIFY AN UNPRICED SKU.** On the first real floors file, **7 of 15 DC floors were
+`50/50` on UNPRICED SKUs** — 350 units of committed stock that move the rupee figure by **₹0.00**.
+Identical to 2026-08-28, where 161 cells zeroed while the money read ₹0.00. Check the **cell count and
+the cells**, never the money; and an unpriced SKU is already stocked at the **95th percentile** under
+PCT, so it is the worst class to get wrong silently.
 
 ### Active-only normalization (final engine override, LIVE 2026-07-30)
 **Only SKUs `active` in the SKU Master get non-zero targets.** Runs immediately before the
@@ -1580,24 +1732,61 @@ Shipped without these, deliberately. Listed so they are decisions, not omissions
 - **An outlier discovery report.** Nothing surfaces ceiling candidates in the app, so the input will
   stay as empty as ops leaves it. `scripts/dryrun-sku-ceiling.mjs` and a days-of-cover sort are the
   manual substitutes. ⚠ This is the item most likely to make the feature quietly unused.
-- **The rate-based DC gap** — 81 SKUs, ₹4.4L. See the ceiling section.
+- **The rate-based DC gap** — 81 SKUs, ₹4.4L. See the ceiling section. ⚠ **Still open, and DC-only
+  SKUs are NOT affected** — they take the strategy branch, then the `DC Cap`, so they are cappable.
+- ✅ **A `DC Cap` column now exists** (2026-09-07), added for DC-only SKUs but applying to all. Ops
+  adoption of the ceiling has been strong meanwhile: **815 SKUs** carry one, up from 0 at ship.
 - **A DOC cap for Fixed Unit Floor.** PCT has `pctDocCap`/`pctDocCapLow`, plywood has `maxCap: 20`,
   Fixed Unit Floor has **nothing** — which is why all 10 top ceiling candidates are Fixed Unit Floor
   Finolex wire at 42–62 days of cover. One parameter would clear today's crop with no ops maintenance.
   Ceiling first was the right call (it generalises), but this is cheap and still open.
 
-### 30. Two floor-sheet reader gaps found while cleaning the floors CSV (2026-08-26)
+### 30. ✅ CLOSED 2026-09-07 — two floor-sheet reader gaps (found 2026-08-26)
 Both latent, both the invoice-round-trip shape — a writer and a reader that disagree, failing `ok: true`.
+Kept for the reasoning; **both are fixed**, and the ineffective report now carries **four** reasons
+(absent · not Active · **Dead Stock** · **DC-only with DS floors**), deduplicated because a SKU can be
+both. Live at close: 107 of 1,877 ineffective — 1 absent + 106 not Active, 0 dead-with-floor.
 - **`scripts/dryrun-sku-floors.mjs` under-reports ineffective floors:** it counts "absent from
   `skuMaster`" and "not Active" but **not Dead Stock**, whose floor equally can never take effect.
   Measured live: of **1,798** floors carrying a value, **34 are ineffective — 4 absent + 24 not Active
   (14 of those also Dead Stock) + 6 Active-but-Dead-Stock**. Those 6 are exactly the SKUs from the Dead
   Stock bug, so the script called them healthy on the morning they were wrong.
+  **Fixed in both places** — the script AND `sync-sku-floors`, which had the same two-reason gap.
 - **⚠ `App.jsx buildDataCSV("newSKUQty")` QUOTES the SKU cell; `parseFloorSheet` never strips quotes.**
   Verified: feeding the app's own floors download to the sync's parser returns **`ok: true` with keys
   like `"\"ATGRU\""`** — every SKU matching nothing, reported as success. Harmless today (the sync reads
   only the Google Sheet; the browser's `parseCSV` strips quotes) but it is the exact shape of the invoice
   `⬇ Data` bug. **Emit floors CSVs UNQUOTED** — SKUs are plain alphanumeric; assert it before writing.
+  **Fixed:** the writer now emits the SKU cell unquoted.
+
+### 31. Purchase/Move follow-ups, all consciously deferred 2026-09-07
+Listed so they are decisions, not omissions.
+- **Hysteresis on `status`.** The operator confirmed `status` stays the FIRST gate (inactive ⇒ 0/0
+  everywhere, beating everything), which is the conservative choice and keeps a discontinued item
+  self-zeroing without anyone setting `Purchase=No`. **The cost is that the 2026-08-28 whipsaw stays**:
+  a transient bulk deactivation still zeroes ~2,150 SKU×DS cells the same night and reverses the next,
+  with **₹0.00** of visible value movement because those SKUs were unpriced. Hysteresis — apply a
+  deactivation only after N consecutive nights, apply a re-activation **immediately** — is the fix, and
+  the discriminator it exploits is the real one: **not magnitude, but persistence**. Machinery is a
+  `{sku: consecutiveInactiveNights}` counter in `catalogueSyncStatus`. Explicitly the operator's call.
+- **Dropping SKUs absent from `skuMaster` from `res`.** Agreed to defer: those entries are already
+  `0/0` so **no number changes**, it only affects which lists include them (the Overview card's
+  `Unknown` category row of 5 would go). ⚠ It is the ONE change here that **cannot** produce a
+  byte-identical diff, because it changes the key set of `res` — so it wants its own change with its
+  own diff, where a changed key set is the expected result rather than noise.
+  ⚠ **Dropping from `skuMaster` on absence from the Zoho pull is a firm NO** — `assessCoverage` builds
+  `knownSkus` from master keys, so it would push `unknownPct` past 1% and make **`sync-invoices` refuse
+  to write**. One sync silently breaking another.
+- **Aligning the `Purchase` dropdown to `Yes`/`No`.** It is `ON`/`OFF` while `Move` is `Yes`/`No`. The
+  code accepts both deliberately (no dependency on a UI setting staying put), so this is cosmetic —
+  but two vocabularies on adjacent fields is a trap for whoever maintains them.
+- **A `Sell` flag, if the Shopify Draft signal is ever synced.** Today "we stopped selling this" lives
+  in Shopify, and with two fields it has to be written as *two* values (`N/N`) — a lossy encoding of
+  one fact. Don't build the field before the signal exists.
+- **"Sold at the DC *and* the DSes."** `Y/Y` understates the DC once the DC can sell: the DC target is a
+  pure replenishment buffer with no allowance for the DC's own retail sales, and those `DC01` rows are
+  today either reassigned to a DS by attribution (inflating it) or dropped by `tags90`. The precedent
+  for fixing it exists — `dcDetails.dsSeedAug` adds a synthetic rate into the DC calc.
 
 ### Later, not urgent
 - **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence
@@ -2143,6 +2332,18 @@ plus `toTargets`, mails one summary, green or red. Pure logic in `_shared/nightl
 - **Three of this build's defects were found by reading rendered output, not by tests** (`refused: ok`,
   an empty `WHAT TO DO` heading, the collapsed columns). All passed every assertion, because the tests
   checked the logic intended rather than the text a person reads. **Render the artifact.**
+
+### 32. Purchase / Move — commercial policy ✅ Shipped (2026-09-07)
+Two item-level Zoho dropdowns (`cf_purchase_status` ON/OFF, `cf_move` Yes/No) make three things
+expressible that nothing could say before: **buy at the DC and sell only from the DC**, **stop buying
+but sell till stock lasts**, and **withdrawn**. Full design, all the ⚠s and the measured numbers are in
+the **Purchase / Move** section above — this entry exists only so the number is not reused.
+
+Shipped **provably inert**: 0 of 18,046 cells differing, four times, because every flag is blank and
+both new CSV columns empty. 20 files, 658 tests (+48), lint unchanged at the 75 baseline.
+
+Also closed while in the code: **item #30** (both floor-sheet reader gaps) and the `DC Cap` half of
+**item #29**. New follow-ups are **item #31**.
 
 ### 6. Plywood Network Design ✅ Shipped (2026-04-28)
 Network Design strategy in engine (`src/engine/strategies/plywoodNetwork.js`). Full UI in PlywoodNetworkTab.jsx — unified SKU table with zone colouring, DC tab, brand assignment editor, compact modal with zone-aware formula display and lookback-period charts.
