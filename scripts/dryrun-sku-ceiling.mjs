@@ -18,6 +18,9 @@ import { runEngine } from "../src/engine/index.js";
 import { DEFAULT_PARAMS, DS_LIST } from "../src/engine/constants.js";
 import { loadParamConfigRows } from "../src/paramConfigRows.js";
 import { parseSkuCeilingCsv } from "../src/skuCeilingCsv.js";
+
+/** Capping locations: the six stores plus the DC. */
+const CAP_LOCS = [...DS_LIST, "DC"];
 import { computeInvValue } from "../src/invValue.js";
 
 const B = "https://rgyupnrogkbugsadwlye.supabase.co/rest/v1";
@@ -55,7 +58,10 @@ console.log(`  stored skuCeiling: ${Object.keys(stored).length} SKUs`);
 // ── The candidate ───────────────────────────────────────────────────────────
 let proposed = stored;
 if (file) {
-  const p = parseSkuCeilingCsv(readFileSync(file, "utf8"), DS_LIST);
+  // ⚠ [...DS_LIST, "DC"] — the app passes the same. Passing DS_LIST alone would
+  // make this preview REFUSE any sheet carrying a DC Cap, i.e. refuse exactly the
+  // SKU class (DC-only) where a cap matters most.
+  const p = parseSkuCeilingCsv(readFileSync(file, "utf8"), CAP_LOCS);
   console.log(`\nPARSE  ${file}`);
   console.log(`  ok=${p.ok} reason=${p.reason} · ${p.skuCount} SKUs · ${p.capCells} caps · ${p.zeroCells} at ZERO`);
   if (p.unknownDs.length) console.log(`  x unknown DS columns: ${p.unknownDs.join(", ")}`);
@@ -79,10 +85,14 @@ const after = run(proposed);
 const bv = computeInvValue(before, priceData, DS_LIST);
 const av = computeInvValue(after, priceData, DS_LIST);
 
+// ⚠ Iterates CAP_LOCS, not DS_LIST: a DC cap is now cappable, and reporting only the
+// six stores would show "0 cells changed" for a sheet that just capped the DC. The DC
+// lives at `.dc`, not `.stores.DC`, so read it through a helper.
+const cellAt = (r, loc) => (loc === "DC" ? r?.dc : r?.stores?.[loc]);
 const moves = [];
 for (const sku of Object.keys(after)) {
-  for (const ds of DS_LIST) {
-    const a = before[sku]?.stores?.[ds], b = after[sku]?.stores?.[ds];
+  for (const ds of CAP_LOCS) {
+    const a = cellAt(before[sku], ds), b = cellAt(after[sku], ds);
     if (!a || !b || (a.min === b.min && a.max === b.max)) continue;
     moves.push({ sku, ds, from: `${a.min}/${a.max}`, to: `${b.min}/${b.max}`,
       value: (Number(priceData[sku]) || 0) * (a.max - b.max) });
