@@ -23,6 +23,7 @@
 
 import { DS_LIST } from "./engine/constants.js";
 import { normaliseStatus } from "./skuStatus.js";
+import { normalisePolicy } from "./skuPolicy.js";
 
 export const PO_CSV_HEADERS = [
   "Item Name",
@@ -34,12 +35,30 @@ export const PO_CSV_HEADERS = [
   "DC Min",
   "DC Max",
   ...DS_LIST.flatMap((ds) => [`${ds} Min`, `${ds} Max`]),
+  // ⚠ APPENDED AFTER `DS06 Max`, never inserted. The PO team's sheet formulas key
+  // on column POSITION, so a reorder produces wrong purchase orders rather than an
+  // error. Same rule as the Stock Health CSV's two appended columns.
+  //
+  // Why they are here: `Purchase = No` already shows as a 0/0 target, but the sheet
+  // cannot tell that from "no demand". These two columns are what let it distinguish
+  // a deliberate stop-buying from a SKU that simply is not selling — the same reason
+  // `Inventorised At` and `Status` are columns.
+  "Purchase",
+  "Move",
 ];
 
 /** Index of the first numeric column. Everything from here on is a bare number, and
  *  everything before it is a quoted text field. Derived, not hardcoded, so inserting
  *  another identity column (as `Brand` was on 2026-08-03) cannot desynchronise it. */
 export const PO_FIRST_NUMERIC_COL = PO_CSV_HEADERS.indexOf("DC Min");
+
+/** How many columns from PO_FIRST_NUMERIC_COL are bare numbers: DC Min/Max plus two
+ *  per DS. The numeric block now has TEXT after it (`Purchase`, `Move`), so
+ *  "slice to the end" is no longer the same thing as "the numeric columns" —
+ *  readers must bound the slice or they will assert Yes/No is a number. Derived,
+ *  never hardcoded: inserting `Brand` once shifted 14 columns and desynced both the
+ *  test file and verify-po-csv.mjs, which had positions written in by hand. */
+export const PO_NUMERIC_COL_COUNT = 2 + DS_LIST.length * 2;
 
 // `normaliseStatus` lives in ./skuStatus.js — shared with the SKU Master CSV so the two
 // downloads can never disagree on how a status is spelled.
@@ -89,6 +108,11 @@ export function buildPoTargetsCsv({ skuMaster, results, coreOverrides } = {}) {
       num(r?.dc?.min),
       num(r?.dc?.max),
       ...dsCols,
+      // Appended last — see PO_CSV_HEADERS. `normalisePolicy` renders blank as
+      // "Yes", which is the engine's own reading, so the sheet and the targets
+      // beside them can never disagree.
+      q(normalisePolicy(s.purchase)),
+      q(normalisePolicy(s.move)),
     ].join(",");
   });
 

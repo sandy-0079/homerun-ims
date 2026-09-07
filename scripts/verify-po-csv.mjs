@@ -12,7 +12,7 @@
 import { runEngine } from "../src/engine/index.js";
 import { DEFAULT_PARAMS, DS_LIST } from "../src/engine/constants.js";
 import { loadParamConfigRows } from "../src/paramConfigRows.js";
-import { buildPoTargetsCsv, PO_CSV_HEADERS, PO_FIRST_NUMERIC_COL, poCsvFilename } from "../src/poTargetsCsv.js";
+import { buildPoTargetsCsv, PO_CSV_HEADERS, PO_FIRST_NUMERIC_COL, PO_NUMERIC_COL_COUNT, poCsvFilename } from "../src/poTargetsCsv.js";
 
 const B = "https://rgyupnrogkbugsadwlye.supabase.co/rest/v1";
 const K = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJneXVwbnJvZ2tidWdzYWR3bHllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3NzgzMzgsImV4cCI6MjA4ODM1NDMzOH0.sbZh8CbmW7hhpiUCg5OoS7hQzHaNqExkaAlACEqJ9sc";
@@ -83,9 +83,12 @@ check(wrongWidth.length === 0, `EVERY row has exactly ${N} columns`,
   wrongWidth.length ? `BAD: lines ${wrongWidth.slice(0, 5).map((x) => x.i).join(", ")}` : "");
 
 const body = lines.slice(1).map(cells);
-const blanks = body.filter((c) => c.slice(PO_FIRST_NUMERIC_COL).some((v) => v.trim() === ""));
+// ⚠ BOUNDED slice. `Purchase`/`Move` are text columns appended AFTER the numeric
+// block, so slicing to the end would assert that "Yes" is a number.
+const NUM_END = PO_FIRST_NUMERIC_COL + PO_NUMERIC_COL_COUNT;
+const blanks = body.filter((c) => c.slice(PO_FIRST_NUMERIC_COL, NUM_END).some((v) => v.trim() === ""));
 check(blanks.length === 0, "no blank numeric cells (0 everywhere instead)");
-const nonNumeric = body.filter((c) => c.slice(PO_FIRST_NUMERIC_COL).some((v) => !/^-?\d+(\.\d+)?$/.test(v)));
+const nonNumeric = body.filter((c) => c.slice(PO_FIRST_NUMERIC_COL, NUM_END).some((v) => !/^-?\d+(\.\d+)?$/.test(v)));
 check(nonNumeric.length === 0, "all 14 numeric cells are bare unquoted numbers",
   nonNumeric.length ? `BAD e.g. ${unq(nonNumeric[0][2])}` : "");
 
@@ -98,7 +101,9 @@ check(Object.keys(st).every((k) => /^[A-Z]/.test(k)), "every Status value is nor
 check(!Object.keys(st).some((k) => k.includes("_")), "no snake_case leaked into Status");
 
 console.log("\nSTRUCTURAL ZEROS (present so the sheet can filter them, but 0/0)");
-const allZero = (c) => c.slice(PO_FIRST_NUMERIC_COL).every((v) => v === "0");
+// ⚠ BOUNDED, like the two checks above: `Purchase`/`Move` are text columns after
+// the numeric block, so an unbounded slice makes every structural-zero row fail.
+const allZero = (c) => c.slice(PO_FIRST_NUMERIC_COL, NUM_END).every((v) => v === "0");
 const supplier = body.filter((c) => unq(c[IX["Inventorised At"]]) === "Supplier");
 const notActive = body.filter((c) => unq(c[IX["Status"]]) !== "Active");
 check(supplier.length > 0 && supplier.every(allZero), `all ${supplier.length} Supplier rows are 0/0`);

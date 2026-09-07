@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildPoTargetsCsv, PO_CSV_HEADERS, PO_FIRST_NUMERIC_COL,
+  buildPoTargetsCsv, PO_CSV_HEADERS, PO_FIRST_NUMERIC_COL, PO_NUMERIC_COL_COUNT,
   poCsvFilename,
 } from "./poTargetsCsv.js";
 import { DS_LIST } from "./engine/constants.js";
@@ -40,24 +40,34 @@ const cells = (line) => {
 describe("PO_CSV_HEADERS — the frozen contract", () => {
   // ⚠ This test exists to FAIL if anyone reorders or inserts a column. The PO team's
   // sheet formulas key on position, so a reorder produces wrong POs, not an error.
-  it("is exactly the agreed 20 columns in the agreed order", () => {
+  it("is exactly the agreed 22 columns in the agreed order", () => {
     expect(PO_CSV_HEADERS).toEqual([
       "Item Name", "Inventorised At", "SKU", "Category", "Brand", "Status",
       "DC Min", "DC Max",
       "DS01 Min", "DS01 Max", "DS02 Min", "DS02 Max", "DS03 Min", "DS03 Max",
       "DS04 Min", "DS04 Max", "DS05 Min", "DS05 Max", "DS06 Min", "DS06 Max",
+      // Appended 2026-09-07, AFTER DS06 Max — positions 0-19 are untouched, which is
+      // what keeps the PO team's position-keyed formulas working.
+      "Purchase", "Move",
     ]);
-    expect(PO_CSV_HEADERS).toHaveLength(20);
+    expect(PO_CSV_HEADERS).toHaveLength(22);
   });
 
   it("derives PO_FIRST_NUMERIC_COL rather than hardcoding it", () => {
     expect(PO_FIRST_NUMERIC_COL).toBe(6);
     expect(PO_CSV_HEADERS[PO_FIRST_NUMERIC_COL]).toBe("DC Min");
-    expect(PO_CSV_HEADERS.length - PO_FIRST_NUMERIC_COL).toBe(14); // 2 DC + 12 DS
+    expect(PO_NUMERIC_COL_COUNT).toBe(14); // 2 DC + 12 DS
+    // The numeric block ENDS at DS06 Max — text follows it, so an unbounded slice
+    // from PO_FIRST_NUMERIC_COL would now include "Yes"/"No".
+    expect(PO_CSV_HEADERS[PO_FIRST_NUMERIC_COL + PO_NUMERIC_COL_COUNT - 1]).toBe(`${DS_LIST.at(-1)} Max`);
   });
 
-  it("keeps identity columns first, so anything appended lands after DS06 Max", () => {
-    expect(PO_CSV_HEADERS.at(-1)).toBe(`${DS_LIST.at(-1)} Max`);
+  it("keeps every added column after DS06 Max, never inserted among them", () => {
+    // The numeric block is contiguous and ends at DS06 Max; everything after it is
+    // an addition. Assert BOTH, so inserting a column mid-block still fails loudly.
+    expect(PO_CSV_HEADERS.slice(PO_FIRST_NUMERIC_COL, PO_FIRST_NUMERIC_COL + PO_NUMERIC_COL_COUNT).at(-1))
+      .toBe(`${DS_LIST.at(-1)} Max`);
+    expect(PO_CSV_HEADERS.slice(PO_FIRST_NUMERIC_COL + PO_NUMERIC_COL_COUNT)).toEqual(["Purchase", "Move"]);
   });
 });
 
@@ -65,7 +75,7 @@ describe("buildPoTargetsCsv", () => {
   it("emits a header plus one row per master SKU", () => {
     const r = rows(buildPoTargetsCsv({ skuMaster: master, results }));
     expect(r).toHaveLength(4);
-    expect(cells(r[0])).toHaveLength(20);
+    expect(cells(r[0])).toHaveLength(22);
   });
 
   it("places every value in its contracted column", () => {
@@ -87,26 +97,26 @@ describe("buildPoTargetsCsv", () => {
   it("escapes embedded quotes so the row cannot break mid-name", () => {
     const line = rows(buildPoTargetsCsv({ skuMaster: master, results }))[2];
     expect(line.startsWith('"Floor Drain 5"" x 5"""')).toBe(true);
-    expect(cells(line)).toHaveLength(20);
+    expect(cells(line)).toHaveLength(22);
   });
 
   it("quotes Brand, so a comma in a brand name cannot shift the columns", () => {
     const c = cells(rows(buildPoTargetsCsv({ skuMaster: master, results }))[3]);
     expect(c[4]).toBe('"Polycab, Ltd"');
-    expect(c).toHaveLength(20);
+    expect(c).toHaveLength(22);
   });
 
   it("emits an empty quoted cell for a missing Brand, never a shifted row", () => {
     const c = cells(rows(buildPoTargetsCsv({ skuMaster: master, results }))[2]);
     expect(c[4]).toBe('""');
-    expect(c).toHaveLength(20);
+    expect(c).toHaveLength(22);
   });
 
   it("writes 0, never blank, for stores with no target", () => {
     const c = cells(rows(buildPoTargetsCsv({ skuMaster: master, results }))[2]);
     // B2 is Supplier with no stores at all — every numeric cell must be a literal 0
-    expect(c.slice(PO_FIRST_NUMERIC_COL)).toEqual(Array(14).fill("0"));
-    expect(c.slice(PO_FIRST_NUMERIC_COL).some((v) => v === "")).toBe(false);
+    expect(c.slice(PO_FIRST_NUMERIC_COL, PO_FIRST_NUMERIC_COL + PO_NUMERIC_COL_COUNT)).toEqual(Array(14).fill("0"));
+    expect(c.slice(PO_FIRST_NUMERIC_COL, PO_FIRST_NUMERIC_COL + PO_NUMERIC_COL_COUNT).some((v) => v === "")).toBe(false);
   });
 
   it("keeps Supplier and non-active SKUs as rows, so the sheet can filter them", () => {
@@ -130,7 +140,7 @@ describe("buildPoTargetsCsv", () => {
     const csv = buildPoTargetsCsv({ skuMaster: { Z9: { sku: "Z9", name: "Z9" } }, results: {} });
     const c = cells(rows(csv)[1]);
     expect(c[5]).toBe('"Active"');
-    expect(c.slice(PO_FIRST_NUMERIC_COL)).toEqual(Array(14).fill("0"));
+    expect(c.slice(PO_FIRST_NUMERIC_COL, PO_FIRST_NUMERIC_COL + PO_NUMERIC_COL_COUNT)).toEqual(Array(14).fill("0"));
   });
 
   it("returns null rather than a header-only file when there is no master", () => {
