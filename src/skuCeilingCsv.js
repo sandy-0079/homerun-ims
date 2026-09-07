@@ -31,7 +31,12 @@
 
 const INTEGER = /^\d+$/;
 const CSV_SKU = "SKU";
-const CAP_COLUMN = /^(DS\d+)\s+Cap$/i;
+// ⚠ `DC` is accepted alongside DS codes: a DC-only SKU (Move=No) is stocked at the
+// DC alone, which is exactly where a cap matters most, and `capFor` would return
+// null for it otherwise — i.e. the one SKU class that most needs a ceiling would be
+// uncappable. One column, not two: `clampToCeiling` applies a single absolute cap to
+// BOTH min and max, unlike a floor, which is two-sided.
+const CAP_COLUMN = /^(DS\d+|DC)\s+Cap$/i;
 
 const splitRow = (line) => line.split(",").map((c) => c.trim());
 

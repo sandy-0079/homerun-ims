@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseSkuCeilingCsv, buildSkuCeilingCsv } from "./skuCeilingCsv.js";
+import { capFor } from "./engine/skuCeiling.js";
 
 const DS = ["DS01", "DS02", "DS03", "DS04", "DS05", "DS06"];
 const HEADER = ["SKU", ...DS.map((d) => `${d} Cap`)].join(",");
@@ -162,5 +163,52 @@ describe("buildSkuCeilingCsv — round-trips through the parser", () => {
 
   it("emits a header the parser accepts even with no rows", () => {
     expect(buildSkuCeilingCsv({}, DSL)).toBe(["SKU", ...DSL.map((d) => `${d} Cap`)].join(","));
+  });
+});
+
+// ── DC Cap ────────────────────────────────────────────────────────────────────
+// A DC-only SKU (Move=No) is stocked at the DC alone, which is precisely where a cap
+// matters most — and where the DC-only branch produces a number that can be much
+// larger than the old rate-based buffer (measured: a plywood SKU went 24/31 -> 67/89).
+// Without a DC column that SKU class would be uncappable.
+describe("parseSkuCeilingCsv — DC is a capping location", () => {
+  const DSDC = [...DS, "DC"];
+  const H = ["SKU", ...DSDC.map((d) => `${d} Cap`)].join(",");
+
+  it("accepts a DC Cap column and keys it under DC", () => {
+    const out = parseSkuCeilingCsv([H, `AAA,,,,,,,8`].join("\n"), DSDC);
+    expect(out.ok).toBe(true);
+    expect(out.ceilings.AAA).toEqual({ DC: 8 });
+  });
+
+  it("keeps blank and 0 opposites at the DC too", () => {
+    const zero = parseSkuCeilingCsv([H, `AAA,,,,,,,0`].join("\n"), DSDC);
+    expect(zero.ceilings.AAA).toEqual({ DC: 0 });      // stock nothing at the DC
+    const blank = parseSkuCeilingCsv([H, `AAA,,,,,,,`].join("\n"), DSDC);
+    // An all-blank row is a PRESENT-BUT-EMPTY entry, matching the parser's existing
+    // convention (and parseFloorSheet's). What matters downstream is that capFor
+    // reports no cap — it returns null, never undefined, so `if (cap)` can never
+    // silently drop a legitimate cap of 0.
+    expect(blank.ceilings.AAA).toEqual({});
+    expect(capFor(blank.ceilings, "AAA", "DC")).toBeNull();
+    expect(capFor(zero.ceilings, "AAA", "DC")).toBe(0);
+  });
+
+  it("still rejects an unknown location, so DS07 remains a hard stop", () => {
+    const bad = ["SKU", "DS07 Cap"].join(",");
+    expect(parseSkuCeilingCsv([bad, "AAA,3"].join("\n"), DSDC).ok).toBe(false);
+  });
+
+  it("round-trips DC through the builder", () => {
+    const ceilings = { AAA: { DS01: 2, DC: 8 }, BBB: { DC: 0 } };
+    const back = parseSkuCeilingCsv(buildSkuCeilingCsv(ceilings, DSDC), DSDC);
+    expect(back.ok).toBe(true);
+    expect(back.ceilings).toEqual(ceilings);
+  });
+
+  it("omits DC when the caller does not offer it, so old sheets are unaffected", () => {
+    // parseSkuCeilingCsv is given the location list; a caller still passing DS_LIST
+    // alone must reject a DC column rather than silently accept it.
+    expect(parseSkuCeilingCsv([H, `AAA,,,,,,,8`].join("\n"), DS).ok).toBe(false);
   });
 });

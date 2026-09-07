@@ -281,3 +281,55 @@ describe("assessFloorChange — a row count that never moves must not hide a mas
     expect(r.floorDropPct).toBe(0);
   });
 });
+
+// ── DC Min / DC Max ──────────────────────────────────────────────────────────
+// ⚠ This parser and `App.jsx handleNSQ` are TWO WRITERS OF ONE KEY. The 2026-08-15
+// duplicate-SKU incident was exactly them disagreeing on an ambiguous input, with the
+// UNGUARDED browser path succeeding where the guarded sync refused. The DC columns
+// must behave identically on both sides, including the blank-is-0 rule.
+//
+// It must be accepted HERE and not only in the browser: the sheet is authoritative and
+// replaces newSKUQty WHOLESALE at 04:35 IST, so a DC floor this parser ignored would
+// be silently dropped every night while reporting ok:true.
+describe("parseFloorSheet — DC is a floor location", () => {
+  const H = ["SKU", ...[...DS, "DC"].flatMap((d) => [`${d} Min`, `${d} Max`])].join(",");
+  const r = (sku: string, vals: (number | string)[]) =>
+    [sku, ...vals, ...Array(14 - vals.length).fill(0)].join(",");
+
+  it("reads DC Min / DC Max into nsq[sku].DC", () => {
+    const out = parseFloorSheet([H, r("AAA", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 8])].join("\n"), DS);
+    expect(out.ok).toBe(true);
+    expect(out.floors.AAA).toEqual({ DC: { min: 5, max: 8 } });
+  });
+
+  it("omits DC when it is 0/0, exactly like a DS", () => {
+    const out = parseFloorSheet([H, r("AAA", [1, 2])].join("\n"), DS);
+    expect(out.ok).toBe(true);
+    expect(out.floors.AAA).toEqual({ DS01: { min: 1, max: 2 } });
+  });
+
+  it("floors DC Max at DC Min, matching the DS rule", () => {
+    const out = parseFloorSheet([H, r("AAA", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 3])].join("\n"), DS);
+    expect(out.floors.AAA).toEqual({ DC: { min: 9, max: 9 } });
+  });
+
+  it("accepts DC without the caller adding it to dsList", () => {
+    // `known` includes DC inside the parser rather than asking the one call site to
+    // pass [...DS_LIST, "DC"] — one less place to forget.
+    expect(parseFloorSheet([H, r("AAA", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1])].join("\n"), DS).ok).toBe(true);
+  });
+
+  it("still hard-stops on a genuinely unknown location", () => {
+    const bad = ["SKU", "DS07 Min", "DS07 Max"].join(",");
+    const out = parseFloorSheet([bad, "AAA,1,2"].join("\n"), DS);
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe("unknown_ds");
+    expect(out.unknownDs).toEqual(["DS07"]);
+  });
+
+  it("rejects a non-integer DC value rather than coercing it", () => {
+    const out = parseFloorSheet([H, r("AAA", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "2.5", 3])].join("\n"), DS);
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe("invalid_value");
+  });
+});

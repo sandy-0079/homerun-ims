@@ -46,7 +46,13 @@ export type ParseResult = {
 // stray space-and-text) is REJECTED rather than coerced, because `parseFloat`
 // silently turning a typo into 0 is indistinguishable from ops removing a floor.
 const INTEGER = /^\d+$/;
-const DS_COLUMN = /^(DS\d+)\s+(Min|Max)$/i;
+// ⚠ `DC` is accepted as a location alongside DS codes. A DC-only SKU is stocked at
+// the DC alone, and a brand-new delicate item has no demand history — so without a
+// DC floor there is nothing to lift it off 0/0. It must be accepted HERE and not
+// only in the browser: the sheet is authoritative and replaces `newSKUQty`
+// WHOLESALE at 04:35 IST, so a DC floor this parser ignored would be silently
+// dropped every night while reporting ok:true.
+const DS_COLUMN = /^(DS\d+|DC)\s+(Min|Max)$/i;
 
 const splitRow = (line: string) => line.split(",").map((c) => c.trim());
 
@@ -79,7 +85,10 @@ export function parseFloorSheet(csv: string, dsList: string[]): ParseResult {
   // ⚠ A DS the engine does not know about is a hard stop, never a skip: ops adds
   // DS07 columns to the sheet before `DS_LIST` gains it, and writing floors for a
   // store the engine ignores would look like a successful sync that did nothing.
-  const known = new Set(dsList.map((d) => d.toUpperCase()));
+  // DC is always known — it is not in `dsList` (which is DS_LIST) but the engine
+  // reads `nsq[sku].DC` when deriving the DC. Adding it here rather than asking
+  // every caller to pass [...DS_LIST, "DC"] keeps the one call site honest.
+  const known = new Set([...dsList.map((d) => d.toUpperCase()), "DC"]);
   const unknownDs = [...seenDs].filter((d) => !known.has(d)).sort();
   if (unknownDs.length) return { ...base, reason: "unknown_ds", unknownDs };
 

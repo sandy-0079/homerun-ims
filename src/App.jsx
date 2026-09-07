@@ -8,6 +8,7 @@ import { mergeCoreOverrides, buildToTargets, buildInputsStamp } from "./toTarget
 import { buildPoTargetsCsv, poCsvFilename, PO_CSV_HEADERS } from "./poTargetsCsv";
 import { normaliseStatus } from "./skuStatus";
 import { parseSkuCeilingCsv, buildSkuCeilingCsv } from "./skuCeilingCsv";
+import { normalisePolicy } from "./skuPolicy";
 import { computeInvValue } from "./invValue";
 
 import {
@@ -3414,7 +3415,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     const file=e.target.files[0];if(!file)return;
     setUploading("skuMaster");
     const rows=parseCSV(await file.text());const master={};
-    rows.forEach(r=>{const s=r["SKU"]||"";if(s)master[s]={sku:s,name:r["Name"]||"",category:r["Category"]||r["Category Name"]||"",brand:r["Brand"]||"",status:r["Status"]||"Active",inventorisedAt:r["Inventorised At"]||"DS"};});
+    rows.forEach(r=>{const s=r["SKU"]||"";if(s)master[s]={sku:s,name:r["Name"]||"",category:r["Category"]||r["Category Name"]||"",brand:r["Brand"]||"",status:r["Status"]||"Active",inventorisedAt:r["Inventorised At"]||"DS",purchase:normalisePolicy(r["Purchase"]),move:normalisePolicy(r["Move"])};});
     setSKU(master);LS.set("skuMaster",JSON.stringify(master));
     await saveTeamData({skuMaster:master});
     setModelDirty(true);
@@ -3437,7 +3438,7 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     const file=e.target.files[0];if(!file)return;
     setUploading("skuCeiling");
     try{
-      const parsed=parseSkuCeilingCsv(await file.text(),DS_LIST);
+      const parsed=parseSkuCeilingCsv(await file.text(),[...DS_LIST,"DC"]);
       if(!parsed.ok){
         const why={header_mismatch:"No SKU column, or no 'DSxx Cap' columns. Is this the SKU Floors file by mistake?",
           unknown_ds:`Unknown store column(s): ${parsed.unknownDs.join(", ")}`,
@@ -3494,7 +3495,11 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     rows.forEach(r=>{
       const s=r["SKU"]||"";if(!s)return;
       nsq[s]={};
-      DS_LIST.forEach(ds=>{
+      // ⚠ DC included. This parser and `parseFloorSheet` (the nightly sync) are TWO
+      // WRITERS OF ONE KEY and must agree — the 2026-08-15 duplicate-SKU incident was
+      // exactly them disagreeing on an ambiguous input, with the UNGUARDED fallback
+      // succeeding where the guarded primary refused. Keep both column sets identical.
+      [...DS_LIST,"DC"].forEach(ds=>{
         const mn=parseFloat(r[ds+" Min"]||r[ds]||0);
         const mx=parseFloat(r[ds+" Max"]||r[ds]||0);
         if(mn>0||mx>0) nsq[s][ds]={min:mn,max:Math.max(mn,mx)};
@@ -3935,9 +3940,9 @@ const outputFreshness = useMemo(
           if(key==="invoiceData") return buildInvoiceCsv(invoiceData, skuMaster);
           if(key==="skuMaster"){
             if(!Object.keys(skuMaster).length) return null;
-            const h=["Name","Inventorised At","SKU","Category","Brand","Status"];
+            const h=["Name","Inventorised At","SKU","Category","Brand","Status","Purchase","Move"];
             const q=v=>`"${(v||"").replace(/"/g,'""')}"`;
-            const rows=Object.values(skuMaster).map(s=>[q(s.name),q(s.inventorisedAt||"DS"),q(s.sku),q(s.category),q(s.brand),q(s.status||"Active")].join(","));
+            const rows=Object.values(skuMaster).map(s=>[q(s.name),q(s.inventorisedAt||"DS"),q(s.sku),q(s.category),q(s.brand),q(s.status||"Active"),q(normalisePolicy(s.purchase)),q(normalisePolicy(s.move))].join(","));
             return h.map(v=>`"${v}"`).join(",")+"\n"+rows.join("\n");
           }
           if(key==="priceData"){
@@ -3949,7 +3954,7 @@ const outputFreshness = useMemo(
           if(key==="skuCeiling"){
             if(!Object.keys(skuCeiling).length) return null;
             // Shared writer, pinned by a round-trip test against parseSkuCeilingCsv.
-            return buildSkuCeilingCsv(skuCeiling,DS_LIST);
+            return buildSkuCeilingCsv(skuCeiling,[...DS_LIST,"DC"]);
           }
           if(key==="minReqQty"){
             if(!Object.keys(minReqQty).length) return null;
@@ -3959,15 +3964,21 @@ const outputFreshness = useMemo(
           }
           if(key==="newSKUQty"){
             if(!Object.keys(newSKUQty).length) return null;
-            const h=["SKU",...DS_LIST.flatMap(ds=>[ds+" Min",ds+" Max"])];
+            // ⚠ DC columns included, or this download would silently DROP the DC
+            // floors and re-uploading it would wipe them — the invoice ⬇ Data bug,
+            // exactly (a writer and its reader disagreeing, failing ok:true).
+            const h=["SKU",...[...DS_LIST,"DC"].flatMap(ds=>[ds+" Min",ds+" Max"])];
             const rows=Object.entries(newSKUQty).map(([s,dsMap])=>{
-              const vals=DS_LIST.flatMap(ds=>{
+              const vals=[...DS_LIST,"DC"].flatMap(ds=>{
                 const fl=dsMap[ds];
                 if(!fl) return [0,0];
                 if(typeof fl==="number") return [fl,fl];
                 return [fl.min||0,fl.max||0];
               });
-              return `"${s}",${vals.join(",")}`;
+              // ⚠ SKU emitted UNQUOTED. `parseFloorSheet` never strips quotes, so the
+              // quoted form fed back through the sync returned ok:true with keys like
+              // '"ATGRU"' matching nothing. SKUs are plain alphanumeric here.
+              return `${s},${vals.join(",")}`;
             });
             return h.join(",")+"\n"+rows.join("\n");
           }
@@ -3979,14 +3990,14 @@ const outputFreshness = useMemo(
         };
         const templates={
           invoiceData:{file:"Invoice_Dump_Template.csv",headers:["Invoice Date","Invoice Number","Invoice Status","Shopify Order","Item Name","SKU","Category Name","Quantity","Line Item Location Name","Shipping Code"],rows:[["2026-01-01","INV001","Closed","HR/26/0001","Product Name A","SKU001","Paints",5,"DS01 Sarjapur","560035"],["2026-01-02","INV002","Closed","HR/26/0002","Product Name B","SKU002","Adhesives",3,"DS02 Bileshivale","560016"]]},
-          skuMaster:  {file:"SKU_Master_Template.csv",  headers:["Name","Inventorised At","SKU","Category","Status","Brand"],rows:[["Product Name A","DS","SKU001","Paints","Active","Asian Paints"],["Product Name B","DS","SKU002","Adhesives","Active","MYK Laticrete"]]},
+          skuMaster:  {file:"SKU_Master_Template.csv",  headers:["Name","Inventorised At","SKU","Category","Status","Brand","Purchase","Move"],rows:[["Product Name A","DS","SKU001","Paints","Active","Asian Paints","Yes","Yes"],["Product Name B","DS","SKU002","Adhesives","Active","MYK Laticrete","Yes","No"]]},
           priceData:{file:"Avg_Price_Template.csv",headers:["item_id","item_name","unit","is_combo_product","quantity_purchased","amount","average_price","location_name","sku"],rows:[["ITEM001","Product Name A","PCS","No",100,25000,250,"DS01 Warehouse","SKU001"],["ITEM002","Product Name B","PCS","No",10,18000,1800,"DS02 Warehouse","SKU002"]]},
           minReqQty:  {file:"New_DS_Floor_Template.csv",headers:["SKU","Qty"],rows:[["SKU001",10],["SKU002",5]]},
-          newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU",...DS_LIST.flatMap(ds=>[`${ds} Min`,`${ds} Max`])],rows:[["SKU001",3,5,2,3,0,0,5,7,0,0,0,0],["SKU002",0,0,1,2,2,3,0,0,3,4,1,2]]},
+          newSKUQty:  {file:"SKU_Floors_Template.csv",headers:["SKU",...[...DS_LIST,"DC"].flatMap(ds=>[`${ds} Min`,`${ds} Max`])],rows:[["SKU001",3,5,2,3,0,0,5,7,0,0,0,0,0,0],["SKU002",0,0,1,2,2,3,0,0,3,4,1,2,4,6]]},
           deadStock:  {file:"Dead_Stock_Template.csv",  headers:["Dead Stock"],rows:[["SKU001"],["SKU002"]]},
           // ⚠ BLANK = no cap, 0 = stock nothing here. The template shows both so the
           // difference is visible before anyone fills it in; they are opposites.
-          skuCeiling: {file:"SKU_Ceilings_Template.csv",headers:["SKU",...DS_LIST.map(ds=>`${ds} Cap`)],rows:[["SKU001","","","","",5,""],["SKU002",0,0,0,"","",""]]},
+          skuCeiling: {file:"SKU_Ceilings_Template.csv",headers:["SKU",...[...DS_LIST,"DC"].map(ds=>`${ds} Cap`)],rows:[["SKU001","","","","",5,"",""],["SKU002",0,0,0,"","","",8]]},
         };
         // ⚠ Counts come from inputSummary.js, never from Object.keys() inline. Two of
         // these were counting the wrong thing before 2026-07-30 — New DS Floor Qty
@@ -4003,7 +4014,7 @@ const outputFreshness = useMemo(
         // so the one input whose overdue warning we most needed could not have shown it.
         // Leave `note` off anything with an auto writer; let the derived note through.
         const autoBucketCards=[
-          {label:"SKU Floors - DS Level",desc:"Per-store Min/Max floors from the ops Google Sheet. Columns: SKU, DS01 Min, DS01 Max, ..., DS06 Max",handler:handleNSQ,key:"newSKUQty",required:true,
+          {label:"SKU Floors - DS Level",desc:"Per-store Min/Max floors from the ops Google Sheet. Columns: SKU, DS01 Min, DS01 Max, ..., DS06 Max, DC Min, DC Max",handler:handleNSQ,key:"newSKUQty",required:true,
            count:`${sum.newSKUQty.count.toLocaleString()} ${sum.newSKUQty.unit}`,hasData:sum.newSKUQty.total>0},
         ];
         const opsCards=[
@@ -4107,7 +4118,7 @@ const outputFreshness = useMemo(
                   <span style={{color:"#B91C1C",fontSize:10,fontWeight:400}}>required</span>
                   <div style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
                     <span onMouseEnter={()=>setInfoCard("skuMaster")} onMouseLeave={()=>setInfoCard(null)} style={{cursor:"help",color:HR.muted,fontSize:11,userSelect:"none"}}>ⓘ</span>
-                    {infoCard==="skuMaster"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>Name, Inventorised At, SKU, Category, Status, Brand</div>}
+                    {infoCard==="skuMaster"&&<div style={{position:"absolute",top:"120%",left:0,zIndex:30,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"6px 10px",fontSize:10,color:HR.text,whiteSpace:"normal",maxWidth:260,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",lineHeight:1.6}}>Name, Inventorised At, SKU, Category, Status, Brand, Purchase, Move</div>}
                   </div>
                 </div>
                 <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
@@ -4124,8 +4135,8 @@ const outputFreshness = useMemo(
                   <button onClick={()=>{const t=templates.skuMaster;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
                   {Object.keys(skuMaster).length>0&&<button onClick={()=>{
                     const q=v=>`"${(v||"").replace(/"/g,'""')}"`;
-                    const h=["Name","Inventorised At","SKU","Category","Brand","Status"];
-                    const rows=Object.values(skuMaster).map(s=>[q(s.name),q(s.inventorisedAt||"DS"),q(s.sku),q(s.category),q(s.brand),q(s.status||"Active")].join(","));
+                    const h=["Name","Inventorised At","SKU","Category","Brand","Status","Purchase","Move"];
+                    const rows=Object.values(skuMaster).map(s=>[q(s.name),q(s.inventorisedAt||"DS"),q(s.sku),q(s.category),q(s.brand),q(s.status||"Active"),q(normalisePolicy(s.purchase)),q(normalisePolicy(s.move))].join(","));
                     const blob=new Blob([[h.join(","),...rows].join("\n")],{type:"text/csv"});
                     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="skuMaster_data.csv";a.click();
                   }} style={dlBtnS}>⬇ Data</button>}
