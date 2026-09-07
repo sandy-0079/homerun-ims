@@ -10,6 +10,7 @@
 
 import { parseFloorSheet, assessFloorChange } from "../supabase/functions/_shared/skuFloorSheet.ts";
 import { DS_LIST } from "../src/engine/constants.js";
+import { isPolicyNo } from "../src/skuPolicy.js";
 
 const SHEET_CSV =
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vTT2_CBSySgwSk_DVQEziLMzrTxWxmuVDZ1npn6qb5jIeN2zBbNAQWPRZf-r3A7tb_mreZtAgNSJYFh/pub?gid=0&single=true&output=csv";
@@ -75,16 +76,28 @@ if (a.changed.length) console.log(`    ~ ${list(a.changed)}`);
 // The most valuable output and nothing to do with syncing: ops maintains these
 // believing all are live. A floor on a SKU absent from skuMaster, or on one that
 // is not Active, is zeroed by the engine's active-only pass.
-const absent = [], inactive = [];
+// ⚠ FOUR REASONS, NOT TWO — kept in step with sync-sku-floors/index.ts. Reporting
+// only "absent" and "not Active" called a floor healthy on the morning it could not
+// fire: Dead Stock zeroes every location including the DC (open item #30), and a
+// DC-only SKU has all six DS zeroed so its DS floors are inert.
+const absent = [], inactive = [], dead = [], dcOnlyDs = [];
+const deadSet = new Set(payload.deadStock ?? []);
 for (const [sku, f] of Object.entries(p.floors)) {
-  if (Object.keys(f).length === 0) continue;
+  const locs = Object.keys(f);
+  if (locs.length === 0) continue;
   const meta = skuMaster[sku];
   if (!meta) { absent.push(sku); continue; }
   if ((meta.status || "Active").toLowerCase() !== "active") inactive.push(sku);
+  if (deadSet.has(sku)) dead.push(sku);
+  if (isPolicyNo(meta.move) && String(meta.inventorisedAt ?? "").trim().toLowerCase() === "dc"
+      && locs.some((l) => l !== "DC")) dcOnlyDs.push(sku);
 }
-console.log(`\nINEFFECTIVE FLOORS  ${absent.length + inactive.length} of ${withFloors}`);
+const ineffective = new Set([...absent, ...inactive, ...dead, ...dcOnlyDs]);
+console.log(`\nINEFFECTIVE FLOORS  ${ineffective.size} of ${withFloors}`);
 if (absent.length) console.log(`  absent from skuMaster (${absent.length}): ${list(absent, 8)}`);
 if (inactive.length) console.log(`  in master but not Active (${inactive.length}): ${list(inactive, 8)}`);
+if (dead.length) console.log(`  Dead Stock — 0/0 everywhere, outranks floors (${dead.length}): ${list(dead, 8)}`);
+if (dcOnlyDs.length) console.log(`  DC-only (Move=No) with DS floors — DS is zeroed (${dcOnlyDs.length}): ${list(dcOnlyDs, 8)}`);
 
 console.log(
   a.safe

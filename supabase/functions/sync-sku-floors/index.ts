@@ -55,6 +55,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { parseFloorSheet, assessFloorChange } from "../_shared/skuFloorSheet.ts";
+import { isPolicyNo } from "../_shared/skuPolicy.ts";
 import { shouldRun, alreadyRanTonight } from "../_shared/syncCooldown.ts";
 
 // Published-to-web CSV export. ⚠ This is the `pub?...&output=csv` path, NOT the
@@ -163,6 +164,9 @@ Deno.serve(async (req) => {
     const gRow = await supabase.from("team_data").select("payload").eq("id", "global").maybeSingle();
     const live = gRow.data?.payload?.newSKUQty ?? {};
     const skuMaster = gRow.data?.payload?.skuMaster ?? {};
+    // Needed only for the ineffective-floor report below: Dead Stock outranks every
+    // floor, so a floor on a dead SKU can never take effect.
+    const deadStock = gRow.data?.payload?.deadStock ?? [];
 
     // ── 4. Change guard, on BOTH dimensions. See skuFloorSheet.ts: a mass
     //       zeroing leaves the SKU key count flat, so key count alone is blind.
@@ -172,13 +176,33 @@ Deno.serve(async (req) => {
     // useful thing this function reports: ops maintains the sheet believing every
     // row is live. A floor on a SKU absent from skuMaster, or on one that is not
     // Active, is zeroed by the engine's active-only pass.
+    // ⚠ FOUR REASONS, NOT TWO. This used to report only "absent" and "not Active",
+    // which meant it called a floor healthy on the very morning it could not fire:
+    //   • Dead Stock zeroes every location including the DC, outranking all floors
+    //     (open item #30 — measured 2026-08-26 as 6 Active-but-Dead-Stock SKUs whose
+    //     floors were the SKUs from the Dead Stock branch bug)
+    //   • a DC-ONLY SKU (Move=No) has all six DS zeroed by the policy pass, so its DS
+    //     floors are inert — only its `DC Min`/`DC Max` can take effect
+    // A report that omits a reason is worse than no report: it produces a confident
+    // "healthy" on exactly the rows that are wrong.
     const absentFromMaster: string[] = [];
     const notActive: string[] = [];
+    const deadStockFloors: string[] = [];
+    const dcOnlyDsFloors: string[] = [];
+    const deadSet = new Set<string>((deadStock as string[]) ?? []);
     for (const [sku, f] of Object.entries(p.floors)) {
-      if (Object.keys(f).length === 0) continue;
+      const locs = Object.keys(f);
+      if (locs.length === 0) continue;
       const meta = (skuMaster as any)[sku];
       if (!meta) { absentFromMaster.push(sku); continue; }
       if (String(meta.status ?? "Active").toLowerCase() !== "active") notActive.push(sku);
+      if (deadSet.has(sku)) deadStockFloors.push(sku);
+      // Only counts when a DS floor actually exists — a DC-only SKU carrying only a
+      // `DC` floor is entirely correct and must not be reported as ineffective.
+      if (isPolicyNo(meta.move) && String(meta.inventorisedAt ?? "").trim().toLowerCase() === "dc"
+          && locs.some((l) => l !== "DC")) {
+        dcOnlyDsFloors.push(sku);
+      }
     }
 
     // Did a human override us since our last run? The sheet is authoritative so
@@ -213,8 +237,11 @@ Deno.serve(async (req) => {
         counts: { added: change.added.length, removed: change.removed.length, changed: change.changed.length },
       },
       ineffective: {
-        total: absentFromMaster.length + notActive.length,
+        // Deduplicated: a SKU can be both not-Active and Dead Stock (14 of the 24 were,
+        // measured 2026-08-26), and adding the lists would double-count it.
+        total: new Set([...absentFromMaster, ...notActive, ...deadStockFloors, ...dcOnlyDsFloors]).size,
         absentFromMaster: cap(absentFromMaster), notActive: cap(notActive),
+        deadStock: cap(deadStockFloors), dcOnlyDsFloors: cap(dcOnlyDsFloors),
       },
       overrodeManualUpload,
       elapsedSec: Math.round((Date.now() - started) / 1000),
