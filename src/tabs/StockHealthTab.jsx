@@ -1108,12 +1108,36 @@ export default function StockHealthTab({
                   Max · ROS · Req Qty · [DC Stock, DS tabs only] · Ordered Qty ·
                   Received Qty · PO Date · Est. Delivery · PO Number · PO Status.
                   Bare <col>s only — inline comments/whitespace here trip React's
-                  "whitespace text node in <colgroup>" hydration warning. */}
+                  "whitespace text node in <colgroup>" hydration warning.
+
+                  ⚠ THESE ARE MEASURED, NOT ESTIMATED (2026-09-08). Widths were set
+                  from the rendered table at its 85% zoom — canvas-measuring every
+                  cell's text in its own computed font against the allotted width —
+                  because character-count arithmetic got three of them wrong. SKU was
+                  248px, sized for the pre-July codes; a current 5-char code needs 93,
+                  and the only longer ones left are HR-* test SKUs that now ellipsis.
+                  Brand (705 rows clipped) and Stock Health (433, on the "Low Stock"
+                  pill) were the real offenders; every numeric and date column already
+                  measured OVERSIZED, so none of them changed. The freed remainder goes
+                  to Item Name.
+
+                  ⚠⚠ ITEM NAME IS CAPPED AT 440 AND THE VALUE IS LOAD-BEARING. It used
+                  to be the ONE column without a width, so it absorbed every pixel the
+                  window gained or lost: measured 709px at a 1728 viewport (419 wasted
+                  on a median row) but only 261 at 1280, where it already clipped. Once
+                  EVERY column has a width, `table-layout: fixed` distributes surplus
+                  PROPORTIONALLY — which is what widens the other 16 columns ~28% at
+                  1728 for free, with no per-column arithmetic.
+                  ⚠ 440 is the largest value that does not overflow at a 1440 viewport;
+                  500 was measured to overflow there, and below ~1440 even 440 makes the
+                  wrapper scroll horizontally rather than squeezing the name column.
+                  So DO NOT raise this without re-measuring at 1440. Re-measure rather
+                  than reason about any of these numbers. */}
               <colgroup>
-                <col style={{ width: 248 }} />
-                <col />
-                <col style={{ width: 58 }} />
-                <col style={{ width: 64 }} />
+                <col style={{ width: 96 }} />
+                <col style={{ width: 440 }} />
+                <col style={{ width: 92 }} />
+                <col style={{ width: 76 }} />
                 <col style={{ width: 54 }} />
                 <col style={{ width: 54 }} />
                 <col style={{ width: 32 }} />
@@ -1199,10 +1223,18 @@ export default function StockHealthTab({
                       onMouseEnter={e => e.currentTarget.style.filter = "brightness(0.94)"}
                       onMouseLeave={e => e.currentTarget.style.filter = ""}>
 
-                      {/* SKU — sized for 40-char max; copy icon */}
+                      {/* SKU — 5-char codes since the ~2026-07-01 Zoho re-code; copy icon
+                          yields the FULL value, so truncating the display is lossless.
+                          ⚠ ellipsis, NOT a hard slice to 5: nine HR-asian-paints-* test
+                          SKUs would all render as an identical "HR-as", and HR-test /
+                          HR-RLE-01L fit as they are. A hard cut also gives no signal that
+                          anything was removed — which is what `textOverflow: clip` was
+                          doing here, stopping mid-glyph. */}
                       <td style={{ padding: TP, borderTop: topBorder, borderLeft: `3px solid ${cfg.borderColor}`, overflow: "hidden" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
-                          <span style={{ fontFamily: "monospace", fontSize: 9.5, color: HR.muted }}>{row.sku}</span>
+                          <span style={{ fontFamily: "monospace", fontSize: 9.5, color: HR.muted,
+                            overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}
+                            title={row.sku}>{row.sku}</span>
                           <span
                             onClick={e => copySku(row.sku, e)}
                             title="Copy SKU"
