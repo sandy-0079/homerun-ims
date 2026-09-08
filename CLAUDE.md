@@ -628,6 +628,10 @@ governs the DC→DS arc and the arc does not exist there. **One arc, one switch.
     a claim about OPS BEHAVIOUR, not about the code — so it cannot be asserted from the code, and it is
     exactly the kind of claim the first real dataset can refute.** Prefer green until measured.
   - Still worth doing: **leave `Move` blank on DS-inv and Supplier SKUs** — it does nothing there.
+  - **⚠ `scripts/dryrun-sku-master.mjs` STILL CALLS THIS "⚠ RED incoherent" (13 SKUs, seen
+    2026-09-08).** The digest was corrected the day it shipped and the script was not, so the two now
+    disagree about the same fact — the TO deep-link shape exactly, where the right answer already
+    existed in one place and never propagated. One line. See item #34.
 - `Purchase=No` on a DS-inv SKU necessarily also stops it selling — one number drives both the PO and
   the shelf. **13 SKUs, accepted limitation.** A `Sell` flag would not have fixed it.
 
@@ -725,15 +729,28 @@ Inv Value identical to 4 dp, re-verified after every step.
   ceiling bug and the Dead Stock branch bug presented.
 - **Inertness says nothing about whether the feature WORKS** — a policy pass that never fired would
   pass it perfectly. `scripts/dryrun-sku-policy.mjs` asserts the outcome of all four combinations
-  against five real SKU classes, **using the real `ON`/`OFF` + `Yes`/`No` values**: testing with
+  against real SKU classes, **using the real `ON`/`OFF` + `Yes`/`No` values**: testing with
   Yes/No on both would pass while `Purchase = OFF` silently meant Yes in production.
+  - **⚠⚠ IT PRINTS "ALL ASSERTIONS PASSED" OVER A SHRINKING SET — 4 classes, not 5, measured
+    2026-09-08.** Classes are `pick()`ed from live data and `.filter(Boolean)`'d, so one that no longer
+    exists is dropped **silently**. The lost one is "DC + active + has demand + UNFLOORED": the floors
+    sheet grew 1,877 → 2,201, leaving exactly **one** unfloored DC-active SKU (`MAXT8`, created that
+    day, no demand). **A check whose coverage is decided by prod data narrows as the data moves while
+    still reporting success** — the ceiling's untested zero-demand branch again. See item #34.
 
 **⚠ `scripts/dryrun-sku-master.mjs` exists because THE SKU MASTER UPLOAD REPLACES ENTIRELY AND HAS NO
 GUARD** — floors, invoices and ceilings all have one. A file short by 200 rows silently deletes 200
 SKUs, and `inventorisedAt` alone decides whether a SKU is stocked anywhere. It parses with the **real**
 `parseCSV` and reproduces `handleSKU`'s mapping, which is how the first bulk file's **`Item Name`**
-header was caught: IMS reads **`Name`**, so all 2,573 item names would have been blanked — including on
+header was caught: IMS read **`Name`**, so all 2,573 item names would have been blanked — including on
 the Reverse TO list, where the name is how the DS team finds the item on the shelf.
+- **✅ CLOSED 2026-09-08 (`4be7846`): `handleSKU` accepts `Item Name` as an ALIAS for `Name`**, the
+  same one-line shape as `Category`/`Category Name` beside it. Forced by the Tool Output tab's
+  `SKU_Master.csv`, which emits `Item Name` and, once it gained `Purchase`/`Move`, carried **every**
+  field the parser reads — so it looked re-uploadable and was not. Round-tripped on live data: 2,574
+  rows, name column resolved as `Item Name`, **blank names after parse 0 (was 2,574)**, 0 SKUs dropped.
+- **⚠ The script MIRRORS the alias and must keep mirroring it**, resolving name as an alias PAIR so a
+  well-formed file reports no missing column either way.
 
 **⚠ INV VALUE CANNOT VERIFY AN UNPRICED SKU.** On the first real floors file, **7 of 15 DC floors were
 `50/50` on UNPRICED SKUs** — 350 units of committed stock that move the rupee figure by **₹0.00**.
@@ -1414,7 +1431,7 @@ called *Download*. Removing it also retired `outputRows`, `outputScrollTop` and 
 | **PO Team Download** (orange, leftmost) | `PO_Targets_<today>_demand-thru-<date>.csv` | **20 cols** · all master SKUs |
 | Tool Output — DS Level | `IMS_Output_DS.csv` | 15 cols · unchanged |
 | Tool Output — DC | `IMS_Output_DC.csv` | 5 cols · unchanged |
-| SKU Master | `SKU_Master.csv` | 8 cols · Status now normalised |
+| SKU Master | `SKU_Master.csv` | **10 cols** · Status normalised · `Purchase`/`Move` after Status |
 
 ### ⚠⚠ The PO column order is a FROZEN CONTRACT
 `src/poTargetsCsv.js` — `PO_CSV_HEADERS`:
@@ -1797,6 +1814,32 @@ Listed so they are decisions, not omissions.
   pure replenishment buffer with no allowance for the DC's own retail sales, and those `DC01` rows are
   today either reassigned to a DS by attribution (inflating it) or dropped by `tags90`. The precedent
   for fixing it exists — `dcDetails.dsSeedAug` adds a synthetic rate into the DC calc.
+
+### 33. AHJM5 / M8LP6 / YJFZ6 — deactivated AND DC-only, hiding ~₹1.02L at the DC
+All three are Parryware sanitaryware, `inventorisedAt: DC`, `purchase: Yes`, `move: No` — configured
+DC-only *and* in the 15 deactivations of 2026-09-07, which looks like a half-finished edit. `status` is
+the FIRST gate, so it beats both the DC-only flag and the DC floor: they read **0/0** everywhere and
+are absent from `toTargets`. Confirmed still inactive 2026-09-08.
+- **The cost is invisibility, not wrong numbers.** Stock Health filters to `status = Active`, so all
+  three vanish from the DC tab **and the Reverse TO list** while holding real stock — DC 9 / 8 / 10
+  units, ~**₹1.02L** at purchase price, plus stranded DS units (AHJM5 DS01 −1 · DS03 1; M8LP6 DS01 1 ·
+  DS04 2). And **Zoho refuses to transact an inactive item**, so even a hand-raised TO to drain them
+  fails — the 2026-08-28 wall.
+- Two of the three still sold inside the window (AHJM5 1 unit to 08-02, M8LP6 3 to 08-26), so
+  "discontinued" fits only YJFZ6 (zero demand, 10 units).
+- **The coherent encodings, whichever was meant:** DC-only ⇒ reactivate, leaving `Purchase=Yes,
+  Move=No`, which already zeroes the dark stores. Withdrawal ⇒ `Purchase=No, Move=No` with the SKU left
+  **Active**, so the stock stays visible while it drains. Deactivating does both jobs badly.
+- ⚠ The other 12 of the 15 are a clean set (11 LOCTITE adhesives + 1 Jaquar shower set), which is what
+  makes these three look unintended rather than part of a sweep.
+
+### 34. Two dry-run scripts disagree with the code they check — both one-liners
+Same shape twice, and it is the `diag-items` shape: a diagnostic drifting from its subject produces a
+confident wrong answer, which is worse than no check.
+- **`dryrun-sku-master.mjs` calls `Move=No` on a non-DC SKU "RED incoherent"** while `nightly-digest`
+  reports it green and informational. Align the script to green.
+- **`dryrun-sku-policy.mjs` prints "ALL ASSERTIONS PASSED" over 4 classes, not 5.** Make it NAME the
+  classes it could not build, so coverage loss is loud rather than silent.
 
 ### Later, not urgent
 - **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence
