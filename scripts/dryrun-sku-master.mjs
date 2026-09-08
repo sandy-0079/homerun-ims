@@ -12,10 +12,15 @@
 //
 // It parses with the REAL `parseCSV` and reproduces `handleSKU`'s field mapping
 // exactly, so a column-name mismatch shows up here rather than as blank data in prod.
-// That is not hypothetical: the first bulk file used `Item Name`, which IMS does not
-// read (it reads `Name`), and every one of 2,573 item names would have been blanked —
-// including on the Reverse TO list, which is a physical walk sheet where the name is
-// how the DS team finds the item on the shelf.
+// That is not hypothetical: the first bulk file used `Item Name`, which IMS did not
+// read (it read only `Name`), and every one of 2,573 item names would have been
+// blanked — including on the Reverse TO list, which is a physical walk sheet where
+// the name is how the DS team finds the item on the shelf.
+//
+// `handleSKU` now accepts `Item Name` as an ALIAS for `Name` (the Tool Output tab's
+// SKU_Master.csv emits the former), and this script mirrors that. ⚠ The mirroring is
+// the whole point: a diagnostic that reads a different field than the code it checks
+// produces a confident wrong answer — see the diag-items post-mortem in CLAUDE.md.
 //
 // Exits 1 on anything that would lose data, so it can gate an upload.
 
@@ -36,11 +41,16 @@ console.log(`FILE  ${rows.length} data rows`);
 console.log(`  header: ${Object.keys(rows[0] ?? {}).join(" | ")}`);
 
 // ── 1. Column names IMS actually reads ───────────────────────────────────────
-const READS = ["SKU", "Name", "Category", "Category Name", "Brand", "Status", "Inventorised At", "Purchase", "Move"];
+// `Name` and `Item Name` are ALIASES, so they are checked as a pair — listing both in
+// READS would report a missing column on every well-formed file.
+const READS = ["SKU", "Category", "Category Name", "Brand", "Status", "Inventorised At", "Purchase", "Move"];
+const NAME_COLS = ["Name", "Item Name"];
 const present = new Set(Object.keys(rows[0] ?? {}));
+const nameCol = NAME_COLS.find((c) => present.has(c)) ?? null;
 const missing = READS.filter((c) => !present.has(c));
-const unread = [...present].filter((c) => !READS.includes(c));
+const unread = [...present].filter((c) => !READS.includes(c) && !NAME_COLS.includes(c));
 console.log(`\nCOLUMNS IMS READS`);
+console.log(`  name column resolved  : ${nameCol ?? "NONE — every item name would be BLANK"}`);
 console.log(`  missing from the file : ${missing.join(", ") || "(none)"}`);
 console.log(`  in file but IGNORED   : ${unread.join(", ") || "(none)"}`);
 
@@ -51,7 +61,7 @@ for (const r of rows) {
   const s = r["SKU"] || "";
   if (!s) { blankSku++; continue; }
   built[s] = {
-    sku: s, name: r["Name"] || "", category: r["Category"] || r["Category Name"] || "",
+    sku: s, name: r["Name"] || r["Item Name"] || "", category: r["Category"] || r["Category Name"] || "",
     brand: r["Brand"] || "", status: r["Status"] || "Active",
     inventorisedAt: r["Inventorised At"] || "DS",
     purchase: normalisePolicy(r["Purchase"]), move: normalisePolicy(r["Move"]),
@@ -125,7 +135,7 @@ if (perSku.size > 25) console.log(`    … (+${perSku.size - 25} more SKUs)`);
 
 // ── Verdict ──────────────────────────────────────────────────────────────────
 const problems = [];
-if (missing.includes("Name")) problems.push(`header has no "Name" column — all ${keys.length} item names would be BLANK (found "Item Name"? rename it)`);
+if (!nameCol) problems.push(`header has neither a "Name" nor an "Item Name" column — all ${keys.length} item names would be BLANK`);
 if (dropped.length) problems.push(`${dropped.length} SKU(s) in the live master are absent from this file and WOULD BE DELETED`);
 if (unrec.length) problems.push(`${unrec.length} unreadable Purchase/Move value(s)`);
 if (catLostCount > 0) problems.push(`${catLostCount} SKU(s) would LOSE their category, which drives strategy dispatch`);

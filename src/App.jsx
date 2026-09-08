@@ -3415,7 +3415,16 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
     const file=e.target.files[0];if(!file)return;
     setUploading("skuMaster");
     const rows=parseCSV(await file.text());const master={};
-    rows.forEach(r=>{const s=r["SKU"]||"";if(s)master[s]={sku:s,name:r["Name"]||"",category:r["Category"]||r["Category Name"]||"",brand:r["Brand"]||"",status:r["Status"]||"Active",inventorisedAt:r["Inventorised At"]||"DS",purchase:normalisePolicy(r["Purchase"]),move:normalisePolicy(r["Move"])};});
+    // ⚠ `Item Name` IS ACCEPTED AS AN ALIAS FOR `Name`, and that is a data-safety
+    // fix, not a convenience. The Tool Output tab's SKU_Master.csv emits `Item Name`
+    // while this parser read only `Name`, so re-uploading that file BLANKED every
+    // item name — on an upload that replaces entirely with no guard. The name is how
+    // the DS team finds an item on the shelf in the Reverse TO list, so the loss was
+    // silent and expensive. Same one-line alias shape as `Category`/`Category Name`
+    // directly below. ⚠ scripts/dryrun-sku-master.mjs REPRODUCES this mapping and
+    // must be changed with it — a diagnostic that reads a different field than the
+    // code it checks is worse than no diagnostic (the diag-items lesson).
+    rows.forEach(r=>{const s=r["SKU"]||"";if(s)master[s]={sku:s,name:r["Name"]||r["Item Name"]||"",category:r["Category"]||r["Category Name"]||"",brand:r["Brand"]||"",status:r["Status"]||"Active",inventorisedAt:r["Inventorised At"]||"DS",purchase:normalisePolicy(r["Purchase"]),move:normalisePolicy(r["Move"])};});
     setSKU(master);LS.set("skuMaster",JSON.stringify(master));
     await saveTeamData({skuMaster:master});
     setModelDirty(true);
@@ -4467,7 +4476,7 @@ const outputFreshness = useMemo(
                   cta="⬇ Download SKU Master"
                   disabled={!results||outputFreshness.blocked}
                   onClick={()=>{
-                    const hdr=["Item Name","Inventorised At","SKU","Category","Status","Brand","Price Tag","Top N"].join(",");
+                    const hdr=["Item Name","Inventorised At","SKU","Category","Status","Purchase","Move","Brand","Price Tag","Top N"].join(",");
                     const rows=Object.values(skuMaster).map(s=>{
                       const res=results[s.sku];
                       const priceTag=res?.meta?.priceTag||getPriceTag(priceData[s.sku]||0,params.priceTiers);
@@ -4481,6 +4490,14 @@ const outputFreshness = useMemo(
                         // disagree on how a status is spelled — Zoho sends four
                         // spellings (see skuStatus.js).
                         `"${normaliseStatus(s.status)}"`,
+                        // Canonicalised for the same reason Status is: the two Zoho
+                        // fields speak DIFFERENT vocabularies (cf_purchase_status is
+                        // ON/OFF, cf_move is Yes/No), so the raw values would put two
+                        // spellings in one column and a sheet formula would match
+                        // neither. normalisePolicy is the one writer all three CSVs
+                        // share, so they cannot disagree.
+                        `"${normalisePolicy(s.purchase)}"`,
+                        `"${normalisePolicy(s.move)}"`,
                         `"${(s.brand||"").replace(/"/g,'""')}"`,
                         priceTag,
                         topN,
