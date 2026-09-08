@@ -62,15 +62,38 @@ const isActive = (s) => String(I.skuMaster[s]?.status ?? "Active").trim().toLowe
 const dsSum = (s) => DS_LIST.reduce((a, ds) => a + (base[s]?.stores?.[ds]?.max ?? 0), 0);
 
 const pick = (pred) => Object.keys(base).find((s) => I.skuMaster[s] && pred(s));
-const chosen = process.argv.slice(3).length ? process.argv.slice(3) : [
-  pick((s) => invAt(s) === "dc" && isActive(s) && dsSum(s) > 0 && !I.newSKUQty[s]
-             && base[s].dc?.dcDetails?.isFlooredSKU === false),
-  pick((s) => invAt(s) === "dc" && isActive(s) && dsSum(s) > 0 && !!I.newSKUQty[s]),
-  pick((s) => invAt(s) === "dc" && isActive(s) && dsSum(s) > 0
-             && base[s].stores?.[DS_LIST[0]]?.strategyTag === "network_design"),
-  pick((s) => invAt(s) === "ds" && isActive(s)),
-  pick((s) => invAt(s) === "supplier"),
-].filter(Boolean);
+
+// ⚠⚠ THE CLASSES ARE PICKED FROM LIVE DATA, SO COVERAGE SHRINKS AS PROD MOVES — and
+// until 2026-09-08 it shrank SILENTLY: an unmatched class was `.filter(Boolean)`'d
+// away and the run still printed "ALL ASSERTIONS PASSED". Measured that day: 4 of 5.
+// The one lost was "DC unfloored" — the floors sheet grew 1,877 -> 2,201, leaving
+// exactly one unfloored DC-active SKU (MAXT8, created that day, no demand). That is
+// the class that matters most to keep an eye on: floored and unfloored SKUs take
+// DIFFERENT DC branches (`sum(DS Min) x mult` vs `sumDailyAvg x (leadTime+1)`), and
+// the unfloored one is precisely what open item #8 says understocks erratic demand.
+//
+// Unbuilt classes are now NAMED and carried into the success line, so you cannot read
+// a pass without seeing what it did not cover. Deliberately NOT a non-zero exit: a
+// missing class is a fact about prod data, not a defect, and failing every run would
+// train the reader to ignore this script — the Sunday-row-count mistake.
+const CLASSES = [
+  ["DC · unfloored (rate-based DC branch)",
+   (s) => invAt(s) === "dc" && isActive(s) && dsSum(s) > 0 && !I.newSKUQty[s]
+          && base[s].dc?.dcDetails?.isFlooredSKU === false],
+  ["DC · floored (sum-of-DS-mins DC branch)",
+   (s) => invAt(s) === "dc" && isActive(s) && dsSum(s) > 0 && !!I.newSKUQty[s]],
+  ["DC · network design (plywood bypass)",
+   (s) => invAt(s) === "dc" && isActive(s) && dsSum(s) > 0
+          && base[s].stores?.[DS_LIST[0]]?.strategyTag === "network_design"],
+  ["DS-inventorised (Move has no arc to govern)", (s) => invAt(s) === "ds" && isActive(s)],
+  ["Supplier (both flags ignored)", (s) => invAt(s) === "supplier"],
+];
+const explicit = process.argv.slice(3);
+const resolved = explicit.length
+  ? explicit.map((s) => ["(named on the command line)", s])
+  : CLASSES.map(([label, pred]) => [label, pick(pred)]);
+const unbuilt = resolved.filter(([, s]) => !s).map(([label]) => label);
+const chosen = resolved.filter(([, s]) => s).map(([, s]) => s);
 
 const label = (s) => {
   const m = I.skuMaster[s];
@@ -133,8 +156,16 @@ for (const combo of COMBOS) {
 }
 
 console.log("");
+if (unbuilt.length) {
+  console.log(`⚠ ${unbuilt.length} of ${CLASSES.length} class(es) had NO matching SKU in this snapshot and were NOT TESTED:`);
+  for (const label of unbuilt) console.log(`    ${label}`);
+  console.log(`  Not a failure — prod simply holds no such SKU today. But the assertions below`);
+  console.log(`  cover less than they used to, so read the pass with that in mind.`);
+  console.log("");
+}
+const caveat = unbuilt.length ? ` — ⚠ ${unbuilt.length} class(es) NOT TESTED, see above` : "";
 if (failures.length === 0) {
-  console.log(`✓ ALL ASSERTIONS PASSED — ${COMBOS.length} combinations x ${chosen.length} SKU classes.`);
+  console.log(`✓ ALL ASSERTIONS PASSED — ${COMBOS.length} combinations x ${chosen.length} of ${CLASSES.length} SKU classes${caveat}.`);
 } else {
   console.log(`✕ ${failures.length} assertion(s) failed:`);
   for (const f of failures) console.log(`    ${f}`);

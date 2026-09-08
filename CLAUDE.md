@@ -628,10 +628,12 @@ governs the DC→DS arc and the arc does not exist there. **One arc, one switch.
     a claim about OPS BEHAVIOUR, not about the code — so it cannot be asserted from the code, and it is
     exactly the kind of claim the first real dataset can refute.** Prefer green until measured.
   - Still worth doing: **leave `Move` blank on DS-inv and Supplier SKUs** — it does nothing there.
-  - **⚠ `scripts/dryrun-sku-master.mjs` STILL CALLS THIS "⚠ RED incoherent" (13 SKUs, seen
-    2026-09-08).** The digest was corrected the day it shipped and the script was not, so the two now
-    disagree about the same fact — the TO deep-link shape exactly, where the right answer already
-    existed in one place and never propagated. One line. See item #34.
+  - **⚠ `scripts/dryrun-sku-master.mjs` CALLED THIS "⚠ RED incoherent" FOR A DAY — fixed 2026-09-08.**
+    The digest was corrected on 09-07 and the script was not, so two readers of one fact disagreed —
+    the TO deep-link shape exactly, where the right answer already existed in one place and never
+    propagated. It also *predicted* a red digest in its verdict text, which was simply false. Now
+    reports it informational and says the digest is green. **When a severity ruling changes, grep for
+    every place that RESTATES it, not just the one that raised it.**
 - `Purchase=No` on a DS-inv SKU necessarily also stops it selling — one number drives both the PO and
   the shelf. **13 SKUs, accepted limitation.** A `Sell` flag would not have fixed it.
 
@@ -736,7 +738,11 @@ Inv Value identical to 4 dp, re-verified after every step.
     exists is dropped **silently**. The lost one is "DC + active + has demand + UNFLOORED": the floors
     sheet grew 1,877 → 2,201, leaving exactly **one** unfloored DC-active SKU (`MAXT8`, created that
     day, no demand). **A check whose coverage is decided by prod data narrows as the data moves while
-    still reporting success** — the ceiling's untested zero-demand branch again. See item #34.
+    still reporting success** — the ceiling's untested zero-demand branch again. **Fixed 2026-09-08:
+    unbuilt classes are NAMED and the count is carried into the success line itself** (`4 of 5 SKU
+    classes — ⚠ 1 class(es) NOT TESTED`), so a pass cannot be read without its gap. Deliberately still
+    exit 0 — a missing class is a fact about prod data, not a defect, and failing every run would
+    train the reader to ignore the script.
 
 **⚠ `scripts/dryrun-sku-master.mjs` exists because THE SKU MASTER UPLOAD REPLACES ENTIRELY AND HAS NO
 GUARD** — floors, invoices and ceilings all have one. A file short by 200 rows silently deletes 200
@@ -1815,31 +1821,26 @@ Listed so they are decisions, not omissions.
   today either reassigned to a DS by attribution (inflating it) or dropped by `tags90`. The precedent
   for fixing it exists — `dcDetails.dsSeedAug` adds a synthetic rate into the DC calc.
 
-### 33. AHJM5 / M8LP6 / YJFZ6 — deactivated AND DC-only, hiding ~₹1.02L at the DC
-All three are Parryware sanitaryware, `inventorisedAt: DC`, `purchase: Yes`, `move: No` — configured
-DC-only *and* in the 15 deactivations of 2026-09-07, which looks like a half-finished edit. `status` is
-the FIRST gate, so it beats both the DC-only flag and the DC floor: they read **0/0** everywhere and
-are absent from `toTargets`. Confirmed still inactive 2026-09-08.
-- **The cost is invisibility, not wrong numbers.** Stock Health filters to `status = Active`, so all
-  three vanish from the DC tab **and the Reverse TO list** while holding real stock — DC 9 / 8 / 10
-  units, ~**₹1.02L** at purchase price, plus stranded DS units (AHJM5 DS01 −1 · DS03 1; M8LP6 DS01 1 ·
-  DS04 2). And **Zoho refuses to transact an inactive item**, so even a hand-raised TO to drain them
-  fails — the 2026-08-28 wall.
-- Two of the three still sold inside the window (AHJM5 1 unit to 08-02, M8LP6 3 to 08-26), so
-  "discontinued" fits only YJFZ6 (zero demand, 10 units).
-- **The coherent encodings, whichever was meant:** DC-only ⇒ reactivate, leaving `Purchase=Yes,
-  Move=No`, which already zeroes the dark stores. Withdrawal ⇒ `Purchase=No, Move=No` with the SKU left
-  **Active**, so the stock stays visible while it drains. Deactivating does both jobs badly.
-- ⚠ The other 12 of the 15 are a clean set (11 LOCTITE adhesives + 1 Jaquar shower set), which is what
-  makes these three look unintended rather than part of a sweep.
+> **33** (AHJM5 / M8LP6 / YJFZ6 deactivated *and* DC-only) was **dropped 2026-09-08**: the Category
+> Manager owns these and will reactivate when they see fit — it was never an engineering decision.
+> Number retired, not reused. **Kept as one line because the symptom invites re-filing:** all three
+> hold real DC stock (9 / 8 / 10 units, ~₹1.02L) yet read **0/0** everywhere and are absent from Stock
+> Health and the Reverse TO list. That is `status` being the first gate, working as designed — not a
+> Purchase/Move bug.
 
-### 34. Two dry-run scripts disagree with the code they check — both one-liners
-Same shape twice, and it is the `diag-items` shape: a diagnostic drifting from its subject produces a
-confident wrong answer, which is worse than no check.
-- **`dryrun-sku-master.mjs` calls `Move=No` on a non-DC SKU "RED incoherent"** while `nightly-digest`
-  reports it green and informational. Align the script to green.
-- **`dryrun-sku-policy.mjs` prints "ALL ASSERTIONS PASSED" over 4 classes, not 5.** Make it NAME the
-  classes it could not build, so coverage loss is loud rather than silent.
+### 34. ✅ CLOSED 2026-09-08 — two dry-run scripts had drifted from the code they check
+Kept for the shape, which recurred twice in one file and is the `diag-items` shape: a diagnostic
+drifting from its subject gives a confident wrong answer, which is worse than no check. **Neither was
+prod code and neither could break anything** — the damage is being wrong exactly when someone is about
+to do something risky, which is the only time these are run.
+- **`dryrun-sku-master.mjs` called `Move=No` on a non-DC SKU "RED incoherent"** (13 SKUs) while
+  `nightly-digest` had reported it green since the day it shipped, *and* its verdict text claimed "the
+  nightly digest will go RED every morning", which was false. Now informational. The cost of leaving
+  it: this script also emits **real** reds — SKUs that would be deleted, categories lost — and a
+  standing false red teaches the reader to skip all of them.
+- **`dryrun-sku-policy.mjs` printed "ALL ASSERTIONS PASSED" over 4 classes while claiming 5.** Now
+  names the unbuilt ones and folds the count into the success line. See the ⚠ in the Purchase/Move
+  section for why the lost class — unfloored DC — was the worst one to lose quietly.
 
 ### Later, not urgent
 - **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence

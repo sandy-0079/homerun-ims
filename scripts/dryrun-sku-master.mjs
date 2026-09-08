@@ -101,12 +101,20 @@ console.log(`  after normalisation -> Purchase ${JSON.stringify(vals("purchase")
 const moveNo = keys.filter((s) => isPolicyNo(built[s].move));
 const invAt = (s) => String(built[s].inventorisedAt).trim().toLowerCase();
 const dcOnly = moveNo.filter((s) => invAt(s) === "dc");
-const incoherent = moveNo.filter((s) => invAt(s) !== "dc" && !isPolicyNo(built[s].purchase));
+// ⚠ INFORMATIONAL, NOT A FAULT — and this script called it "RED incoherent" until
+// 2026-09-08 while `nightly-digest` had already been corrected to green on 09-07.
+// `Move` governs the DC->DS arc, which does not exist for a DS-inventorised SKU, so
+// setting it there does nothing whichever way it is set — and ops sets them
+// deliberately (11 in the first real dataset). The dangerous reading ("meant DC-only,
+// got inventorisedAt wrong") is INDISTINGUISHABLE from the benign one in the data, so
+// only a human can tell them apart. A red nobody can action teaches the reader to
+// ignore this script's reds — and it has real ones (SKUs deleted, categories lost).
+const moveNoEffect = moveNo.filter((s) => invAt(s) !== "dc" && !isPolicyNo(built[s].purchase));
 const purchNo = keys.filter((s) => isPolicyNo(built[s].purchase));
 const act = (s) => String(built[s].status).trim().toLowerCase() === "active";
 console.log(`\nDC-ONLY SET   Move=No: ${moveNo.length} · of which Inventorised At=DC: ${dcOnly.length}`);
 console.log(`  active ${dcOnly.filter(act).length} · not active ${dcOnly.filter((s) => !act(s)).length}`);
-console.log(`  ⚠ RED incoherent (Move=No, Purchase=Yes, invAt != DC): ${incoherent.length}${incoherent.length ? " -> " + incoherent.join(", ") : ""}`);
+console.log(`  Move=No where it has NO EFFECT (Purchase=Yes, invAt != DC) — informational: ${moveNoEffect.length}${moveNoEffect.length ? " -> " + moveNoEffect.join(", ") : ""}`);
 console.log(`  Purchase=No: ${purchNo.length}${purchNo.length ? " -> " + purchNo.slice(0, 10).join(", ") : ""}`);
 for (const s of dcOnly) {
   console.log(`    ${s.padEnd(8)} ${built[s].status.padEnd(10)} ${built[s].inventorisedAt.padEnd(9)} P=${built[s].purchase.padEnd(3)} M=${built[s].move.padEnd(3)} ${built[s].name.slice(0, 44) || "(NO NAME)"}`);
@@ -141,11 +149,12 @@ if (unrec.length) problems.push(`${unrec.length} unreadable Purchase/Move value(
 if (catLostCount > 0) problems.push(`${catLostCount} SKU(s) would LOSE their category, which drives strategy dispatch`);
 
 console.log("");
-if (incoherent.length) {
-  console.log(`! ${incoherent.length} SKU(s) have Move=No but are not DC-inventorised. Move governs the`);
+if (moveNoEffect.length) {
+  console.log(`- ${moveNoEffect.length} SKU(s) have Move=No but are not DC-inventorised. Move governs the`);
   console.log(`  DC->DS arc, so it does NOTHING there and they stay stocked at the dark stores.`);
-  console.log(`  Harmless if deliberate, but the nightly digest will go RED every morning.`);
-  console.log(`  Leave Move blank on DS-inventorised and Supplier SKUs unless you mean it.`);
+  console.log(`  Harmless; the nightly digest reports this GREEN. Listed only because it is the`);
+  console.log(`  one place a mis-set Inventorised At would surface. Leave Move blank on`);
+  console.log(`  DS-inventorised and Supplier SKUs unless you mean it.`);
 }
 if (problems.length === 0) {
   console.log("OK - safe to upload. Nothing would be lost.");
