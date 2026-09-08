@@ -1821,13 +1821,6 @@ Listed so they are decisions, not omissions.
   today either reassigned to a DS by attribution (inflating it) or dropped by `tags90`. The precedent
   for fixing it exists — `dcDetails.dsSeedAug` adds a synthetic rate into the DC calc.
 
-> **33** (AHJM5 / M8LP6 / YJFZ6 deactivated *and* DC-only) was **dropped 2026-09-08**: the Category
-> Manager owns these and will reactivate when they see fit — it was never an engineering decision.
-> Number retired, not reused. **Kept as one line because the symptom invites re-filing:** all three
-> hold real DC stock (9 / 8 / 10 units, ~₹1.02L) yet read **0/0** everywhere and are absent from Stock
-> Health and the Reverse TO list. That is `status` being the first gate, working as designed — not a
-> Purchase/Move bug.
-
 ### 34. ✅ CLOSED 2026-09-08 — two dry-run scripts had drifted from the code they check
 Kept for the shape, which recurred twice in one file and is the `diag-items` shape: a diagnostic
 drifting from its subject gives a confident wrong answer, which is worse than no check. **Neither was
