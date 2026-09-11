@@ -1181,6 +1181,20 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 **Sync performance constraints (150s Supabase Edge Function wall time):**
 - `inventorysummary` report: ~18–56s/call depending on Zoho health — dominant cost.
 - **Zoho inventorysummary rate limit: ~8 calls/minute** (confirmed 2026-05-22; re-confirmed on the Inventory API 2026-07-06 — 10 calls in ~2 min → 429). 4 concurrent (2 branches × 2 modes) → 429 after 2 groups; 6 concurrent (3 branches) → 429 after 1 group. Safe: max 4 calls per invocation.
+  - **⚠⚠ THAT "8/MIN" COUNTS FETCH CHAINS, NOT HTTP REQUESTS — CORRECTED 2026-09-11.** `fetchBranchStock`
+    **paginates** (`per_page=200`, `while(true)` until `has_more_page`), so one "call" above is ~14
+    requests at today's ~2,700 SKUs. A 2-branch invocation = 4 chains ≈ **50–56 real requests**, not 4.
+    Measured live: DC+DS01 = 2,704 SKUs in **31.8s ≈ 100–105 requests/min** — a running group sits
+    **AT Zoho's documented 100 req/min/org ceiling**, not at 8/min. Nothing here is undocumented; we
+    were miscounting by ~13×, and the 2026-07-09 storm (12 "calls" in 15s ≈ 150+ real req/min) fits
+    the documented limit exactly.
+  - **Consequences.** (1) The 3-min cron stagger is NOT padding — it holds the duty cycle near 35%;
+    overlapping two groups ≈ 200 req/min, i.e. the 2026-07-09 storm. **Do not compress the cron
+    cycle**, and never read "8/min" as headroom. (2) Real volume is **~180 req/cycle ≈ 4,400/day**
+    from stock sync alone — budget any new caller against that, not against 14/cycle.
+  - **The highest-leverage lever is `per_page`, not spacing or cooldown.** If the report accepts
+    >200, ~14 pages becomes ~3 and both the burst rate and the ~4,400/day fall ~4×. **Untested** —
+    settle this before touching cron spacing or `COOLDOWN_MINS`.
 - **Zoho OAuth token-endpoint throttle (distinct from the inventory-API limit above):** `accounts.zoho.in/oauth/v2/token` throttles *access-token generation* from the refresh token — `{"error":"Access Denied","error_description":"You have made too many requests continuously"}`. On 2026-07-14 this failed stock-sync-1 + stock-sync-2 (DC/DS01/DS02/DS03 missed a cycle) at the auth step, *before* any inventory/Supabase call; stock-sync-3/4 recovered ~3 min later. Root cause: every function minted a fresh token per invocation (~5-10/hr across 4 stock crons + orders + on-demand create-to). **Fix (2026-07-15):** shared `supabase/functions/_shared/zohoToken.ts` `getZohoToken(supabase)` caches the token in `public.zoho_auth_cache` (RLS ON, no policies → service-role only; NOT in `params`, which anon can read) and reuses it until ~10 min before expiry. Cuts token calls to ~1/hr; raising a TO now logs `zoho token: cache hit` and costs zero token calls, so it can't starve the crons. FAIL-SAFE: any cache miss/read/write error → fresh refresh (pre-cache behaviour). Hot path only (sync-stock, sync-orders, create-to); the `zoho-invoices/prices/skumaster` importers still mint per-call. Logs `zoho token: refreshed` / `cache hit`.
   - **⚠ KNOWN-BENIGN, DO NOT TREAT AS AN INCIDENT: nightly `401 → force-refresh` bursts, in groups of
     exactly FOUR.** Measured 2026-08-05 (and present on the 08-03 night, so not new): **11 events in one
@@ -1194,6 +1208,30 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
     2026-07-14 throttle above — but 11 mints/night is nowhere near the ~5-10/hr sustained rate that
     caused it. **Not worth a deploy on its own** (piggyback rule). If it ever needs fixing, the lever is
     the cache's ~10-min pre-expiry margin or single-flighting the refresh, not the retry.
+  - **🚀 ESCALATED, THEN FIXED 2026-09-11 — the benign ×4 became a fatal ×16.** Same mechanism plus one
+    multiplier: `zohoFetchWithRetry`'s `reminted` guard is **PER PAGE**, and a chain is ~14 pages — so a
+    token death re-mints per page, and each extra mint evicts a sibling's still-live token (Zoho caps
+    concurrent access tokens per refresh token) → **self-sustaining**. 2026-09-11 08:38:01 UTC
+    (stock-sync-2): `×20 cache hit`, `×16 401 — force-refreshing`, then `Zoho auth failed: "You have
+    made too many requests continuously"` → **HTTP 500, DS02+DS03 lost that cycle**. Recurring daily
+    (5.6% 5xx over 3h). This is also the likely answer to the long-open "why do tokens die before
+    expiry" question — **we were our own other consumer**, not a third-party app.
+  - **Fix = the singleflight this entry predicted.** `mintOnce` in `zohoToken.ts`: concurrent callers
+    join one in-flight promise and all get the same token; the cache write-back moved inside it (N
+    upserts → 1). The slot is cleared on **rejection as well as resolution** — module state outlives a
+    request in a warm isolate, so a retained failed mint would be replayed to every later caller there.
+    New log line **`zoho token: joined in-flight mint`** = the fix engaging; its absence plus no 500s
+    also means healthy.
+  - **⚠ DELIBERATELY NOT ADDED: a cache re-read before a forced mint.** That would regress 2026-07-15
+    (`aae5e85`), whose whole lesson is that **`isTokenFresh` is unreliable** — a token can pass the
+    expiry check and already be revoked. A forced caller must ALWAYS mint. The singleflight changes only
+    HOW MANY callers mint, never WHETHER a forced one does. If you ever add the re-read, key it on token
+    **identity** ("is this a different token from the one that just 401'd?"), never on freshness.
+  - **Deployed `sync-stock` ONLY (v39 → v40).** `create-to` stays **v13**, `sync-orders` **v8** — edge
+    functions bundle their imports at deploy time, so the TO-creation path runs **byte-identical** code
+    and needed no re-verification. `create-to` also pages **sequentially** (`create-to/index.ts:97-112`),
+    concurrency 1, so it never had the stampede. 7 new tests in `zohoToken.test.ts` (677 total green);
+    `getZohoToken` gained an optional 3rd arg `{refresh}` for injection — existing callers unchanged.
 - **⚠ ZOHO GOES DOWN ORG-WIDE, AND A FUNCTION CAN BE A VICTIM RATHER THAN A CAUSE — TWICE NOW,
   2026-07-29 and 2026-07-30.** First occurrence: between **17:35–18:30 UTC every Zoho consumer failed
   identically** with
