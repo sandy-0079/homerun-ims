@@ -19,7 +19,17 @@ Run this the day after the deploy, then again after ~3 days. It answers one ques
 3. **Do NOT trigger manual syncs to "test" this.** Rate-limit recovery takes 60+ min and a
    burst can poison a cron cycle. The hourly crons generate all the evidence needed. The only
    safe manual probe is the cooldown-skip in Check 1 (zero Zoho calls).
-4. **Never redeploy `create-to`.** It must stay on **v13**. It runs byte-identical code to
+4. **⚠ MANUAL PULLS ARE NOW NORMAL — added 2026-09-11, after this runbook was first
+   written.** The TO tool's "Pull fresh stock" button went live the same evening and the DC
+   team uses it after dispatching TO-1 vehicles. So `sync-stock` now has a second, human
+   source of invocations and **none of the following is an anomaly**:
+   - Invocations at **arbitrary minutes**, not only :35/:38/:41/:44 UTC.
+   - `stockUploadedAtPerDS` entries that are **not ~1s after a cron minute**.
+   - **Six invocations in a burst**: 1 `sessionStart` + 4 branch groups + 1 `sessionEnd`.
+     The two session calls return before any Zoho call (`index.ts:154-173`), so they are
+     **sub-second and spend zero Zoho requests** — do not read them as cooldown skips.
+   - Each full manual pull is ~180 Zoho requests over ~4.5 min.
+5. **Never redeploy `create-to`.** It must stay on **v13**. It runs byte-identical code to
    before this change, which is the entire safety argument — see CLAUDE.md, 2026-07-15.
 
 ---
@@ -35,6 +45,10 @@ Run this the day after the deploy, then again after ~3 days. It answers one ques
 | `force-refreshed (after 401)` | **20** | Mints that completed. 36 − 20 = 16 that did not, i.e. the throttled burst. |
 | `joined in-flight mint` | **0** | Did not exist before the fix. |
 | `cache hit` | 2,203 | Normal traffic volume, for scale. |
+
+**⚠ Compare the FAILURE rows, not the volume rows.** `cache hit` and `401 — force-refreshing`
+will both rise now that manual pulls add invocations — that is the button working, not a
+regression. Only `Zoho auth failed` is a pass/fail number.
 
 Dashboard for the same day: **36 invocations / 5.6% 5xx** over 3h, error `Zoho auth failed …`
 count **4** in 24h. The worst single burst (08:38:01 UTC, stock-sync-2) logged
@@ -124,7 +138,9 @@ curl -s "$SUPABASE_URL/rest/v1/team_data?id=eq.global&select=payload->stockUploa
   -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY"
 ```
 Crons fire at **:35 / :38 / :41 / :44 UTC** (= :05/:08/:11/:14 IST) and the timestamp is
-stamped at handler **start**, so each lands ~1s after its cron minute.
+stamped at handler **start**, so a *cron-driven* write lands ~1s after its cron minute.
+**A manual pull writes at arbitrary minutes** — an off-schedule timestamp is the button,
+not a fault. What still holds either way: all 7 present, none stuck an hour behind.
 **Pass:** all 7 present, none older than ~75 min, groups ~3 min apart.
 **Fail:** a location stuck an hour+ behind the others → that group is failing.
 
@@ -137,8 +153,10 @@ select timestamp, req.url, resp.status_code, m.execution_time_ms from function_e
 cross join unnest(metadata) as m cross join unnest(m.request) as req
 cross join unnest(m.response) as resp order by timestamp desc
 ```
-Reference durations for `sync-stock`: **cooldown skip ≈ 1.1–1.2s**; **real 2-branch group
-≈ 12–32s** (measured 2026-09-11: DC+DS01, 2,704 SKUs, **31.8s**).
+Reference durations for `sync-stock`: **session claim/release ≈ sub-second, zero Zoho
+calls** (manual pulls only); **cooldown skip ≈ 1.1–1.2s**; **real 2-branch group ≈ 12–32s**
+(measured 2026-09-11: DC+DS01, 2,704 SKUs, **31.8s**). Three duration classes now, not two —
+a sub-second row is a session call, not a skip.
 **Pass:** real groups still ≲ 40s, status 200.
 **Fail:** durations climbing toward the 150s wall time, or 500/504 appearing.
 
