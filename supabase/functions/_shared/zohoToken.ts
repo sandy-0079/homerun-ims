@@ -39,14 +39,21 @@ async function refreshFromZoho(): Promise<TokenPayload> {
 
 // ── Mint singleflight ────────────────────────────────────────────────────────
 // sync-stock fans 4 paginated branch fetches out under Promise.all, and
-// zohoFetchWithRetry's `reminted` guard is PER PAGE. So when the shared token is
-// revoked mid-run, every in-flight page 401s at once and each one force-refreshes
-// independently: 2026-09-11 08:38 UTC logged ×16 "401 — force-refreshing" for a
+// each chain force-refreshes independently. So when the shared token is revoked
+// mid-run, all 4 chains 401 within the same millisecond and each mints its own
+// replacement: 2026-09-11 08:38 UTC logged 4 × "401 — force-refreshing" for a
 // single dead token, which tripped Zoho's token-endpoint throttle ("You have made
 // too many requests continuously") and 500'd the whole invocation — losing that
 // cron cycle's stock for DS02+DS03. Minting N tokens to replace one is also
 // self-defeating: Zoho evicts older access tokens once too many are live, so the
 // stampede can invalidate the very tokens its siblings are still using.
+//
+// ⚠ Corrected 2026-09-12 (comment only, no behaviour change): an earlier version of
+// this comment said ×16, reading `reminted` (which IS per page) as a per-page
+// stampede. Measured per-burst it is 4 × 401 — one per CONCURRENCY-4 chain, never
+// ~14 per page — so the guard does hold within a chain. This removes a 4×
+// amplification, not 16×. See docs/runbooks/2026-09-11-zoho-token-singleflight-
+// verification.md for the burst-by-burst arithmetic.
 //
 // One mint per dead token. Concurrent callers join the in-flight promise and all
 // receive the same fresh token.

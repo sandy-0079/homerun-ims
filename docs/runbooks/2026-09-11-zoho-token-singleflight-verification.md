@@ -42,7 +42,7 @@ Run this the day after the deploy, then again after ~3 days. It answers one ques
 |---|---:|---|
 | `Zoho auth failed` | **4** | **The failures. Target: 0.** Each one is an HTTP 500 and a lost cron group. |
 | `401 — force-refreshing` | **36** | 401s seen. Not itself a fault — the self-heal working. |
-| `force-refreshed (after 401)` | **20** | Mints that completed. 36 − 20 = 16 that did not, i.e. the throttled burst. |
+| `force-refreshed (after 401)` | **20** | Mints that completed. 36 − 20 = 16 that did not — **4 failed bursts × 4, not one burst of 16.** |
 | `joined in-flight mint` | **0** | Did not exist before the fix. |
 | `cache hit` | 2,203 | Normal traffic volume, for scale. |
 
@@ -51,9 +51,20 @@ will both rise now that manual pulls add invocations — that is the button work
 regression. Only `Zoho auth failed` is a pass/fail number.
 
 Dashboard for the same day: **36 invocations / 5.6% 5xx** over 3h, error `Zoho auth failed …`
-count **4** in 24h. The worst single burst (08:38:01 UTC, stock-sync-2) logged
-`×20 cache hit`, `×16 401 — force-refreshing`, `×2 Zoho auth failed` → HTTP 500, DS02+DS03
-lost that cycle.
+count **4** in 24h.
+
+**⚠ CORRECTED 2026-09-12 — THERE WAS NEVER A BURST OF ×16.** This runbook originally read *"the
+worst single burst (08:38:01 UTC, stock-sync-2) logged `×20 cache hit`, `×16 401 —
+force-refreshing`, `×2 Zoho auth failed`"*. That shape was **inferred** from `36 − 20 = 16` across
+the whole 10.9h window and pinned on one burst — it was never measured per-burst. Grouped by
+timestamp from `function_logs`, **every** pre-fix burst was exactly **4 × 401** (one per
+concurrent branch-fetch chain, `CONCURRENCY 4`), and 08:38:01 itself was `4 × 401` + **1**
+`Zoho auth failed`. The 16 is **4 failed bursts × 4** — 06:35, 06:38, 08:35, 08:38 UTC, all of
+them `:35`/`:38` slots. Arithmetic closes exactly: `36 = 20 mints + 16 unresolved`.
+**So the amplification this fix removes is 4×, not 16×** — mints per dead token 4 → 1, still
+worth having, just a smaller number than the original write-up claimed.
+**Generalisable: two window totals subtracted is not a burst measurement. Group by timestamp
+before claiming a shape.**
 
 ---
 
@@ -128,8 +139,21 @@ Read the **ratio**, not the totals. The fix converts N force-refreshes into 1 mi
 | `force-refreshing` : `force-refreshed` | was ~36:20 — should now be many-to-few |
 | `joined in-flight mint` | >0 on any day a token died; **0 is fine if `Zoho auth failed` is also 0** |
 
-**Inconclusive** (say so, don't guess): all three are 0 → no token died in the window. Re-run
-after more days rather than declaring victory.
+**⚠⚠ A FAILED BURST LOGS NEITHER A MINT NOR A JOIN — added 2026-09-12, and without this you will
+misread the one case that matters.** `zohoToken.ts` emits that line **after** `await mintOnce(…)`
+resolves, so when Zoho refuses the mint the promise rejects and **no** line is printed at all —
+the only trace is `401 — force-refreshing` plus `Zoho auth failed`. A failed burst is therefore
+invisible in *both* mint columns, and the absence of `joined in-flight mint` inside one is
+**expected, not evidence the singleflight disengaged**. Measured 2026-09-12: the two failed bursts
+were `4 × 401 → 0 mints, 0 joins`, while five successful bursts the same window were
+`4 × 401 → 1 mint + 3 joins`.
+**So read the ratio over SUCCESSFUL bursts, and account for the failed ones with
+`401s − mints − joins == 4 × (auth-fail count)`.** That arithmetic closing is the real proof the
+singleflight engaged — it closed exactly both pre-fix (`36 = 20 + 0 + 16`) and post-fix
+(`35 = 12 + 15 + 8`).
+
+**Inconclusive** (say so, don't guess): all three are 0 **and `Zoho auth failed` is 0** → no token
+died in the window. Re-run after more days rather than declaring victory.
 
 ## Check 4 — crons still complete all 7 locations
 

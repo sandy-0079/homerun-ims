@@ -1208,14 +1208,23 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
     2026-07-14 throttle above — but 11 mints/night is nowhere near the ~5-10/hr sustained rate that
     caused it. **Not worth a deploy on its own** (piggyback rule). If it ever needs fixing, the lever is
     the cache's ~10-min pre-expiry margin or single-flighting the refresh, not the retry.
-  - **🚀 ESCALATED, THEN FIXED 2026-09-11 — the benign ×4 became a fatal ×16.** Same mechanism plus one
-    multiplier: `zohoFetchWithRetry`'s `reminted` guard is **PER PAGE**, and a chain is ~14 pages — so a
-    token death re-mints per page, and each extra mint evicts a sibling's still-live token (Zoho caps
-    concurrent access tokens per refresh token) → **self-sustaining**. 2026-09-11 08:38:01 UTC
-    (stock-sync-2): `×20 cache hit`, `×16 401 — force-refreshing`, then `Zoho auth failed: "You have
-    made too many requests continuously"` → **HTTP 500, DS02+DS03 lost that cycle**. Recurring daily
-    (5.6% 5xx over 3h). This is also the likely answer to the long-open "why do tokens die before
-    expiry" question — **we were our own other consumer**, not a third-party app.
+  - **🚀 ESCALATED, THEN FIXED 2026-09-11 — the benign ×4 became a fatal "4 chains, 4 mints".** Each of
+    the 4 concurrent branch-fetch chains force-refreshes independently on a dead token, and each extra
+    mint evicts a sibling's still-live token (Zoho caps concurrent access tokens per refresh token) →
+    **self-sustaining**. 2026-09-11 08:38:01 UTC (stock-sync-2): `4 × 401 — force-refreshing` → `Zoho
+    auth failed: "You have made too many requests continuously"` → **HTTP 500, DS02+DS03 lost that
+    cycle**. Recurring daily (5.6% 5xx over 3h). Likely also the answer to the long-open "why do tokens
+    die before expiry" question — **we were our own other consumer**, not a third-party app.
+    - **⚠⚠ CORRECTED 2026-09-12: THE "×16 IN ONE BURST" FIGURE WAS NEVER MEASURED.** It was `36 − 20`
+      subtracted across a 10.9h window and attributed to a single burst. Grouped by timestamp,
+      **every** pre-fix burst was exactly **4 × 401** — 08:38:01 included — and the 16 is **4 failed
+      bursts × 4** (06:35, 06:38, 08:35, 08:38 UTC). Arithmetic closes both ways: pre-fix
+      `36 = 20 mints + 16 unresolved`, post-fix `35 = 12 mints + 15 joins + 8 unresolved`.
+      **So `reminted` being PER PAGE does NOT produce a per-page stampede** — the guard holds within a
+      chain, and a dead token costs one 401 per *concurrent chain* (4), never ~14 per page. The
+      amplification removed is **4×, not 16×**; still worth having (mints per dead token 4 → 1).
+      **Generalisable: two window totals subtracted is not a burst measurement — group by timestamp
+      before claiming a shape.**
   - **Fix = the singleflight this entry predicted.** `mintOnce` in `zohoToken.ts`: concurrent callers
     join one in-flight promise and all get the same token; the cache write-back moved inside it (N
     upserts → 1). The slot is cleared on **rejection as well as resolution** — module state outlives a
