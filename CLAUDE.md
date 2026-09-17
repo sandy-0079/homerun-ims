@@ -1474,7 +1474,8 @@ The DS-Req-Covered reclassification lives in **one shared helper `applyDCReqCove
 
 ## Tool Output Download Tab
 
-**Four download cards, no table** (rebuilt 2026-08-03 — commits `9a64dee`, `bf35922`, `f3958a7`).
+**Five download cards, no table** (rebuilt 2026-08-03 — commits `9a64dee`, `bf35922`, `f3958a7`;
+fifth card added 2026-09-17, `b0473c0`).
 The Min/Max table that used to fill this tab is gone: it was virtualised so it cost little to render,
 but every number it showed is in SKU Detail, Overview, Stock Health or Manual Overrides, and the tab is
 called *Download*. Removing it also retired `outputRows`, `outputScrollTop` and `visibleOutput`.
@@ -1485,6 +1486,7 @@ called *Download*. Removing it also retired `outputRows`, `outputScrollTop` and 
 | Tool Output — DS Level | `IMS_Output_DS.csv` | 15 cols · unchanged |
 | Tool Output — DC | `IMS_Output_DC.csv` | 5 cols · unchanged |
 | SKU Master | `SKU_Master.csv` | **10 cols** · Status normalised · `Purchase`/`Move` after Status |
+| **Zero Sale SKUs** (row 2, under PO) | `Zero_Sale_SKUs_L<N>D_<from>_to_<to>.csv` | **9 cols** · 3 buttons (60/75/90 Days) |
 
 ### ⚠⚠ The PO column order is a FROZEN CONTRACT
 `src/poTargetsCsv.js` — `PO_CSV_HEADERS`:
@@ -1530,14 +1532,69 @@ disagree. Measured live 2026-08-03, `skuMaster.status` held **four spellings at 
   engine gates Min/Max on an allowlist of exactly `"active"`. **A display transform must never decide
   whether a SKU gets stocked** — leave those alone.
 
-### ⚠ All four downloads are GATED on demand freshness
+### Zero Sale SKUs — the delisting shortlist (SHIPPED 2026-09-17, `b0473c0`)
+One card, **three buttons** (60 / 75 / 90 Days), each downloading the **Active SKUs that sold nothing,
+anywhere** in that trailing window. Logic in **`src/zeroSaleCsv.js`** (28 tests). It is the **fifth child
+of the 4-column grid**, so it flows to row 2 column 1 — directly below PO, identical width, **no grid
+change**; if you are editing `gridTemplateColumns`, stop. At ship: **L60D 547 · L75D 529 · L90D 517** of
+2,396 active SKUs of 2,781 (they move nightly — re-run the script, never quote these).
+
+**⚠⚠ DO NOT WIRE THIS TO `results[sku].meta.t150Tag === "Zero Sale"`.** That value already exists,
+already says these exact words, and answers a **different question**: it is computed over
+`invSliced = allDatesRaw.slice(-overallPeriod)`, and `overallPeriod` is **45** live — an L45D verdict.
+Three buttons reading it emit **three IDENTICAL 45-day files labelled 60/75/90**: every count plausible,
+every column right, **nothing fails**. Exactly the `maxBufferPercentile` shape — a coherent-looking value
+already in scope that answers a different question than the one asked. The module therefore recomputes
+from raw invoice rows and **never imports engine output**.
+
+**⚠ RAW `invoiceData` IS CORRECT HERE — the "pass `attributedInvoice`" rule does NOT apply**, and the
+next reader will assume it does. Zero-sale asks *"did this sell ANYWHERE?"*, so the membership test is on
+`r.sku` alone and never `r.ds`; `applyAttribution` only ever RELABELS `r.ds`, dropping no rows and
+creating none. Raw and attributed are **provably byte-identical** here, so passing attributed rows would
+imply a dependency that does not exist. Commented at both sites.
+
+**⚠ A window is `dates.slice(-N)` over the dates PRESENT**, matching `runEngine.js:77` — not a calendar
+subtraction, so the card and the engine cannot disagree about what a window is. The two readings coincide
+only while the invoice row is contiguous. Hence the **filename carries the RESOLVED range**
+(`Zero_Sale_SKUs_L60D_2026-07-19_to_2026-09-16.csv`) instead of asserting a duration — not a comment row
+above the header, which breaks paste-into-sheet. And because `RETENTION_DAYS = 90` puts the 90-day button
+permanently at the data's edge, **that button disables itself** when fewer dates exist rather than
+emitting a short window under a filename claiming 90.
+
+**⚠ `DownloadCard` took ONE button and now takes an optional `actions` prop**
+(`[{label,onClick,hint,disabled}]`). Absent ⇒ the original single-button path, so the four older cards are
+byte-identically untouched — that was the acceptance bar. **One shared button-style helper serves both
+paths**; a separate `MultiDownloadCard` was rejected because it would duplicate the border, accent, blurb,
+shape, footnote and disabled styling, and the two would drift the first time anyone restyles a card — the
+duplicated-Stock-Health-filter shape. A per-action `disabled` is what lets one window refuse while its
+siblings stay live.
+
+**Columns are the SKU Master set MINUS `Top N`** (9): `Item Name · Inventorised At · SKU · Category ·
+Status · Purchase · Move · Brand · Price Tag`. `Top N` is absent precisely *because* it is the L45D tag
+above. **Nothing is excluded** — Supplier, Dead Stock and DC-only SKUs all stay in, and `Inventorised At`
+/ `Status` are what let the sheet filter them. Formatters are the real shared ones (`normaliseStatus`,
+`normalisePolicy`, `getPriceTag`). **NOT a frozen contract** unlike `PO_CSV_HEADERS` — pinned by a test
+for regression only, with none of the append-only ceremony.
+
+**⚠ `skuMaster` HAS NO CREATED-DATE FIELD**, so a SKU created last week is indistinguishable from one dead
+for a year — both read "zero sale in 90 days". The master grew 2,573 → 2,781 between 2026-09-07 and
+09-16, so genuinely-new SKUs **are** in these lists. Shipped without a flag by operator decision, and
+**surfaced in the card blurb**: a delisting decision made from an unqualified list is the failure mode.
+
+**Oracle: `scripts/adhoc-zero-sale-lists.mjs`** (read-only, `npx vite-node`, writes to gitignored
+`validation-out/`). It **now imports the module**, so the two cannot drift — but it deliberately did NOT
+while the card was being verified, and the three browser downloads were diffed **byte-identical** against
+it as two independent implementations first. **Keep that order:** point a checker at the code it checks
+and the diff compares the module to itself while looking exactly as reassuring.
+
+### ⚠ EVERY download is GATED on demand freshness
 These files serialise a **client-side engine run from page load**, so a tab left open overnight produces
 yesterday's Min/Max in a file that looks entirely normal — and the PO team commits spend from it. On
 opening the tab, and on the 5-minute tick that already drives the provenance pills, the newest invoice
 date *this tab computed from* is compared against the newest date **published** to Supabase
 (`params/invoiceSyncStatus.dates`, taken from the same read that feeds the Invoice Data pill, so gating
 costs no extra request). If the page is behind: amber banner naming both dates, a `↻ Reload now` button,
-and **all four buttons disabled**. Reload recomputes through the existing load path rather than
+and **every button disabled**. Reload recomputes through the existing load path rather than
 re-implementing the engine inside a click handler.
 - **⚠⚠ TRI-STATE — `unknown` MUST NEVER BLOCK** (`assessOutputFreshness`, `src/freshness.js`). The two
   failure directions are not symmetric: a stale file is **mildly wrong and correctable**, a download
@@ -1548,12 +1605,17 @@ re-implementing the engine inside a click handler.
   path.** Seven of the nine tests assert exactly this.
 - Consequence to expect: each night between the invoice publish (~04:00 IST) and the engine run (~05:45),
   a tab left open from the previous day shows all downloads disabled until reloaded. That is the feature.
-- All four are gated, not just PO — the DS/DC files are equally stale, and SKU Master embeds engine
+- All of them are gated, not just PO — the DS/DC files are equally stale, and SKU Master embeds engine
   output (`Price Tag`, `Top N`).
+- ⚠ **Zero Sale is gated too even though its gate is genuinely WEAKER** — it reads `invoiceData`, not the
+  engine's computed targets, so a stale tab degrades more gracefully there. Gated anyway for consistency
+  and because one live button under a banner reading "downloads are disabled" reads as a bug. That is an
+  argument for keeping the gate (no downside), never for dropping it.
 
 ### ⚠ A GREEN BUILD IS NOT EVIDENCE THAT JSX RUNS
-Three bugs in this work **all passed `npm run build` cleanly** and would each have broken production:
-1. `dlCSV` is defined inside the Upload tab's IIFE — out of scope on this tab, so all four cards would
+Three bugs in the 2026-08-03 rebuild **all passed `npm run build` cleanly** and would each have broken
+production:
+1. `dlCSV` is defined inside the Upload tab's IIFE — out of scope on this tab, so every card would
    have thrown on click. (Hence the module-level `downloadCsvFile`.)
 2. `PO_CSV_HEADERS` was used on a card but never imported — `ReferenceError`, white-screened the tab.
 3. `setOutputScrollTop` was still called in `handleTabClick` after the table's state was removed —
@@ -1561,8 +1623,26 @@ Three bugs in this work **all passed `npm run build` cleanly** and would each ha
 
 esbuild does not resolve undefined identifiers, so `npm run build` says nothing about them. What caught
 all three was **`npx eslint src/ | grep no-undef`** plus actually loading the page. Run both before any
-frontend push. (Lint baseline `npx eslint src/` is **75 problems**, measured 2026-08-15; this line has
-said 68 and 79 at different times, so **re-measure rather than trusting it**. `scripts/` is clean.)
+frontend push. (Lint baseline `npx eslint src/` is **75 problems** — measured 2026-08-15, re-confirmed
+2026-09-17; this line has said 68 and 79 at different times, so **re-measure rather than trusting it**.
+`scripts/` is clean. Suite was **705 tests** on 2026-09-17.)
+
+- **⚠⚠ AND THE LINT CHECK ITSELF CAN RETURN A FALSE CLEAN — 2026-09-17, a fourth bug of the same
+  family.** Adding the Zero Sale card redeclared `const zeroSale`, a name **already** taken in `App.jsx`
+  for an unrelated all-time never-sold count feeding the Data Health KPI. That is a **parse error, not a
+  lint finding**, and the consequence is worse than the identifier bugs above: **eslint abandons the file
+  and reports one problem for the whole of it**, so `| grep no-undef` printed nothing *because nothing
+  was analysed*, not because it was clean. Verbatim: `Parsing error: Identifier 'zeroSale' has already
+  been declared`. It would have white-screened every user, since the engine recomputes client-side on
+  every page load.
+  - **The tell was the TOTAL, not the grep: 75 → 23 problems**, an impossible *improvement* for a purely
+    additive change. **A check whose result moves in a direction the change cannot explain is measuring
+    something other than what you think.** Always read the problem count beside the grep, and treat a
+    *drop* as suspicious.
+  - `npx eslint src/App.jsx` alone names the parse error immediately; the whole-directory run buries it.
+  - **Generalisable beyond lint:** this is the `diag-items` shape again — a tool that inspects the wrong
+    thing yields a confident negative. Here the tool was right and the *file selection* silently changed
+    what it inspected.
 
 ---
 
@@ -1760,7 +1840,7 @@ but here the consequence is transfer quantities. Repo: `homerun-to`.
 It can no longer *clobber* `team_data` (see `teamDataBundle.js`) but still computes from a stale
 catalogue, and can publish a stale `params/toTargets` if someone clicks Apply. Wants change-detection or
 a "catalogue updated, reload" prompt. Habit meanwhile: **reload before clicking Apply.**
-- **✅ The DOWNLOAD half of this gap is closed (2026-08-03)** — all four Tool Output downloads are now
+- **✅ The DOWNLOAD half of this gap is closed (2026-08-03)** — every Tool Output download is now
   gated on demand freshness, so a stale tab cannot produce a CSV. See the Tool Output Download section.
   What remains is **Apply**, which is the higher-consequence half: it writes `params/toTargets`. The same
   tri-state assessment could gate it, but Apply is not a download — blocking it would strand a genuine
