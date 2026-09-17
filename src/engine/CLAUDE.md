@@ -150,6 +150,9 @@ of demand lines misattributed** in steady state (20.2% including DS06 launch eff
   - Fixed with **one derivation** in `App.jsx` — `attributedInvoice = useMemo(() =>
     applyAttribution(invoiceData, params.pincodeConfig), …)` — passed to SKU Detail, Plywood v1,
     Plywood v2, Baskets and Simulation. `OverviewTab` deliberately still gets raw: it never groups by
+    ⚠ **Plywood v2 and Simulation were RETIRED 2026-09-17** — that list is now SKU Detail,
+    Plywood v1 and Baskets. The RULE is unchanged and still binds: any tab reading
+    `invoiceData` must be passed `attributedInvoice`.
     `r.ds`, so attributing would change nothing.
   - **⚠ `runEngine` still gets RAW `invoiceData`** and attributes internally. Double-applying is
     harmless (idempotent — `r.pin` is never modified) but it is a trap for the next reader, so keep the
@@ -161,6 +164,9 @@ of demand lines misattributed** in steady state (20.2% including DS06 launch eff
     to five stores while the rest of the tab used `DS_LIST`, so DS06 data existed with no per-store
     view; it now **derives** from `DS_LIST`. `BasketAnalysisTab` had a stale local five-store `DS_LIST`
     (now imports the canonical one), and `simWorker.js` had one ×2 — it **cannot** import (Web Worker),
+    ⚠ **`simWorker.js` was DELETED 2026-09-17** with the OOS Simulation tab, so its duplicated
+    six-store literal no longer exists. Kept because the LESSON does: a Web Worker cannot import
+    `DS_LIST`, so any future worker needs the same completed literal and the same comment.
     so the literal is completed to six with a comment saying why it is duplicated.
 - **Static current mapping applied to all history is deliberate** — it asks "what would demand be if
   today's catchment had always existed", the right counterfactual for future Min/Max. No date-versioning
@@ -560,6 +566,8 @@ Applied as a last pass over `res` in `runEngine` (after all strategies, floors, 
 
 **Downstream of Supplier exclusion:**
 - **OOS Simulation** (`simWorker.js` `runSim` + `runActualStockSim`) explicitly skips Supplier SKUs via `inventorisedAt==='supplier'` — independent of the engine zeroing (holds even if a floor pushed Max>0; the actual-stock sim doesn't read Max at all). The dead inline `runSim`/`median` in App.jsx were removed (2026-06-30).
+  ⚠ **RETIRED 2026-09-17** — `simWorker.js` is deleted. The ENGINE side is unchanged: Supplier
+  SKUs are still zeroed by the Inventorised-At pass. See `docs/retired/README.md`.
 - **Overview tab** store selector "All" = **All Locations (incl. DC)** — `getInv` sums DS01–DS05 **+ DC** so the category/brand/SKU table rollups tie out to the KPI "Inv Value" cards (which always include DC). Coverage figures in "All" mode include DC stock vs DS-only sales by design.
 - **⚠ Overview's "Active SKUs" card counts ENGINE RESULTS, not `skuMaster` rows — the two use different
   denominators.** Measured 2026-07-30: card read **2,106** while the master held **2,101** active, the

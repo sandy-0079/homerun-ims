@@ -4,7 +4,7 @@
 rules for Stock Health and the Tool Output Download tab: health tags, the location
 universe, KPI cards, the PO/TO column sets, the CSV contracts and the freshness gate.
 
-**Tabs are also defined in `src/App.jsx`**, which is 5,285 lines and NOT in this
+**Tabs are also defined in `src/App.jsx`**, which is 3,921 lines and NOT in this
 directory — `ADMIN_TABS` / `PUBLIC_TABS` around line 3760, plus Overview, SKU Detail,
 Upload Data, Logic Tweaker and Manual Overrides, which live inline there rather than as
 files here. Editing App.jsx does not load this file; read it deliberately.
@@ -285,8 +285,8 @@ production:
 
 esbuild does not resolve undefined identifiers, so `npm run build` says nothing about them. What caught
 all three was **`npx eslint src/ | grep no-undef`** plus actually loading the page. Run both before any
-frontend push. (Lint baseline `npx eslint src/` is **75 problems** — measured 2026-08-15, re-confirmed
-2026-09-17; this line has said 68 and 79 at different times, so **re-measure rather than trusting it**.
+frontend push. (Lint baseline `npx eslint src/` is **58 problems** — measured 2026-09-17 AFTER
+the OOS Simulation + Plywood v2 tab removal, down from 75; this line has said 68, 75 and 79 at different times, so **re-measure rather than trusting it**.
 `scripts/` is clean. Suite was **705 tests** on 2026-09-17.)
 
 - **⚠⚠ AND THE LINT CHECK ITSELF CAN RETURN A FALSE CLEAN — 2026-09-17, a fourth bug of the same

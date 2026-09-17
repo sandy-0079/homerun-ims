@@ -128,10 +128,15 @@ a "catalogue updated, reload" prompt. Habit meanwhile: **reload before clicking 
   config change, so it likely wants the "catalogue updated, reload" prompt instead.
 
 ### 7. Read-only config visibility for non-admins — Logic Tweaker + Overrides tabs
-**Verified still open 2026-08-03:** `PUBLIC_TABS` (`App.jsx:3589`) lacks `logic` and `overrides`, so
+**Verified still open 2026-08-03:** `PUBLIC_TABS` (`App.jsx:2420` as of 2026-09-17 — grep, do not trust
+the number) lacks `logic` and `overrides`, so
 non-admins cannot see them at all. Plan: add both to `PUBLIC_TABS` and disable every input with
 `disabled={!isAdmin}`. Upload Data stays admin-only. Plywood Network Design Config is already done this
 way (visible to all, inputs disabled, Save hidden) — copy that pattern.
+- **⚠ THIS NOW INTERACTS WITH ITEM 35, which proposes REMOVING the Overrides tab (2026-09-17).**
+  Do not action them independently: making `overrides` publicly visible and deleting it are
+  opposite moves on the same tab. Item 35 option (c) — keep the tab, make it read-only — IS this
+  item for that half, so settle 35 first and then apply 7 to whatever survives (`logic` at minimum).
 
 ### 23. DS06 cluster assignment
 Clusters are DS01+DS05 (C1), DS02+DC/Rampura (C2), DS03+DS04 (C3). DS06 went live ~2026-07-08 and has
@@ -264,6 +269,9 @@ Supabase **`overrides`** table (`overrides/global`), the third table beside `par
   the merge too — a larger change touching the nightly engine path, `poTargetsCsv` and their
   tests, needing the inertness proof — or **(c)** make the tab read-only for everyone, the
   pattern already used for the Plywood Network Design config.
+- **⚠ Settle this BEFORE item 7**, which proposes the opposite: adding `overrides` to `PUBLIC_TABS`
+  so non-admins can see it read-only. Option (c) here IS item 7 for this tab. Two open items
+  pointing opposite ways at one tab is exactly the kind of thing that gets actioned twice.
 - Same treatment as the 2026-09-17 retirement: `docs/retired/README.md` gains an entry, no code
   is copied, and the restore SHA is recorded.
 

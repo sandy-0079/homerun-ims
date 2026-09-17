@@ -24,6 +24,10 @@ Ceiling, attribution, Active-only, Inventorised-At, Purchase/Move — is in
 
 **v2 — capacity-aware successor (`network_design_v2`):** a separate engine in `src/engine/strategies/plywoodV2/` that stocks every SKU at every DS sized to fit shelf capacity, with a lean-reorder + one-bulk-order DC buffer (replaces v1's brand-node matrix). **Shipped to prod DORMANT 2026-06-18 (PR #11)** — admin-only "Plywood v2" tab (Locations / Assortment-Keep-Score / Settings / OOS-Sim views); the live engine stays on v1/PCT until an admin selects "Network Design v2" in the Logic Tweaker + Apply (reversible). Config in `params/plywoodNetworkV2Config` (own row). **Authoritative doc: `src/engine/strategies/plywoodV2/CLAUDE.md` — read it for v2 work.** v1 (below) is unchanged.
 
+⚠ **The v2 TAB was retired 2026-09-17** — there is no admin-only "Plywood v2" tab any more, and
+no UI writes `params/plywoodNetworkV2Config`. The ENGINE remains and the Logic Tweaker still
+offers the strategy, so selecting it would still work. Removing it is open-work item 36.
+
 **Concept:** Brand-level assignments — each brand is stocked at specific DS nodes which aggregate demand from multiple DSes. Non-stocking DSes get Min=Max=0 (fulfilled from stocking node or DC).
 
 **Current brand assignments (live Supabase config, re-verified 2026-08-05 — code defaults in constants.js are stale):**

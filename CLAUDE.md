@@ -65,7 +65,7 @@ on every session. Verified 2026-09-17, not assumed.
 | `CLAUDE.md` (this) | orientation, credentials, cross-cutting data-safety rules, open-work index, stable IDs | always |
 | `src/engine/CLAUDE.md` | strategies, post-blend + DC ladders, Dead Stock, SKU Ceiling, attribution, DS Seed, Active-only, Inventorised-At, Purchase/Move | touching `src/engine/` |
 | `src/engine/strategies/CLAUDE.md` | Plywood Network Design v1 | touching `src/engine/strategies/` |
-| `src/engine/strategies/plywoodV2/CLAUDE.md` | Plywood v2 (dormant) | touching that directory |
+| `src/engine/strategies/plywoodV2/CLAUDE.md` | Plywood v2 — ENGINE only; its tab was retired 2026-09-17 | touching that directory |
 | `supabase/functions/CLAUDE.md` | Zoho API contracts, rate limits, token singleflight, crons, `create-to`, row inventory, deploy hazards, log recipes | touching `supabase/functions/` |
 | `src/tabs/CLAUDE.md` | Stock Health + Tool Output UI, CSV contracts, freshness gate | touching `src/tabs/` |
 | `docs/OPEN-WORK.md` | full open-work entries | read deliberately |
@@ -78,7 +78,7 @@ on every session. Verified 2026-09-17, not assumed.
 > and the exact failure this split exists to avoid. **Always wrap paths in backticks**; the
 > import parser skips code spans. `scripts/check-claude-md.mjs` asserts zero `@`-imports.
 
-> ⚠ **`src/App.jsx` is 5,285 lines and is NOT in `src/tabs/`.** Overview, SKU Detail,
+> ⚠ **`src/App.jsx` is 3,921 lines and is NOT in `src/tabs/`.** Overview, SKU Detail,
 > Upload Data, Logic Tweaker and Manual Overrides live inline there, so editing them loads
 > **no** directory file. Read `src/tabs/CLAUDE.md` deliberately when working in App.jsx.
 
@@ -457,7 +457,7 @@ let the next feature silently reuse a taken number.
 | # | what | shipped | live documentation |
 |---|---|---|---|
 | 1 | Category Network Analysis (Baskets + Plywood tabs) | 2026-04-18 | archive only |
-| 2 | OOS Simulation — revived as a real backtest | 2026-06-18 | `src/engine/strategies/plywoodV2/CLAUDE.md` |
+| 2 | OOS Simulation — revived as a real backtest | 2026-06-18 | **retired 2026-09-17** — `docs/retired/README.md` |
 | 3 | Stock Health Tab | 2026-05-14 | Stock Health Tab § |
 | 4 | *(retired — "rethink Tool Output tab", dropped 2026-08-03; done anyway that day as the download-cards rebuild)* | — | Tool Output Download Tab § |
 | 5 | *(retired — "full UI polish pass", dropped 2026-08-03, never specified)* | — | — |
