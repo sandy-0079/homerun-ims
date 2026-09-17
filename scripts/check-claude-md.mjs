@@ -31,6 +31,7 @@ const BASELINE_PATH = "CLAUDE.md";
 const DESTINATIONS = [
   { path: "CLAUDE.md",                     budget:  40_000 },
   { path: "src/engine/CLAUDE.md",          budget:  55_000 },
+  { path: "src/engine/strategies/CLAUDE.md", budget: 15_000 },
   { path: "supabase/functions/CLAUDE.md",  budget:  55_000 },
   { path: "src/tabs/CLAUDE.md",            budget:  30_000 },
   { path: "docs/CHANGELOG-ARCHIVE.md",     budget:  60_000 },
