@@ -460,3 +460,102 @@ invoice sync:**
 - OPTIONS preflight: handler checks `req.method === 'OPTIONS'` and returns immediately — prevents browser CORS preflight from running the full sync.
 
 ---
+
+## `create-to` — the DC TO-raising write path
+
+The TO tool itself is a separate repo (`~/Documents/GitHub/homerun-to`, authoritative doc
+`homerun-to/CLAUDE.md`). What lives HERE is the edge function it calls to create draft
+Zoho transfer orders. It is the only **write** path into Zoho in this project, so its
+failure modes are ops-visible immediately.
+
+**`create-to` edge function (this repo, deployed 2026-07-10):** creates **draft-only** Zoho TOs for
+the TO tool. ⚠ Zoho trap: `is_intransit_order:false` = instant full transfer (NOT draft) — the real
+draft mechanism is the undocumented `status:'draft'` body field (captured from the UI's own network
+trace). Non-draft responses are auto-deleted in the same invocation. SKU→item_id map cached in
+`params/zohoItemIds`; audit in `params/toAudit`. Details: homerun-to spec 2026-07-10-task6b.
+- **TO Type = "Mid Mile" (custom field, live 2026-08-07, prod-verified TO-02821).** Zoho added a
+  `TO Type` dropdown (`cf_to_type`; options `Mid Mile` | `Order Fulfilment`, default
+  **Order Fulfilment**, NOT mandatory) and the DC team was flipping every tool-created TO by hand.
+  `create-to` now sends `custom_fields: [{ api_name: 'cf_to_type', value: 'Mid Mile' }]` — a
+  server-side constant, since every TO this endpoint creates is a DC→DS mid-mile restock; the tool
+  neither asks nor sends it, so **no homerun-to deploy was involved**. ⚠ Custom fields must go in
+  `custom_fields`; a top-level `cf_to_type` key would be silently ignored (same trap as `reason`
+  vs `description`) — and because the field has a *default*, a wrong api_name fails **invisibly**
+  as "Order Fulfilment", not as a blank. Hence the read-back check that logs the whole
+  `custom_fields` array on mismatch. **Safety valve:** on a `400` (Zoho validation ⇒ nothing
+  created) the POST is retried ONCE without the custom field, so a labelling nicety can never
+  block a transfer — worst case is the pre-2026-08-07 behaviour. Deliberately not retried on
+  5xx/timeout/429, where a TO may exist and a repeat would duplicate it.
+- **⚠⚠ INACTIVE SKUs ARE DROPPED, NOT FATAL (live 2026-08-29, commit `e1c33c5`).** Zoho refuses the
+  **ENTIRE** transfer order if any line names an item marked inactive or deleted — *"Transfer Order
+  cannot be raised for item &lt;name&gt; that has been deleted or marked as inactive"*, nothing created.
+  So one bad SKU blocked a 94-line TO. On **2026-08-28** ops deactivated 334 SKUs mid-afternoon and
+  **the DC team could not raise a single TO** until they reverted the flip in Zoho by hand.
+  - **⚠ THE ENGINE CANNOT PREVENT THIS AND NEVER WILL.** `buildToTargets` already emits only SKUs
+    whose master status is `active` — but `skuMaster` is a **nightly** copy, so it is *structurally
+    blind* to a same-day flip. Only Zoho knows. Don't "fix" this upstream in the engine.
+  - Pure logic in **`_shared/toLineFilter.ts`** (19 tests): `partitionInactive` splits the requested
+    SKUs, `skipSetGrew` is the retry condition. A **missing** status counts as active (**fails OPEN**)
+    so an older cached item map behaves exactly as before. A SKU **absent** from the map is left alone
+    — `badSkus` owns that and *refuses*; two owners for one fact is how the Stock Health filter and the
+    TO deep link both drifted.
+  - **⚠⚠ `ITEM_MAP_TTL_HOURS` 24 → 0.5, AND THE TTL IS A CORRECTNESS PARAMETER, NOT A PERFORMANCE
+    ONE.** It decides whether validation can *see* a same-day deactivation: at 24h the map called
+    yesterday's flipped SKUs active, the pre-flight passed, and only the POST discovered otherwise.
+    ~12 TOs/day in two windows ⇒ roughly **2 refreshes/day**; the first TO of a session pays ~8s
+    (surfaced in the tool's existing `validating` stage), the rest are instant.
+  - **⚠ A REFRESH FAILURE FALLS BACK TO THE CACHED MAP, never throws.** At a 24h TTL almost every TO
+    was served from cache and never touched `/items`; at 30 min most TOs refresh, which would newly
+    expose the whole DC TO path to Zoho being slow or 429'd. This is the guard that stops a latency
+    change from becoming an availability change.
+  - **⚠⚠ A SKIP PROPOSED FROM A CACHED MAP IS NEVER ACTED ON — refresh and re-ask first.** The cache
+    is stale in **both** directions and the second is worse: *"says inactive, actually active"* would
+    **silently drop good lines**. Not hypothetical — on 2026-08-29 ops reactivated 334 SKUs, and a map
+    from the previous evening would have skipped every one of them while the screen calmly read
+    "90 of 94 items". Costs nothing on a clean TO, because `buildToTargets` already emits active-only.
+  - **Reactive backstop:** after the TO Type valve, a 400 triggers one forced refresh + re-partition,
+    and retries **once only if the skip set GREW**. ⚠ That condition is the whole safety of the branch
+    and is why we do **not parse Zoho's message**: a numbering or location 400 produces no new skips,
+    so nothing is retried and the original error is surfaced untouched. **Zoho names exactly ONE item
+    per 400**, so parsing would cost one write attempt per bad SKU (four attempts for four SKUs) and
+    would only ever yield the item *name*, not the SKU. Re-partitioning catches all of them in one
+    pass. Gated strictly on `400`; never 5xx/timeout/429.
+  - **An empty TO is refused, never created** — a zero-line draft in Zoho is worse than a clear error.
+  - Response and `params/toAudit` gain `skipped` + `requested`. **The nightly digest names them; the
+    ground team sees only a COUNT** — an inactive SKU is a Zoho catalogue problem they cannot act on,
+    and a list would invite chasing stock that was never sent. Admin-only **by construction** (one
+    recipient), no new UI and no new gate. Reported **green**: a dropped line means the TO *succeeded*
+    where it used to fail. Deduped by SKU across TOs — one bad SKU in six transfers is one thing to fix.
+
+---
+
+## Supabase row inventory
+
+Which rows exist, who owns each, and which are the only surviving copy of something. Most
+of these are written by the syncs in this directory; the two-row `team_data` separation
+and the params-row rule are in root `CLAUDE.md`, which loads automatically.
+
+- **Row inventory (verified live 2026-08-05).** `team_data` — **8 rows**: `global` (4.3MB), `invoice_data`
+  (8.6MB), `invoice_sync_buffer` (in-flight chunks for the 1–2 dates being pulled, keyed
+  `date|round|offset` so a re-run of a chunk is idempotent; **nothing else reads it** — sits at **32
+  bytes** when drained, which is what a healthy morning looks like),
+  (`invoice_data_shadow` was **deleted 2026-08-04** — verified first that all 8 of its dates existed in
+  the live row, none were pre-July, and where counts differed the live row was the *more* correct one,
+  post-void-correction),
+  `invoice_data_backup_20260728` + `_20260729` + **`_20260803`** (the last is the Stage 5 cutover backup,
+  75,699 rows / 90 dates verified; the API cannot re-serve anything before 2026-07-01, so these are the
+  only copy of Apr–Jun history — and **the only copy of each date the retention trim trims**, one per
+  night until ~28 Sep 2026), **`sku_floors_backup_20260731`** (159KB, taken at the Stage 8 cutover),
+  `catalogue_backup_20260729`
+  (skuMaster/priceData — **matters more than the invoice backup**, see Stage 7). `params`: `global`,
+  `paramsBackup`, `plywoodNetworkConfig`, `plywoodNetworkV2Config`, `networkConfigs`, `pincodeMap`,
+  **`dsCapacities`** (a FIFTH own-row config this list omitted until 2026-09-07 — `loadParamConfigRows`
+  attaches it, so verify against that function rather than this list)
+  (attribution), `toTargets`, `toAudit`, `toSnapshots`, `zohoItemIds`, `binLocations`, `syncLock`,
+  `invoiceSyncStatus`, `invoiceSyncCursor`, `uploadProvenance` (**new 2026-07-30** — when each input was
+  last set BY HAND; the browser is its only writer, syncs record their own times in their own status
+  rows, so no key has two writers), `catalogueSyncStatus` (now also carries **`lastOkNight`** —
+  the once-per-night gate; see Stage 7), **`digestHistory`** + **`digestStatus`** (new 2026-08-04 —
+  `nightly-digest` is the only reader and writer of both; history is `{days:[{date,min,max}]}`,
+  idempotent by IST date, trimmed to 60; **first real entry written 2026-08-05**, so the email's ₹ delta
+  line starts appearing from 2026-08-06).

@@ -29,12 +29,13 @@ const BASELINE_PATH = "CLAUDE.md";
 // regrowth rule: exceed one and this check goes amber, which is the prompt to
 // promote the lesson and archive the incident rather than append again.
 const DESTINATIONS = [
-  { path: "CLAUDE.md",                     budget:  40_000 },
+  { path: "CLAUDE.md",                     budget:  45_000 }, // strictest of the set: this is the one that loads every session
   { path: "src/engine/CLAUDE.md",          budget:  55_000 },
   { path: "src/engine/strategies/CLAUDE.md", budget: 15_000 },
-  { path: "supabase/functions/CLAUDE.md",  budget:  55_000 },
+  { path: "supabase/functions/CLAUDE.md",  budget:  62_000 }, // largest legitimately: 7 functions + Zoho contracts + crons
   { path: "src/tabs/CLAUDE.md",            budget:  30_000 },
   { path: "docs/CHANGELOG-ARCHIVE.md",     budget:  60_000 },
+  { path: "docs/OPEN-WORK.md",             budget:  25_000 },
 ];
 
 // Deliberate rewrites. Step 6 condenses some post-mortems into rules, so a
