@@ -76,7 +76,7 @@ export function assessSyncedInput({ source, ms }) {
  *
  * The Tool Output downloads serialise a client-side engine run from page load, so a tab
  * left open overnight produces yesterday's Min/Max in a file that looks entirely normal
- * — and the PO team commits spend from it. This gates all four downloads.
+ * — and the PO team commits spend from it. This gates every download on that tab.
  *
  * ⚠⚠ TRI-STATE ON PURPOSE — "unknown" must NEVER block. A hard block is only as
  * trustworthy as the check behind it, and the two ways to be wrong are not symmetric:

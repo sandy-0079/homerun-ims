@@ -10,6 +10,7 @@ import { normaliseStatus } from "./skuStatus";
 import { parseSkuCeilingCsv, buildSkuCeilingCsv } from "./skuCeilingCsv";
 import { normalisePolicy } from "./skuPolicy";
 import { computeInvValue } from "./invValue";
+import { summariseZeroSale, buildZeroSaleCsv, zeroSaleFilename, ZERO_SALE_CSV_HEADERS } from "./zeroSaleCsv";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
@@ -129,19 +130,38 @@ function downloadCsvFile(filename,csv){
  * numbers are. These files serialise a client-side recompute from page load, so a tab
  * left open overnight produces yesterday's targets in a file that looks entirely normal.
  */
-const DownloadCard=React.memo(({title,accent,blurb,shape,cta,footnote,primary,disabled,onClick,hint})=>(
+const DownloadCard=React.memo(({title,accent,blurb,shape,cta,footnote,primary,disabled,onClick,hint,actions})=>{
+  // ONE button style, shared by both paths, so the multi-button row cannot drift from
+  // the single button the other cards use the first time anyone restyles a card. That
+  // drift is why a separate MultiDownloadCard was rejected: it would have duplicated
+  // the border, accent, blurb, shape, footnote and disabled styling as well.
+  const btn=(off)=>({background:off?"#E5E5E5":accent,color:off?"#999":HR.white,border:"none",
+    padding:"9px 12px",borderRadius:6,cursor:off?"not-allowed":"pointer",
+    fontWeight:primary?800:700,fontSize:12,width:"100%"});
+  return(
   <div style={{...S.card,display:"flex",flexDirection:"column",gap:8,borderTop:`3px solid ${disabled?"#ccc":accent}`,
     ...(primary&&!disabled?{boxShadow:`0 2px 12px ${accent}38`}:{})}}>
     <div style={{fontWeight:800,fontSize:13,color:HR.text,letterSpacing:0.2}}>{title}</div>
     <div style={{fontSize:11,color:HR.muted,lineHeight:1.5,flex:1}}>{blurb}</div>
     <div style={{fontSize:10,color:HR.muted,fontFamily:"monospace"}}>{shape}</div>
-    <button disabled={disabled} onClick={onClick} title={hint}
-      style={{background:disabled?"#E5E5E5":accent,color:disabled?"#999":HR.white,border:"none",
-        padding:"9px 12px",borderRadius:6,cursor:disabled?"not-allowed":"pointer",
-        fontWeight:primary?800:700,fontSize:12,width:"100%"}}>{cta}</button>
+    {/* `actions` is OPTIONAL and the four original cards pass nothing, so they take the
+        single-button path below unchanged — that is the acceptance bar for this prop.
+        A per-action `disabled` lets one button refuse (a window with too few invoice
+        dates) while its siblings stay live. */}
+    {actions?.length?(
+      <div style={{display:"flex",gap:6}}>
+        {actions.map(a=>(
+          <button key={a.label} disabled={disabled||a.disabled} onClick={a.onClick} title={a.hint}
+            style={{...btn(disabled||a.disabled),padding:"9px 4px"}}>{a.label}</button>
+        ))}
+      </div>
+    ):(
+      <button disabled={disabled} onClick={onClick} title={hint}
+        style={btn(disabled)}>{cta}</button>
+    )}
     <div style={{fontSize:10,color:HR.muted,textAlign:"center",minHeight:13}}>{footnote||""}</div>
   </div>
-));
+);});
 
 const S={
   app:{fontFamily:"Inter,sans-serif",background:HR.bg,height:"calc(100vh / 0.85)",color:HR.text,width:"100%",boxSizing:"border-box",overflowX:"hidden",display:"flex",flexDirection:"column"},
@@ -3702,12 +3722,34 @@ const outputDemandThrough = useMemo(
   () => (invoiceData.length ? [...new Set(invoiceData.map(r => r.date))].sort().at(-1) : null),
   [invoiceData],
 );
-// Gates ALL FOUR Tool Output downloads. Re-evaluates on the same 5-min tick that drives
+// Gates EVERY Tool Output download. Re-evaluates on the same 5-min tick that drives
 // the provenance pills, so a tab open across the nightly publish notices without a click.
 // ⚠ `blocked` is true ONLY on positive evidence of staleness — see assessOutputFreshness.
 const outputFreshness = useMemo(
   () => assessOutputFreshness({ pageThrough: outputDemandThrough, liveThrough: provRaw.invoiceLiveThrough }),
   [outputDemandThrough, provRaw.invoiceLiveThrough],
+);
+// Zero-sale SKU lists for the three trailing windows.
+//
+// ⚠ Derived from RAW `invoiceData`, NOT from `results` — the engine already publishes
+// `meta.t150Tag === "Zero Sale"`, but it is computed over `overallPeriod` (45 live), so
+// reusing it would emit three IDENTICAL 45-day files labelled 60/75/90 and nothing
+// would fail. See src/zeroSaleCsv.js.
+//
+// ⚠ Raw rather than `attributedInvoice` on purpose: the membership test is on `r.sku`
+// alone and never reads `r.ds`, and `applyAttribution` only relabels `r.ds` — so the
+// two inputs give byte-identical output and passing the attributed rows would imply a
+// dependency that does not exist.
+//
+// Deps are the inputs themselves, so a reload or a fresh nightly publish moves the
+// counts without a click; it does NOT depend on the engine having been re-run.
+// ⚠ NOT `zeroSale` — that name is already a different quantity in this component: an
+// ALL-TIME count of never-sold active SKUs feeding the Data Health KPI tile. Same two
+// words, different question (all-time vs a trailing window), which is why the lists
+// carry the plural name.
+const zeroSaleLists = useMemo(
+  () => summariseZeroSale({ invoiceData, skuMaster }),
+  [invoiceData, skuMaster],
 );
 
 
@@ -4355,13 +4397,13 @@ const outputFreshness = useMemo(
               <div>
                 <h2 style={{color:HR.yellowDark,margin:0,fontSize:16}}>Tool Output Download</h2>
                 <div style={{fontSize:11,color:HR.muted,marginTop:4}}>
-                  Every file below is generated from the model as computed in <b>this browser tab</b>.
+                  Every file below is generated from the data and model held in <b>this browser tab</b>.
                   If it has been open a while, hard-reload before downloading.
                   {outputDemandThrough&&<> Currently showing demand through <b>{outputDemandThrough}</b>.</>}
                 </div>
               </div>
 
-              {/* ⚠ Blocks ALL FOUR downloads, but only on positive evidence that newer
+              {/* ⚠ Blocks EVERY download on this tab, but only on positive evidence that newer
                   demand data was published (assessOutputFreshness). A failed or unknown
                   check leaves every download working — a blocked download at 06:00 IST
                   stops purchasing, which is worse than a slightly stale file. */}
@@ -4402,8 +4444,8 @@ const outputFreshness = useMemo(
                     const csv=buildPoTargetsCsv({skuMaster,results,coreOverrides});
                     if(!csv){alert("No SKU Master loaded — nothing to download.");return;}
 
-                    // No staleness check here — the banner above gates all four
-                    // downloads before the click, so reaching this point means the page
+                    // No staleness check here — the banner above gates every download
+                    // on this tab before the click, so reaching this point means the page
                     // is fresh or the check could not prove otherwise.
                     const d=new Date(),p=n=>String(n).padStart(2,"0");
                     downloadCsvFile(poCsvFilename({
@@ -4505,6 +4547,46 @@ const outputFreshness = useMemo(
                     });
                     downloadCsvFile("SKU_Master.csv",[hdr,...rows].join("\n"));
                   }}
+                />
+
+                {/* ── Zero Sale SKUs ───────────────────────────────────────────────
+                    The FIFTH child of a 4-column grid, so it flows to row 2 column 1 —
+                    directly below the PO card, at identical width. No grid change, no
+                    wrapper, no explicit placement: if you find yourself editing
+                    gridTemplateColumns, the requirement is already satisfied by append
+                    order.
+
+                    Unlike the four above, this file does NOT serialise engine output —
+                    it reads invoice history directly, so it is unaffected by the
+                    params the model was last run with. It is gated on the same banner
+                    anyway: one live button under "downloads are disabled" reads as a
+                    bug, and the gate costs nothing here. */}
+                <DownloadCard
+                  title="Zero Sale SKUs"
+                  accent="#DC2626"
+                  blurb={<>Active SKUs that sold <b>nothing, anywhere</b>, across the trailing window — a delisting shortlist. Supplier, Dead Stock and DC-only SKUs are all kept in; filter them in the sheet on <b>Inventorised At</b> and <b>Status</b>. ⚠ The master holds no created-date, so a <b>SKU added last week looks identical to one dead for a year</b> — check age before delisting.</>}
+                  shape={`${ZERO_SALE_CSV_HEADERS.length} columns · ${zeroSaleLists.windows.map(w=>w.available?w.skus.length.toLocaleString():"—").join(" / ")} SKUs`}
+                  footnote={zeroSaleLists.activeCount?`of ${zeroSaleLists.activeCount.toLocaleString()} active SKUs`:null}
+                  disabled={!results||outputFreshness.blocked}
+                  actions={zeroSaleLists.windows.map(w=>({
+                    label:`${w.days} Days`,
+                    // ⚠ RETENTION_DAYS = 90 trims the invoice row nightly, so L90D sits
+                    // permanently at the edge of the data. After a bad night or a
+                    // restore this button refuses rather than emitting 84 days of rows
+                    // under a filename claiming 90.
+                    disabled:!w.available,
+                    hint:w.available
+                      ?`${w.skus.length.toLocaleString()} Active SKUs with zero sales · ${w.from} → ${w.to}`
+                      :`Needs ${w.days} invoice dates — only ${zeroSaleLists.dateCount} are held.`,
+                    onClick:()=>{
+                      const csv=buildZeroSaleCsv({skus:w.skus,priceData,priceTiers:params.priceTiers});
+                      if(!csv){alert(`No Active SKUs had zero sales over the last ${w.days} days.`);return;}
+                      // Filename carries the RESOLVED range, not just the duration: a
+                      // window is "the last N dates PRESENT", so "L90D" is a claim the
+                      // data can fail to back.
+                      downloadCsvFile(zeroSaleFilename(w),csv);
+                    },
+                  }))}
                 />
 
               </div>

@@ -133,5 +133,5 @@ export function poCsvFilename({ refreshedOn, demandThrough }) {
   return `PO_Targets_${safe(refreshedOn)}_demand-thru-${safe(demandThrough)}.csv`;
 }
 
-// Freshness gating lives in ./freshness.js (`assessOutputFreshness`) — it now governs all
-// four Tool Output downloads, not just this one, so it does not belong in this file.
+// Freshness gating lives in ./freshness.js (`assessOutputFreshness`) — it now governs
+// every Tool Output download, not just this one, so it does not belong in this file.
