@@ -27,6 +27,9 @@ Removed from `App.jsx`: the `SimulationTab` component and its 16 exclusive helpe
 `handleSavePlywoodNetworkV2Config` handler, both tab panels, both nav entries, and two
 helpers orphaned by the cut (`oosColor`, `parseOverrideCSV`). App.jsx 5,285 → 3,921 lines.
 
+**Tracked as open-work item 36** (see `docs/OPEN-WORK.md`), to be picked up after item 35
+(removing the Manual Overrides tab).
+
 **⚠ The Plywood v2 ENGINE was deliberately left in place.** Only the tab went. Removing
 `src/engine/strategies/plywoodV2/` would mean editing `runEngine.js` and `src/engine/index.js`
 — an edit to the file that computes every Min/Max — and that is a separate change needing

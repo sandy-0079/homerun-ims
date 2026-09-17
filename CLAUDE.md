@@ -437,6 +437,8 @@ which numbers are taken.
 | 30 | ✅ closed 2026-09-07 — floor-sheet reader gaps | kept for the reasoning |
 | 31 | Purchase/Move follow-ups | hysteresis on `status` (operator's call), dropping absent SKUs from `res`, the `Sell` flag |
 | 34 | ✅ closed 2026-09-08 — two dry-run scripts had drifted | kept for the shape: a diagnostic drifting from its subject is worse than no check |
+| 35 | Remove the **Manual Overrides** tab | live `coreOverrides` is **0**, but the tab is the EDITOR not the feature — `mergeCoreOverrides` stays in the nightly engine path and the PO CSV |
+| 36 | The **Plywood v2 engine** is still in the tree | tab retired 2026-09-17, engine kept; 21 files / 184 KB, reachable from nothing. ⚠ the Logic Tweaker option must go in the SAME change |
 | — | *Later, not urgent* | IMS reads the canonical stored result instead of recomputing client-side |
 
 
@@ -450,7 +452,7 @@ one reason: **the numbers are stable IDs that appear in commit messages and PRs,
 are never renumbered or reused** — and an index that left the file with the entries would
 let the next feature silently reuse a taken number.
 
-**Highest used: 34. `33` was never used (a gap, not a free slot — leave it). Next: 35.**
+**Highest used: 36. `33` was never used (a gap, not a free slot — leave it). Next: 37.**
 
 | # | what | shipped | live documentation |
 |---|---|---|---|
@@ -488,6 +490,8 @@ let the next feature silently reuse a taken number.
 | 32 | Purchase / Move — commercial policy | 2026-09-07 | Purchase / Move § |
 | 33 | *(never used)* | — | — |
 | 34 | Two dry-run scripts had drifted | closed 2026-09-08 | Open Work § (kept for the shape) |
+| 35 | Remove the Manual Overrides tab | **open** | Open Work § |
+| 36 | Remove the dormant Plywood v2 engine | **open** | Open Work § + `docs/retired/README.md` |
 
 
 ## Deferred

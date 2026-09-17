@@ -11,7 +11,7 @@ someone re-deriving a conclusion that was already measured and rejected — item
 not oversights.
 
 **Numbers are stable IDs.** They appear in commit messages and PRs, so they are never
-renumbered or reused. Highest used is 34; 33 was never used; next is 35. The full index,
+renumbered or reused. Highest used is 36; 33 was never used; next is 37. The full index,
 including everything shipped, is in root `CLAUDE.md`.
 
 ---
@@ -242,6 +242,58 @@ to do something risky, which is the only time these are run.
 - **`dryrun-sku-policy.mjs` printed "ALL ASSERTIONS PASSED" over 4 classes while claiming 5.** Now
   names the unbuilt ones and folds the count into the success line. See the ⚠ in the Purchase/Move
   section for why the lost class — unfloored DC — was the worst one to lose quietly.
+
+### 35. Remove the Manual Overrides tab — decide editor-only vs the whole feature
+Queued 2026-09-17 alongside the tab retirement, to be looked at **before** item 36.
+`OverridesTab` (`App.jsx`, admin-only, `tab==="overrides"&&isAdmin`) reads and writes the
+Supabase **`overrides`** table (`overrides/global`), the third table beside `params` and
+`team_data`.
+- **Live `coreOverrides` count is 0** (measured 2026-09-17 via `snapshot-engine-inputs.mjs`).
+  So removing the tab today would be provably inert for targets — but **re-measure at the
+  time rather than trusting this number**, since a non-empty row changes the answer.
+- **⚠⚠ THE TAB IS THE EDITOR, NOT THE FEATURE — and this is the whole decision.**
+  `mergeCoreOverrides` (`src/toTargets.js:38`) is called by **both** `toTargets` writers:
+  `applyAndRun` in App.jsx **and `api/run-engine.js:128`, the nightly Vercel run**. Separately
+  `buildPoTargetsCsv` (`src/poTargetsCsv.js:83`) applies overrides to the PO Team Download.
+  Deleting the tab leaves all three paths intact.
+- **⚠ That leaves a real hazard worth naming.** With the editor gone, a non-empty
+  `overrides/global` would still move published targets and the PO file, with **no UI to
+  inspect or clear it** — a writer with no reader, the shape this codebase keeps getting bitten
+  by. Either also remove the merge, or keep the tab visible read-only.
+- So the decision is explicit: **(a)** remove only the editor and leave the merge, **(b)** remove
+  the merge too — a larger change touching the nightly engine path, `poTargetsCsv` and their
+  tests, needing the inertness proof — or **(c)** make the tab read-only for everyone, the
+  pattern already used for the Plywood Network Design config.
+- Same treatment as the 2026-09-17 retirement: `docs/retired/README.md` gains an entry, no code
+  is copied, and the restore SHA is recorded.
+
+### 36. The Plywood v2 engine is still in the tree with no way to reach it
+Its **tab** was retired 2026-09-17; the **engine was deliberately kept**, because removing it
+edits the file that computes every Min/Max and deserves its own change and its own proof.
+Footprint: `src/engine/strategies/plywoodV2/` — **21 files, 184 KB**, plus a **32,909-char
+`CLAUDE.md`** and its own `__tests__/`.
+- **Inert today, verified:** no category maps to `network_design_v2` (live 2026-09-17 —
+  Plywood/MDF is on `network_design`, v1), so it computes nothing. **Re-verify at the time.**
+- **Every site that must change together** — grep rather than trusting these line numbers:
+  `runEngine.js:17` (import) · `runEngine.js:138` (dispatch) · `runEngine.js:270` (the
+  `network_design || network_design_v2` fallback) · `src/engine/index.js:7` (re-export) ·
+  **`App.jsx:3424` `<option value="network_design_v2">Network Design v2</option>`** and the
+  conditional at `3429` · `params/plywoodNetworkV2Config` and its entry in
+  `loadParamConfigRows()` · the tests under `plywoodV2/__tests__/`.
+- **⚠⚠ THE LOGIC TWEAKER OPTION MUST GO IN THE SAME CHANGE.** Leave it and an admin can select
+  a strategy whose implementation no longer exists — and because `resolveStrategy` falls back
+  silently, the symptom would be Plywood quietly computing on the wrong strategy rather than an
+  error.
+- **⚠ Decide the config row separately from the code.** Dropping `plywoodNetworkV2Config` from
+  `loadParamConfigRows()` is the `pincodeConfig` trap in reverse — safe here only because
+  nothing would read it, but it is a params own-row and those have bitten before. Leaving two
+  inert keys in a row is the cheaper trade (precedent: `maxBufferPercentile`/`abqMultiplier`).
+- **Proof required:** `snapshot-engine-inputs.mjs` → `dump-engine-output.mjs` (both sides) →
+  `diff-engine-dumps.mjs`, expecting **0 of ~19,500 cells differing**, plus build, tests, lint
+  with the problem count read, and the app actually loaded.
+- **Context to preserve:** the 32,909-char `plywoodV2/CLAUDE.md` is the design record and does
+  not rot. Move it to `docs/retired/` rather than deleting, and extend
+  `docs/retired/README.md` — which already documents why the *code* is not copied anywhere.
 
 ### Later, not urgent
 - **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence
