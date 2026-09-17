@@ -1,5 +1,9 @@
 # CLAUDE.md — Plywood Network v2
 
+> ⚠⚠ **THE TAB WAS RETIRED 2026-09-17 — THIS ENGINE WAS NOT.** `src/tabs/PlywoodNetworkV2Tab.jsx` is
+> deleted; `strategies/plywoodV2/` is untouched and still imported by `runEngine.js`. Everything below
+> about the ENGINE is current; everything about the UI describes a removed tab. No category is mapped
+> to `network_design_v2`, so it computes nothing today. Restore map: `docs/retired/README.md`.
 Capacity-aware plywood Min/Max engine. Replaces v1 Network Design (`../plywoodNetwork.js`,
 brand-node stocking). **Status: MERGED TO PROD (dormant) 2026-06-18 via PR #11 — admin-only "Plywood v2"
 tab, engine still on v1; the deploy changed NO live Min/Max or any Supabase params/team_data state.

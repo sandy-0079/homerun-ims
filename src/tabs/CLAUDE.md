@@ -14,6 +14,10 @@ particular `saveTeamData` / `BROWSER_OWNED_KEYS`, since several tabs write
 `team_data`, and the upload guards.
 
 **Related:** `src/engine/CLAUDE.md` for anything these tabs display;
+
+> ⚠ **TWO TABS WERE RETIRED 2026-09-17 — OOS Simulation and Plywood v2.** `PlywoodNetworkV2Tab.jsx` and
+> `src/simWorker.js` are gone, along with `SimulationTab` and its 16 helpers in `App.jsx`. Anything
+> below describing them is history. Restore map + why no code was copied: `docs/retired/README.md`.
 `supabase/functions/CLAUDE.md` for the syncs that produce stock, PO and TO data.
 
 > ⚠⚠ **A GREEN BUILD IS NOT EVIDENCE THAT JSX RUNS.** esbuild does not resolve undefined

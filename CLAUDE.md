@@ -70,6 +70,7 @@ on every session. Verified 2026-09-17, not assumed.
 | `src/tabs/CLAUDE.md` | Stock Health + Tool Output UI, CSV contracts, freshness gate | touching `src/tabs/` |
 | `docs/OPEN-WORK.md` | full open-work entries | read deliberately |
 | `docs/CHANGELOG-ARCHIVE.md` | everything shipped | read deliberately |
+| `docs/retired/README.md` | tabs removed 2026-09-17 (OOS Simulation, Plywood v2) + how to restore | read deliberately |
 
 > ⚠⚠ **NEVER write a path as `@docs/foo.md` in any of these files.** `@`-imports resolve
 > **eagerly at session launch**, so a path written in prose silently re-inlines the whole

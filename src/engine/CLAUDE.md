@@ -19,6 +19,11 @@ rules: `saveTeamData` / `BROWSER_OWNED_KEYS`, the params-row rule, the invoice u
 guards, and validate-at-the-boundary.
 
 **Related:** `src/engine/strategies/plywoodV2/CLAUDE.md` is authoritative for v2;
+
+> ⚠ **The OOS Simulation TAB was retired 2026-09-17** (`src/simWorker.js` deleted). Notes below that
+> describe how the sim treated Supplier SKUs are history — the ENGINE is unchanged. The Plywood v2
+> tab went too, but its engine under `strategies/plywoodV2/` REMAINS and is still imported by
+> `runEngine.js`. See `docs/retired/README.md`.
 `supabase/functions/CLAUDE.md` owns the syncs that produce this engine's inputs.
 
 > ⚠ **A rule that only ever REDUCES a value belongs in ONE pass over the finished object,
