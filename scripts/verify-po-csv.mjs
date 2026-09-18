@@ -12,7 +12,8 @@
 import { runEngine } from "../src/engine/index.js";
 import { DEFAULT_PARAMS, DS_LIST } from "../src/engine/constants.js";
 import { loadParamConfigRows } from "../src/paramConfigRows.js";
-import { buildPoTargetsCsv, PO_CSV_HEADERS, PO_FIRST_NUMERIC_COL, PO_NUMERIC_COL_COUNT, poCsvFilename } from "../src/poTargetsCsv.js";
+import { buildPoTargetsCsv, buildPoCsvHeaders, poFirstNumericCol, poNumericColCount, poCsvFilename } from "../src/poTargetsCsv.js";
+import { liveDsList } from "../src/engine/constants.js";
 
 const B = "https://rgyupnrogkbugsadwlye.supabase.co/rest/v1";
 const K = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJneXVwbnJvZ2tidWdzYWR3bHllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3NzgzMzgsImV4cCI6MjA4ODM1NDMzOH0.sbZh8CbmW7hhpiUCg5OoS7hQzHaNqExkaAlACEqJ9sc";
@@ -57,14 +58,23 @@ const results = runEngine(
 );
 console.log(`ENGINE  ${Object.keys(results).length} SKUs\n`);
 
-const csv = buildPoTargetsCsv({ skuMaster, results, coreOverrides });
+// ⚠ TRADING stores, exactly as the download does. Checking against the full store
+// universe would fail the moment a dark store is wired ahead of opening — a
+// diagnostic that disagrees with its subject is worse than no diagnostic (Open Work
+// #34, where two dry-run scripts had drifted from the code they were checking).
+const LIVE = liveDsList(activeParams);
+const csv = buildPoTargetsCsv({ skuMaster, results, coreOverrides, dsList: LIVE });
 const lines = csv.split("\n");
 const hdr = cells(lines[0]).map(unq);
 
 // ⚠ Indices derived from the header, never hardcoded — `Brand` was inserted after
 // `Category` on 2026-08-03 and shifted every numeric column one right.
-const IX = Object.fromEntries(PO_CSV_HEADERS.map((h, i) => [h, i]));
-const N = PO_CSV_HEADERS.length;
+const EXPECTED = buildPoCsvHeaders(LIVE);
+const IX = Object.fromEntries(EXPECTED.map((h, i) => [h, i]));
+const N = EXPECTED.length;
+const PO_FIRST_NUMERIC_COL = poFirstNumericCol(LIVE);
+const PO_NUMERIC_COL_COUNT = poNumericColCount(LIVE);
+const LAST_DS = LIVE.at(-1);
 
 let fail = 0;
 const check = (ok, label, detail = "") => {
@@ -73,7 +83,9 @@ const check = (ok, label, detail = "") => {
 };
 
 console.log("HEADER");
-check(JSON.stringify(hdr) === JSON.stringify(PO_CSV_HEADERS), "matches the frozen contract, in order");
+check(JSON.stringify(hdr) === JSON.stringify(EXPECTED), "matches the contract for the trading stores, in order");
+check(hdr.slice(-2).join() === "Purchase,Move", "Purchase/Move remain the last two columns");
+check(!hdr.some((h) => /^DS\d+ /.test(h) && !LIVE.includes(h.split(" ")[0])), "no column for a store that is not trading");
 console.log(`      ${hdr.join(" | ")}`);
 
 console.log("\nSHAPE");
@@ -119,7 +131,7 @@ check(actionable.length > 1000, "actionable row count is plausible");
 console.log(`\nFILENAME  ${poCsvFilename({ refreshedOn: "2026-08-03", demandThrough: pageThrough })}`);
 console.log("\nSAMPLE (first 3 actionable rows)");
 for (const c of actionable.slice(0, 3)) {
-  console.log(`      ${unq(c[IX["SKU"]]).padEnd(20)} ${unq(c[IX["Brand"]]).slice(0,16).padEnd(17)} ${unq(c[IX["Inventorised At"]]).padEnd(9)} DC ${c[IX["DC Min"]]}/${c[IX["DC Max"]]}  DS01 ${c[IX["DS01 Min"]]}/${c[IX["DS01 Max"]]}  DS06 ${c[IX["DS06 Min"]]}/${c[IX["DS06 Max"]]}`);
+  console.log(`      ${unq(c[IX["SKU"]]).padEnd(20)} ${unq(c[IX["Brand"]]).slice(0,16).padEnd(17)} ${unq(c[IX["Inventorised At"]]).padEnd(9)} DC ${c[IX["DC Min"]]}/${c[IX["DC Max"]]}  DS01 ${c[IX["DS01 Min"]]}/${c[IX["DS01 Max"]]}  ${LAST_DS} ${c[IX[`${LAST_DS} Min`]]}/${c[IX[`${LAST_DS} Max`]]}`);
 }
 
 console.log(fail === 0 ? "\n✅ ALL CHECKS PASSED" : `\n❌ ${fail} CHECK(S) FAILED`);

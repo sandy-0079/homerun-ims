@@ -158,7 +158,22 @@ invoice sync:**
   lines (blank SKU, qty 1) that the engine correctly drops.
 
 **Zoho Inventory location IDs (org 60075214606, confirmed 2026-07-06):**
-`DC=3915979000000118466`, `DS01=3915979000000054002`, `DS02=3915979000000054017`, `DS03=3915979000000054032`, `DS04=3915979000000054047`, `DS05=3915979000000054062`, `DS06=3915979000000118484`
+`DC=3915979000000118466`, `DS01=3915979000000054002`, `DS02=3915979000000054017`, `DS03=3915979000000054032`, `DS04=3915979000000054047`, `DS05=3915979000000054062`, `DS06=3915979000000118484`, **`DS07=3915979000030598119` (HAL)**, **`DS08=3915979000030600296` (Rajajinagar)**
+
+**DS07 HAL + DS08 Rajajinagar (wired 2026-09-18, ahead of opening):** both exist in Zoho named
+prefix-first, so `invoiceMap.ts`'s `dsOf()` attributes their invoices with no code change, and
+`sync-orders`' name-keyed `LOCATION_TO_DS` carries the strings **verbatim** — one wrong character
+silently drops every PO and TO for that store rather than erroring. Both are in `sync-stock` and
+`create-to` BRANCHES. The engine holds them at 0/0 via `openingDSList`, so none of this moves a
+target. **`stock-sync-4` now carries `DS06,DS07`** (migration `20260918000001`): that slot was the
+only single-branch group, so this restores parity rather than adding load, where a 5th cron would
+have cost ~1,200 Zoho requests/day for a store holding no stock.
+- **⚠⚠ DS08 MUST NOT JOIN THAT GROUP.** Three branches in one invocation is measured unsafe — 6
+  concurrent chains 429 after a single group. It is in BRANCHES so it can be pulled by hand
+  (`{"branches":["DS08"]}`) to verify its id, but nothing calls it on a schedule. See Open Work 39.
+- **⚠ `sync-sku-floors`' duplicated `DS_LIST` gained both**, and the ORDER matters: an unrecognised
+  DS column is a hard stop, so ops must add DS07/DS08 columns to the floor sheet only AFTER this
+  deploy. Sheet-first fails the nightly sync with `unknown_ds` and leaves the previous floors live.
 
 **DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase). **Phase 2 (2026-07-06, now in `main`):** `DS_LIST` includes DS06 (Stock Health tab/KPIs/DC ROS/DS Req Covered follow automatically; 6th `DS_COLORS` entry added) + engine **DS Seed pass** gives DS06 Min/Max = avg(DS02, DS04) — see the DS Seed section. Both go-live steps are **done**: DS06 is in `newDSList`, and DS06 is in all four plywood brand matrices. **The DS Seed was sunset 2026-07-31** once pincode attribution gave DS06 a full 45-day catchment history — see the DS Seed section for the measurement and the reasoning. Review later: cluster assignment.
 

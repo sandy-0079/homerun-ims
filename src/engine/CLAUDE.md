@@ -196,57 +196,49 @@ effect: every page load silently reverted attribution to "location" (₹7.95Cr v
 `toTargets` — written from in-memory params at Apply — stayed correct. Symptom was "the radio resets
 on reload"; cause was the engine reverting too. Adding a config row is now a one-line change there.
 
-### DS Seed — new store bootstrap (`src/engine/dsSeed.js`)
-Seeds a new DS's Min/Max from the **equal-weight average of source DSes** — built for DS06 Kogilu, whose catchment carves ~50% of orders each from DS02 and DS04. Config: `params.dsSeed = { DS06: ["DS02","DS04"] }` (Logic Tweaker → "DS Seed — New Store Bootstrap" checkbox; empty object = inactive).
+### Opening Shortly — a wired store that is not trading (`src/engine/openingStores.js`)
 
-**✅ SUNSET 2026-07-31 — `dsSeed = {}` is now live, and this was the right call.** Superseding the
-earlier "do NOT sunset yet" note (measured 07-27: 2,374 → 1,482 stocked SKUs, 892 → zero, ₹23.0L).
-That note reasoned from the *map's* sparseness — "16 pincodes over a mostly pre-launch window is too
-thin" — and set a ~90-day calendar trigger. Both were wrong, for the same reason:
+**Replaced the DS Seed pass on 2026-09-18, and the inversion is the point.** DS Seed had to
+INVENT numbers for a store with no history (DS06 opened ~2026-07-08, three weeks before pincode
+attribution shipped). Attribution is **retroactive**, so a store opening now inherits its own real
+history the moment its catchment is mapped. The problem is no longer "invent numbers" but "hold a
+wired store at zero until opening day".
 
-- **⚠ THE "PRE-LAUNCH WINDOW" ARGUMENT IS INVALID, and it is easy to re-derive by mistake.** Attribution
-  applies the **static current mapping to ALL history** on purpose (see Demand Attribution), so
-  pre-go-live orders from DS06 pincodes are reassigned to DS06. DS06 therefore has a **full 45 days** of
-  real catchment demand, not 23. Anyone re-opening this question will be tempted by "half the window
-  predates go-live" — it does, and it does not matter.
-- **DS06 is not a data-poor store.** Measured 2026-07-31 over `2026-06-16 → 07-30` with
-  `shippingCode` on: attributed demand share **DS01 26.3% · DS03 21.5% · DS02 16.9% · DS06 14.8% ·
-  DS04 11.3% · DS05 9.1%.** Its 16 pincodes out-earn two long-established stores, and bought **941
-  distinct SKUs** in the window.
-- **The decisive measurement — the seed was inventing assortment, not bridging thin data.** Of the
-  **431** SKUs that lose DS06 stocking when the seed is removed, **417 (97%) have ZERO DS06-attributed
-  demand in 45 days**; the other 14 have exactly one order-day each (111 units total). Of the ₹19.5L the
-  seed added, **₹18.8L sat on zero-demand SKUs.** By category the 431 were: Furniture & Arch HW 117 ·
-  Wires/MCB 85 · CPVC 57 · Plywood/MDF 32 · Sanitary & Bath 32 · Tiling 27 · Switches 18 · Lighting 14.
-- **Why, mechanically:** under `shippingCode`, DS02's and DS04's historical orders *from DS06 pincodes
-  have already been moved to DS06*. Seeding DS06 from their averages then adds back their **remaining**
-  demand — which belongs to other catchments. It is not filling a gap.
-- **The chicken-and-egg objection does not apply**, which is what makes the sunset safe: a SKU never
-  stocked at DS06 can still be ordered by a DS06-catchment customer and fulfilled elsewhere, and
-  attribution credits it to DS06 by pincode. So "zero attributed demand" means that catchment has not
-  wanted it — not that it was unavailable.
-- **Residual protection:** DS06 stays in `newDSList` with `newDSFloorTopN` 250, so the New DS Floor
-  still guarantees baseline breadth. ⚠ The floor does **not** compensate for the seed — the 431-SKU drop
-  was measured with the floor active in both runs. Different jobs: the floor gives a new store top-N
-  breadth, the seed mirrored its donors' whole assortment.
-- Decay confirms it had done its job: the same removal cost **892 SKUs on 07-27 and 431 on 07-31** as
-  DS06's own history accumulated.
+`params/global.openingDSList` lists stores that exist everywhere — Zoho branch, stock sync, floor
+and ceiling columns, `newDSList` membership, plywood node — and hold **Min = Max = 0 at every SKU**.
+Going live is removing the store from that list; nothing else. Live value at ship: `["DS07","DS08"]`.
 
-**⚠ GENERALISABLE — a bootstrap justified by "no data" must be re-tested when the DEFINITION of the data
-changes, not when a calendar trigger fires.** The 07-27 note set a 90-day review. What actually
-obsoleted the seed was the attribution flip four days later, which changed what "DS06 demand" *means*.
-Re-derive with `applyAttribution` + a two-way `runEngine` diff (`dsSeed:{}` vs `{DS06:[…]}`) rather than
-trusting either this entry or the calendar. Re-enabling it needs a fresh measurement, not a rollback.
-- Per SKU, per field: `DS06 = max(organic/floor value, ceil(avg(sources)))` — "whichever wins". `ceil` ⇒ union assortment. logicTag `DS Seed`, audit entry in `postBlendSteps`, `preFloor*` untouched.
-- **⚠ WHILE ACTIVE, A 5-COLUMN SKU-FLOOR FILE SET SIX STORES — no longer true since the 07-31 sunset,
-  but re-read this before re-enabling.** A floor lifting DS02 and DS04 propagated to DS06 through the
-  seed. Worked example (2026-07-30, `SMBTV`): a `2/5` floor on DS01–DS05 took DS06 from `2/2` to `2/5`
-  as well, because both its sources became 5. With `dsSeed = {}` a floor now sets exactly the columns
-  you type — the ops sheet carries explicit DS06 columns (260 SKUs) and those are the only thing setting
-  DS06 floors.
-- Runs after all strategies/floors, **before Inventorised-At normalization** — Supplier/DS-inv zeroing still wins; Dead Stock propagates (0+0→0).
-- **DC re-derived treating the seeded DS as a real sixth store** (deliberate transition overstock — sources are never reduced; both self-correct as carved-out demand leaves source history ~45 days post-go-live): rate-based SKUs add a synthetic rate `max(0, avg(source rates) − organic DS06 rate)` into `sumDailyAvg`; floored SKUs add the seed deltas into Σ DS sums; Network Design adds `ceil(ΔMin × brand dcMult)`. DC never decreases. Audit: `dcDetails.dsSeedAug`.
-- Tests: `src/engine/__tests__/dsSeed.test.js` (18).
+- **⚠ It is an OPENING list, not a LIVE list, and that direction is the safety property.** If the key
+  goes missing the fallback (`OPENING_DS_DEFAULT`) names only stores that never traded, so absence
+  can never dark a store that *is* trading. A live-list would default to "nothing is live" on one bad
+  read and zero the network.
+- **⚠⚠ READ IT WITH `??`, NEVER `||`.** `[]` is the legitimate end state — every store open — and
+  `[] || OPENING_DS_DEFAULT` silently re-gates DS07/DS08 the moment the last one opens, reading as
+  "the go-live reverted overnight". Pinned by `openingStores.test.js`. The fallback is not
+  theoretical: prod's `params/global` predates the key and the merge is shallow, so `p.openingDSList`
+  really is `undefined` on the first nightly run after deploy.
+- **⚠⚠ APPLIED TO THE FINISHED `stores` MAP, BEFORE THE DC SUMS — both halves are load-bearing.**
+  Finished-map, because `runEngine` writes `stores[dsId]` from five places and three-inline-copies
+  plus one omission is exactly the Dead Stock (2026-08-26) and SKU Ceiling (2026-08-15) bugs.
+  Before-the-sums, because `sumMin` feeds the floored DC: applied afterwards a store in `newDSList`
+  takes the New DS Floor, lands ~250 targets, and the DC absorbs them — **0/0 on screen, real
+  inventory in the warehouse.** Measured live 2026-09-18: DC total Min **24,547 gated vs 28,516
+  open**. A test pins `gated < open`.
+- **⚠ `dsDailyAvgs` is deliberately NOT zeroed** — `sumDailyAvg` feeds the rate-based DC, and
+  attribution only RELABELS rows, so the donors have already lost that demand. Removing it from the
+  DC too would delete it from the network.
+  - **⚠ That protects the rate-based branch ONLY.** The floored branch sums `stores[ds].min`, which
+    this pass zeroed. Measured: remapping 19 pincodes to a gated DS07 moved **179 live-store cells
+    and 132 DC values**. Nothing here can fix it — it is the cost of the misconfiguration itself.
+    **Map a catchment and open the store in the SAME Apply.** The Logic Tweaker warns on both halves
+    (`mapped but not trading`, `trading with no catchment`); that warning is load-bearing.
+- **Downstream:** `liveDsList(p)` in `constants.js` is the single definition of "which stores are
+  real", shared by the gate, the PO CSV header, `buildToTargets` and Stock Health. Four hand-rolled
+  copies of that filter is the `paramConfigRows` / `toTargets` lesson again.
+- **⚠ The Active-only and Inventorised-At passes run AFTER this and retag ~960 of the gated cells**
+  (`Not Active`, `Supplier`, `Move = No`). Values stay 0/0, but do not assume `logicTag ===
+  "Opening Shortly"` is universal at a gated store — read the store flag, not the cell tag.
+
 
 ### SKU × DS Ceiling — the ops override for outliers (SHIPPED + PROVEN LIVE 2026-08-15)
 An absolute cap on Min/Max at a store, whatever the strategy computed.

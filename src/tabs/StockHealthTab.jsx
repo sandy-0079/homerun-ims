@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { DS_LIST } from "../engine/index.js";
+import { DS_COLOR } from "../dsColors.js";
 import { getHealthTag, applyDCReqCovered } from "../stockHealthTags.js";
 import { supabase } from "../supabase.js";
 
@@ -9,7 +10,18 @@ const SYNC_COOLDOWN_MINS = 15;
 // group STARTS: back-to-back groups on a fast-Zoho day put 12 calls in ~15s and
 // tripped Zoho's ~8/min inventorysummary limit (2026-07-09 — 60+ min penalty
 // that also killed a cron cycle). Mirrors homerun-to/src/sync.js.
-const SYNC_GROUPS = [["DC", "DS01"], ["DS02", "DS03"], ["DS04", "DS05"], ["DS06"]];
+// ⚠ MIRRORS THE CRON GROUPS EXACTLY (migration 20260918000001) — DC+DS01 :35,
+// DS02+DS03 :38, DS04+DS05 :41, DS06+DS07 :44. Two branches per group is the
+// measured safe ceiling: a 2-branch group is ~50-56 real Zoho requests in ~32s,
+// already at the documented 100 req/min/org limit, and 3 branches 429s after one
+// group. If "Sync Now" and the crons disagree on grouping, whichever runs second
+// stacks on top of the first — the shape of the 2026-07-09 storm.
+//
+// ⚠ DS08 IS DELIBERATELY ABSENT. It has no cron either: an unopened store holds no
+// stock, so syncing it hourly buys nothing and costs ~1,200 Zoho requests a day.
+// It stays pullable by hand (`{"branches":["DS08"]}`) to prove its branch id before
+// go-live. Adding it needs a 5th group, not a third branch here.
+const SYNC_GROUPS = [["DC", "DS01"], ["DS02", "DS03"], ["DS04", "DS05"], ["DS06", "DS07"]];
 const SYNC_MIN_GAP_MS = 90_000;
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -18,11 +30,6 @@ const HR = {
   bg: "#F5F5F0", surface: "#FFFFFF", surfaceLight: "#F0F0E8",
   border: "#E0E0D0", muted: "#888870", text: "#1A1A1A", textSoft: "#444438",
 };
-const DS_COLORS = [
-  { header: "#B8860B" }, { header: "#1D6B30" }, { header: "#C05A00" },
-  { header: "#7A3DBF" }, { header: "#B5006A" }, { header: "#0F766E" },
-];
-const DC_COLOR = { header: "#0077A8" };
 const DS_AND_DC = [...DS_LIST, "DC"];
 
 // Zoho Inventory deep-link base (org migrated from Books → Inventory 2026-07-06).
@@ -125,9 +132,12 @@ const downloadCsv = (csv, filename) => {
   URL.revokeObjectURL(url);
 };
 
+// ⚠ Was a LOCAL six-entry palette indexed unguarded by DS position, which blanked
+// this whole tab the moment DS_LIST gained DS07 (2026-09-18). Both halves of the fix
+// matter: the palette is now shared so it cannot fall behind, and DS_COLOR clamps so
+// a future store degrades to a borrowed colour instead of throwing. See dsColors.js.
 function dsAccent(ds) {
-  const i = DS_LIST.indexOf(ds);
-  return i >= 0 ? DS_COLORS[i].header : DC_COLOR.header;
+  return DS_COLOR(DS_LIST.indexOf(ds)).header;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────

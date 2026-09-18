@@ -105,6 +105,51 @@ export function parsePincodeMapCsv(text) {
   return { map, conflicts };
 }
 
+// What an upload is about to change, BEFORE it is applied.
+//
+// ⚠⚠ WHY THIS EXISTS: `params/pincodeMap` is REPLACE-ENTIRELY, exactly like the
+// invoice CSV. A short or partial sheet raises no error — the pincodes it omits
+// simply stop being mapped, their demand falls back to the fulfilling store, and
+// every donor silently re-inflates. Nothing in the app could show that, and the
+// upload happens on the one morning a new store depends on it.
+//
+// Reported, never enforced: REMOVING pincodes is legitimate (a store closes, a
+// catchment is re-cut) and a modal that cries wolf on a go-live morning is a modal
+// people learn to click through. The number to look at is `removed` — a remap should
+// MOVE pincodes, so a non-zero `removed` with no explanation means rows went missing
+// rather than changing hands.
+export function diffPincodeMap(before, after) {
+  const A = before || {}, B = after || {};
+  const moved = [], added = [], removed = [];
+  for (const [pin, ds] of Object.entries(B)) {
+    if (!(pin in A)) added.push({ pin, to: ds });
+    else if (A[pin] !== ds) moved.push({ pin, from: A[pin], to: ds });
+  }
+  for (const pin of Object.keys(A)) if (!(pin in B)) removed.push({ pin, from: A[pin] });
+
+  // Per-DS net, which is the line that actually reads as right or wrong: a store
+  // gaining 34 while its neighbours give up 34 is a remap; a store gaining 34 while
+  // nobody loses anything means the file grew rather than being re-cut.
+  const net = {};
+  const bump = (ds, k) => { (net[ds] ??= { gained: 0, lost: 0 })[k]++; };
+  for (const m of moved) { bump(m.to, "gained"); bump(m.from, "lost"); }
+  for (const a of added) bump(a.to, "gained");
+  for (const r of removed) bump(r.from, "lost");
+
+  return { beforeCount: Object.keys(A).length, afterCount: Object.keys(B).length, moved, added, removed, net };
+}
+
+/** One-line human summary of a diff — the string the upload alert shows. */
+export function describePincodeDiff(d) {
+  const per = Object.entries(d.net).sort()
+    .map(([ds, n]) => `${ds} ${n.gained - n.lost >= 0 ? "+" : ""}${n.gained - n.lost}`).join(" · ");
+  return [
+    `${d.beforeCount} → ${d.afterCount} pincodes`,
+    `${d.moved.length} moved · ${d.added.length} added · ${d.removed.length} removed`,
+    per || "no change",
+  ].join("\n");
+}
+
 export function applyAttribution(inv, cfg) {
   if (!cfg || cfg.mode !== "shippingCode") return inv;
   const map = cfg.map || {};

@@ -2,7 +2,34 @@
 // UI constants (HR colors, DS_COLORS, MOV_COLORS, etc.) remain in App.jsx
 
 export const ROLLING_DAYS = 90;
-export const DS_LIST = ["DS01","DS02","DS03","DS04","DS05","DS06"];
+export const DS_LIST = ["DS01","DS02","DS03","DS04","DS05","DS06","DS07","DS08"];
+
+// ── Stores that exist everywhere but are not trading yet ─────────────────────
+// A store listed here is wired end-to-end — Zoho branch, stock sync, floor-sheet
+// columns, ceiling columns, `newDSList` membership, plywood node — and emits
+// 0/0 anyway. Going live is removing it from this list; nothing else.
+//
+// ⚠ IT IS AN "OPENING" LIST, NOT A "LIVE" LIST, AND THAT DIRECTION IS THE SAFETY
+// PROPERTY. If the key ever goes missing the fallback below names only the stores
+// that were never trading, so absence can never dark a store that IS. The inverse
+// (a list of live stores) would default to "nothing is live" on one bad read and
+// zero the whole network.
+//
+// ⚠⚠ READ IT WITH `??`, NEVER `||`. `[]` is the legitimate end state — every store
+// live — and `[] || OPENING_DS_DEFAULT` silently re-gates DS07/DS08 the moment the
+// last one opens, which would read as "the go-live reverted overnight".
+export const OPENING_DS_DEFAULT = ["DS07","DS08"];
+
+/** DS_LIST minus the not-yet-trading stores, in DS_LIST order.
+ *
+ *  The single definition of "which stores are real", shared by the engine gate,
+ *  the PO CSV header, `buildToTargets` and the Stock Health tab. Same reasoning as
+ *  `toTargets.js` and `paramConfigRows.js`: the alternative is four hand-rolled
+ *  copies of one filter, and the copies drift. */
+export const liveDsList = (p) => {
+  const opening = new Set(p?.openingDSList ?? OPENING_DS_DEFAULT);
+  return DS_LIST.filter((ds) => !opening.has(ds));
+};
 
 export const MOVEMENT_TIERS_DEFAULT = [2,4,7,10];
 
@@ -77,7 +104,12 @@ export const DEFAULT_PARAMS = {
   overallPeriod:90,recencyWindow:15,recencyWt:RECENCY_WT_DEFAULT,movIntervals:[2,4,7,10],
   priceTiers:[3000,1500,400,100],spikeMultiplier:5,spikePctFrequent:10,spikePctOnce:5,
   maxDaysBuffer:2,abqMaxMultiplier:1.5,baseMinDays:BASE_MIN_DAYS_DEFAULT,
-  brandBuffer:DEFAULT_BRAND_BUFFER,newDSList:["DS04","DS05"],newDSFloorTopN:150,
+  brandBuffer:DEFAULT_BRAND_BUFFER,newDSList:["DS04","DS05","DS07","DS08"],newDSFloorTopN:150,
+  // ⚠ THE DEFAULT ABOVE IS NOT WHAT PROD RUNS. Live `params/global.newDSList` is
+  // ["DS04","DS05","DS06","DS03"], and a shallow merge means prod's value wins
+  // outright — so adding DS07/DS08 here does NOT put them in the live list. That
+  // is a Logic Tweaker edit on go-live day; the Opening Shortly panel says so.
+  openingDSList:OPENING_DS_DEFAULT,
   activeDSCount:4,dcMult:DC_MULT_DEFAULT,dcDeadMult:DC_DEAD_MULT_DEFAULT,
   categoryStrategies:{},
   percentileCover:{
@@ -92,10 +124,10 @@ export const DEFAULT_PARAMS = {
   skuFloorDCMultMin:0.2,
   skuFloorDCMultMax:0.3,
   plywoodNonNetworkStrategy:"percentile_cover",
-  // DS Seed: { targetDS: [sourceDS, ...] } — target Min/Max seeded from the
-  // equal-weight average of sources (see dsSeed.js). Empty = inactive.
-  dsSeed:{},
-  // Per-category seed damping: seed = ceil(mult × avg). Plywood 0.6 keeps the
-  // full assortment but lean depth — sized so DS06 thick fits a sibling rack.
-  dsSeedCategoryMult:{"Plywood, MDF & HDHMR":0.6},
+  // `dsSeed` / `dsSeedCategoryMult` were removed 2026-09-18 with the DS Seed pass.
+  // A new store no longer needs seeding from its siblings: pincode attribution is
+  // RETROACTIVE, so mapping a catchment hands the store its own real history. DS06
+  // needed a seed only because it opened ~2026-07-08, three weeks before attribution
+  // shipped. The orphaned keys in prod's `params/global` are inert — nothing reads
+  // them — and are left rather than migrated away.
 };

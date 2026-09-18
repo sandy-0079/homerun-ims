@@ -307,3 +307,16 @@ Footprint: `src/engine/strategies/plywoodV2/` — **21 files, 184 KB**, plus a *
 - **IMS reads the canonical stored result** instead of recomputing client-side — makes divergence
   structurally impossible and page loads much faster. Costs the "engine changes go live on next page
   load" property, and Impact Preview still needs client-side compute.
+
+### 38. `sync-stock` with an EMPTY body syncs every branch
+Chunks into pairs sequentially: 8 branches = 4 pairs ≈ 128s vs a 150s wall clock at ~200 req/min —
+the 2026-07-09 storm shape. **Latent:** both callers send explicit branch lists. DS07/DS08 worsened
+an existing foot-gun, not a new one. ⚠ Left alone 2026-09-18 so the go-live's "0 cells differ" proof
+stayed clean. Fix: reject an empty body, or cap it to one group.
+
+### 39. DS08 has no stock cron
+`stock-sync-4` carries `DS06,DS07`. **⚠ Do NOT add DS08 to it** — 3 branches in one invocation 429s
+after one group (2026-07-06, re-confirmed on the Inventory API). ⚠ Nor compress the 3-min stagger:
+it holds the duty cycle near 35%. Prefer **`per_page` > 200** — untested, but ~14 pages becomes ~3
+and both burst rate and the ~4,400 req/day fall ~4×. Fallback: a 5th slot at :47. Settle before DS08
+opens; see `docs/HANDOFF-2026-09-16-zoho-token-contention.md`.

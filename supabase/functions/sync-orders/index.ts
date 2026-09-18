@@ -10,6 +10,11 @@ const LOCATION_TO_DS: Record<string, string> = {
   'DS04 Chikkabanavara': 'DS04',
   'DS05 Basavanapura':   'DS05',
   'DS06 Kogilu':         'DS06',
+  // ⚠ EXACT strings from Zoho Settings -> Locations, not retyped from memory. This
+  // map is name-keyed, so a single wrong character silently drops every PO and TO
+  // for that store rather than erroring.
+  'DS07 HAL':            'DS07',
+  'DS08 Rajajinagar':    'DS08',
   'DC01 Rampura':        'DC',
 }
 

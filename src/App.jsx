@@ -5,19 +5,21 @@ import { buildTeamDataBundle } from "./teamDataBundle";
 import { resolveSource, assessSyncedInput, assessModel, assessOutputFreshness } from "./freshness";
 import { summariseInputs } from "./inputSummary";
 import { mergeCoreOverrides, buildToTargets, buildInputsStamp } from "./toTargets";
-import { buildPoTargetsCsv, poCsvFilename, PO_CSV_HEADERS } from "./poTargetsCsv";
+import { buildPoTargetsCsv, poCsvFilename, buildPoCsvHeaders } from "./poTargetsCsv";
 import { normaliseStatus } from "./skuStatus";
 import { parseSkuCeilingCsv, buildSkuCeilingCsv } from "./skuCeilingCsv";
 import { normalisePolicy } from "./skuPolicy";
 import { computeInvValue } from "./invValue";
+import { DS_COLORS, DS_COLOR, DC_COLOR } from "./dsColors";
 import { summariseZeroSale, buildZeroSaleCsv, zeroSaleFilename, ZERO_SALE_CSV_HEADERS } from "./zeroSaleCsv";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
   DC_DEAD_MULT_DEFAULT, RECENCY_WT_DEFAULT,
-  BASE_MIN_DAYS_DEFAULT, DEFAULT_PARAMS,
+  BASE_MIN_DAYS_DEFAULT, DEFAULT_PARAMS, liveDsList, OPENING_DS_DEFAULT,
   runEngine,
   parseCSV, parseInvoiceCsv, buildInvoiceCsv, parsePincodeMapCsv, summariseCoverage, getPriceTag,
+  diffPincodeMap, describePincodeDiff,
   applyAttribution,
 } from "./engine/index.js";
 
@@ -31,15 +33,16 @@ const HR = {
   bg:"#F5F5F0",surface:"#FFFFFF",surfaceLight:"#F0F0E8",border:"#E0E0D0",
   muted:"#888870",text:"#1A1A1A",textSoft:"#444438",green:"#2D7A3A",
 };
-const DS_COLORS = [
-  {bg:"#FFFBEA",header:"#B8860B",text:"#7A5800"},
-  {bg:"#EDFFF3",header:"#1D6B30",text:"#0F4020"},
-  {bg:"#FFF4EC",header:"#C05A00",text:"#7A3800"},
-  {bg:"#F5EEFF",header:"#7A3DBF",text:"#4A1A8A"},
-  {bg:"#FFF0F6",header:"#B5006A",text:"#7A0040"},
-  {bg:"#E8FFFA",header:"#0F766E",text:"#0A4A44"},
-];
-const DC_COLOR = {bg:"#EAF9FF",header:"#0077A8",text:"#004D70"};
+// ⚠⚠ `yellow` AND `yellowDark` ARE FILLS, NOT TEXT COLOURS. Measured on white
+// 2026-09-18: 1.64:1 and 2.23:1 — both fail WCAG AA at every size. They are correct
+// behind black text on a button, and unreadable as text on the page. `yellowDark`
+// had drifted into use for the SKU Detail header's 17px figures, i.e. LOWER contrast
+// than the 10px labels beneath them; those now use `green` (5.31:1). The name is the
+// trap — "yellowDark" sounds like the safe one. For dark text use `text` (17.4:1),
+// `textSoft` (9.9:1) or `green` (5.31:1).
+// ⚠ Still used as text elsewhere (Overview KPIs, Logic Tweaker figures, the boxed
+// StatStrip default). Not swept 2026-09-18 — a palette pass across the app is its own
+// change. Do not add new text uses.
 const MOV_COLORS = {"Super Fast":"#16a34a","Fast":"#2D7A3A","Moderate":"#B8860B","Slow":"#C05A00","Super Slow":"#C0392B"};
 const PRICE_TAG_COLORS = {
   "Premium":{bg:"#FEE2E2",color:"#B91C1C",border:"#FECACA"},
@@ -162,6 +165,15 @@ const DownloadCard=React.memo(({title,accent,blurb,shape,cta,footnote,primary,di
   </div>
 );});
 
+// Page gutter, named because the sticky SKU Detail header has to cancel it exactly.
+// ⚠ MEASURED, NOT ASSUMED (2026-09-18): `position:sticky; top:0` inside a scroll
+// container pins to the container's CONTENT box, i.e. BELOW its padding-top — the
+// scroller's top edge read 37.4px while the pinned bar read 51.0px, leaving a ~14px
+// strip where the page scrolled through above the bar. So the header uses
+// `top:-PAGE_PAD_Y` to sit flush, and negative side margins to cover the gutters.
+// Keep these as the single source or the two will drift and the leak returns.
+const PAGE_PAD_Y = 16, PAGE_PAD_X = 20;
+
 const S={
   app:{fontFamily:"Inter,sans-serif",background:HR.bg,height:"calc(100vh / 0.85)",color:HR.text,width:"100%",boxSizing:"border-box",overflowX:"hidden",display:"flex",flexDirection:"column"},
   header:{background:HR.white,borderBottom:`2px solid ${HR.yellow}`,padding:"0 16px",display:"flex",alignItems:"center",gap:6,height:44,boxShadow:"0 1px 4px rgba(0,0,0,0.08)",flexShrink:0,flexWrap:"nowrap",overflowX:"auto"},
@@ -172,7 +184,7 @@ const S={
   btn:(on)=>({padding:"4px 10px",borderRadius:6,border:`1px solid ${on?HR.yellow:HR.border}`,cursor:"pointer",fontSize:11,fontWeight:600,background:on?HR.yellow:HR.white,color:on?HR.black:HR.muted,transition:"all 0.15s",whiteSpace:"nowrap",outline:"none",flexShrink:0}),
   input:{background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,padding:"5px 10px",color:HR.text,fontSize:12},
   runBtn:{background:HR.yellow,color:HR.black,border:"none",padding:"10px 24px",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:13,width:"100%"},
-  pageWrap:{flex:1,overflowY:"auto",overflowX:"hidden",padding:"16px 20px"},
+  pageWrap:{flex:1,overflowY:"auto",overflowX:"hidden",padding:`${PAGE_PAD_Y}px ${PAGE_PAD_X}px`},
 };
 
 /* Old dashboard frozen column width constants removed */
@@ -267,12 +279,43 @@ const HomeRunLogo=()=>(
   </div>
 );
 
-const StatStrip=({items})=>(
-  <div style={{display:"grid",gridTemplateColumns:`repeat(${items.length},1fr)`,gap:10,marginBottom:16}}>
-    {items.map(c=>(
-      <div key={c.label} style={{background:HR.surface,borderRadius:8,padding:"12px 14px",border:`1px solid ${HR.border}`}}>
-        <div style={{fontSize:20,fontWeight:800,color:c.color||HR.yellowDark}}>{c.value}</div>
-        <div style={{fontSize:11,color:HR.muted,marginTop:2}}>{c.label}</div>
+// Two presentations, deliberately different in weight:
+//   default  — bordered cards, for a strip that owns its own row.
+//   compact  — no box, no rules, no cell padding: the grid columns do the spacing,
+//              which is all the separation five short labels need. Costs ~33px
+//              against the card's ~48px, and that difference is paid on every
+//              screen for the whole session, because this variant lives in the
+//              PINNED SKU Detail header.
+//
+// ⚠ COMPACT RIGHT-ALIGNS EVERY CELL, and the uniformity is the whole point.
+// It briefly aligned by position — first left, last right, middle centred — to get
+// both ends flush. That put the last value on the strip edge but wrecked the
+// rhythm: measured glyph gaps of 394 / 263 / 275 / 427px, so the middle three
+// looked bunched and the outer two stranded. One alignment for all five makes the
+// pitch constant (it is just the column pitch), keeps the last value flush right,
+// and matches how figures are conventionally set. The first value no longer touches
+// the DS picker above it — the GROUP still starts there, which is what the
+// alignment was for. Equal columns also hold the numbers in the same place from one
+// SKU to the next, so paging between them does not make the row jump.
+// ⚠ `title` carries the long wording. "Rate of Sale (qty sold on avg per day)"
+// cannot render at this width, and a silently truncated label is how one number
+// comes to mean different things to different readers.
+const StatStrip=({items,compact=false})=>(
+  <div style={{display:"grid",gridTemplateColumns:`repeat(${items.length},minmax(0,1fr))`,
+               gap:compact?16:10,marginBottom:compact?0:16}}>
+    {items.map((c)=>(
+      <div key={c.label} title={c.title||c.label}
+        style={compact
+          ? {textAlign:"right"}
+          : {background:HR.surface,borderRadius:8,padding:"12px 14px",border:`1px solid ${HR.border}`}}>
+        <div style={{fontSize:compact?17:20,fontWeight:800,color:c.color||HR.yellowDark,lineHeight:1.2}}>{c.value}</div>
+        {/* ⚠ textSoft + 700, not muted + regular. At 10px `HR.muted` (#888870) is
+            ~3.5:1 against white — under the 4.5:1 AA threshold for small text — and
+            it showed: the labels read as grey noise under the values. `HR.textSoft`
+            (#444438) is ~9.9:1, and weight does more for legibility than colour at
+            this size. Neither costs the hierarchy: a 10px/700 label cannot compete
+            with a 17px/800 figure, because the 7px size gap carries it. */}
+        <div style={{fontSize:compact?10:11,fontWeight:700,color:HR.textSoft,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.label}</div>
       </div>
     ))}
   </div>
@@ -496,7 +539,7 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
               <th style={th()} rowSpan={2}>Source</th>
               <th style={th()} rowSpan={2}>Timestamp</th>
               {DS_LIST.map((ds, i) => (
-                <th key={ds} colSpan={4} style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].header, borderLeft: `2px solid ${DS_COLORS[i].header}44` })}>{ds}</th>
+                <th key={ds} colSpan={4} style={th({ background: DS_COLOR(i).bg, color: DS_COLOR(i).header, borderLeft: `2px solid ${DS_COLOR(i).header}44` })}>{ds}</th>
               ))}
               <th colSpan={4} style={th({ background: DC_COLOR.bg, color: DC_COLOR.header, borderLeft: `2px solid ${DC_COLOR.header}44` })}>DC</th>
               <th style={th()} rowSpan={2}>Actions</th>
@@ -505,10 +548,10 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
             <tr style={{ background: HR.surfaceLight }}>
               {DS_LIST.map((ds, i) => (
                 <React.Fragment key={ds}>
-                  <th style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].text, fontSize: 8, borderLeft: `2px solid ${DS_COLORS[i].header}44` })}>TMin</th>
-                  <th style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].text, fontSize: 8 })}>TMax</th>
-                  <th style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].text, fontSize: 8 })}>OMin</th>
-                  <th style={th({ background: DS_COLORS[i].bg, color: DS_COLORS[i].text, fontSize: 8 })}>OMax</th>
+                  <th style={th({ background: DS_COLOR(i).bg, color: DS_COLOR(i).text, fontSize: 8, borderLeft: `2px solid ${DS_COLOR(i).header}44` })}>TMin</th>
+                  <th style={th({ background: DS_COLOR(i).bg, color: DS_COLOR(i).text, fontSize: 8 })}>TMax</th>
+                  <th style={th({ background: DS_COLOR(i).bg, color: DS_COLOR(i).text, fontSize: 8 })}>OMin</th>
+                  <th style={th({ background: DS_COLOR(i).bg, color: DS_COLOR(i).text, fontSize: 8 })}>OMax</th>
                 </React.Fragment>
               ))}
               <th style={th({ background: DC_COLOR.bg, color: DC_COLOR.text, fontSize: 8, borderLeft: `2px solid ${DC_COLOR.header}44` })}>TMin</th>
@@ -538,7 +581,7 @@ function OverridesTab({ coreOverrides, saveCoreOverrides, priceData, results, ne
                   const oMaxHigher = d.ovrMax > d.toolMax;
                   return (
                     <React.Fragment key={ds}>
-                      <td style={td({ color: HR.muted, borderLeft: `2px solid ${DS_COLORS[di].header}22` })}>{d.toolMin}</td>
+                      <td style={td({ color: HR.muted, borderLeft: `2px solid ${DS_COLOR(di).header}22` })}>{d.toolMin}</td>
                       <td style={td({ color: HR.muted })}>{d.toolMax}</td>
                       <td style={td(hasOvr && oMinHigher ? { background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark } : { color: "#ccc" })}>{hasOvr ? d.ovrMin : "—"}</td>
                       <td style={td(hasOvr && oMaxHigher ? { background: "#FFFDE7", fontWeight: 700, color: HR.yellowDark } : { color: "#ccc" })}>{hasOvr ? d.ovrMax : "—"}</td>
@@ -769,8 +812,15 @@ const SPIKE_TAG_COLORS = {
   "No Spike":{bg:"#F1F5F9",color:"#64748B",border:"#CBD5E1"},
 };
 
-const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
-  const dc = DS_COLORS[dsIndex] || DS_COLORS[0];
+// ⚠⚠ `opening` COMES FROM `openingDSList`, NEVER FROM `storeData.logicTag`, and the
+// difference is measurable: the Active-only and Inventorised-At passes run AFTER the
+// gate and overwrite the tag, so on live data (2026-09-18) only 82.8% of DS07 cells
+// still read "Opening Shortly" — the other 17.2% read Not Active / Move = No /
+// Supplier, exactly like a trading store's card for the same SKU. Reading the tag
+// would make the badge vanish on ~1 SKU in 6, which is worse than not having it:
+// a reassurance that is silently absent some of the time is one you stop trusting.
+const StrategyCard = ({ dsId, dsIndex, storeData, meta, params, opening = false }) => {
+  const dc = DS_COLOR(dsIndex);
   const s = storeData || {};
   const det = s.strategyDetails || null;
   const stratTag = s.strategyTag || "standard";
@@ -788,6 +838,14 @@ const StrategyCard = ({ dsId, dsIndex, storeData, meta, params }) => {
     <div style={{background:dc.bg, borderRadius:10, border:`1px solid ${dc.header}33`, overflow:"hidden"}}>
       <div style={{background:dc.header, color:"#fff", padding:"6px 10px", fontSize:12, fontWeight:700, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
         <span>{dsId}</span>
+        {opening && (
+          <span title="Not trading yet — held at Min = Max = 0 by openingDSList, whatever the strategy computed. Untick it in Logic Tweaker → Store Status to go live."
+            style={{fontSize:9,fontWeight:800,letterSpacing:0.3,textTransform:"uppercase",
+                    background:"rgba(255,255,255,0.22)",border:"1px solid rgba(255,255,255,0.45)",
+                    borderRadius:999,padding:"1px 7px",whiteSpace:"nowrap"}}>
+            Opening Shortly
+          </span>
+        )}
       </div>
       <div style={{padding:"8px 10px"}}>
         {/* Tags + Min/Max row */}
@@ -971,7 +1029,7 @@ const DateOrderChart = ({ data, color, minVal, maxVal }) => {
   );
 };
 
-function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRange,
+function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRange, priceData,
   skuId, setSkuId, searchVal, setSearchVal,
   period, setPeriod, dateFrom, setDateFrom, dateTo, setDateTo,
   dsView, setDsView }) {
@@ -1042,10 +1100,43 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
     return dates.map(d => ({ date: d, qty: qtyByDate[d] || 0 }));
   }, [invoiceDateRange, period, dateFrom, dateTo, filteredInv]);
 
-  const dsCards = useMemo(() => {
-    if (dsView === "All") return DS_LIST;
-    return [dsView];
-  }, [dsView]);
+  // Every store, trading or not — deliberately NOT `liveDsList`. This tab is the one
+  // place a gated store is worth SEEING: a DS07 card reading 0/0 is how you confirm
+  // the gate is doing its job before go-live. The PO CSV and the TO tool, which feed
+  // other people's decisions, still show only trading stores.
+  const dsCards = useMemo(() => (dsView === "All" ? DS_LIST : [dsView]), [dsView]);
+  const openingSet = useMemo(
+    () => new Set(params?.openingDSList ?? OPENING_DS_DEFAULT), [params?.openingDSList]);
+
+  // ── Align the headline numbers with the end of the DS picker above them ────
+  // ⚠ MEASURED, NOT A PERCENTAGE. Row 1's width is not fixed: selecting `Custom`
+  // adds two date inputs, which pushes DS08 right, and the period label text
+  // changes length with the range. A hardcoded split would line up under one
+  // configuration and be visibly wrong under every other, which is worse than not
+  // aligning at all. ResizeObserver so it survives a window resize too.
+  // Callback ref rather than useEffect: this node exists only while a SKU is
+  // selected, so it mounts and unmounts beneath the component.
+  const [filterW, setFilterW] = useState(null);
+  const filterRO = useRef(null);
+  const filterRef = useCallback((node) => {
+    filterRO.current?.disconnect();
+    filterRO.current = null;
+    if (!node) return;
+    // ⚠⚠ CSS PIXELS, NOT getBoundingClientRect(). The rect is in VISUAL pixels —
+    // after page zoom and any transform — while the value is fed straight back into
+    // a CSS `flex-basis`, which is in LAYOUT pixels. At 85% zoom the two differ by
+    // exactly that factor: measured 787 visual px, set 787 CSS px, rendered 669
+    // visual px, so the numbers sat ~100px left of where DS08 ends. Invisible at
+    // 100% zoom and wrong at every other setting, which is the worst kind of bug to
+    // ship. `borderBoxSize.inlineSize` is layout px by definition; `offsetWidth` is
+    // the same thing, integer-rounded, for the first measure and older engines.
+    const ro = new ResizeObserver(([entry]) => {
+      setFilterW(entry?.borderBoxSize?.[0]?.inlineSize ?? node.offsetWidth);
+    });
+    ro.observe(node);
+    filterRO.current = ro;
+    setFilterW(node.offsetWidth);
+  }, []);
 
   // Compute period label showing actual date range
   const periodLabel = useMemo(() => {
@@ -1059,7 +1150,7 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
   return (
     <div>
       {/* Search bar */}
-      <div style={{display:"flex",gap:8,marginBottom:16,position:"relative"}}>
+      <div style={{display:"flex",gap:8,marginBottom:8,position:"relative"}}>
         <div style={{position:"relative",flex:1,maxWidth:420}}>
           <input
             ref={searchRef}
@@ -1081,7 +1172,7 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             style={{...S.input, width:"100%", paddingRight:36}}
           />
           {dropdownOpen && matches.length > 0 && (
-            <div style={{position:"absolute",top:"100%",left:0,right:0,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,zIndex:10,boxShadow:"0 4px 12px rgba(0,0,0,0.1)",maxHeight:240,overflowY:"auto"}}>
+            <div style={{position:"absolute",top:"100%",left:0,right:0,background:HR.white,border:`1px solid ${HR.border}`,borderRadius:6,zIndex:40,boxShadow:"0 4px 12px rgba(0,0,0,0.1)",maxHeight:240,overflowY:"auto"}}>  {/* ⚠ zIndex 40 > the sticky header's 30. The search sits ABOVE the header in the DOM but its dropdown opens DOWNWARD across it, so at the old zIndex:10 the pinned header painted over the results and the list looked empty. */}
               {matches.map((m, i) => (
                 <div key={m.sku}
                   onMouseDown={() => { setSearchVal(m.sku); setSkuId(m.sku); setDropdownOpen(false); setHlIdx(-1); }}
@@ -1117,79 +1208,154 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
 
       {skuId && res && (
         <>
-          {/* SKU Header */}
-          <div style={{...S.card,marginBottom:12,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-            <div style={{flex:1,minWidth:200}}>
-              <div style={{fontSize:16,fontWeight:800,color:HR.text}}>{res.meta?.name || skuId}</div>
-              <div style={{fontSize:11,color:HR.muted,marginTop:2}}>
-                {res.meta?.sku || skuId} <span onClick={e => { e.stopPropagation(); copyText(res.meta?.sku || skuId); }} style={{cursor:"pointer",opacity:0.4,verticalAlign:"middle",marginLeft:2}} title="Copy SKU ID"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
-                {res.meta?.category && <> · {res.meta.category}</>}
-                {res.meta?.brand && <> · {res.meta.brand}</>}
-              </div>
-            </div>
-            <div style={{display:"flex",gap:4}}>
-              {res.meta?.priceTag && <TagPill value={res.meta.priceTag} colorMap={PRICE_TAG_COLORS} />}
-              {res.meta?.t150Tag && <TagPill value={res.meta.t150Tag} colorMap={TOPN_TAG_COLORS} />}
-            </div>
-          </div>
+          {/* ── Pinned header: filters, identity, headline numbers ────────────
+              WHY STICKY: eight DS cards in two rows pushed the DC card below the
+              fold, so reading it meant losing which SKU you were looking at. The
+              scroll container is `S.pageWrap` (overflowY:auto).
+              ⚠⚠ `top:-PAGE_PAD_Y`, NOT `top:0` — measured 2026-09-18. Sticky pins to
+              the scroll container's CONTENT box, so with `top:0` the bar sat ~14px
+              BELOW the scrollport (scroller top 37.4px vs bar 51.0px) and the page
+              scrolled visibly through that strip above it. The negative offset
+              cancels pageWrap's padding-top exactly, docking it flush when pinned.
+              ⚠ It is a CARD, matching S.card, not a full-bleed bar. It briefly had
+              negative side margins to cover pageWrap's 20px gutters — unnecessary,
+              because nothing on this page renders there: the charts panel, the DS
+              cards and the DC card all sit inside the same content box, so they pass
+              cleanly behind it. Full-bleed only broke the alignment with the search
+              box above and the cards below.
+              ⚠ Net height is a WIN, not a cost: ~96px pinned, against ~100px of
+              flow removed by folding the old identity card, the separate
+              "Showing: …" line and the full-width StatStrip into it. */}
+          <div style={{position:"sticky",top:-PAGE_PAD_Y,zIndex:30,
+                       background:HR.white,borderRadius:8,border:`1px solid ${HR.border}`,
+                       padding:"0 12px",marginBottom:12,
+                       boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}}>
 
-          {/* Period + DS pickers */}
-          <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
-            <div style={{display:"flex",borderRadius:6,overflow:"hidden",border:`1px solid ${HR.border}`}}>
-              {SD_PERIODS.filter(p => p.key !== "CUSTOM").map(p => (
-                <button key={p.key} onClick={() => setPeriod(p.key)}
-                  style={{padding:"4px 9px",background:period===p.key?HR.yellow:HR.white,color:period===p.key?HR.black:HR.muted,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700}}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            {period === "CUSTOM" && (
-              <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{...S.input,fontSize:10,padding:"3px 6px"}} />
-                <span style={{color:HR.muted,fontSize:10}}>→</span>
-                <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{...S.input,fontSize:10,padding:"3px 6px"}} />
-              </div>
-            )}
-            <button onClick={() => setPeriod(period === "CUSTOM" ? "L90D" : "CUSTOM")}
-              style={S.btn(period === "CUSTOM")}>
-              Custom
-            </button>
-            <div style={{width:1,height:20,background:HR.border,margin:"0 4px"}} />
-            <div style={{display:"flex",borderRadius:6,overflow:"hidden",border:`1px solid ${HR.border}`}}>
-              {SD_DS_OPTS.map(d => {
-                const di = DS_LIST.indexOf(d), col = di >= 0 ? DS_COLORS[di].header : HR.muted;
-                const isActive = dsView === d;
-                return (
-                  <button key={d} onClick={() => setDsView(d)}
-                    style={{padding:"4px 9px",background:isActive?(di>=0?DS_COLORS[di].header:HR.yellow):HR.white,color:isActive?HR.white:col,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700}}>
-                    {d}
+            {/* Row 1 — period · range · store filter */}
+            <div style={{display:"flex",padding:"6px 0 3px"}}>
+              {/* This inner flex item shrink-wraps to its content, so its measured
+                  width is exactly "left edge → end of DS08" — the line row 2 aligns to. */}
+              <div ref={filterRef} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <div style={{display:"flex",borderRadius:6,overflow:"hidden",border:`1px solid ${HR.border}`}}>
+                {SD_PERIODS.filter(p => p.key !== "CUSTOM").map(p => (
+                  <button key={p.key} onClick={() => setPeriod(p.key)}
+                    style={{padding:"4px 9px",background:period===p.key?HR.yellow:HR.white,color:period===p.key?HR.black:HR.muted,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700}}>
+                    {p.label}
                   </button>
-                );
-              })}
+                ))}
+              </div>
+              <button onClick={() => setPeriod(period === "CUSTOM" ? "L90D" : "CUSTOM")}
+                style={S.btn(period === "CUSTOM")}>
+                Custom
+              </button>
+              {period === "CUSTOM" && (
+                <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                  <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{...S.input,fontSize:10,padding:"3px 6px"}} />
+                  <span style={{color:HR.muted,fontSize:10}}>→</span>
+                  <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{...S.input,fontSize:10,padding:"3px 6px"}} />
+                </div>
+              )}
+              {/* Folded in from its own line — it only ever restated the picker. */}
+              {/* textSoft, like the identity row and the stat labels — the pinned card
+                  is now uniformly readable, and HR.muted is left to mean "inactive"
+                  (the unselected period buttons beside this) rather than "small". */}
+              {periodLabel && <span style={{fontSize:11,color:HR.textSoft,fontWeight:500}}>{periodLabel}</span>}
+              <div style={{width:1,height:20,background:HR.border,margin:"0 4px"}} />
+              <div style={{display:"flex",borderRadius:6,overflow:"hidden",border:`1px solid ${HR.border}`}}>
+                {SD_DS_OPTS.map(d => {
+                  const di = DS_LIST.indexOf(d), col = di >= 0 ? DS_COLOR(di).header : HR.muted;
+                  const isActive = dsView === d;
+                  return (
+                    <button key={d} onClick={() => setDsView(d)}
+                      title={di >= 0 && openingSet.has(d) ? `${d} — not trading yet` : undefined}
+                      style={{padding:"4px 9px",background:isActive?(di>=0?DS_COLOR(di).header:HR.yellow):HR.white,color:isActive?HR.white:col,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700,
+                              opacity: di >= 0 && openingSet.has(d) && !isActive ? 0.55 : 1}}>
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+              </div>
+            </div>
+
+            {/* Row 2 — identity, then the five numbers starting where DS08 ends */}
+            {/* ⚠ NO borderTop. The block already carries a bottom border, so an
+                internal rule made three horizontal lines inside ~70px and the header
+                read as crowded. The two rows are distinguishable by content — pill
+                buttons above, text and figures below — so the line was doing no work
+                the layout was not already doing. Removing it also lets the rows sit
+                closer, since neither has to stand off a rule. */}
+            <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap",padding:"9px 0 10px"}}>
+              {/* ⚠ maxWidth caps it at 60%: on a narrow window row 1 wraps to two
+                  lines and the measured width balloons, which would squeeze the five
+                  numbers to nothing. Past that the whole row wraps instead. */}
+              <div style={{flex: filterW ? `0 0 ${filterW}px` : "1 1 46%", maxWidth:"60%", minWidth:240}}>
+                <div style={{fontSize:14,fontWeight:800,color:HR.text,lineHeight:1.2,
+                             whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                  {res.meta?.name || skuId}
+                </div>
+                {/* Price pill sits with the brand, where it reads as part of the
+                    identity rather than as a separate row of its own. */}
+                {/* textSoft for the same reason as the stat labels: HR.muted is
+                    ~3.5:1 on white, under AA for small text. The SKU code, category
+                    and brand are identity, not chrome — they are read, not glanced
+                    past. The 14px/800 name above still leads. */}
+                <div style={{fontSize:11,color:HR.textSoft,marginTop:3,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span>
+                    {res.meta?.sku || skuId} <span onClick={e => { e.stopPropagation(); copyText(res.meta?.sku || skuId); }} style={{cursor:"pointer",opacity:0.4,verticalAlign:"middle",marginLeft:2}} title="Copy SKU ID"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                    {res.meta?.category && <> · {res.meta.category}</>}
+                    {res.meta?.brand && <> · {res.meta.brand}</>}
+                  </span>
+                  {res.meta?.priceTag && <TagPill value={res.meta.priceTag} colorMap={PRICE_TAG_COLORS} />}
+                  {/* The rupee figure BEHIND the tag. `priceTag` is a bucket —
+                      getPriceTag(price, priceTiers) — and the bucket is what drives
+                      the PCT percentile, the Fixed Unit Floor order-days gate and the
+                      DOC caps, so seeing the number that produced it saves a trip to
+                      the Upload tab when a target looks wrong.
+                      ⚠ Read from the `priceData` prop, not from engine `meta`: meta is
+                      also consumed by buildToTargets and buildInputsStamp, and a label
+                      is no reason to widen that contract. */}
+                  {Number(priceData?.[res.meta?.sku || skuId]) > 0 && (
+                    // ⚠ Coloured by its OWN tier, from the same map the pill beside it
+                    // uses, so the figure and the badge can never disagree — the colour
+                    // IS the tier rather than decoration. Cheap tiers render muted
+                    // (Low #475569, Super Low #64748B), which is the right emphasis: a
+                    // Premium price is the one worth catching the eye.
+                    <span style={{fontSize:12,fontWeight:800,
+                                  color:(PRICE_TAG_COLORS[res.meta?.priceTag]||{}).color||HR.text}}>
+                      ₹{Number(priceData[res.meta?.sku || skuId]).toLocaleString("en-IN",{maximumFractionDigits:2})}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {/* ⚠ `minWidth:340` is what stops the five boxes crushing: below that the
+                  whole row wraps and they take the full width on their own line,
+                  rather than squeezing to an unreadable ~50px each. */}
+              {/* `repeat(5, minmax(0,1fr))` inside StatStrip divides this equally. */}
+              <div style={{flex:"1 1 0",minWidth:340}}>
+                <StatStrip compact items={[
+                  { label: "Orders",       value: stats.instances.toLocaleString(), color: HR.green },
+                  // ⚠ NOT HR.green. Green is SEMANTIC in this app — a saving, a
+                  // decrease, "nothing changed" (see the Logic Tweaker deltas, which
+                  // all read `delta < 0 ? HR.green : "#C05A00"`). Quantity Sold is a
+                  // neutral volume count, so colouring it green claimed a meaning it
+                  // does not have. All five are neutral measures; the values are the
+                  // signal, not the ink. Inherited from the original StatStrip call
+                  // and carried over unexamined until 2026-09-18.
+                  { label: "Quantity Sold", value: stats.qty.toLocaleString(),      color: HR.green },
+                  { label: "Rate of Sale", value: dateData.length > 0 ? (stats.qty / dateData.length).toFixed(2) : "—", color: HR.green, title: "Rate of Sale — qty sold on avg per day" },
+                  { label: "Avg Buying Qty", value: stats.abq,                      color: HR.green, title: "ABQ — Average Buying Quantity, i.e. qty sold on avg per order" },
+                  { label: "Active Days",  value: stats.activeDays,                 color: HR.green },
+                ]} />
+              </div>
             </div>
           </div>
-
-          {/* Period range label */}
-          {periodLabel && (
-            <div style={{fontSize:11,color:HR.muted,marginBottom:8,fontWeight:500}}>
-              Showing: {periodLabel}
-            </div>
-          )}
-
-          {/* Stats strip */}
-          <StatStrip items={[
-            { label: "Orders", value: stats.instances.toLocaleString(), color: HR.yellowDark },
-            { label: "Quantity Sold", value: stats.qty.toLocaleString(), color: HR.green },
-            { label: "Rate of Sale (qty sold on avg per day)", value: dateData.length > 0 ? (stats.qty / dateData.length).toFixed(2) : "—", color: HR.yellowDark },
-            { label: "ABQ (qty sold on avg per order)", value: stats.abq, color: HR.yellowDark },
-            { label: "Active Days", value: stats.activeDays, color: HR.yellowDark },
-          ]} />
 
           {/* Charts section */}
           {(() => {
             const dsLabel = dsView === "All" ? "All DS Combined" : dsView;
             const di = DS_LIST.indexOf(dsView);
-            const chartColor = di >= 0 ? DS_COLORS[di].header : HR.yellowDark;
+            const chartColor = di >= 0 ? DS_COLOR(di).header : HR.yellowDark;
             const storeMin = dsView !== "All" && res.stores?.[dsView] ? res.stores[dsView].min : null;
             const storeMax = dsView !== "All" && res.stores?.[dsView] ? res.stores[dsView].max : null;
             const totalOrders = Object.values(freqData).reduce((a, b) => a + b, 0);
@@ -1215,11 +1381,22 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
             );
           })()}
 
-          {/* DS Computation Cards + DC Card — all 5 DS in one row */}
-          <div style={{display:"grid",gridTemplateColumns:`repeat(${dsCards.length}, 1fr)`,gap:10,marginBottom:12}}>
+          {/* DS Computation Cards — every store, including the ones not trading yet.
+              ⚠ COLUMN COUNT IS DERIVED, NOT HARDCODED. One row per store was fine at
+              five and unreadable at eight; `repeat(4,…)` would just move the cliff to
+              DS09 (4+4+1). Same trap the Ops download grid carries a note about.
+              <=4 cards stay on one row (so selecting a single DS still renders it
+              full-width); beyond that the count is halved and rounded up, which
+              balances rather than leaving a widow: 8 -> 4+4, 6 -> 3+3, 7 -> 4+3.
+              ⚠ minmax(0,1fr), not 1fr — a long brand or category name in a card must
+              not force its column wider than its share. */}
+          <div style={{display:"grid",
+                       gridTemplateColumns:`repeat(${dsCards.length <= 4 ? dsCards.length : Math.ceil(dsCards.length / 2)}, minmax(0,1fr))`,
+                       gap:10,marginBottom:12}}>
             {dsCards.map(ds => {
               const di = DS_LIST.indexOf(ds);
-              return <StrategyCard key={ds} dsId={ds} dsIndex={di} storeData={res.stores?.[ds]} meta={res.meta} params={params} />;
+              return <StrategyCard key={ds} dsId={ds} dsIndex={di} storeData={res.stores?.[ds]}
+                       meta={res.meta} params={params} opening={openingSet.has(ds)} />;
             })}
           </div>
           <div style={{marginBottom:12}}>
@@ -1751,7 +1928,7 @@ export default function App(){
   const handleLogout=()=>{localStorage.removeItem("adminSession");setIsAdmin(false);};
 
   const hasChanges=JSON.stringify(params)!==JSON.stringify(savedParams);
-  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays),params.plywoodNonNetworkStrategy!==savedParams.plywoodNonNetworkStrategy,JSON.stringify(params.dsSeed||{})!==JSON.stringify(savedParams.dsSeed||{}),JSON.stringify(params.dsSeedCategoryMult||{})!==JSON.stringify(savedParams.dsSeedCategoryMult||{})].filter(Boolean).length;
+  const changedCount=[params.overallPeriod!==savedParams.overallPeriod,params.recencyWindow!==savedParams.recencyWindow,JSON.stringify(params.recencyWt)!==JSON.stringify(savedParams.recencyWt),JSON.stringify(params.movIntervals)!==JSON.stringify(savedParams.movIntervals),JSON.stringify(params.priceTiers)!==JSON.stringify(savedParams.priceTiers),params.spikeMultiplier!==savedParams.spikeMultiplier,params.spikePctFrequent!==savedParams.spikePctFrequent,params.spikePctOnce!==savedParams.spikePctOnce,params.maxDaysBuffer!==savedParams.maxDaysBuffer,params.abqMaxMultiplier!==savedParams.abqMaxMultiplier,JSON.stringify(params.baseMinDays)!==JSON.stringify(savedParams.baseMinDays),JSON.stringify(params.brandBuffer)!==JSON.stringify(savedParams.brandBuffer),JSON.stringify(params.newDSList)!==JSON.stringify(savedParams.newDSList),params.newDSFloorTopN!==savedParams.newDSFloorTopN,params.activeDSCount!==savedParams.activeDSCount,JSON.stringify(params.dcMult)!==JSON.stringify(savedParams.dcMult),JSON.stringify(params.dcDeadMult)!==JSON.stringify(savedParams.dcDeadMult),JSON.stringify(params.categoryStrategies)!==JSON.stringify(savedParams.categoryStrategies),JSON.stringify(params.percentileCover)!==JSON.stringify(savedParams.percentileCover),JSON.stringify(params.fixedUnitFloor)!==JSON.stringify(savedParams.fixedUnitFloor),JSON.stringify(params.brandLeadTimeDays)!==JSON.stringify(savedParams.brandLeadTimeDays),params.plywoodNonNetworkStrategy!==savedParams.plywoodNonNetworkStrategy,JSON.stringify(params.openingDSList??OPENING_DS_DEFAULT)!==JSON.stringify(savedParams.openingDSList??OPENING_DS_DEFAULT)].filter(Boolean).length;
 
   // ── Load team data (invoice, SKU master etc.) ───────────────────────────────
   useEffect(()=>{
@@ -2215,11 +2392,21 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
         alert(`${conflicts.length} pincode(s) are assigned to more than one DS:\n\n${detail}\n\nFix the sheet and re-upload.`);
         return;
       }
+      // ⚠ REVIEW GATE ON A REPLACE-ENTIRELY WRITE. The parse succeeded, so nothing
+      // below is about validity — it is about whether this file is the one intended.
+      // A remap MOVES pincodes; anything removed is a row that went missing, and the
+      // symptom of getting it wrong is donor stores quietly re-inflating with no error.
+      const d=diffPincodeMap((params.pincodeConfig||{}).map||{},map);
+      if(d.beforeCount>0){
+        const risky=d.removed.length>0||d.afterCount<d.beforeCount;
+        const warn=risky?`\n\n⚠ ${d.removed.length} pincode(s) would be REMOVED, not moved. Their demand reverts to whichever store invoices it.`:"";
+        if(!window.confirm(`Apply this pincode mapping?\n\n${describePincodeDiff(d)}${warn}`)) return;
+      }
       setParams(prev=>({...prev,pincodeConfig:{...(prev.pincodeConfig||{mode:"location"}),map}}));
       setModelDirty(true);
-      addChange(`Pincode mapping uploaded: ${n} pincodes`);
+      addChange(`Pincode mapping uploaded: ${n} pincodes (${d.moved.length} moved, ${d.added.length} added, ${d.removed.length} removed)`);
     } finally { setUploading(null); e.target.value=""; }
-  },[setModelDirty,addChange]);
+  },[setModelDirty,addChange,params.pincodeConfig]);
 
   const clearData=useCallback(async(key)=>{
     setModelDirty(true);
@@ -2278,7 +2465,8 @@ if(sbInvoiceData?.length&&sbData?.skuMaster){
           // Own row (params/toTargets) — never touched by the sync functions (which only write
           // team_data/global), written only here on Apply. Non-blocking: a failure never affects Apply.
           try {
-            const toTargets = buildToTargets(merged, DS_LIST);
+            // ⚠ TRADING stores only — see the matching call in api/run-engine.js.
+            const toTargets = buildToTargets(merged, liveDsList(np));
             // ⚠ Stamp the SAME fields the nightly run stamps. This used to write only
             // `{targets, refreshedAt}`, so every Apply ERASED `engineCommit` and
             // `inputs` — which would blank the TO tool's freshness display
@@ -3000,7 +3188,7 @@ const zeroSaleLists = useMemo(
           ):(
             <SKUDetailTab
               invoiceData={attributedInvoice} skuMaster={skuMaster} results={results} params={params}
-              invoiceDateRange={invoiceDateRange}
+              invoiceDateRange={invoiceDateRange} priceData={priceData}
               skuId={sdSku} setSkuId={setSdSku}
               searchVal={sdSearch} setSearchVal={setSdSearch}
               period={sdPeriod} setPeriod={setSdPeriod}
@@ -3079,13 +3267,13 @@ const zeroSaleLists = useMemo(
                   title="PO Team Download"
                   accent="#F97316"
                   blurb={<>Min/Max targets for raising POs. One row per SKU with <b>DC and DS01–DS06 side by side</b>, plus Inventorised At and Status so the sheet can filter out Supplier and inactive items.</>}
-                  shape={`${PO_CSV_HEADERS.length} columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
+                  shape={`${buildPoCsvHeaders(liveDsList(params)).length} columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
                   cta="⬇ PO Team Download"
                   footnote={outputDemandThrough?`demand through ${outputDemandThrough}`:null}
                   hint="Filter on Status = Active and Inventorised At ≠ Supplier in your sheet."
                   disabled={!results||outputFreshness.blocked}
                   onClick={async ()=>{
-                    const csv=buildPoTargetsCsv({skuMaster,results,coreOverrides});
+                    const csv=buildPoTargetsCsv({skuMaster,results,coreOverrides,dsList:liveDsList(params)});
                     if(!csv){alert("No SKU Master loaded — nothing to download.");return;}
 
                     // No staleness check here — the banner above gates every download
@@ -3279,8 +3467,12 @@ const zeroSaleLists = useMemo(
   if(JSON.stringify(c.movIntervals)!==JSON.stringify(s.movIntervals)) logicChangelog.push(`Movement tag boundaries changed`);
   if(JSON.stringify(c.priceTiers)!==JSON.stringify(s.priceTiers)) logicChangelog.push(`Price tag boundaries changed`);
   if(JSON.stringify(c.newDSList)!==JSON.stringify(s.newDSList)) logicChangelog.push(`New DS list changed`);
-  if(JSON.stringify(c.dsSeed||{})!==JSON.stringify(s.dsSeed||{})) logicChangelog.push(`DS Seed config changed`);
-  if(JSON.stringify(c.dsSeedCategoryMult||{})!==JSON.stringify(s.dsSeedCategoryMult||{})) logicChangelog.push(`DS Seed category multiplier changed`);
+  {const co=c.openingDSList??OPENING_DS_DEFAULT, so=s.openingDSList??OPENING_DS_DEFAULT;
+   if(JSON.stringify(co)!==JSON.stringify(so)){
+     const opened=so.filter(d=>!co.includes(d)), closed=co.filter(d=>!so.includes(d));
+     if(opened.length) logicChangelog.push(`${opened.join(", ")} went LIVE (was Opening Shortly)`);
+     if(closed.length) logicChangelog.push(`${closed.join(", ")} set to Opening Shortly`);
+   }}
   if(c.newDSFloorTopN!==s.newDSFloorTopN) logicChangelog.push(`New DS floor top N: ${s.newDSFloorTopN} → ${c.newDSFloorTopN}`);
   const blt={...DEFAULT_PARAMS.brandLeadTimeDays,...(c.brandLeadTimeDays||{})};
   const sblt=s.brandLeadTimeDays||{};
@@ -3833,29 +4025,47 @@ const zeroSaleLists = useMemo(
               </Section>
                 );
               })()}
-              <Section title="DS Seed — New Store Bootstrap" icon="" accent={HR.yellowDark}
-                summary={Object.keys(params.dsSeed||{}).length?Object.entries(params.dsSeed).map(([t,s])=>`${t} ← avg(${(s||[]).join(", ")})`).join(" · "):"Inactive"}>
+              <Section title="Store Status — Opening Shortly" icon="" accent={HR.yellowDark}
+                summary={(()=>{const o=params.openingDSList??OPENING_DS_DEFAULT;return o.length?`${o.join(", ")} not trading yet`:"All stores trading";})()}>
                 <div style={{...S.card,padding:"12px 14px"}}>
-                  <div style={{fontSize:12,color:HR.text,marginBottom:8,lineHeight:1.5}}>
-                    Seeds DS06's Min/Max with the <b>average of DS02 and DS04</b> (50% of each store's
-                    orders migrate to Kogilu). Per field, whichever is higher wins: seed, organic history,
-                    or New DS Floor. DC targets are re-derived treating DS06 as a sixth store.
-                    Remove the seed once DS06 has ~45 days of its own history.
+                  <div style={{fontSize:12,color:HR.text,marginBottom:10,lineHeight:1.5}}>
+                    A store ticked here is wired everywhere — Zoho branch, stock sync, floor and ceiling
+                    columns, plywood node — and still holds <b>Min = Max = 0</b> at every SKU. It is absent
+                    from the TO tool and contributes no columns to the PO Team download, so a store can be
+                    built weeks ahead without moving a single number. <b>Untick it to go live</b>; that is
+                    the whole action.
                   </div>
-                  <label style={{display:"flex",alignItems:"center",gap:8,cursor:isAdmin?"pointer":"default",fontSize:13,fontWeight:600,color:HR.text}}>
-                    <input type="checkbox" disabled={!isAdmin}
-                      checked={!!(params.dsSeed&&params.dsSeed.DS06)}
-                      onChange={e=>saveParams({...params,dsSeed:e.target.checked?{DS06:["DS02","DS04"]}:{}})}/>
-                    Seed DS06 from DS02 + DS04
-                  </label>
-                  {!!(params.dsSeed&&params.dsSeed.DS06)&&(
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${HR.border}`}}>
-                      <span style={{fontSize:12,color:HR.text,fontWeight:600}}>Plywood seed multiplier</span>
-                      <NumInput value={(params.dsSeedCategoryMult||{})["Plywood, MDF & HDHMR"]??0.6} min={0} max={1} step={0.05}
-                        onChange={v=>saveParams({...params,dsSeedCategoryMult:{...(params.dsSeedCategoryMult||{}),"Plywood, MDF & HDHMR":v}})}/>
-                      <span style={{fontSize:11,color:HR.muted}}>Damps plywood depth to fit racking (0.6 ≈ sibling-store thick rack); other categories seed at full average.</span>
-                    </div>
-                  )}
+                  {DS_LIST.map(ds=>{
+                    const opening=(params.openingDSList??OPENING_DS_DEFAULT).includes(ds);
+                    const mapped=Object.values((params.pincodeConfig||{}).map||{}).filter(d=>d===ds).length;
+                    const inNewDS=(params.newDSList||[]).includes(ds);
+                    return (
+                      <div key={ds} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderTop:`1px solid ${HR.border}`}}>
+                        <label style={{display:"flex",alignItems:"center",gap:8,cursor:isAdmin?"pointer":"default",fontSize:13,fontWeight:600,color:HR.text,minWidth:150}}>
+                          <input type="checkbox" disabled={!isAdmin} checked={opening}
+                            onChange={e=>{const cur=params.openingDSList??OPENING_DS_DEFAULT;
+                              saveParams({...params,openingDSList:e.target.checked?[...new Set([...cur,ds])]:cur.filter(d=>d!==ds)});}}/>
+                          {ds} <span style={{fontWeight:500,color:opening?HR.yellowDark:HR.muted}}>{opening?"Opening Shortly":"Trading"}</span>
+                        </label>
+                        <span style={{fontSize:11,color:HR.muted}}>{mapped} pincode{mapped===1?"":"s"} mapped</span>
+                        {/* The two states that silently produce wrong numbers. Neither blocks —
+                            both are legitimate mid-changeover, and a modal on Monday morning is
+                            the last thing anyone needs. */}
+                        {opening&&mapped>0&&(
+                          <span style={{fontSize:11,fontWeight:700,color:"#B91C1C"}}>
+                            ⚠ catchment mapped but not trading — that demand has left the donor stores and nothing is sized for it
+                          </span>)}
+                        {!opening&&mapped===0&&(
+                          <span style={{fontSize:11,fontWeight:700,color:"#B91C1C"}}>
+                            ⚠ trading with no catchment — targets will come from floors alone
+                          </span>)}
+                        {!opening&&!inNewDS&&(
+                          <span style={{fontSize:11,color:"#A16207"}}>
+                            not in New DS list — SKUs with no attributed demand get no floor
+                          </span>)}
+                      </div>
+                    );
+                  })}
                 </div>
               </Section>
               <Section title="Dead Stock DC Multiplier" icon="" accent="#0077A8"

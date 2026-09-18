@@ -73,7 +73,7 @@ const SHEET_URL = () => Deno.env.get("SKU_FLOOR_SHEET_URL") ?? DEFAULT_SHEET_URL
 // writing floors for a store the engine ignores looks like a successful sync that
 // silently did nothing. (Same known drift as the stale local copies in
 // simWorker.js / BasketAnalysisTab.jsx.)
-const DS_LIST = ["DS01", "DS02", "DS03", "DS04", "DS05", "DS06"];
+const DS_LIST = ["DS01", "DS02", "DS03", "DS04", "DS05", "DS06", "DS07", "DS08"];
 
 const COOLDOWN_MS = 15 * 60_000;
 const STATUS_ROW = "skuFloorSyncStatus";

@@ -48,7 +48,18 @@
 > Cleanup done: the Stage 5 runbook, the 2026-08-05 runbook, the frozen `team_data/invoice_data_shadow`
 > row and `docs/HANDOFF-2026-07-31.md` are all deleted. All were transient cutover state.
 
-HomeRun operates **6 dark stores (DS01–DS06) + one DC** (Rampura). This tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to hold. (DS06 Kogilu went live ~2026-07-08; `DS_LIST` in `constants.js` has six entries and everything iterates it.)
+HomeRun operates **8 dark stores (DS01–DS08) + one DC** (Rampura), of which **6 are trading**. This
+tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to
+hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
+
+> ⚠⚠ **`DS_LIST` IS THE STORE UNIVERSE, NOT THE TRADING SET — use `liveDsList(params)` for anything
+> a human or another system consumes.** DS07 HAL and DS08 Rajajinagar were wired on 2026-09-18, ahead
+> of opening, and are held at **Min = Max = 0** by `params/global.openingDSList` (see the Opening
+> Shortly section in `src/engine/CLAUDE.md`). They are fully present — Zoho branch, stock sync, floor
+> and ceiling columns, plywood node — and contribute nothing: no `toTargets` rows, no PO CSV columns,
+> no TO tool tab. **Going live is removing the store from `openingDSList` and nothing else.**
+> Proven inert on live inputs 2026-09-18: 0 of 19,523 cells changed at DC and DS01–DS06, Inv Value
+> ₹0.0000Cr delta, PO CSV header byte-identical.
 
 
 ---
@@ -439,6 +450,8 @@ which numbers are taken.
 | 34 | ✅ closed 2026-09-08 — two dry-run scripts had drifted | kept for the shape: a diagnostic drifting from its subject is worse than no check |
 | 35 | Remove the **Manual Overrides** tab | live `coreOverrides` is **0**, but the tab is the EDITOR not the feature — `mergeCoreOverrides` stays in the nightly engine path and the PO CSV |
 | 36 | The **Plywood v2 engine** is still in the tree | tab retired 2026-09-17, engine kept; 21 files / 184 KB, reachable from nothing. ⚠ the Logic Tweaker option must go in the SAME change |
+| 38 | `sync-stock` empty-body path syncs every branch | 8 branches = 4 sequential pairs ≈ 128s against a 150s wall clock; latent (no caller does it) but our change made it worse |
+| 39 | DS08 has no stock cron | ⚠ do NOT add it to `stock-sync-4` — 3 branches in one invocation 429s after one group. Needs a 5th slot or the untested `per_page` lever |
 | — | *Later, not urgent* | IMS reads the canonical stored result instead of recomputing client-side |
 
 
@@ -452,7 +465,7 @@ one reason: **the numbers are stable IDs that appear in commit messages and PRs,
 are never renumbered or reused** — and an index that left the file with the entries would
 let the next feature silently reuse a taken number.
 
-**Highest used: 36. `33` was never used (a gap, not a free slot — leave it). Next: 37.**
+**Highest used: 39. `33` was never used (a gap, not a free slot — leave it). Next: 40.**
 
 | # | what | shipped | live documentation |
 |---|---|---|---|
@@ -492,6 +505,9 @@ let the next feature silently reuse a taken number.
 | 34 | Two dry-run scripts had drifted | closed 2026-09-08 | Open Work § (kept for the shape) |
 | 35 | Remove the Manual Overrides tab | **open** | Open Work § |
 | 36 | Remove the dormant Plywood v2 engine | **open** | Open Work § + `docs/retired/README.md` |
+| 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | 2026-09-18 | Opening Shortly § in `src/engine/CLAUDE.md` + `docs/superpowers/specs/2026-09-18-ds07-ds08-golive-design.md` |
+| 38 | `sync-stock` empty-body path syncs every branch | **open** | Open Work § |
+| 39 | DS08 has no stock cron | **open** | Open Work § |
 
 
 ## Deferred
@@ -517,8 +533,10 @@ Full backup auto-saved to `params/paramsBackup` on every "Apply & Re-run Model" 
 
 Key non-defaults (verified live 2026-07-31): `overallPeriod=45`, `newDSFloorTopN=250`,
 `newDSList=["DS04","DS05","DS06","DS03"]` (DS06 added at go-live), `brandLeadTimeDays={_default:3,"Asian Paints":4}`,
-`pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`, **`dsSeed={}` — sunset 2026-07-31**, see the DS Seed
-section for the measurement. Category strategies:
+`pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`, **`openingDSList=["DS07","DS08"]`** (⚠ read it with
+`??`, never `||` — `[]` means "all trading"; see Opening Shortly in `src/engine/CLAUDE.md`).
+**`dsSeed`/`dsSeedCategoryMult` were deleted 2026-09-18** with the DS Seed pass; the orphaned keys
+still sitting in prod's `params/global` are inert and deliberately not migrated away. Category strategies:
 **11** — 8 PCT + 2 Fixed Unit Floor + Plywood=NetworkDesign (`Kitchen Sinks & Faucets` → PCT added 2026-07-30).
 **A reload→Apply round trip is verified lossless** (2026-07-30: fresh Incognito load, Apply, all 7 params
 rows byte-identical bar `_backedUpAt`/`refreshedAt`) — the historic "a reload changed my params" was the

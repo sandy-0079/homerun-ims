@@ -32,8 +32,19 @@ const BRANCHES: Record<string, string> = {
   DS04: '3915979000000054047',
   DS05: '3915979000000054062',
   DS06: '3915979000000118484',
+  // Added 2026-09-18, ahead of go-live. Ids read off Zoho Settings -> Locations.
+  // ⚠ Both stores are gated by `openingDSList` in the engine, so their presence
+  // here moves no target — it only lets stock/PO/TO data accumulate from day one.
+  DS07: '3915979000030598119',
+  DS08: '3915979000030600296',
 }
-const DS_ONLY = ['DS01', 'DS02', 'DS03', 'DS04', 'DS05', 'DS06']
+// ⚠ DS07/DS08 are valid destinations from the moment they exist in Zoho, NOT from
+// the moment they open. The TO tool cannot reach them — they are absent from
+// `params/toTargets` while gated — so the only way to address one is a deliberate
+// hand-built call, which is exactly what you want when test-firing a draft against
+// a new branch before go-live. Everything this function creates is a draft: zero
+// stock movement, deletable.
+const DS_ONLY = ['DS01', 'DS02', 'DS03', 'DS04', 'DS05', 'DS06', 'DS07', 'DS08']
 
 // ─── TO Type (Zoho custom field, added 2026-08-07) ───────────────────────────
 // Every TO this function creates is a DC→DS mid-mile restock, so the type is a

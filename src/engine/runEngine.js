@@ -4,13 +4,14 @@ import {
   DS_LIST, MOVEMENT_TIERS_DEFAULT,
   DC_DEAD_MULT_DEFAULT,
   RECENCY_WT_DEFAULT,
+  OPENING_DS_DEFAULT,
 } from "./constants.js";
 
 import { getPriceTag, getMovTag, getSpikeTag, computeStats } from "./utils.js";
-import { applyDSSeed } from "./dsSeed.js";
 import { applyAttribution } from "./attribution.js";
 import { applyCeilingToStores, capFor, clampToCeiling } from "./skuCeiling.js";
 import { applyDeadStockToStores } from "./deadStock.js";
+import { applyOpeningToStores } from "./openingStores.js";
 import { dispatchStrategy } from "./strategyDispatch.js";
 import { policyOf } from "../skuPolicy.js";
 import { computePlywoodNetworkResults } from "./strategies/plywoodNetwork.js";
@@ -130,6 +131,14 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
     activeDSCount = p.activeDSCount || 4,
     res = {};
 
+  // ⚠ `??`, NEVER `||`. `[]` is the legitimate end state (every store trading) and
+  // `[] || OPENING_DS_DEFAULT` would silently re-gate DS07/DS08 the moment the last
+  // one opened. The fallback matters in its own right: prod's `params/global`
+  // predates this key and the shallow merge drops what prod lacks, so without it a
+  // nightly run would have gone live with the gate off. Same idiom as
+  // `fixedUnitFloor.minNZD ?? 2`.
+  const openingSet = new Set(p.openingDSList ?? OPENING_DS_DEFAULT);
+
   // Network Design: only runs when explicitly selected in categoryStrategies.
   // Uses full inv (not invSliced) so lookbackDays is independent of overallPeriod.
   const plyMode = p.categoryStrategies?.["Plywood, MDF & HDHMR"];
@@ -192,6 +201,9 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
       // reason it lives here and not in the loop above: one rule, one application
       // site, so a branch added later cannot silently escape it. See deadStock.js.
       applyDeadStockToStores(_stores, _isDead, DS_LIST);
+      // Same pass, same reason — this bypass builds its own `_stores` and would
+      // otherwise let a plywood node at a not-yet-open store publish targets.
+      applyOpeningToStores(_stores, openingSet, DS_LIST);
 
       // ── Re-derive the network DC from the (possibly capped) stores ──────────
       // ⚠ The plywood DC is `dcP95 + ceil(sumMin x dcMult)` computed inside
@@ -396,6 +408,13 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
     // ⚠ BEFORE the sums below, for the same reason the ceiling is.
     applyDeadStockToStores(stores, isDead, DS_LIST);
 
+    // ── Opening Shortly ─────────────────────────────────────────────────────
+    // ⚠ BEFORE the sums below, and that is the whole reason it sits here rather
+    // than at the end of the run: `sumMin` feeds the floored DC branch, so a store
+    // zeroed AFTER the sums would read 0/0 while the DC was already stocked to
+    // supply it. See openingStores.js.
+    applyOpeningToStores(stores, openingSet, DS_LIST);
+
     // Derived from `stores` rather than the push-as-you-go arrays, which were filled
     // before the clamp — and which the third NO-DATA branch never pushed to at all.
     const sumMin = DS_LIST.reduce((a, ds) => a + (stores[ds]?.min ?? 0), 0),
@@ -523,10 +542,6 @@ export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {
       dc: { min: dcMin, max: dcMax, preFloorMin: preFloorDcMin, preFloorMax: preFloorDcMax, mvTag: dcStats.mvTag, nonZeroDays: dcStats.nonZeroDays, dcDetails },
     };
   });
-
-  // ── DS Seed pass (e.g. DS06 = avg of DS02/DS04) — before normalization so
-  // Supplier/DS-inv zeroing below still wins over seeded values ──────────────
-  applyDSSeed(res, p);
 
   // ── Active-only normalization (final override) ──────────────────────────────
   // ONLY SKUs Active in the SKU Master get non-zero targets. Anything else is a

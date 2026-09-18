@@ -11,6 +11,11 @@ const BRANCHES: Record<string, string> = {
   DS04: '3915979000000054047',
   DS05: '3915979000000054062',
   DS06: '3915979000000118484',
+  // Added 2026-09-18, ahead of go-live. Ids read off Zoho Settings -> Locations.
+  // ⚠ Both stores are gated by `openingDSList` in the engine, so their presence
+  // here moves no target — it only lets stock/PO/TO data accumulate from day one.
+  DS07: '3915979000030598119',
+  DS08: '3915979000030600296',
 }
 
 const COOLDOWN_MINS = 15

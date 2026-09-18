@@ -35,7 +35,7 @@
 // Env: SUPABASE_URL, SUPABASE_ANON_KEY, ENGINE_RUN_SECRET.
 
 import { runEngine } from "../src/engine/index.js";
-import { DEFAULT_PARAMS, DS_LIST } from "../src/engine/constants.js";
+import { DEFAULT_PARAMS, DS_LIST, liveDsList } from "../src/engine/constants.js";
 import { loadParamConfigRows } from "../src/paramConfigRows.js";
 import { mergeCoreOverrides, buildToTargets, assessTargetsChange, buildInputsStamp } from "../src/toTargets.js";
 import { computeInvValue } from "../src/invValue.js";
@@ -125,7 +125,11 @@ export default async function handler(req, res) {
       // capped ones. Same class as the pincodeConfig omission.
       team?.skuCeiling ?? {},
     );
-    const built = buildToTargets(mergeCoreOverrides(raw, sbOverrides), DS_LIST);
+    // ⚠ TRADING stores only, never DS_LIST. A store that is wired but not open must
+    // not reach the TO tool: `solver.js` iterates `Object.keys(perDS)`, so an entry
+    // here renders a row and invites a transfer to a store with no staff. Both
+    // writers of this row must agree — see the same call in App.jsx applyAndRun.
+    const built = buildToTargets(mergeCoreOverrides(raw, sbOverrides), liveDsList(params));
     const engineMs = Date.now() - tEngine;
 
     // Network inventory value, for the nightly digest's directional line.
