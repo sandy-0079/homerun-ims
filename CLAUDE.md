@@ -60,6 +60,16 @@ hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
 > no TO tool tab. **Going live is removing the store from `openingDSList` and nothing else.**
 > Proven inert on live inputs 2026-09-18: 0 of 19,523 cells changed at DC and DS01–DS06, Inv Value
 > ₹0.0000Cr delta, PO CSV header byte-identical.
+>
+> ⚠⚠ **HALF-DEPLOYED AS OF 2026-09-18 ~20:00 IST, DELIBERATELY. Read
+> `docs/HANDOFF-2026-09-18-ds07-ds08.md` before touching any of it.** Both frontends are live
+> (`homerun-ims b9c9523`, `homerun-to 3d3f6b2`); the **four edge functions are NOT deployed**
+> and the **cron migration is NOT applied**, so `stock-sync-4` still sends `["DS06"]` and DS07
+> has never synced. The skew is safe — `sync-stock` filters unknown branches, so a frontend
+> asking for DS07 against the old build just syncs DS06 — but do not read "shipped" as
+> "deployed". ⚠ The **SKU Floors sheet must not gain DS07/DS08 columns until
+> `sync-sku-floors` is deployed**: `parseFloorSheet` hard-stops `unknown_ds` and fails closed,
+> so a night's floors silently do not update.
 
 
 ---
@@ -79,6 +89,7 @@ on every session. Verified 2026-09-17, not assumed.
 | `src/engine/strategies/plywoodV2/CLAUDE.md` | Plywood v2 — ENGINE only; its tab was retired 2026-09-17 | touching that directory |
 | `supabase/functions/CLAUDE.md` | Zoho API contracts, rate limits, token singleflight, crons, `create-to`, row inventory, deploy hazards, log recipes | touching `supabase/functions/` |
 | `src/tabs/CLAUDE.md` | Stock Health + Tool Output UI, CSV contracts, freshness gate | touching `src/tabs/` |
+| `docs/HANDOFF-2026-09-18-ds07-ds08.md` | DS07/DS08 go-live — what is deployed, what is not, and the order | **read before any DS07/DS08 work** |
 | `docs/OPEN-WORK.md` | full open-work entries | read deliberately |
 | `docs/CHANGELOG-ARCHIVE.md` | everything shipped | read deliberately |
 | `docs/retired/README.md` | tabs removed 2026-09-17 (OOS Simulation, Plywood v2) + how to restore | read deliberately |
@@ -505,7 +516,7 @@ let the next feature silently reuse a taken number.
 | 34 | Two dry-run scripts had drifted | closed 2026-09-08 | Open Work § (kept for the shape) |
 | 35 | Remove the Manual Overrides tab | **open** | Open Work § |
 | 36 | Remove the dormant Plywood v2 engine | **open** | Open Work § + `docs/retired/README.md` |
-| 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | 2026-09-18 | Opening Shortly § in `src/engine/CLAUDE.md` + `docs/superpowers/specs/2026-09-18-ds07-ds08-golive-design.md` |
+| 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | 2026-09-18 **(frontends only — functions/migration pending)** | Opening Shortly § in `src/engine/CLAUDE.md` · `docs/HANDOFF-2026-09-18-ds07-ds08.md` · spec in `docs/superpowers/specs/` |
 | 38 | `sync-stock` empty-body path syncs every branch | **open** | Open Work § |
 | 39 | DS08 has no stock cron | **open** | Open Work § |
 
