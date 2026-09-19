@@ -349,6 +349,15 @@ Two facts worth carrying even when you are nowhere near the engine:
 - **`params/toTargets` has two writers** — `applyAndRun` in `App.jsx` and the nightly
   `api/run-engine.js` — sharing `src/toTargets.js`, which is the only thing stopping them
   drifting.
+  - **⚠ A two-writer field cannot carry an assertion about one writer. Ask who OWNS the
+    field before checking it.** `toTargets.refreshedAt` looks like "when did the nightly
+    run" and is not — any browser Apply overwrites it. A 2026-09-19 check asserting
+    `refreshedAt == 06:15` passed all morning and then cried wolf the moment an operator
+    clicked Apply at 14:39, on a completely healthy system. The nightly's own signal is
+    **`params/engineRunStatus.at`**, which only the nightly writes. Same shape as the
+    `invoiceSyncStatus.at` vs `.publishedAt` trap (`.at` is stamped on failures too) and
+    the `autoAtFor` provenance bug. **The fix is never a better threshold — it is a
+    single-writer field.** Report a shared field; assert on an owned one.
 
 ---
 
