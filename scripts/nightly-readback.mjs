@@ -30,11 +30,20 @@ const ist = (s) =>
 const cr = (n) => `₹${(Number(n) / 1e7).toFixed(2)}Cr`;
 const agoMin = (s) => (s ? Math.round((Date.now() - new Date(s)) / 60000) : Infinity);
 
-const [tt, glob, floors, inv, cat, dg, hist, team] = await Promise.all([
+const [tt, glob, floors, inv, cat, dg, hist, team, eng] = await Promise.all([
   get("params", "toTargets"), get("params", "global"), get("params", "skuFloorSyncStatus"),
   get("params", "invoiceSyncStatus"), get("params", "catalogueSyncStatus"),
   get("params", "digestStatus"), get("params", "digestHistory"), get("team_data", "global"),
+  get("params", "engineRunStatus"),
 ]);
+
+// IST calendar date + wall time, as the operator reads them.
+const istParts = (s) => {
+  if (!s) return { date: "", time: "" };
+  const [date, time] = new Date(s).toLocaleString("sv-SE", { timeZone: "Asia/Kolkata" }).split(" ");
+  return { date, time };
+};
+const todayIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
 const problems = [];
 const stop = [];
@@ -60,11 +69,27 @@ ok(Object.keys(gatedNonZero).length === 0,
    "A GATED STORE HAS NON-ZERO TARGETS", true);
 
 // ── 2. Engine ────────────────────────────────────────────────────────────────
-// Two slots (15,45 0 * * * UTC): the SECOND rewrites refreshedAt, so 06:15 is the
-// healthy value and 05:45 means the later run failed. Derived, not assumed.
-const refIst = tt?.refreshedAt ? new Date(tt.refreshedAt).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour12: false }) : "";
-console.log(`\nENGINE  refreshedAt ${ist(tt?.refreshedAt)}`);
-ok(refIst.startsWith("06:15"), `ran the 06:15 slot (05:45 would mean the second run FAILED) — got ${refIst}`);
+// ⚠ Check the NIGHTLY run against `engineRunStatus.at`, NOT `toTargets.refreshedAt`.
+// `toTargets` has two writers — the nightly `api/run-engine.js` and the browser's
+// `applyAndRun` — so any manual Apply overwrites `refreshedAt` and tells you nothing
+// about whether the nightly ran. `engineRunStatus` is written only by the nightly.
+// (An earlier version of this script hardcoded "expect 06:15" on `refreshedAt` and
+// cried wolf the first time an operator clicked Apply at 14:39 — the exact stale-
+// expectation bug this file's header warns about, committed by this file.)
+const er = istParts(eng?.at);
+console.log(`\nENGINE  nightly ${er.date} ${er.time} IST · toTargets ${ist(tt?.refreshedAt)}`);
+ok(eng?.ok === true && er.date === todayIst, `nightly engine ran today (engineRunStatus ${er.date || "never"})`);
+// Two slots at 15,45 0 * * * UTC = 05:45 + 06:15 IST; the second rewrites the first,
+// so a 05:45 stamp means the 06:15 run FAILED.
+ok(!er.time.startsWith("05:45"), `used the 06:15 slot — a 05:45 stamp means the second run FAILED (got ${er.time})`);
+
+const manualApply = tt?.refreshedAt && eng?.at && new Date(tt.refreshedAt) > new Date(eng.at);
+if (manualApply) {
+  console.log(`     \u2139 toTargets was rewritten by a browser Apply at ${istParts(tt.refreshedAt).time} IST, after the nightly.`);
+  if (tt?.invValue === undefined)
+    console.log(`     \u2139 invValue is absent — browser Apply strips it (Open Work #28). The next nightly`);
+    console.log(`       re-stamps it before the 06:30 digest, so the digest keeps its \u20b9 line.`);
+}
 const through = tt?.inputs?.invoiceDataThrough;
 const yday = new Date(Date.now() - 864e5).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 ok(through === yday, `invoiceDataThrough ${through} === yesterday ${yday}`);
