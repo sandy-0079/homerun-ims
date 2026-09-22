@@ -48,28 +48,31 @@
 > Cleanup done: the Stage 5 runbook, the 2026-08-05 runbook, the frozen `team_data/invoice_data_shadow`
 > row and `docs/HANDOFF-2026-07-31.md` are all deleted. All were transient cutover state.
 
-HomeRun operates **8 dark stores (DS01–DS08) + one DC** (Rampura), of which **6 are trading**. This
+HomeRun operates **8 dark stores (DS01–DS08) + one DC** (Rampura), of which **7 are trading** (DS07 HAL joined 2026-09-22; DS08 is wired but gated). This
 tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to
 hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
 
 > ⚠⚠ **`DS_LIST` IS THE STORE UNIVERSE, NOT THE TRADING SET — use `liveDsList(params)` for anything
-> a human or another system consumes.** DS07 HAL and DS08 Rajajinagar were wired on 2026-09-18, ahead
-> of opening, and are held at **Min = Max = 0** by `params/global.openingDSList` (see the Opening
-> Shortly section in `src/engine/CLAUDE.md`). They are fully present — Zoho branch, stock sync, floor
-> and ceiling columns, plywood node — and contribute nothing: no `toTargets` rows, no PO CSV columns,
-> no TO tool tab. **Going live is removing the store from `openingDSList` and nothing else.**
-> Proven inert on live inputs 2026-09-18: 0 of 19,523 cells changed at DC and DS01–DS06, Inv Value
-> ₹0.0000Cr delta, PO CSV header byte-identical.
+> a human or another system consumes.** **DS07 HAL went live 2026-09-22**; **DS08 Rajajinagar is
+> still gated** and is now the only entry in `params/global.openingDSList` (see the Opening Shortly
+> section in `src/engine/CLAUDE.md`). A gated store is fully present — Zoho branch, stock sync, floor
+> and ceiling columns, plywood node — and contributes nothing: no `toTargets` rows, no PO CSV columns,
+> no TO tool tab. **Going live is removing the store from `openingDSList` and nothing else** — that
+> claim held: on 2026-09-22 the untick, the pincode remap and the `newDSList` edit were one Apply,
+> and no other code changed.
 >
-> ⚠⚠ **HALF-DEPLOYED AS OF 2026-09-18 ~20:00 IST, DELIBERATELY. Read
-> `docs/HANDOFF-2026-09-18-ds07-ds08.md` before touching any of it.** Both frontends are live
-> (`homerun-ims b9c9523`, `homerun-to 3d3f6b2`); the **four edge functions are NOT deployed**
-> and the **cron migration is NOT applied**, so `stock-sync-4` still sends `["DS06"]` and DS07
-> has never synced. The skew is safe — `sync-stock` filters unknown branches, so a frontend
-> asking for DS07 against the old build just syncs DS06 — but do not read "shipped" as
-> "deployed". ⚠ The **SKU Floors sheet must not gain DS07/DS08 columns until
-> `sync-sku-floors` is deployed**: `parseFloorSheet` hard-stops `unknown_ds` and fails closed,
-> so a night's floors silently do not update.
+> ⚠ **The go-live signature was NOT "Inv Value roughly flat" — it was +5.2%, and that was correct.**
+> Measured 2026-09-22: ₹10.58Cr → ₹11.13Cr Max. Toggling only the gate moved exactly two locations
+> (DS07 +14,358 Min, DC +2,727) and **no donor cell**, so nothing double-counted. The prediction came
+> from reasoning about *demand* — attribution relocates it — but Inv Value is dominated by *floors and
+> base minimums*, which barely shrink when marginal demand leaves a donor. Donors gave back only
+> ~₹0.085Cr against DS07's ₹0.633Cr. **A new location costs a location's worth of floors.** Expect
+> the same shape when DS08 opens; do not treat it as a fault.
+>
+> ⚠ **Backend is FULLY DEPLOYED as of 2026-09-19** — four edge functions, the `stock-sync-4` cron
+> migration (`DS06,DS07`), and DS07/DS08 branch reachability all proven. DS07 syncs hourly. The
+> floors sheet and ceilings csv carry DS07/DS08 columns. **DS08 has no stock cron by design**
+> (Open Work #39) and must not join `stock-sync-4` — three branches in one invocation 429s.
 
 
 ---
@@ -525,7 +528,7 @@ let the next feature silently reuse a taken number.
 | 34 | Two dry-run scripts had drifted | closed 2026-09-08 | Open Work § (kept for the shape) |
 | 35 | Remove the Manual Overrides tab | **open** | Open Work § |
 | 36 | Remove the dormant Plywood v2 engine | **open** | Open Work § + `docs/retired/README.md` |
-| 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | 2026-09-18 **(frontends only — functions/migration pending)** | Opening Shortly § in `src/engine/CLAUDE.md` · `docs/HANDOFF-2026-09-18-ds07-ds08.md` · spec in `docs/superpowers/specs/` |
+| 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | wired 2026-09-18 · backend 2026-09-19 · **DS07 LIVE 2026-09-22** (DS08 still gated) | Opening Shortly § in `src/engine/CLAUDE.md` · `docs/HANDOFF-2026-09-18-ds07-ds08.md` · spec in `docs/superpowers/specs/` |
 | 38 | `sync-stock` empty-body path syncs every branch | **open** | Open Work § |
 | 39 | DS08 has no stock cron | **open** | Open Work § |
 
@@ -552,9 +555,16 @@ let the next feature silently reuse a taken number.
 Full backup auto-saved to `params/paramsBackup` on every "Apply & Re-run Model" click. Restore from there if `params/global` is corrupted.
 
 Key non-defaults (verified live 2026-07-31): `overallPeriod=45`, `newDSFloorTopN=250`,
-`newDSList=["DS04","DS05","DS06","DS03"]` (DS06 added at go-live), `brandLeadTimeDays={_default:3,"Asian Paints":4}`,
-`pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`, **`openingDSList=["DS07","DS08"]`** (⚠ read it with
+**`newDSList=["DS06","DS07"]`** (2026-09-22 — DS03/DS04/DS05 were REMOVED in the same Apply that
+added DS07, deliberately: they have traded long enough that the New DS Floor no longer applies.
+Measured cost 130 units of Min ≈ ₹26k, and 179 of the 183 affected cells were caught by their sheet
+floor at the same number), `brandLeadTimeDays={_default:3,"Asian Paints":4}`,
+`pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`, **`openingDSList=["DS08"]`** (⚠ read it with
 `??`, never `||` — `[]` means "all trading"; see Opening Shortly in `src/engine/CLAUDE.md`).
+⚠ `params/global.dsCapacities` is an **orphan copy the engine never reads** — plywood capacity is
+DERIVED from `params/networkConfigs[ds].thick/thin.capacity` by `loadParamConfigRows`. Reading the
+`global` copy gave a confidently wrong answer on 2026-09-22 (it said DS07 was 0/0 an hour after ops
+had set 300/150). Query `networkConfigs`.
 **`dsSeed`/`dsSeedCategoryMult` were deleted 2026-09-18** with the DS Seed pass; the orphaned keys
 still sitting in prod's `params/global` are inert and deliberately not migrated away. Category strategies:
 **11** — 8 PCT + 2 Fixed Unit Floor + Plywood=NetworkDesign (`Kitchen Sinks & Faucets` → PCT added 2026-07-30).

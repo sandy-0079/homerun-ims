@@ -137,8 +137,10 @@ rather than on every session.
 > ⚠ **`SYNC_GROUPS` mirrors the crons exactly and must keep doing so** — `[["DC","DS01"],["DS02","DS03"],["DS04","DS05"],["DS06","DS07"]]` since 2026-09-18. If
 > "Sync Now" and the crons disagree on grouping, whichever runs second stacks Zoho calls on the
 > first — the shape of the 2026-07-09 429 storm. Two branches per group is the ceiling; three 429s
-> after one group. **DS08 is absent from both** (no stock until it opens), and DS07/DS08 render as
-> columns tagged `okay` at 0/0/0 while `openingDSList` holds them.
+> after one group. **DS08 is absent from both** (no stock until it opens) and renders as a column
+> tagged `okay` at 0/0/0 while `openingDSList` holds it. **DS07 went live 2026-09-22** and is now an
+> ordinary trading column — it opened with near-zero stock, so expect it to read short across the
+> board until its first TOs land rather than treating that as a data fault.
 
 ## Tool Output Download Tab
 

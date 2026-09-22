@@ -206,7 +206,23 @@ wired store at zero until opening day".
 
 `params/global.openingDSList` lists stores that exist everywhere — Zoho branch, stock sync, floor
 and ceiling columns, `newDSList` membership, plywood node — and hold **Min = Max = 0 at every SKU**.
-Going live is removing the store from that list; nothing else. Live value at ship: `["DS07","DS08"]`.
+Going live is removing the store from that list; nothing else. **Live value now: `["DS08"]`** — it
+was `["DS07","DS08"]` at ship, and **DS07 HAL went live 2026-09-22**, which exercised this pass end
+to end for the first time.
+
+- **⚠ Going live is the untick PLUS the inputs the gate was hiding.** The gate zeroes
+  `stores[ds].min/max`, so it also masks anything mis-set at that store — and those land the instant
+  it is removed. On 2026-09-22 two mattered: `dsCapacities.DS07` was `{thick:0,thin:0}`, which
+  `applyCapacityTrim` reads as **no cap at all** (`if (!capacity || capacity <= 0) continue`), not
+  zero stock; and `newDSList` needed the store added by hand. Neither is visible while gated.
+  Measured that day: the capacity was in fact inert (0 of 25,965 cells, DS07 plywood ΣMax 266 against
+  a 300/150 cap), but that is a fact about DS07's opening volume, not a property of the code —
+  re-measure for DS08 rather than inheriting the conclusion.
+- **⚠ Expect Inv Value to RISE on go-live, not stay flat.** DS07 came in at +5.2% network-wide
+  (₹10.58Cr → ₹11.13Cr Max). Toggling only the gate moved DS07 (+14,358 Min) and the DC (+2,727) and
+  **no donor cell**, so nothing double-counted: attribution relocates demand, but Min/Max is mostly
+  floors and base minimums, which do not shrink when marginal demand leaves a donor. Donors returned
+  ~₹0.085Cr against DS07's ₹0.633Cr. See the root `CLAUDE.md` block for the full decomposition.
 
 - **⚠ It is an OPENING list, not a LIVE list, and that direction is the safety property.** If the key
   goes missing the fallback (`OPENING_DS_DEFAULT`) names only stores that never traded, so absence

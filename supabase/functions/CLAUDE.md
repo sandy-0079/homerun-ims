@@ -160,20 +160,36 @@ invoice sync:**
 **Zoho Inventory location IDs (org 60075214606, confirmed 2026-07-06):**
 `DC=3915979000000118466`, `DS01=3915979000000054002`, `DS02=3915979000000054017`, `DS03=3915979000000054032`, `DS04=3915979000000054047`, `DS05=3915979000000054062`, `DS06=3915979000000118484`, **`DS07=3915979000030598119` (HAL)**, **`DS08=3915979000030600296` (Rajajinagar)**
 
-**DS07 HAL + DS08 Rajajinagar (wired 2026-09-18, ahead of opening):** both exist in Zoho named
+**DS07 HAL + DS08 Rajajinagar (wired 2026-09-18; all four functions DEPLOYED 2026-09-19; DS07 LIVE
+2026-09-22, DS08 still gated):** both exist in Zoho named
 prefix-first, so `invoiceMap.ts`'s `dsOf()` attributes their invoices with no code change, and
 `sync-orders`' name-keyed `LOCATION_TO_DS` carries the strings **verbatim** — one wrong character
 silently drops every PO and TO for that store rather than erroring. Both are in `sync-stock` and
-`create-to` BRANCHES. The engine holds them at 0/0 via `openingDSList`, so none of this moves a
-target. **`stock-sync-4` now carries `DS06,DS07`** (migration `20260918000001`): that slot was the
+`create-to` BRANCHES. The engine held both at 0/0 via `openingDSList`; **DS08 alone is still held
+there**. **`stock-sync-4` now carries `DS06,DS07`** (migration `20260918000001`): that slot was the
 only single-branch group, so this restores parity rather than adding load, where a 5th cron would
 have cost ~1,200 Zoho requests/day for a store holding no stock.
 - **⚠⚠ DS08 MUST NOT JOIN THAT GROUP.** Three branches in one invocation is measured unsafe — 6
   concurrent chains 429 after a single group. It is in BRANCHES so it can be pulled by hand
   (`{"branches":["DS08"]}`) to verify its id, but nothing calls it on a schedule. See Open Work 39.
 - **⚠ `sync-sku-floors`' duplicated `DS_LIST` gained both**, and the ORDER matters: an unrecognised
-  DS column is a hard stop, so ops must add DS07/DS08 columns to the floor sheet only AFTER this
-  deploy. Sheet-first fails the nightly sync with `unknown_ds` and leaves the previous floors live.
+  DS column is a hard stop, so DS07/DS08 columns had to reach the floor sheet only AFTER that deploy.
+  Sheet-first fails the nightly sync with `unknown_ds` and leaves the previous floors live. **Done in
+  the right order: deploy 2026-09-19 ~10:10 IST, columns added later that day.** Keep the rule for
+  the next store.
+- **⚠ `create-to` accepts DS07 but its Zoho write has never been exercised.** `DS_ONLY` and
+  `BRANCHES` carry DS07, and the TO tool offers it automatically (`dsListFromTargets` reads
+  `toTargets`, no deploy needed). What is proven for DS07 is `inventorysummary` — a READ on a
+  different endpoint. If Zoho rejects `to_location_id` on `POST /transferorders` it returns **400**,
+  the validation layer, so nothing is created and the error surfaces. ⚠ `dryRun:true` does NOT test
+  this — it returns before the POST. **First real DS07 TO: the DC team's 2026-09-22 14:30 run.**
+- **⚠ A new store's first TO is enormous, because parity restock sees an empty store.** `Req = Max −
+  CS DS − In Transit` with stock at zero means every SKU triggers at full Max. Measured for DS07 on
+  2026-09-22: **963 SKUs / 14,731 units requested, 811 lines / 10,978 units allocated in ONE POST** —
+  `buildLines` does not chunk. The existing six lost only 212 units (−5.9%) to the proportional
+  split, so the squeeze is mild; the size is the thing to watch. TO-00892 has gone through at 514
+  lines, so there is headroom, but note `create-to` never retries a 5xx/timeout (a TO may exist), so
+  a timeout at this size means checking Zoho by hand.
 
 **DS06 Kogilu (go-live ~2026-07-08):** sync layer is DS06-aware (stock/PO/TO data accumulates in Supabase). **Phase 2 (2026-07-06, now in `main`):** `DS_LIST` includes DS06 (Stock Health tab/KPIs/DC ROS/DS Req Covered follow automatically; 6th `DS_COLORS` entry added) + engine **DS Seed pass** gives DS06 Min/Max = avg(DS02, DS04) — see the DS Seed section. Both go-live steps are **done**: DS06 is in `newDSList`, and DS06 is in all four plywood brand matrices. **The DS Seed was sunset 2026-07-31** once pincode attribution gave DS06 a full 45-day catchment history — see the DS Seed section for the measurement and the reasoning. Review later: cluster assignment.
 
