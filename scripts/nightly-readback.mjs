@@ -104,7 +104,7 @@ if (prev && last) {
   console.log(`  ${last.date}  ${cr(last.max)} max / ${cr(last.min)} min   Δ ${d(prev.max, last.max)}% / ${d(prev.min, last.min)}%`);
   const jump = Math.max(Math.abs(d(prev.max, last.max)), Math.abs(d(prev.min, last.min)));
   // The context is derived from the same history, never written down: a hardcoded
-  // "observed range ~0.1–1.6%" sat here while digestHistory already held 6.2–10.7% nights.
+  // "observed range ~0.1–1.6%" sat here while digestHistory already held nights of 6.2%, 6.3% and 13.5%.
   const moves = h.slice(0, -1).slice(1).map((x, i) => {
     const p = h[i];
     return { date: x.date, pct: Math.max(Math.abs(d(p.max, x.max)), Math.abs(d(p.min, x.min))) };
