@@ -177,12 +177,17 @@ have cost ~1,200 Zoho requests/day for a store holding no stock.
   Sheet-first fails the nightly sync with `unknown_ds` and leaves the previous floors live. **Done in
   the right order: deploy 2026-09-19 ~10:10 IST, columns added later that day.** Keep the rule for
   the next store.
-- **⚠ `create-to` accepts DS07 but its Zoho write has never been exercised.** `DS_ONLY` and
-  `BRANCHES` carry DS07, and the TO tool offers it automatically (`dsListFromTargets` reads
-  `toTargets`, no deploy needed). What is proven for DS07 is `inventorysummary` — a READ on a
-  different endpoint. If Zoho rejects `to_location_id` on `POST /transferorders` it returns **400**,
-  the validation layer, so nothing is created and the error surfaces. ⚠ `dryRun:true` does NOT test
-  this — it returns before the POST. **First real DS07 TO: the DC team's 2026-09-22 14:30 run.**
+- **✅ `create-to`'s Zoho write to a new branch is proven for DS07, NOT yet for DS08.** `DS_ONLY` and
+  `BRANCHES` carry both, and the TO tool offers a store automatically (`dsListFromTargets` reads
+  `toTargets`, no deploy needed). DS07's first TO was **TO-06515, 2026-09-22 16:20 IST** (805
+  lines, one POST, accepted); the 14:30 run that day covered DS01–DS06 only. For DS08: a rejected
+  `to_location_id` returns **400** (validation layer, nothing created), and ⚠ `dryRun:true` does NOT
+  test it — it returns before the POST. Test-fire a 1-line draft and delete it.
+- **⚠ A draft TO is a pick list, not a commitment — overlapping drafts to one store are NORMAL.**
+  `create-to` only ever makes drafts. The DC picks what it can and dispatches that as its own
+  `in_transit` TO; whatever wasn't picked comes back in the next run's draft. DS07 on 2026-09-22 had
+  two open drafts sharing 766 lines alongside three in-transit TOs. **That is not double-requesting**:
+  don't total drafts against Max, and don't suggest deleting one. Stock only moves via `in_transit`.
 - **⚠ A new store's first TO is enormous, because parity restock sees an empty store.** `Req = Max −
   CS DS − In Transit` with stock at zero means every SKU triggers at full Max. Measured for DS07 on
   2026-09-22: **963 SKUs / 14,731 units requested, 811 lines / 10,978 units allocated in ONE POST** —

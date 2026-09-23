@@ -369,6 +369,8 @@ Two facts worth carrying even when you are nowhere near the engine:
 - Trading: 8 AM–8 PM IST. End of day: closing stock ≤ Min → restock to Max overnight from DC.
 - **TOs are raised DC→DS at ~2:30 PM and ~8:30 PM IST** (changed 2026-07-27; the old ~midnight run is
   retired). Both are manual, by the DC team, via the TO tool. ~Noon next day: TOs arrive at DS.
+- ⚠ TOs are created as **drafts = pick lists**; overlapping drafts to one store are normal, not
+  double-requesting (see `create-to` in `supabase/functions/CLAUDE.md`).
 - **⚠ Invoices are RAISED by ~20:30 IST but not SETTLED until hours later** (corrected 2026-07-29; the
   old note here claimed "complete until 8:30 PM" and a 21:30 IST refresh was built on it). Zoho's
   `status` only reaches `paid` when payment is recorded, so a 21:30 pull sees a large
