@@ -103,7 +103,18 @@ if (prev && last) {
   console.log(`  ${prev.date}  ${cr(prev.max)} max / ${cr(prev.min)} min`);
   console.log(`  ${last.date}  ${cr(last.max)} max / ${cr(last.min)} min   Δ ${d(prev.max, last.max)}% / ${d(prev.min, last.min)}%`);
   const jump = Math.max(Math.abs(d(prev.max, last.max)), Math.abs(d(prev.min, last.min)));
-  ok(jump < 10, `night-on-night move ${jump}% is within normal drift (observed range ~0.1–1.6%)`);
+  // The context is derived from the same history, never written down: a hardcoded
+  // "observed range ~0.1–1.6%" sat here while digestHistory already held 6.2–10.7% nights.
+  const moves = h.slice(0, -1).slice(1).map((x, i) => {
+    const p = h[i];
+    return { date: x.date, pct: Math.max(Math.abs(d(p.max, x.max)), Math.abs(d(p.min, x.min))) };
+  });
+  const sorted = moves.map((m) => m.pct).sort((a, b) => a - b);
+  const top = moves.reduce((a, m) => (m.pct > (a?.pct ?? -1) ? m : a), null);
+  const ctx = sorted.length
+    ? `prior ${sorted.length} nights: median ${sorted[Math.floor(sorted.length / 2)].toFixed(2)}%, max ${top.pct.toFixed(2)}% (${top.date}), ${sorted.filter((p) => p >= jump).length} at or above this one`
+    : "no prior nights to compare";
+  ok(jump < 10, `night-on-night move ${jump}% is under the 10% alarm · ${ctx}`);
 } else console.log("  (not enough history to compare)");
 
 // ── 4. The three input syncs + the digest ────────────────────────────────────
