@@ -86,9 +86,10 @@ ok(!er.time.startsWith("05:45"), `used the 06:15 slot — a 05:45 stamp means th
 const manualApply = tt?.refreshedAt && eng?.at && new Date(tt.refreshedAt) > new Date(eng.at);
 if (manualApply) {
   console.log(`     \u2139 toTargets was rewritten by a browser Apply at ${istParts(tt.refreshedAt).time} IST, after the nightly.`);
-  if (tt?.invValue === undefined)
+  if (tt?.invValue === undefined) {
     console.log(`     \u2139 invValue is absent — browser Apply strips it (Open Work #28). The next nightly`);
     console.log(`       re-stamps it before the 06:30 digest, so the digest keeps its \u20b9 line.`);
+  }
 }
 const through = tt?.inputs?.invoiceDataThrough;
 const yday = new Date(Date.now() - 864e5).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
