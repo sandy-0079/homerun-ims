@@ -101,7 +101,7 @@ const NUM_END = PO_FIRST_NUMERIC_COL + PO_NUMERIC_COL_COUNT;
 const blanks = body.filter((c) => c.slice(PO_FIRST_NUMERIC_COL, NUM_END).some((v) => v.trim() === ""));
 check(blanks.length === 0, "no blank numeric cells (0 everywhere instead)");
 const nonNumeric = body.filter((c) => c.slice(PO_FIRST_NUMERIC_COL, NUM_END).some((v) => !/^-?\d+(\.\d+)?$/.test(v)));
-check(nonNumeric.length === 0, "all 14 numeric cells are bare unquoted numbers",
+check(nonNumeric.length === 0, `all ${PO_NUMERIC_COL_COUNT} numeric cells are bare unquoted numbers`,
   nonNumeric.length ? `BAD e.g. ${unq(nonNumeric[0][2])}` : "");
 
 console.log("\nSTATUS + INVENTORISED AT (the two filter columns)");

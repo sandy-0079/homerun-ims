@@ -129,14 +129,16 @@ ok(dg?.ok === true && dg?.level === "green", `digest ${dg?.level} · sent ${ist(
 for (const c of dg?.checks ?? []) if (c.level !== "green") problems.push(`digest check ${c.key} = ${c.level}`);
 
 // ── 5. Stock crons — per store, staleness derived from now ───────────────────
-console.log(`\nSTOCK FRESHNESS  (crons :35 :38 :41 :44 UTC = :05 :08 :11 :14 IST)`);
+console.log(`\nSTOCK FRESHNESS  (crons :35 :38 :41 :44 :47 UTC = :05 :08 :11 :14 :17 IST)`);
 const per = team?.stockUploadedAtPerDS ?? {};
 for (const ds of Object.keys(per).sort()) {
   const m = agoMin(per[ds]);
   const gated = opening.includes(ds) ? "  (gated)" : "";
   console.log(`  ${m > 90 ? "⚠" : "✅"} ${ds.padEnd(5)} ${ist(per[ds])}  ${String(m).padStart(4)}m ago${gated}`);
-  // DS08 has no cron by design (Open Work #39) — stale is expected, not a fault.
-  if (m > 90 && ds !== "DS08") problems.push(`${ds} stock is ${m}m stale`);
+  // Only a GATED store may be stale. This used to exempt "DS08" by name, which was true
+  // until DS08 got stock-sync-5 on 2026-09-25 and would then have hidden a real outage.
+  // Derive the exemption from openingDSList, never from a store's name.
+  if (m > 90 && !opening.includes(ds)) problems.push(`${ds} stock is ${m}m stale`);
 }
 console.log(`  orders  ${ist(team?.ordersUploadedAt)}  ${agoMin(team?.ordersUploadedAt)}m ago`);
 

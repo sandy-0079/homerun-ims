@@ -48,18 +48,17 @@
 > Cleanup done: the Stage 5 runbook, the 2026-08-05 runbook, the frozen `team_data/invoice_data_shadow`
 > row and `docs/HANDOFF-2026-07-31.md` are all deleted. All were transient cutover state.
 
-HomeRun operates **8 dark stores (DS01–DS08) + one DC** (Rampura), of which **7 are trading** (DS07 HAL joined 2026-09-22; DS08 is wired but gated). This
+HomeRun operates **8 dark stores (DS01–DS08) + one DC** (Rampura), all **live on IMS** (DS07 HAL 2026-09-22; DS08 2026-09-25, trading from 09-30). This
 tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to
 hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
 
 > ⚠⚠ **`DS_LIST` IS THE STORE UNIVERSE, NOT THE TRADING SET — use `liveDsList(params)` for anything
-> a human or another system consumes.** **DS07 HAL went live 2026-09-22**; **DS08 Rajajinagar is
-> still gated** and is now the only entry in `params/global.openingDSList` (see the Opening Shortly
-> section in `src/engine/CLAUDE.md`). A gated store is fully present — Zoho branch, stock sync, floor
+> a human or another system consumes.** **DS07 went live 2026-09-22 and DS08 on 2026-09-25**, so
+> `params/global.openingDSList` is now `[]` (see Opening Shortly in `src/engine/CLAUDE.md`). A gated store is fully present — Zoho branch, stock sync, floor
 > and ceiling columns, plywood node — and contributes nothing: no `toTargets` rows, no PO CSV columns,
 > no TO tool tab. **Going live is removing the store from `openingDSList` and nothing else** — that
-> claim held: on 2026-09-22 the untick, the pincode remap and the `newDSList` edit were one Apply,
-> and no other code changed.
+> held twice: each go-live was one Apply (untick, pincode remap, `newDSList`) with no engine code
+> change. DS08 also needed its stock cron, `stock-sync-5`.
 >
 > ⚠ **The go-live signature was NOT "Inv Value roughly flat" — it was +5.2%, and that was correct.**
 > Measured 2026-09-22: ₹10.58Cr → ₹11.13Cr Max. Toggling only the gate moved exactly two locations
@@ -67,7 +66,7 @@ hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
 > from reasoning about *demand* — attribution relocates it — but Inv Value is dominated by *floors and
 > base minimums*, which barely shrink when marginal demand leaves a donor. Donors gave back only
 > ~₹0.085Cr against DS07's ₹0.633Cr. **A new location costs a location's worth of floors.** Expect
-> the same shape when DS08 opens; do not treat it as a fault.
+> the same shape next time: DS08 matched (+5.7%, ₹0.63Cr, 0 donor cells).
 >
 > ⚠ **Backend is FULLY DEPLOYED as of 2026-09-19** — four edge functions, the `stock-sync-4` cron
 > migration (`DS06,DS07`), and DS07/DS08 branch reachability all proven. DS07 syncs hourly. The
@@ -92,7 +91,7 @@ on every session. Verified 2026-09-17, not assumed.
 | `src/engine/strategies/plywoodV2/CLAUDE.md` | Plywood v2 — ENGINE only; its tab was retired 2026-09-17 | touching that directory |
 | `supabase/functions/CLAUDE.md` | Zoho API contracts, rate limits, token singleflight, crons, `create-to`, row inventory, deploy hazards, log recipes | touching `supabase/functions/` |
 | `src/tabs/CLAUDE.md` | Stock Health + Tool Output UI, CSV contracts, freshness gate | touching `src/tabs/` |
-| `docs/HANDOFF-2026-09-18-ds07-ds08.md` | DS07/DS08 go-live — what is deployed, what is not, and the order | **read before any DS07/DS08 work** |
+| `docs/HANDOFF-2026-09-18-ds07-ds08.md` | DS07/DS08 go-live record; DS08 checks: `…-09-25-ds08-live.md` | before opening a store |
 | `docs/OPEN-WORK.md` | full open-work entries | read deliberately |
 | `docs/CHANGELOG-ARCHIVE.md` | everything shipped | read deliberately |
 | `docs/retired/README.md` | tabs removed 2026-09-17 (OOS Simulation, Plywood v2) + how to restore | read deliberately |
@@ -530,7 +529,7 @@ let the next feature silently reuse a taken number.
 | 34 | Two dry-run scripts had drifted | closed 2026-09-08 | Open Work § (kept for the shape) |
 | 35 | Remove the Manual Overrides tab | **open** | Open Work § |
 | 36 | Remove the dormant Plywood v2 engine | **open** | Open Work § + `docs/retired/README.md` |
-| 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | wired 2026-09-18 · backend 2026-09-19 · **DS07 LIVE 2026-09-22** (DS08 still gated) | Opening Shortly § in `src/engine/CLAUDE.md` · `docs/HANDOFF-2026-09-18-ds07-ds08.md` · spec in `docs/superpowers/specs/` |
+| 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | wired 2026-09-18 · **DS07 LIVE 2026-09-22** · **DS08 LIVE 2026-09-25** | Opening Shortly § in `src/engine/CLAUDE.md` · `docs/HANDOFF-2026-09-18-ds07-ds08.md` · spec in `docs/superpowers/specs/` |
 | 38 | `sync-stock` empty-body path syncs every branch | **open** | Open Work § |
 | 39 | DS08 has no stock cron | closed 2026-09-25 | sync architecture § |
 | 40 | Stock sync `per_page` probe, then re-plan the cycle | **open** | Open Work § |
@@ -558,11 +557,11 @@ let the next feature silently reuse a taken number.
 Full backup auto-saved to `params/paramsBackup` on every "Apply & Re-run Model" click. Restore from there if `params/global` is corrupted.
 
 Key non-defaults (verified live 2026-07-31): `overallPeriod=45`, `newDSFloorTopN=250`,
-**`newDSList=["DS06","DS07"]`** (2026-09-22 — DS03/DS04/DS05 were REMOVED in the same Apply that
+**`newDSList=["DS06","DS07","DS08"]`** (DS08 added 2026-09-25; on 2026-09-22 DS03/DS04/DS05 were REMOVED in the same Apply that
 added DS07, deliberately: they have traded long enough that the New DS Floor no longer applies.
 Measured cost 130 units of Min ≈ ₹26k, and 179 of the 183 affected cells were caught by their sheet
 floor at the same number), `brandLeadTimeDays={_default:3,"Asian Paints":4}`,
-`pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`, **`openingDSList=["DS08"]`** (⚠ read it with
+`pctDocCap=30`, `pctDocCapLow=60`, `pctMinNZD=2`, **`openingDSList=[]`** since 2026-09-25 (⚠ read it with
 `??`, never `||` — `[]` means "all trading"; see Opening Shortly in `src/engine/CLAUDE.md`).
 ⚠ `params/global.dsCapacities` is an **orphan copy the engine never reads** — plywood capacity is
 DERIVED from `params/networkConfigs[ds].thick/thin.capacity` by `loadParamConfigRows`. Reading the

@@ -161,14 +161,13 @@ invoice sync:**
 `DC=3915979000000118466`, `DS01=3915979000000054002`, `DS02=3915979000000054017`, `DS03=3915979000000054032`, `DS04=3915979000000054047`, `DS05=3915979000000054062`, `DS06=3915979000000118484`, **`DS07=3915979000030598119` (HAL)**, **`DS08=3915979000030600296` (Rajajinagar)**
 
 **DS07 HAL + DS08 Rajajinagar (wired 2026-09-18; all four functions DEPLOYED 2026-09-19; DS07 LIVE
-2026-09-22, DS08 still gated):** both exist in Zoho named
+2026-09-22, DS08 LIVE on IMS 2026-09-25):** both exist in Zoho named
 prefix-first, so `invoiceMap.ts`'s `dsOf()` attributes their invoices with no code change, and
 `sync-orders`' name-keyed `LOCATION_TO_DS` carries the strings **verbatim** — one wrong character
 silently drops every PO and TO for that store rather than erroring. Both are in `sync-stock` and
-`create-to` BRANCHES. The engine held both at 0/0 via `openingDSList`; **DS08 alone is still held
-there**. **`stock-sync-4` now carries `DS06,DS07`** (migration `20260918000001`): that slot was the
-only single-branch group, so this restores parity rather than adding load, where a 5th cron would
-have cost ~1,200 Zoho requests/day for a store holding no stock.
+`create-to` BRANCHES. The engine held both at 0/0 via `openingDSList`, which is now `[]`. **`stock-sync-4` now carries `DS06,DS07`** (migration `20260918000001`): that slot was the
+only single-branch group, so this restores parity rather than adding load. A 5th cron for a store
+still gated and empty would have been wasted requests; DS08 got one the day it went live (below).
 - **⚠⚠ DS08 HAS ITS OWN SLOT, `stock-sync-5` at :47 UTC** (migration `20260925000001`, 2026-09-25,
   the day DS08 was ungated). It never joins `stock-sync-4`: three branches in one invocation is
   measured unsafe (6 concurrent chains 429 after a single group). One branch ≈ 28 requests/cycle,
@@ -411,7 +410,8 @@ have cost ~1,200 Zoho requests/day for a store holding no stock.
 - **Edge function logs are reachable without the dashboard** — the CLI (v2.75.0) has no `functions logs`,
   but the Management API does: `POST /v1/projects/{ref}/database/query` for SQL, and
   `GET /v1/projects/{ref}/analytics/endpoints/logs.all?sql=…&iso_timestamp_start=…` for
-  `function_logs` / `function_edge_logs`. Token lives in the macOS keychain
+  `function_logs` / `function_edge_logs` (⚠ that `logs.all` path returned **410 Gone** on 2026-09-25 — find its
+  replacement before relying on it). Token lives in the macOS keychain
   (`security find-generic-password -s "Supabase CLI" -w`, `go-keyring-base64:` prefixed). **Send a browser
   `User-Agent`** or Cloudflare answers `403 error code: 1010`. Cap queries at 1000 rows — split by time
   window to attribute logs per invocation. ⚠ **An `order by timestamp asc limit 1000` that HITS the cap
