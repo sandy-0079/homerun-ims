@@ -169,9 +169,10 @@ silently drops every PO and TO for that store rather than erroring. Both are in 
 there**. **`stock-sync-4` now carries `DS06,DS07`** (migration `20260918000001`): that slot was the
 only single-branch group, so this restores parity rather than adding load, where a 5th cron would
 have cost ~1,200 Zoho requests/day for a store holding no stock.
-- **⚠⚠ DS08 MUST NOT JOIN THAT GROUP.** Three branches in one invocation is measured unsafe — 6
-  concurrent chains 429 after a single group. It is in BRANCHES so it can be pulled by hand
-  (`{"branches":["DS08"]}`) to verify its id, but nothing calls it on a schedule. See Open Work 39.
+- **⚠⚠ DS08 HAS ITS OWN SLOT, `stock-sync-5` at :47 UTC** (migration `20260925000001`, 2026-09-25,
+  the day DS08 was ungated). It never joins `stock-sync-4`: three branches in one invocation is
+  measured unsafe (6 concurrent chains 429 after a single group). One branch ≈ 28 requests/cycle,
+  ~670/day. **The next store gets a slot or the `per_page` work (Open Work 40), never a third branch.**
 - **⚠ `sync-sku-floors`' duplicated `DS_LIST` gained both**, and the ORDER matters: an unrecognised
   DS column is a hard stop, so DS07/DS08 columns had to reach the floor sheet only AFTER that deploy.
   Sheet-first fails the nightly sync with `unknown_ds` and leaves the previous floors live. **Done in
@@ -320,15 +321,16 @@ have cost ~1,200 Zoho requests/day for a store holding no stock.
     - **Two occurrences in two days, both in the 15:40–18:30 UTC band. Not yet a pattern — a THIRD
       makes it one**, at which point revisit the "no recurring nightly Zoho window" conclusion above
       (which rests on 07-26/27/28 being clean).
-- **Architecture:** 4 staggered stock crons (3 branch pairs + DS06; ≤4 concurrent calls, never overlaps)
-  + orders + 2 catalogue + the invoice window + 2 floors + 2 engine + the digest. **11 jobs, no two
+- **Architecture:** 5 staggered stock crons (4 branch pairs + DS08; ≤4 concurrent calls, never overlaps)
+  + orders + 2 catalogue + the invoice window + 2 floors + 2 engine + the digest. **12 jobs, no two
   sharing a minute WITHIN THE SAME HOUR** (the floors, engine and digest slots reuse free minutes at
   hours 23, 00 and 01) — verify with
   `select jobname, schedule from cron.job order by jobname;`:
   - `stock-sync-1` at `:35 UTC` (:05 IST) → DC + DS01
   - `stock-sync-2` at `:38 UTC` (:08 IST) → DS02 + DS03
   - `stock-sync-3` at `:41 UTC` (:11 IST) → DS04 + DS05
-  - `stock-sync-4` at `:44 UTC` (:14 IST) → DS06 (2 calls)
+  - `stock-sync-4` at `:44 UTC` (:14 IST) → DS06 + DS07 (since 2026-09-18)
+  - `stock-sync-5` at `:47 UTC` (:17 IST) → DS08 (2 calls, since 2026-09-25)
   - `orders-sync-hourly` at `:50 UTC` (:20 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket). Moved from :35 on 2026-07-08 (migration `20260708000001`) — at :35 it collided with stock-sync-1's `team_data/global` write (statement timeout left DC+DS01 74m stale).
   - `catalogue-sync-earlier` at `25,55 16,17 * * *` UTC + `catalogue-sync-nightly` at `25 18 * * *`
     → five attempts, 21:55–23:55 IST (migrations `20260730000001` + `20260729000002`)

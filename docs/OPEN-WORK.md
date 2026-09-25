@@ -314,9 +314,8 @@ the 2026-07-09 storm shape. **Latent:** both callers send explicit branch lists.
 an existing foot-gun, not a new one. ⚠ Left alone 2026-09-18 so the go-live's "0 cells differ" proof
 stayed clean. Fix: reject an empty body, or cap it to one group.
 
-### 39. DS08 has no stock cron
-`stock-sync-4` carries `DS06,DS07`. **⚠ Do NOT add DS08 to it** — 3 branches in one invocation 429s
-after one group (2026-07-06, re-confirmed on the Inventory API). ⚠ Nor compress the 3-min stagger:
-it holds the duty cycle near 35%. Prefer **`per_page` > 200** — untested, but ~14 pages becomes ~3
-and both burst rate and the ~4,400 req/day fall ~4×. Fallback: a 5th slot at :47. Settle before DS08
-opens; see `docs/HANDOFF-2026-09-16-zoho-token-contention.md`.
+### 40. Stock sync: probe `per_page`, then re-plan the cycle
+Goal (2026-09-25): all stores fresh within ~10 min. **Not by compressing the stagger** — groups already run at Zoho's ~100 req/min ceiling, and a 2-min stagger caused DB
+timeouts. **Route: `per_page` > 200** (untested; ~14 pages → ~3 per chain). Order: (1) measure
+per-group `execution_time_ms` — ⚠ the documented `logs.all` endpoint returned **410 Gone** on
+2026-09-25; (2) probe ONE branch outside :35–:50; (3) re-plan the slots.

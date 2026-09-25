@@ -71,8 +71,8 @@ hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
 >
 > ⚠ **Backend is FULLY DEPLOYED as of 2026-09-19** — four edge functions, the `stock-sync-4` cron
 > migration (`DS06,DS07`), and DS07/DS08 branch reachability all proven. DS07 syncs hourly. The
-> floors sheet and ceilings csv carry DS07/DS08 columns. **DS08 has no stock cron by design**
-> (Open Work #39) and must not join `stock-sync-4` — three branches in one invocation 429s.
+> floors sheet and ceilings csv carry DS07/DS08 columns. **DS08 syncs in its own slot,
+> `stock-sync-5` (2026-09-25)** — never as a third branch on `stock-sync-4`, which 429s.
 
 
 ---
@@ -476,7 +476,7 @@ which numbers are taken.
 | 35 | Remove the **Manual Overrides** tab | live `coreOverrides` is **0**, but the tab is the EDITOR not the feature — `mergeCoreOverrides` stays in the nightly engine path and the PO CSV |
 | 36 | The **Plywood v2 engine** is still in the tree | tab retired 2026-09-17, engine kept; 21 files / 184 KB, reachable from nothing. ⚠ the Logic Tweaker option must go in the SAME change |
 | 38 | `sync-stock` empty-body path syncs every branch | 8 branches = 4 sequential pairs ≈ 128s against a 150s wall clock; latent (no caller does it) but our change made it worse |
-| 39 | DS08 has no stock cron | ⚠ do NOT add it to `stock-sync-4` — 3 branches in one invocation 429s after one group. Needs a 5th slot or the untested `per_page` lever |
+| 40 | Stock sync `per_page` probe | only safe route to a ~10-min stock cycle; never compress the stagger |
 | — | *Later, not urgent* | IMS reads the canonical stored result instead of recomputing client-side |
 
 
@@ -490,7 +490,7 @@ one reason: **the numbers are stable IDs that appear in commit messages and PRs,
 are never renumbered or reused** — and an index that left the file with the entries would
 let the next feature silently reuse a taken number.
 
-**Highest used: 39. `33` was never used (a gap, not a free slot — leave it). Next: 40.**
+**Highest used: 40. `33` was never used (a gap, not a free slot — leave it). Next: 41.**
 
 | # | what | shipped | live documentation |
 |---|---|---|---|
@@ -532,7 +532,8 @@ let the next feature silently reuse a taken number.
 | 36 | Remove the dormant Plywood v2 engine | **open** | Open Work § + `docs/retired/README.md` |
 | 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | wired 2026-09-18 · backend 2026-09-19 · **DS07 LIVE 2026-09-22** (DS08 still gated) | Opening Shortly § in `src/engine/CLAUDE.md` · `docs/HANDOFF-2026-09-18-ds07-ds08.md` · spec in `docs/superpowers/specs/` |
 | 38 | `sync-stock` empty-body path syncs every branch | **open** | Open Work § |
-| 39 | DS08 has no stock cron | **open** | Open Work § |
+| 39 | DS08 has no stock cron | closed 2026-09-25 | sync architecture § |
+| 40 | Stock sync `per_page` probe, then re-plan the cycle | **open** | Open Work § |
 
 
 ## Deferred

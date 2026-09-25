@@ -10,18 +10,17 @@ const SYNC_COOLDOWN_MINS = 15;
 // group STARTS: back-to-back groups on a fast-Zoho day put 12 calls in ~15s and
 // tripped Zoho's ~8/min inventorysummary limit (2026-07-09 — 60+ min penalty
 // that also killed a cron cycle). Mirrors homerun-to/src/sync.js.
-// ⚠ MIRRORS THE CRON GROUPS EXACTLY (migration 20260918000001) — DC+DS01 :35,
-// DS02+DS03 :38, DS04+DS05 :41, DS06+DS07 :44. Two branches per group is the
+// ⚠ MIRRORS THE CRON GROUPS EXACTLY (migrations 20260918000001 + 20260925000001) —
+// DC+DS01 :35, DS02+DS03 :38, DS04+DS05 :41, DS06+DS07 :44, DS08 :47. Two branches per group is the
 // measured safe ceiling: a 2-branch group is ~50-56 real Zoho requests in ~32s,
 // already at the documented 100 req/min/org limit, and 3 branches 429s after one
 // group. If "Sync Now" and the crons disagree on grouping, whichever runs second
 // stacks on top of the first — the shape of the 2026-07-09 storm.
 //
-// ⚠ DS08 IS DELIBERATELY ABSENT. It has no cron either: an unopened store holds no
-// stock, so syncing it hourly buys nothing and costs ~1,200 Zoho requests a day.
-// It stays pullable by hand (`{"branches":["DS08"]}`) to prove its branch id before
-// go-live. Adding it needs a 5th group, not a third branch here.
-const SYNC_GROUPS = [["DC", "DS01"], ["DS02", "DS03"], ["DS04", "DS05"], ["DS06", "DS07"]];
+// ⚠ DS08 IS ITS OWN GROUP (2026-09-25), never a third branch on DS06+DS07. The next
+// store gets the same treatment. Five groups at a 90s gap take ~6.5 min, inside the 12-min
+// session lease; only a full retry sweep of all five could outrun it.
+const SYNC_GROUPS = [["DC", "DS01"], ["DS02", "DS03"], ["DS04", "DS05"], ["DS06", "DS07"], ["DS08"]];
 const SYNC_MIN_GAP_MS = 90_000;
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
