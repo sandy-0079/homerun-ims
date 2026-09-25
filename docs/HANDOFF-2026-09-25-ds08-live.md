@@ -116,11 +116,13 @@ A store going live silently shifts columns in **two** position-keyed files:
 | DS08 TOs / invoices | 0 / 0 |
 | DS07 targets (for comparison) | 966 SKUs · ΣMin 13,167 · ΣMax 14,327 |
 
-## Open questions for the operator
+## Operator answers (2026-09-25 ~19:15 IST)
 
-1. **Has the PO team been told** about the 26-column file? And the Fill Summary recipients?
-2. **Are DS08 floors being deferred** like DS07's, or added now?
-3. **When does the first DS08 TO go in?** The first one is the proof for check 4.
+1. **PO team and Fill Summary recipients: told** about the widened files. Check 5 is informational only.
+2. **DS08 floors: deferred**, like DS07's (stock on attributed demand first). Empty DS08 floor columns
+   are expected, not a fault.
+3. **First DS08 TO: tonight (the 20:30 run).** So check 4 should find a DS08 entry in `toAudit`. If
+   there is none, ask whether the run happened before concluding the Zoho write failed.
 
 ## Not in scope
 
