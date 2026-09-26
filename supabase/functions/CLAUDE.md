@@ -177,11 +177,11 @@ still gated and empty would have been wasted requests; DS08 got one the day it w
   Sheet-first fails the nightly sync with `unknown_ds` and leaves the previous floors live. **Done in
   the right order: deploy 2026-09-19 ~10:10 IST, columns added later that day.** Keep the rule for
   the next store.
-- **✅ `create-to`'s Zoho write to a new branch is proven for DS07, NOT yet for DS08.** `DS_ONLY` and
+- **✅ `create-to`'s Zoho write to a new branch is proven for DS07 AND DS08.** `DS_ONLY` and
   `BRANCHES` carry both, and the TO tool offers a store automatically (`dsListFromTargets` reads
   `toTargets`, no deploy needed). DS07's first TO was **TO-06515, 2026-09-22 16:20 IST** (805
-  lines, one POST, accepted); the 14:30 run that day covered DS01–DS06 only. For DS08: a rejected
-  `to_location_id` returns **400** (validation layer, nothing created), and ⚠ `dryRun:true` does NOT
+  lines, one POST, accepted); DS08's was **TO-06797, 2026-09-26 03:09 IST** (822 lines). For the next
+  store: a rejected `to_location_id` returns **400** (nothing created), and ⚠ `dryRun:true` does NOT
   test it — it returns before the POST. Test-fire a 1-line draft and delete it.
 - **⚠ A draft TO is a pick list, not a commitment — overlapping drafts to one store are NORMAL.**
   `create-to` only ever makes drafts. The DC picks what it can and dispatches that as its own

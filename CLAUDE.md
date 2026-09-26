@@ -91,7 +91,7 @@ on every session. Verified 2026-09-17, not assumed.
 | `src/engine/strategies/plywoodV2/CLAUDE.md` | Plywood v2 — ENGINE only; its tab was retired 2026-09-17 | touching that directory |
 | `supabase/functions/CLAUDE.md` | Zoho API contracts, rate limits, token singleflight, crons, `create-to`, row inventory, deploy hazards, log recipes | touching `supabase/functions/` |
 | `src/tabs/CLAUDE.md` | Stock Health + Tool Output UI, CSV contracts, freshness gate | touching `src/tabs/` |
-| `docs/HANDOFF-2026-09-18-ds07-ds08.md` | DS07/DS08 go-live record; DS08 checks: `…-09-25-ds08-live.md` | before opening a store |
+| `docs/HANDOFF-2026-09-18-ds07-ds08.md` | DS07/DS08 go-live record + the order for the next store | before opening a store |
 | `docs/OPEN-WORK.md` | full open-work entries | read deliberately |
 | `docs/CHANGELOG-ARCHIVE.md` | everything shipped | read deliberately |
 | `docs/retired/README.md` | tabs removed 2026-09-17 (OOS Simulation, Plywood v2) + how to restore | read deliberately |
