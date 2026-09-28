@@ -34,7 +34,7 @@ const DESTINATIONS = [
   { path: "src/engine/strategies/CLAUDE.md", budget: 15_000 },
   { path: "supabase/functions/CLAUDE.md",  budget:  62_000 }, // largest legitimately: 7 functions + Zoho contracts + crons
   { path: "src/tabs/CLAUDE.md",            budget:  30_000 },
-  { path: "docs/CHANGELOG-ARCHIVE.md",     budget:  60_000 },
+  { path: "docs/CHANGELOG-ARCHIVE.md",     budget:  80_000 }, // read deliberately, never auto-loaded; an archive is meant to grow (raised 2026-09-28)
   { path: "docs/OPEN-WORK.md",             budget:  25_000 },
 ];
 

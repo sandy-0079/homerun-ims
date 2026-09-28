@@ -11,8 +11,9 @@ someone re-deriving a conclusion that was already measured and rejected — item
 not oversights.
 
 **Numbers are stable IDs.** They appear in commit messages and PRs, so they are never
-renumbered or reused. Highest used is 36; 33 was never used; next is 37. The full index,
-including everything shipped, is in root `CLAUDE.md`.
+renumbered or reused. The full index, and the next free number, is in root `CLAUDE.md` — kept
+in one place only, because a second copy here went stale (it read "next is 37" when 41 was taken).
+Closed items move to `docs/CHANGELOG-ARCHIVE.md`, "Closed open-work items".
 
 ---
 
@@ -20,10 +21,7 @@ including everything shipped, is in root `CLAUDE.md`.
 
 **Numbers are stable IDs** — they appear in commit messages and PRs, so they are never renumbered or
 reused. Items are listed in priority order, not numeric order. Everything shipped keeps its number in
-the changelog below.
-
-Step 5 **passed** on 2026-08-04 and its cleanup is done (see the block at the top) — the whole nightly
-chain now runs, and reports on itself, unattended.
+`docs/CHANGELOG-ARCHIVE.md`.
 
 ### 19. The Zoho export locale is still `DD/MM/YYYY` — the documented rollback is unusable
 Measured again 2026-08-03: all rows. The date guard correctly refuses it (see the 2026-07-29 outage), so
@@ -140,12 +138,18 @@ way (visible to all, inputs disabled, Save hidden) — copy that pattern.
 
 ### 23. DS06 cluster assignment
 Clusters are DS01+DS05 (C1), DS02+DC/Rampura (C2), DS03+DS04 (C3). DS06 went live ~2026-07-08 and has
-never been assigned one. Flagged "review later" since then.
+never been assigned one. Flagged "review later" since then. **Now three stores, not one (audited
+2026-09-28):** DS07 (live 09-22) and DS08 (live 09-25) have no cluster either. Clusters exist only in
+prose (root `CLAUDE.md`, Replenishment Logic), so this is an ops decision to record, not code.
 
 ### 24. Make the invoice row-count sanity floor day-of-week aware
 The Stage 5 runbook's flat `< 800 rows ⇒ stop` false-alarmed on 08-02's 752 rows, which was the
 **second-busiest Sunday on record** (13 Sundays: min 382 / median 522 / max 760, vs non-Sunday median
 866). Compare against the same weekday's median. A guard that cries wolf on schedule gets ignored.
+**⚠ Audited 2026-09-28: no such floor exists in code today.** The `< 800` rule lived only in the Stage 5
+runbook, deleted in `5c87347` (2026-08-04), and nothing in `sync-invoices`, `nightly-digest` or
+`scripts/` checks a row count. So this item is really "add a row-count floor at all, weekday-aware from
+the start". The existing guards are the unknown-SKU rate (`assessCoverage`) and `MAX_LOST_PCT`.
 
 ### 27. `params/binLocations` is rot — 98.3% of it cannot be joined
 Measured 2026-08-07: **1,148 entries**, keyed by **pre-July SKU codes** (`HAR-TEL-HET-4732-SC-450`,
@@ -187,24 +191,6 @@ Shipped without these, deliberately. Listed so they are decisions, not omissions
   Finolex wire at 42–62 days of cover. One parameter would clear today's crop with no ops maintenance.
   Ceiling first was the right call (it generalises), but this is cheap and still open.
 
-### 30. ✅ CLOSED 2026-09-07 — two floor-sheet reader gaps (found 2026-08-26)
-Both latent, both the invoice-round-trip shape — a writer and a reader that disagree, failing `ok: true`.
-Kept for the reasoning; **both are fixed**, and the ineffective report now carries **four** reasons
-(absent · not Active · **Dead Stock** · **DC-only with DS floors**), deduplicated because a SKU can be
-both. Live at close: 107 of 1,877 ineffective — 1 absent + 106 not Active, 0 dead-with-floor.
-- **`scripts/dryrun-sku-floors.mjs` under-reports ineffective floors:** it counts "absent from
-  `skuMaster`" and "not Active" but **not Dead Stock**, whose floor equally can never take effect.
-  Measured live: of **1,798** floors carrying a value, **34 are ineffective — 4 absent + 24 not Active
-  (14 of those also Dead Stock) + 6 Active-but-Dead-Stock**. Those 6 are exactly the SKUs from the Dead
-  Stock bug, so the script called them healthy on the morning they were wrong.
-  **Fixed in both places** — the script AND `sync-sku-floors`, which had the same two-reason gap.
-- **⚠ `App.jsx buildDataCSV("newSKUQty")` QUOTES the SKU cell; `parseFloorSheet` never strips quotes.**
-  Verified: feeding the app's own floors download to the sync's parser returns **`ok: true` with keys
-  like `"\"ATGRU\""`** — every SKU matching nothing, reported as success. Harmless today (the sync reads
-  only the Google Sheet; the browser's `parseCSV` strips quotes) but it is the exact shape of the invoice
-  `⬇ Data` bug. **Emit floors CSVs UNQUOTED** — SKUs are plain alphanumeric; assert it before writing.
-  **Fixed:** the writer now emits the SKU cell unquoted.
-
 ### 31. Purchase/Move follow-ups, all consciously deferred 2026-09-07
 Listed so they are decisions, not omissions.
 - **Hysteresis on `status`.** The operator confirmed `status` stays the FIRST gate (inactive ⇒ 0/0
@@ -233,20 +219,6 @@ Listed so they are decisions, not omissions.
   pure replenishment buffer with no allowance for the DC's own retail sales, and those `DC01` rows are
   today either reassigned to a DS by attribution (inflating it) or dropped by `tags90`. The precedent
   for fixing it exists — `dcDetails.dsSeedAug` adds a synthetic rate into the DC calc.
-
-### 34. ✅ CLOSED 2026-09-08 — two dry-run scripts had drifted from the code they check
-Kept for the shape, which recurred twice in one file and is the `diag-items` shape: a diagnostic
-drifting from its subject gives a confident wrong answer, which is worse than no check. **Neither was
-prod code and neither could break anything** — the damage is being wrong exactly when someone is about
-to do something risky, which is the only time these are run.
-- **`dryrun-sku-master.mjs` called `Move=No` on a non-DC SKU "RED incoherent"** (13 SKUs) while
-  `nightly-digest` had reported it green since the day it shipped, *and* its verdict text claimed "the
-  nightly digest will go RED every morning", which was false. Now informational. The cost of leaving
-  it: this script also emits **real** reds — SKUs that would be deleted, categories lost — and a
-  standing false red teaches the reader to skip all of them.
-- **`dryrun-sku-policy.mjs` printed "ALL ASSERTIONS PASSED" over 4 classes while claiming 5.** Now
-  names the unbuilt ones and folds the count into the success line. See the ⚠ in the Purchase/Move
-  section for why the lost class — unfloored DC — was the worst one to lose quietly.
 
 ### 35. Remove the Manual Overrides tab — decide editor-only vs the whole feature
 Queued 2026-09-17 alongside the tab retirement, to be looked at **before** item 36.
@@ -319,3 +291,30 @@ Goal (2026-09-25): all stores fresh within ~10 min. **Not by compressing the sta
 timeouts. **Route: `per_page` > 200** (untested; ~14 pages → ~3 per chain). Order: (1) measure
 per-group `execution_time_ms` — ⚠ the documented `logs.all` endpoint returned **410 Gone** on
 2026-09-25; (2) probe ONE branch outside :35–:50; (3) re-plan the slots.
+### 41. Split-shipment invoices — measured 2026-09-28, parked; re-run ~10 Oct, close or build by ~8 Nov
+**From 2026-09-24 Zoho raises one invoice per shipment**, so one Shopify order can span several invoices
+(ops splits in real time). **The engine is mostly immune:** it counts one invoice **line** as one order
+(`oMap` → ABQ, `collectOrderQtys` → Fixed Unit Floor P90, `orderLines` → Plywood bulk filter), so only a
+**same-SKU** split changes an input: 50 shipped 25 + 25 reads as two orders of 25.
+
+**Baseline 2026-09-28** (window 08-14 → 09-27, only **4/45 days** post-change): repeated lines 0.38% of
+rows before, 1.00% after. Merging post-change rows: **7 cells, 4 SKUs, +₹0.22L Min (0.026%)**. Merging all
+history: 18 cells, 11 SKUs, +₹0.46L. Largest move: `PZVXV` DS04 Max 88 → 116 (unpriced, so ₹0). Direction
+is mixed: FUF/ABQ rise, Plywood can fall. Invoices ran about 1% above orders, so **no cron impact**. Straight-line estimate
+at a full window: about 40 SKUs / ₹2–2.5L.
+
+**If built:** merge rows by `(shopifyOrder, sku, ds, date)` right after `applyAttribution` in `runEngine`
+(stored rows, sync and crons untouched; both `toTargets` writers get it). ⚠ **Same-date merge only**, and
+⚠ **never treat identical lines as duplicates**. Both are explained in the header of
+`scripts/whatif-order-collapse.mjs`. Open: whether the DC-only branch merges across DSs. Independently,
+the Upload card (`inputSummary.js`) labels distinct `shopifyOrder` as "invoices"; it is orders now.
+
+**Decision bar (suggested; the operator's call):** build if the post-change merge moves ≥ ~1% of
+FUF/Plywood cells, or ≥ ₹2L Min, or any SKU's Min drops ≥ 25%.
+
+**Prompt:** *"Re-run the item #41 split-shipment what-if: snapshot the live inputs
+(`scripts/snapshot-engine-inputs.mjs`), run `scripts/whatif-order-collapse.mjs`, and compare against the
+2026-09-28 baseline in `docs/OPEN-WORK.md` #41. Tell me: how full the window is post-change, the
+repeated-line rate trend, POST vs ALL cells/SKUs/₹, the top movers and their strategy, and whether it
+clears the decision bar. List the fully-doubled orders so I can check one in Zoho. Read-only: no Zoho
+calls, no code changes, no push."*

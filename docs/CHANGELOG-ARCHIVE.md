@@ -583,3 +583,112 @@ Clickable column header sorting (Item Name, Brand, AFS, Req Qty, Date, Est. Deli
 
 ### 14. Dead stock logic — Min=Max=0 everywhere ✅ Shipped (2026-05-23)
 Dead stock SKUs now get Min=Max=0 at all DS and DC locations, overriding all floors (New DS Floor, SKU Floor) as the absolute last post-blend step. Previously DS had Max=Min (non-zero) and DC used dcDeadMult×0.25. New behaviour: no PO or TO raised, Stock Health filters them out (0/0 excluded from table). `dcDeadMult` param in Logic Tweaker is now a no-op. Applies to Standard, Fixed Unit Floor, and Network Design paths.
+
+---
+
+## Retired from the root preamble — 2026-09-28
+
+Moved **verbatim** out of the top of root `CLAUDE.md`. These were dated status reports: the proof that
+the nightly chain worked on its first two nights, and the DS07/DS08 go-live measurement. Their rules
+survive where they belong: "derive a check's expected value" stays in root (condensed); the go-live
+Inv Value signature is in `src/engine/CLAUDE.md` (Opening Shortly); the 12-slot arithmetic and the
+stock-slot rule are in `supabase/functions/CLAUDE.md`; the pre-July backup row is in its row inventory.
+The pre-July trim warning **expired 2026-09-28**, when the 90-day window reached 07-01.
+
+> ✅ **Two proving runs, both passed, both verified from the data rather than a runbook table.**
+> **Night 1 (2026-08-04)** — first unattended night: 90 contiguous dates, 77,642 rows, `datesTrimmed: 4`
+> (05-02…05-05), the 07-31 re-fetch **2 rows lighter** from the D-3 void correction.
+> **Night 2 (2026-08-05)** — first `nightly-digest` cron firing and first night on 12 invoice slots:
+> email delivered **06:30:02 IST** green to the Inbox; live row **`05-07 → 08-04`, 90 dates over a
+> 90-day span (contiguous), 78,284 rows**; `datesTrimmed: 1` (05-06, 646 rows, counted out of
+> `invoice_data_backup_20260803`), `datesReplaced: 1`; `unknownPct 0`; zero 429s and **zero non-200
+> responses across every function all night**. Arithmetic closes exactly:
+> `77,642 − 646 trimmed − 1,143 (old 08-01) + 2,431 fetched = 78,284`, and the 08-01 re-fetch came back
+> **1 row lighter** against 15 voids in `statusSeen`. `toTargets.invValue` stamped for the first time
+> (₹7.99Cr Max / ₹5.60Cr Min), `digestHistory` holds one day, `recorded: true`.
+> **`invoiceDataThrough: "2026-08-04"`** — the whole point.
+>
+> ⚠ **STEADY STATE NOW LOSES ONE PRE-JULY DATE EVERY NIGHT, PERMANENTLY — by design, not a fault.** The
+> row sits at the `RETENTION_DAYS = 90` ceiling, so each night's new date trims the oldest. Those dates
+> are pre-2026-07-01 and **the Zoho API cannot re-serve them**, so `team_data/invoice_data_backup_20260803`
+> is their last copy. Continues until the window starts after 2026-07-01 — ~**28 Sep 2026** at 90-day
+> retention. Don't "fix" a shrinking earliest-date; check it against `datesTrimmed` instead.
+>
+> ⚠ **`toTargets.refreshedAt` reads `06:15`, and 06:15 is CORRECT — confirmed both nights.**
+> `engine-run-nightly` is `15,45 0 * * *` UTC — **two slots** — and the second rewrites it. So `05:45`
+> on the chip would mean the 06:15 run FAILED. The Stage 5 runbook asked for `05:45` and nearly had a
+> healthy system reported as broken. Generalisable: derive a check's expected value from the **write
+> semantics** (last successful run wins), not from the schedule.
+>
+> ⚠ **AND FROM THE CURRENT DATA, NOT A SNAPSHOT — the same rule's second half, learned 2026-08-15.**
+> A runbook written that afternoon told the reader to expect `G9NYZ DS01 = 0/0`; the operator replaced
+> the ceiling test file an hour later and the correct answer became `1/1`. **The check was stale before
+> anyone read it, and nothing about it looked wrong.** Any expectation drawn from an input a human can
+> edit must be regenerated at check time, not written down — for ceilings that is one read-only
+> command (`scripts/dryrun-sku-ceiling.mjs`), and every input has an equivalent. Hardcode only what
+> the *code* guarantees; derive everything the *data* decides.
+>
+> ⚠ **The 12-slot gain is schedule arithmetic, not luck — 55 minutes, reproducible.** Publish moved
+> `02:50 → 01:55:10 IST`. Both nights needed the same **6 working chunks**; volume did not change the
+> chunk count. The old `:35,:50` layout forced a 45-min wait to the next hour (6 chunks → 02:50), the
+> new `:35,:45,:55` layout does not (6 chunks → 01:55). Expect the gain on any 6-chunk night.
+>
+> Cleanup done: the Stage 5 runbook, the 2026-08-05 runbook, the frozen `team_data/invoice_data_shadow`
+> row and `docs/HANDOFF-2026-07-31.md` are all deleted. All were transient cutover state.
+
+> ⚠ **The go-live signature was NOT "Inv Value roughly flat" — it was +5.2%, and that was correct.**
+> Measured 2026-09-22: ₹10.58Cr → ₹11.13Cr Max. Toggling only the gate moved exactly two locations
+> (DS07 +14,358 Min, DC +2,727) and **no donor cell**, so nothing double-counted. The prediction came
+> from reasoning about *demand* — attribution relocates it — but Inv Value is dominated by *floors and
+> base minimums*, which barely shrink when marginal demand leaves a donor. Donors gave back only
+> ~₹0.085Cr against DS07's ₹0.633Cr. **A new location costs a location's worth of floors.** Expect
+> the same shape next time: DS08 matched (+5.7%, ₹0.63Cr, 0 donor cells).
+>
+> ⚠ **Backend is FULLY DEPLOYED as of 2026-09-19** — four edge functions, the `stock-sync-4` cron
+> migration (`DS06,DS07`), and DS07/DS08 branch reachability all proven. DS07 syncs hourly. The
+> floors sheet and ceilings csv carry DS07/DS08 columns. **DS08 syncs in its own slot,
+> `stock-sync-5` (2026-09-25)** — never as a third branch on `stock-sync-4`, which 429s.
+
+---
+
+## Closed open-work items
+
+Moved **verbatim** out of `docs/OPEN-WORK.md` on 2026-09-28. They were kept there "for the reasoning",
+and the reasoning is archive material. The IDs stay taken; see the index in root `CLAUDE.md`.
+
+### 30. ✅ CLOSED 2026-09-07 — two floor-sheet reader gaps (found 2026-08-26)
+Both latent, both the invoice-round-trip shape — a writer and a reader that disagree, failing `ok: true`.
+Kept for the reasoning; **both are fixed**, and the ineffective report now carries **four** reasons
+(absent · not Active · **Dead Stock** · **DC-only with DS floors**), deduplicated because a SKU can be
+both. Live at close: 107 of 1,877 ineffective — 1 absent + 106 not Active, 0 dead-with-floor.
+- **`scripts/dryrun-sku-floors.mjs` under-reports ineffective floors:** it counts "absent from
+  `skuMaster`" and "not Active" but **not Dead Stock**, whose floor equally can never take effect.
+  Measured live: of **1,798** floors carrying a value, **34 are ineffective — 4 absent + 24 not Active
+  (14 of those also Dead Stock) + 6 Active-but-Dead-Stock**. Those 6 are exactly the SKUs from the Dead
+  Stock bug, so the script called them healthy on the morning they were wrong.
+  **Fixed in both places** — the script AND `sync-sku-floors`, which had the same two-reason gap.
+- **⚠ `App.jsx buildDataCSV("newSKUQty")` QUOTES the SKU cell; `parseFloorSheet` never strips quotes.**
+  Verified: feeding the app's own floors download to the sync's parser returns **`ok: true` with keys
+  like `"\"ATGRU\""`** — every SKU matching nothing, reported as success. Harmless today (the sync reads
+  only the Google Sheet; the browser's `parseCSV` strips quotes) but it is the exact shape of the invoice
+  `⬇ Data` bug. **Emit floors CSVs UNQUOTED** — SKUs are plain alphanumeric; assert it before writing.
+  **Fixed:** the writer now emits the SKU cell unquoted.
+
+### 34. ✅ CLOSED 2026-09-08 — two dry-run scripts had drifted from the code they check
+Kept for the shape, which recurred twice in one file and is the `diag-items` shape: a diagnostic
+drifting from its subject gives a confident wrong answer, which is worse than no check. **Neither was
+prod code and neither could break anything** — the damage is being wrong exactly when someone is about
+to do something risky, which is the only time these are run.
+- **`dryrun-sku-master.mjs` called `Move=No` on a non-DC SKU "RED incoherent"** (13 SKUs) while
+  `nightly-digest` had reported it green since the day it shipped, *and* its verdict text claimed "the
+  nightly digest will go RED every morning", which was false. Now informational. The cost of leaving
+  it: this script also emits **real** reds — SKUs that would be deleted, categories lost — and a
+  standing false red teaches the reader to skip all of them.
+- **`dryrun-sku-policy.mjs` printed "ALL ASSERTIONS PASSED" over 4 classes while claiming 5.** Now
+  names the unbuilt ones and folds the count into the success line. See the ⚠ in the Purchase/Move
+  section for why the lost class — unfloored DC — was the worst one to lose quietly.
+
+Also retired from `docs/OPEN-WORK.md` the same day, a status line from August:
+
+Step 5 **passed** on 2026-08-04 and its cleanup is done (see the block at the top) — the whole nightly
+chain now runs, and reports on itself, unattended.

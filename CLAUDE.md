@@ -5,48 +5,15 @@
 > (writes `team_data/invoice_data`, the live row)** → SKU floors 04:35/05:25 → engine →
 > `params/toTargets` 05:45/06:15 → **digest email 06:30** → ops POs ~07:30. `minReqQty` and `deadStock`
 > stay manual **by design** (ops judgement, not Zoho data). **No manual invoice CSV is needed again**;
-> upload remains the emergency override.
+> upload remains the emergency override. Proving runs (2026-08-04/05), the pre-July trim and the
+> 12-slot arithmetic: `docs/CHANGELOG-ARCHIVE.md`, "Retired from the root preamble".
 >
-> ✅ **Two proving runs, both passed, both verified from the data rather than a runbook table.**
-> **Night 1 (2026-08-04)** — first unattended night: 90 contiguous dates, 77,642 rows, `datesTrimmed: 4`
-> (05-02…05-05), the 07-31 re-fetch **2 rows lighter** from the D-3 void correction.
-> **Night 2 (2026-08-05)** — first `nightly-digest` cron firing and first night on 12 invoice slots:
-> email delivered **06:30:02 IST** green to the Inbox; live row **`05-07 → 08-04`, 90 dates over a
-> 90-day span (contiguous), 78,284 rows**; `datesTrimmed: 1` (05-06, 646 rows, counted out of
-> `invoice_data_backup_20260803`), `datesReplaced: 1`; `unknownPct 0`; zero 429s and **zero non-200
-> responses across every function all night**. Arithmetic closes exactly:
-> `77,642 − 646 trimmed − 1,143 (old 08-01) + 2,431 fetched = 78,284`, and the 08-01 re-fetch came back
-> **1 row lighter** against 15 voids in `statusSeen`. `toTargets.invValue` stamped for the first time
-> (₹7.99Cr Max / ₹5.60Cr Min), `digestHistory` holds one day, `recorded: true`.
-> **`invoiceDataThrough: "2026-08-04"`** — the whole point.
->
-> ⚠ **STEADY STATE NOW LOSES ONE PRE-JULY DATE EVERY NIGHT, PERMANENTLY — by design, not a fault.** The
-> row sits at the `RETENTION_DAYS = 90` ceiling, so each night's new date trims the oldest. Those dates
-> are pre-2026-07-01 and **the Zoho API cannot re-serve them**, so `team_data/invoice_data_backup_20260803`
-> is their last copy. Continues until the window starts after 2026-07-01 — ~**28 Sep 2026** at 90-day
-> retention. Don't "fix" a shrinking earliest-date; check it against `datesTrimmed` instead.
->
-> ⚠ **`toTargets.refreshedAt` reads `06:15`, and 06:15 is CORRECT — confirmed both nights.**
-> `engine-run-nightly` is `15,45 0 * * *` UTC — **two slots** — and the second rewrites it. So `05:45`
-> on the chip would mean the 06:15 run FAILED. The Stage 5 runbook asked for `05:45` and nearly had a
-> healthy system reported as broken. Generalisable: derive a check's expected value from the **write
-> semantics** (last successful run wins), not from the schedule.
->
-> ⚠ **AND FROM THE CURRENT DATA, NOT A SNAPSHOT — the same rule's second half, learned 2026-08-15.**
-> A runbook written that afternoon told the reader to expect `G9NYZ DS01 = 0/0`; the operator replaced
-> the ceiling test file an hour later and the correct answer became `1/1`. **The check was stale before
-> anyone read it, and nothing about it looked wrong.** Any expectation drawn from an input a human can
-> edit must be regenerated at check time, not written down — for ceilings that is one read-only
-> command (`scripts/dryrun-sku-ceiling.mjs`), and every input has an equivalent. Hardcode only what
-> the *code* guarantees; derive everything the *data* decides.
->
-> ⚠ **The 12-slot gain is schedule arithmetic, not luck — 55 minutes, reproducible.** Publish moved
-> `02:50 → 01:55:10 IST`. Both nights needed the same **6 working chunks**; volume did not change the
-> chunk count. The old `:35,:50` layout forced a 45-min wait to the next hour (6 chunks → 02:50), the
-> new `:35,:45,:55` layout does not (6 chunks → 01:55). Expect the gain on any 6-chunk night.
->
-> Cleanup done: the Stage 5 runbook, the 2026-08-05 runbook, the frozen `team_data/invoice_data_shadow`
-> row and `docs/HANDOFF-2026-07-31.md` are all deleted. All were transient cutover state.
+> ⚠ **Writing a check: derive the expected value, never write it down.** (1) From the **write
+> semantics**: `engine-run-nightly` fires twice, so `toTargets.refreshedAt` correctly reads `06:15`,
+> and a runbook expecting `05:45` nearly reported a healthy system as broken. (2) From the **current
+> data**: a ceiling expectation written one afternoon was stale an hour later when ops replaced the
+> file. Hardcode only what the *code* guarantees; regenerate whatever the *data* decides at check time
+> (e.g. `scripts/dryrun-sku-ceiling.mjs`).
 
 HomeRun operates **8 dark stores (DS01–DS08) + one DC** (Rampura), all **live on IMS** (DS07 HAL 2026-09-22; DS08 2026-09-25, trading from 09-30). This
 tool computes Min/Max inventory levels for every SKU at every location so ops knows how much stock to
@@ -58,20 +25,8 @@ hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
 > and ceiling columns, plywood node — and contributes nothing: no `toTargets` rows, no PO CSV columns,
 > no TO tool tab. **Going live is removing the store from `openingDSList` and nothing else** — that
 > held twice: each go-live was one Apply (untick, pincode remap, `newDSList`) with no engine code
-> change. DS08 also needed its stock cron, `stock-sync-5`.
->
-> ⚠ **The go-live signature was NOT "Inv Value roughly flat" — it was +5.2%, and that was correct.**
-> Measured 2026-09-22: ₹10.58Cr → ₹11.13Cr Max. Toggling only the gate moved exactly two locations
-> (DS07 +14,358 Min, DC +2,727) and **no donor cell**, so nothing double-counted. The prediction came
-> from reasoning about *demand* — attribution relocates it — but Inv Value is dominated by *floors and
-> base minimums*, which barely shrink when marginal demand leaves a donor. Donors gave back only
-> ~₹0.085Cr against DS07's ₹0.633Cr. **A new location costs a location's worth of floors.** Expect
-> the same shape next time: DS08 matched (+5.7%, ₹0.63Cr, 0 donor cells).
->
-> ⚠ **Backend is FULLY DEPLOYED as of 2026-09-19** — four edge functions, the `stock-sync-4` cron
-> migration (`DS06,DS07`), and DS07/DS08 branch reachability all proven. DS07 syncs hourly. The
-> floors sheet and ceilings csv carry DS07/DS08 columns. **DS08 syncs in its own slot,
-> `stock-sync-5` (2026-09-25)** — never as a third branch on `stock-sync-4`, which 429s.
+> change. DS08 also needed its stock cron, `stock-sync-5`: **a new store gets its own stock slot, never
+> a third branch on an existing one** (that 429s; `supabase/functions/CLAUDE.md`).
 
 
 ---
@@ -464,18 +419,17 @@ which numbers are taken.
 | 21 | `demand through …` in the TO tool footer | repo `homerun-to`; consequence there is transfer quantities |
 | 22 | Stale-tab gap | a long-lived tab can no longer clobber, but still computes from a stale catalogue; download half closed, **Apply** half open |
 | 7 | Read-only config visibility for non-admins | add `logic` + `overrides` to `PUBLIC_TABS`, disable inputs; copy the Plywood config pattern |
-| 23 | DS06 cluster assignment | live since 2026-07-08, never assigned a cluster |
-| 24 | Day-of-week-aware invoice row-count floor | a flat floor false-alarms every Sunday; a guard that cries wolf on schedule gets ignored |
+| 23 | DS06 cluster assignment | DS06, DS07 and DS08 have no cluster; an ops decision, clusters exist only in prose |
+| 24 | Day-of-week-aware invoice row-count floor | no floor exists in code today; add one weekday-aware, since a flat one cries wolf every Sunday |
 | 27 | `params/binLocations` is rot | 1,148 entries, **20 joinable**; either rebuild against current SKU codes or delete the row — check the join rate before believing it |
 | 28 | Browser Apply strips `toTargets.invValue` | digest loses its ₹ line until the next nightly run; one line in `applyAndRun` |
 | 29 | SKU Ceiling follow-ups | sheet sync, outlier discovery report, the rate-based DC gap (81 SKUs), a DOC cap for Fixed Unit Floor |
-| 30 | ✅ closed 2026-09-07 — floor-sheet reader gaps | kept for the reasoning |
 | 31 | Purchase/Move follow-ups | hysteresis on `status` (operator's call), dropping absent SKUs from `res`, the `Sell` flag |
-| 34 | ✅ closed 2026-09-08 — two dry-run scripts had drifted | kept for the shape: a diagnostic drifting from its subject is worse than no check |
 | 35 | Remove the **Manual Overrides** tab | live `coreOverrides` is **0**, but the tab is the EDITOR not the feature — `mergeCoreOverrides` stays in the nightly engine path and the PO CSV |
 | 36 | The **Plywood v2 engine** is still in the tree | tab retired 2026-09-17, engine kept; 21 files / 184 KB, reachable from nothing. ⚠ the Logic Tweaker option must go in the SAME change |
 | 38 | `sync-stock` empty-body path syncs every branch | 8 branches = 4 sequential pairs ≈ 128s against a 150s wall clock; latent (no caller does it) but our change made it worse |
 | 40 | Stock sync `per_page` probe | only safe route to a ~10-min stock cycle; never compress the stagger |
+| 41 | Split-shipment invoices (from 09-24) | parked at +₹0.22L; re-run `scripts/whatif-order-collapse.mjs` ~10 Oct |
 | — | *Later, not urgent* | IMS reads the canonical stored result instead of recomputing client-side |
 
 
@@ -489,7 +443,7 @@ one reason: **the numbers are stable IDs that appear in commit messages and PRs,
 are never renumbered or reused** — and an index that left the file with the entries would
 let the next feature silently reuse a taken number.
 
-**Highest used: 40. `33` was never used (a gap, not a free slot — leave it). Next: 41.**
+**Highest used: 41. `33` was never used (a gap, not a free slot, leave it). Next: 42.**
 
 | # | what | shipped | live documentation |
 |---|---|---|---|
@@ -522,17 +476,18 @@ let the next feature silently reuse a taken number.
 | 27 | `params/binLocations` is rot — 98.3% unjoinable | **open** | Open Work § |
 | 28 | Browser Apply strips `toTargets.invValue` | **open** | Open Work § |
 | 29 | SKU Ceiling follow-ups | **open** | Open Work § |
-| 30 | Two floor-sheet reader gaps | closed 2026-09-07 | Open Work § (kept for the reasoning) |
+| 30 | Two floor-sheet reader gaps | closed 2026-09-07 | archive, Closed open-work items |
 | 31 | Purchase/Move follow-ups | **open** | Open Work § |
 | 32 | Purchase / Move — commercial policy | 2026-09-07 | Purchase / Move § |
 | 33 | *(never used)* | — | — |
-| 34 | Two dry-run scripts had drifted | closed 2026-09-08 | Open Work § (kept for the shape) |
+| 34 | Two dry-run scripts had drifted | closed 2026-09-08 | archive, Closed open-work items |
 | 35 | Remove the Manual Overrides tab | **open** | Open Work § |
 | 36 | Remove the dormant Plywood v2 engine | **open** | Open Work § + `docs/retired/README.md` |
 | 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | wired 2026-09-18 · **DS07 LIVE 2026-09-22** · **DS08 LIVE 2026-09-25** | Opening Shortly § in `src/engine/CLAUDE.md` · `docs/HANDOFF-2026-09-18-ds07-ds08.md` · spec in `docs/superpowers/specs/` |
 | 38 | `sync-stock` empty-body path syncs every branch | **open** | Open Work § |
 | 39 | DS08 has no stock cron | closed 2026-09-25 | sync architecture § |
 | 40 | Stock sync `per_page` probe, then re-plan the cycle | **open** | Open Work § |
+| 41 | Split-shipment invoices | **open** | Open Work § |
 
 
 ## Deferred
