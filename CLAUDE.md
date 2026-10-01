@@ -384,7 +384,9 @@ number check vs live Zoho exports passed — 12,369 comparisons, 0 plumbing mism
 `supabase/functions/CLAUDE.md`.** It is the only write path into Zoho in this project.
 Two things worth knowing without opening it: it sends `cf_to_type: "Mid Mile"` as a
 server-side constant, and it **drops inactive SKUs from a TO rather than failing the whole
-transfer** — Zoho refuses an entire TO if any line names an inactive item.
+transfer** — Zoho refuses an entire TO if any line names an inactive item. And since
+2026-10-01 it **splits a TO over 800 lines into equal drafts** (`Internal Transfer 1/2`, `2/2`),
+because Zoho refuses one whose `line_items` exceed its cap.
 
 **Hook in this repo (in `main`):** `applyAndRun` in `App.jsx` serializes the DC-inv Active
 slice of engine results (`{name, category, brand, perDS:{ds:{min,max}}}`) to **`params/toTargets`** after

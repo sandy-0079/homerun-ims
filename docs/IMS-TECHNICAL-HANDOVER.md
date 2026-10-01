@@ -948,6 +948,13 @@ stale, filter and duplicate warnings) → create → View-in-Zoho link. A 60-min
 `params/toAudit`. Line order follows the **DC pick path** (Tiling → Cement → binned items → unbinned →
 Plywood last), from `params/binLocations`.
 
+**Over 800 lines → several drafts (2026-10-01).** Zoho refuses a TO whose `line_items` exceed its cap
+(first hit: DS07, 1,258 lines). `create-to` cuts it into ⌈n/800⌉ equal, contiguous parts in pick order,
+Reason `Internal Transfer 1/2`, `2/2`…; each part is audited as it is confirmed, and a retry carrying the
+same `requestId` creates only the missing parts. A part whose outcome is unknown (timeout/5xx) is never
+re-sent automatically — the tool tells the user to search Zoho's Reason filter first. Rules:
+`supabase/functions/CLAUDE.md` → "Split TOs".
+
 **Side effect to expect:** tool-created drafts appear as **"Picking" pills** in IMS Stock Health within
 the hour, because orders-sync reads draft TOs. Drafts do **not** change `quantity_in_transit`, so the TO
 tool's own table never sees them — hence the duplicate guard.

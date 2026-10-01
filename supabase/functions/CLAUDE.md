@@ -506,7 +506,8 @@ The TO tool itself is a separate repo (`~/Documents/GitHub/homerun-to`, authorit
 Zoho transfer orders. It is the only **write** path into Zoho in this project, so its
 failure modes are ops-visible immediately.
 
-**⚠⚠ Split TOs (built 2026-10-01, `_shared/toSplit.ts`).** Zoho refuses a TO over its line cap —
+**⚠⚠ Split TOs (`_shared/toSplit.ts`) — DEPLOYED 2026-10-01, `create-to` v14 → v15, prod-verified:
+1,342-line DS07 plan → TO-07229 + TO-07230 (671 + 671, ~8 s apart; deleted after).** Zoho refuses a TO over its line cap —
 `400 Looks like the key line_items has exceeded the size`, nothing created. First hit 2026-09-30
 (DS07, 1,258 lines, after a floor re-apply). No documented number; `toAudit` proves 827 OK, 1,258
 refused, so `TO_LINE_CAP = 800` is the largest *proven* size — raise only on evidence.
