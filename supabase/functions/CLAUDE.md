@@ -506,6 +506,26 @@ The TO tool itself is a separate repo (`~/Documents/GitHub/homerun-to`, authorit
 Zoho transfer orders. It is the only **write** path into Zoho in this project, so its
 failure modes are ops-visible immediately.
 
+**⚠⚠ Split TOs (built 2026-10-01, `_shared/toSplit.ts`).** Zoho refuses a TO over its line cap —
+`400 Looks like the key line_items has exceeded the size`, nothing created. First hit 2026-09-30
+(DS07, 1,258 lines, after a floor re-apply). No documented number; `toAudit` proves 827 OK, 1,258
+refused, so `TO_LINE_CAP = 800` is the largest *proven* size — raise only on evidence.
+- `> 800` lines → ⌈n/800⌉ **equal** contiguous parts in the order sent (= DC01 pick path), created
+  one after another. Reason reads `Internal Transfer 1/2 - created by …`; **≤ 800 is byte-identical
+  to before** (no "1/1", same audit/snapshot/response shapes plus an additive `parts`).
+- ⚠ Parts are cut from the **requested** lines, before the inactive drop, so a resume always
+  re-derives the same parts. Cutting after the drop would move the boundary between attempts.
+- **Resume:** the tool sends a `requestId`; each part is audited (`requestId/linesHash/part/parts`)
+  **the moment Zoho confirms it**, and a repeat call skips audited parts. Changed lines under the
+  same requestId → **409, nothing created** (never stitch parts cut from different line sets).
+- A part's 400 → `sure:true` (nothing exists for it). 5xx/timeout/throw → `sure:false`: never
+  retried, and the error tells a human to search Zoho's Reason filter for `… k/n` first. No
+  automatic Zoho lookup by Reason — deliberately dropped (a false match would skip a real part).
+- Snapshot written **once**, after the last part, with `transfer_order_numbers` + per-row `toPart`.
+  Per-part audit `skipped` lists only that part's SKUs (the nightly digest maps SKU → TO).
+- Verified by `toSplit.test.ts` + an end-to-end harness running the bundled function against a
+  mocked Zoho/Supabase (11 scenarios incl. 500-then-resume, 409, single-TO response parity).
+
 **`create-to` edge function (this repo, deployed 2026-07-10):** creates **draft-only** Zoho TOs for
 the TO tool. ⚠ Zoho trap: `is_intransit_order:false` = instant full transfer (NOT draft) — the real
 draft mechanism is the undocumented `status:'draft'` body field (captured from the UI's own network

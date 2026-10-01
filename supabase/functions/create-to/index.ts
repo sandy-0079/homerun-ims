@@ -1,6 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { zohoFetchWithRetry } from '../_shared/zohoClient.ts'
 import { partitionInactive, skipSetGrew, type SkippedLine } from '../_shared/toLineFilter.ts'
+import {
+  splitParts, partReason, linesFingerprint, findCreatedParts, stampSnapshotParts, type CreatedPart,
+} from '../_shared/toSplit.ts'
 
 // ─── create-to — creates Zoho Transfer Orders as DRAFTS, and nothing else ─────
 // Spec: homerun-to/docs/superpowers/specs/2026-07-10-task6b-draft-to-design.md
@@ -22,7 +25,8 @@ import { partitionInactive, skipSetGrew, type SkippedLine } from '../_shared/toL
 //    rejected); the audit trail records the verified token's email.
 //
 // Zoho calls: GET /items (read-only, SKU→item_id+status map, cached 30 MIN in
-// params/zohoItemIds), POST /transferorders (one draft). Nothing else.
+// params/zohoItemIds), POST /transferorders (one draft — or, since 2026-10-01, one
+// per part when a TO exceeds Zoho's line cap; see _shared/toSplit.ts). Nothing else.
 
 const BRANCHES: Record<string, string> = {
   DC:   '3915979000000118466',
@@ -244,15 +248,29 @@ Deno.serve(async (req) => {
       console.log(`create-to: after refresh, ${skipped.length} skip(s) confirmed`)
     }
 
-    const skippedSet = new Set(skipped.map((s) => s.sku))
-    let resolved = lines
-      .filter((l: any) => !skippedSet.has(l.sku.trim()))
-      .map((l: any) => ({
-        sku: l.sku.trim(),
-        item_id: itemMap[l.sku.trim()].id,
-        name: itemMap[l.sku.trim()].name,
-        quantity_transfer: l.qty,
-      }))
+    const resolveLine = (l: any, map: Record<string, ItemInfo>) => ({
+      sku: l.sku.trim(),
+      item_id: map[l.sku.trim()].id,
+      name: map[l.sku.trim()].name,
+      quantity_transfer: l.qty,
+    })
+    const sendable = (part: any[]) => {
+      const s = new Set(skipped.map((x) => x.sku))
+      return part.filter((l: any) => !s.has(l.sku.trim())).map((l: any) => resolveLine(l, itemMap))
+    }
+
+    // ── Parts (added 2026-10-01) — see _shared/toSplit.ts ─────────────────────
+    // Zoho refuses a TO over its line_items cap, so a big transfer becomes several
+    // drafts, cut in the order sent (= the DC01 pick path). ≤ TO_LINE_CAP lines is
+    // ONE part and runs exactly the pre-2026-10-01 path: same reason text, same
+    // audit entry, same snapshot, same response (plus an additive `parts` array).
+    // ⚠ Cut from the REQUESTED lines, before the inactive drop — see toSplit.ts for
+    // why that is what makes a resume safe.
+    const requestedParts = splitParts(lines)
+    const nParts = requestedParts.length
+    const multi = nParts > 1
+
+    let resolved = sendable(lines)
 
     // ⚠ An empty TO is refused, never created. If every line is inactive there is
     // nothing to transfer, and a zero-line draft in Zoho is worse than a clear
@@ -270,12 +288,14 @@ Deno.serve(async (req) => {
     // the API `description` (live-verified 2026-07-10; a standalone `reason` key is
     // ignored). So the reason leads the description, attribution follows. Zoho's
     // "Created By" always shows the API account — the email is the real clicker
-    // (verified JWT).
+    // (verified JWT). A split TO carries "k/n" after the reason, which is also what
+    // the DC team searches Zoho's Reason filter for when a part's outcome is unknown.
     const reason = typeof body.reason === 'string' && body.reason.trim()
       ? body.reason.trim() : 'Internal Transfer'
-    const description =
-      `${reason} - created by ${by}` +
+    const descriptionFor = (part: number) =>
+      `${partReason(reason, part, nParts)} - created by ${by}` +
       (typeof body.note === 'string' && body.note ? ` ${body.note}` : '')
+    const description = descriptionFor(1)
 
     // zohoOrgId lets the tool build "View in Zoho" deep links (org id is not a secret
     // to our own signed-in users).
@@ -283,185 +303,301 @@ Deno.serve(async (req) => {
     if (body.dryRun) {
       // `skipped` rides the DRY RUN so the tool can show the drop on its existing
       // confirm screen — the user approves a plan that already reflects it, rather
-      // than discovering "90 of 94" after the TO exists.
+      // than discovering "90 of 94" after the TO exists. `parts` likewise lets it say
+      // "2 drafts of 629" before anything is created.
       return json({ ok: true, dryRun: true, toDsId, date, description, reason, lines: resolved,
-        skipped, requested: skus.length, zohoOrgId: org, toType: TO_TYPE_VALUE })
+        skipped, requested: skus.length, zohoOrgId: org, toType: TO_TYPE_VALUE,
+        parts: requestedParts.map((p, i) => {
+          const s = sendable(p)
+          return { part: i + 1, lineCount: s.length, units: s.reduce((a, l) => a + l.quantity_transfer, 0) }
+        }),
+      })
     }
 
-    // ── Create the DRAFT transfer order ───────────────────────────────────────
+    // ── Resume: parts of THIS request that already exist ──────────────────────
+    // The tool sends one requestId per Generate and re-sends it on Resume / Try
+    // again. Each part is audited the moment Zoho confirms it, so a part found here
+    // definitely exists and is not created again. Only consulted for a split TO.
+    const requestId = typeof body.requestId === 'string' && body.requestId.trim()
+      ? body.requestId.trim().slice(0, 64) : undefined
+    const linesHash = linesFingerprint(lines)
+    let created = new Map<number, CreatedPart>()
+    if (multi && requestId) {
+      const { data: aRow } = await supabase.from('params').select('payload').eq('id', 'toAudit').maybeSingle()
+      const found = findCreatedParts(aRow?.payload?.entries, requestId, linesHash, nParts)
+      if (found.mismatch) {
+        // ⚠ Never stitch a part cut from old lines to parts cut from new ones — SKUs
+        // on the boundary would be sent twice or not at all.
+        return json({
+          ok: false, partial: true, parts: [], partsTotal: nParts,
+          error: 'This TO\'s lines changed since its first part was created (stock reloaded?). ' +
+            'Nothing new was created. Check Zoho for the parts already made before generating again.',
+        }, 409)
+      }
+      created = found.created
+      if (created.size) console.log(`create-to: resume ${requestId} — parts already created: ${[...created.keys()].join(', ')}`)
+    }
+
+    // ── Create ONE draft transfer order ───────────────────────────────────────
     // status:'draft' is the undocumented field the Zoho UI's own "Save as Draft"
     // sends (captured from the web app's network trace, 2026-07-10). NOTE:
     // is_intransit_order is NOT a draft toggle — false means "direct transfer",
     // which executes the full stock movement instantly (learned the hard way,
     // TO-00539 incident 2026-07-10).
-    const postTO = (withType: boolean) => zohoFetchWithRetry(supabase, (token) => fetch(
-      `https://www.zohoapis.in/inventory/v1/transferorders?organization_id=${org}`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date,
-          from_location_id: BRANCHES.DC,
-          to_location_id: BRANCHES[toDsId],
-          line_items: resolved.map(({ item_id, name, quantity_transfer }) => ({ item_id, name, quantity_transfer })),
-          status: 'draft', // DRAFT — the only mode this function supports
-          description,
-          ...(withType
-            ? { custom_fields: [{ api_name: TO_TYPE_API_NAME, value: TO_TYPE_VALUE }] }
-            : {}),
-        }),
-      },
-    ), { retry429: false })
+    //
+    // Returns { ok:true, to, partResolved, toTypeActual, toTypeWarning } or
+    // { ok:false, error, sure } — `sure` = Zoho certainly created NOTHING for this
+    // part (a 400, or a non-draft that was deleted). `sure:false` means the outcome
+    // is unknown and a human must look before this part is attempted again.
+    const createPart = async (partLines: any[], part: number) => {
+      let partResolved = sendable(partLines)
+      const postTO = (withType: boolean) => zohoFetchWithRetry(supabase, (token) => fetch(
+        `https://www.zohoapis.in/inventory/v1/transferorders?organization_id=${org}`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date,
+            from_location_id: BRANCHES.DC,
+            to_location_id: BRANCHES[toDsId],
+            line_items: partResolved.map(({ item_id, name, quantity_transfer }) => ({ item_id, name, quantity_transfer })),
+            status: 'draft', // DRAFT — the only mode this function supports
+            description: descriptionFor(part),
+            ...(withType
+              ? { custom_fields: [{ api_name: TO_TYPE_API_NAME, value: TO_TYPE_VALUE }] }
+              : {}),
+          }),
+        },
+      ), { retry429: false })
 
-    let res = await postTO(true)
-    let data = await res.json()
-    let toTypeWarning: string | null = null
+      let res = await postTO(true)
+      let data = await res.json()
+      let toTypeWarning: string | null = null
 
-    // ── Safety valve: TO Type must never block a transfer ─────────────────────
-    // Before 2026-08-07 this field could not fail a create at all (Zoho just
-    // applied its default), so setting it is the FIRST thing here that can 400.
-    // On a 400 — Zoho's validation layer, which means nothing was created, the
-    // same reasoning the numbering self-heal relies on — retry ONCE without the
-    // custom field. Worst case is then exactly the old behaviour: TO created,
-    // type "Order Fulfilment", flipped by hand.
-    // Deliberately NOT retried on 5xx/timeout/429: there a TO may in fact have
-    // been created, and a blind repeat would duplicate it (why writes carry
-    // retry429:false in the first place).
-    if (!res.ok && res.status === 400) {
-      const firstErr = data.message ?? JSON.stringify(data)
-      console.error(`create-to: 400 with ${TO_TYPE_API_NAME} — retrying without it: ${firstErr}`)
-      const retryRes = await postTO(false)
-      const retryData = await retryRes.json()
-      if (retryRes.ok && retryData.transfer_order) {
-        res = retryRes
-        data = retryData
-        toTypeWarning = `TO Type NOT set — Zoho rejected ${TO_TYPE_API_NAME}="${TO_TYPE_VALUE}" (${firstErr}). ` +
-          `The TO was created with Zoho's default; set the type manually.`
-        console.error(`create-to: ${toTypeWarning}`)
-      } else {
-        // ── Last resort: was a SKU deactivated since our item map was built? ────
-        // The pre-flight above uses a map up to ITEM_MAP_TTL_HOURS old, so a SKU
-        // deactivated inside that window still reaches Zoho and 400s here. Refresh,
-        // re-partition, and retry ONCE — but only if the skip set actually GREW.
-        //
-        // ⚠ That condition is the whole safety of this branch, and it is why we do
-        // NOT parse Zoho's message. A 400 about numbering or locations produces no
-        // new skips, so nothing is retried and the original error is surfaced
-        // untouched. Reading the English sentence would also only ever give us the
-        // item NAME, and only ONE of them — four bad SKUs would cost four attempts.
-        // Re-partitioning catches all of them in a single pass.
-        //
-        // ⚠ Reached only on status === 400 — Zoho's validation layer, which means
-        // NOTHING WAS CREATED. Never on 5xx/timeout/429, where a TO may exist and a
-        // repeat would duplicate it. Same rule as the TO Type valve above.
-        let recovered = false
-        try {
-          const re = await getItemMap(supabase, skus, true)
-          const after = partitionInactive(skus, re.map).skipped
-          if (skipSetGrew(skipped, after)) {
-            const grew = after.filter((s) => !skipped.some((p) => p.sku === s.sku)).map((s) => s.sku)
-            console.error(`create-to: 400 recovered — newly inactive since the item map was built: ${grew.join(', ')}`)
-            skipped = after
-            itemMap = re.map
-            const nowSkipped = new Set(after.map((s) => s.sku))
-            resolved = lines
-              .filter((l: any) => !nowSkipped.has(l.sku.trim()))
-              .map((l: any) => ({
-                sku: l.sku.trim(),
-                item_id: re.map[l.sku.trim()].id,
-                name: re.map[l.sku.trim()].name,
-                quantity_transfer: l.qty,
-              }))
-            if (resolved.length > 0) {
-              const finalRes = await postTO(true)
-              const finalData = await finalRes.json()
-              if (finalRes.ok && finalData.transfer_order) {
-                res = finalRes
-                data = finalData
-                recovered = true
+      // ── Safety valve: TO Type must never block a transfer ─────────────────────
+      // Before 2026-08-07 this field could not fail a create at all (Zoho just
+      // applied its default), so setting it is the FIRST thing here that can 400.
+      // On a 400 — Zoho's validation layer, which means nothing was created, the
+      // same reasoning the numbering self-heal relies on — retry ONCE without the
+      // custom field. Worst case is then exactly the old behaviour: TO created,
+      // type "Order Fulfilment", flipped by hand.
+      // Deliberately NOT retried on 5xx/timeout/429: there a TO may in fact have
+      // been created, and a blind repeat would duplicate it (why writes carry
+      // retry429:false in the first place).
+      if (!res.ok && res.status === 400) {
+        const firstErr = data.message ?? JSON.stringify(data)
+        console.error(`create-to: 400 with ${TO_TYPE_API_NAME} — retrying without it: ${firstErr}`)
+        const retryRes = await postTO(false)
+        const retryData = await retryRes.json()
+        if (retryRes.ok && retryData.transfer_order) {
+          res = retryRes
+          data = retryData
+          toTypeWarning = `TO Type NOT set — Zoho rejected ${TO_TYPE_API_NAME}="${TO_TYPE_VALUE}" (${firstErr}). ` +
+            `The TO was created with Zoho's default; set the type manually.`
+          console.error(`create-to: ${toTypeWarning}`)
+        } else {
+          // ── Last resort: was a SKU deactivated since our item map was built? ────
+          // The pre-flight above uses a map up to ITEM_MAP_TTL_HOURS old, so a SKU
+          // deactivated inside that window still reaches Zoho and 400s here. Refresh,
+          // re-partition, and retry ONCE — but only if the skip set actually GREW.
+          //
+          // ⚠ That condition is the whole safety of this branch, and it is why we do
+          // NOT parse Zoho's message. A 400 about numbering or locations produces no
+          // new skips, so nothing is retried and the original error is surfaced
+          // untouched. Reading the English sentence would also only ever give us the
+          // item NAME, and only ONE of them — four bad SKUs would cost four attempts.
+          // Re-partitioning catches all of them in a single pass.
+          //
+          // ⚠ Reached only on status === 400 — Zoho's validation layer, which means
+          // NOTHING WAS CREATED. Never on 5xx/timeout/429, where a TO may exist and a
+          // repeat would duplicate it. Same rule as the TO Type valve above.
+          //
+          // The skip set is the WHOLE request's (shared across parts), so a SKU found
+          // inactive here is also left out of every later part.
+          let recovered = false
+          try {
+            const re = await getItemMap(supabase, skus, true)
+            const after = partitionInactive(skus, re.map).skipped
+            if (skipSetGrew(skipped, after)) {
+              const grew = after.filter((s) => !skipped.some((p) => p.sku === s.sku)).map((s) => s.sku)
+              console.error(`create-to: 400 recovered — newly inactive since the item map was built: ${grew.join(', ')}`)
+              skipped = after
+              itemMap = re.map
+              partResolved = sendable(partLines)
+              if (partResolved.length > 0) {
+                const finalRes = await postTO(true)
+                const finalData = await finalRes.json()
+                if (finalRes.ok && finalData.transfer_order) {
+                  res = finalRes
+                  data = finalData
+                  recovered = true
+                }
               }
             }
+          } catch (e) {
+            console.error(`create-to: inactive-SKU recovery failed, surfacing the original 400: ${e}`)
           }
-        } catch (e) {
-          console.error(`create-to: inactive-SKU recovery failed, surfacing the original 400: ${e}`)
-        }
-        if (!recovered) {
-          // Surface the ORIGINAL error: if the 400 was really about numbering or
-          // locations, that message is far more useful than the retry's.
-          return json({ ok: false, skipped, error: `Zoho create failed (400): ${firstErr}` }, 502)
+          if (!recovered) {
+            // Surface the ORIGINAL error: if the 400 was really about numbering or
+            // locations, that message is far more useful than the retry's.
+            return { ok: false as const, sure: true, was400: true, error: `Zoho create failed (400): ${firstErr}` }
+          }
         }
       }
-    }
 
-    if (!res.ok || !data.transfer_order) {
-      return json({ ok: false, error: `Zoho create failed (${res.status}): ${data.message ?? JSON.stringify(data)}` }, 502)
-    }
-    const to = data.transfer_order
+      if (!res.ok || !data.transfer_order) {
+        return { ok: false as const, sure: false,
+          error: `Zoho create failed (${res.status}): ${data.message ?? JSON.stringify(data)}` }
+      }
+      const to = data.transfer_order
 
-    // ── Hard guard: anything but a draft is reversed IMMEDIATELY ──────────────
-    // If Zoho ignored/changed the draft semantics, delete the TO in the same
-    // invocation (deletion reverses any stock effect) and fail loudly.
-    if (to.status !== 'draft') {
-      const del = await zohoFetchWithRetry(supabase, (token) => fetch(
-        `https://www.zohoapis.in/inventory/v1/transferorders/${to.transfer_order_id}?organization_id=${org}`,
-        { method: 'DELETE', headers: { Authorization: `Zoho-oauthtoken ${token}` } },
-      ), { retry429: false })
-      return json({
-        ok: false,
-        error: `Zoho returned status='${to.status}' instead of 'draft' — ${to.transfer_order_number} was ` +
-          (del.ok ? 'deleted immediately; no changes persisted.' :
-            `NOT deletable (HTTP ${del.status}) — DELETE IT MANUALLY IN ZOHO NOW: ${to.transfer_order_number}`),
-      }, 502)
-    }
+      // ── Hard guard: anything but a draft is reversed IMMEDIATELY ──────────────
+      // If Zoho ignored/changed the draft semantics, delete the TO in the same
+      // invocation (deletion reverses any stock effect) and fail loudly.
+      if (to.status !== 'draft') {
+        const del = await zohoFetchWithRetry(supabase, (token) => fetch(
+          `https://www.zohoapis.in/inventory/v1/transferorders/${to.transfer_order_id}?organization_id=${org}`,
+          { method: 'DELETE', headers: { Authorization: `Zoho-oauthtoken ${token}` } },
+        ), { retry429: false })
+        return {
+          ok: false as const, sure: del.ok,
+          error: `Zoho returned status='${to.status}' instead of 'draft' — ${to.transfer_order_number} was ` +
+            (del.ok ? 'deleted immediately; no changes persisted.' :
+              `NOT deletable (HTTP ${del.status}) — DELETE IT MANUALLY IN ZOHO NOW: ${to.transfer_order_number}`),
+        }
+      }
 
-    // ── Read the TO Type back off the created TO ──────────────────────────────
-    // The create response carries the same `custom_fields` array sync-orders reads,
-    // so this turns a SILENT no-op (wrong api_name → Zoho's default silently wins)
-    // into something visible. Never fatal: a mislabelled draft is a data-quality
-    // issue, not a stock one, and the draft is worth far more than the label.
-    // The full array is logged because it is also how the real api_name is
-    // discovered if the constant above is ever wrong.
-    const cfList = Array.isArray(to.custom_fields) ? to.custom_fields : []
-    const toTypeActual = cfList.find((f: any) => f.api_name === TO_TYPE_API_NAME)?.value ?? null
-    if (!toTypeWarning && toTypeActual !== TO_TYPE_VALUE) {
-      toTypeWarning = `TO Type reads ${JSON.stringify(toTypeActual)} not "${TO_TYPE_VALUE}" — ` +
-        `api_name "${TO_TYPE_API_NAME}" is probably wrong; Zoho ignored it and applied its default.`
-      console.error(`create-to: ${toTypeWarning} custom_fields=${JSON.stringify(cfList)}`)
+      // ── Read the TO Type back off the created TO ──────────────────────────────
+      // The create response carries the same `custom_fields` array sync-orders reads,
+      // so this turns a SILENT no-op (wrong api_name → Zoho's default silently wins)
+      // into something visible. Never fatal: a mislabelled draft is a data-quality
+      // issue, not a stock one, and the draft is worth far more than the label.
+      // The full array is logged because it is also how the real api_name is
+      // discovered if the constant above is ever wrong.
+      const cfList = Array.isArray(to.custom_fields) ? to.custom_fields : []
+      const toTypeActual = cfList.find((f: any) => f.api_name === TO_TYPE_API_NAME)?.value ?? null
+      if (!toTypeWarning && toTypeActual !== TO_TYPE_VALUE) {
+        toTypeWarning = `TO Type reads ${JSON.stringify(toTypeActual)} not "${TO_TYPE_VALUE}" — ` +
+          `api_name "${TO_TYPE_API_NAME}" is probably wrong; Zoho ignored it and applied its default.`
+        console.error(`create-to: ${toTypeWarning} custom_fields=${JSON.stringify(cfList)}`)
+      }
+      return { ok: true as const, to, partResolved, toTypeActual, toTypeWarning }
     }
 
     // ── Audit (additive params row; best-effort) ──────────────────────────────
-    try {
-      const { data: aRow } = await supabase.from('params').select('payload').eq('id', 'toAudit').maybeSingle()
-      const entries = Array.isArray(aRow?.payload?.entries) ? aRow.payload.entries : []
-      entries.unshift({
+    // A split TO writes ONE ENTRY PER PART, the moment that part exists — not at the
+    // end — so a function killed mid-run still leaves a record of what it made, and
+    // a resume skips it. Split entries also carry requestId/linesHash/part/parts;
+    // a single TO's entry is exactly the pre-2026-10-01 shape.
+    const audit = async (entry: Record<string, unknown>) => {
+      try {
+        const { data: aRow } = await supabase.from('params').select('payload').eq('id', 'toAudit').maybeSingle()
+        const entries = Array.isArray(aRow?.payload?.entries) ? aRow.payload.entries : []
+        entries.unshift(entry)
+        await supabase.from('params').upsert({
+          id: 'toAudit',
+          payload: { entries: entries.slice(0, AUDIT_KEEP) },
+          updated_at: new Date().toISOString(),
+        })
+      } catch (e) {
+        console.error(`toAudit write failed (non-fatal${multi ? '; a RESUME of this split TO would NOT see this part' : ''}):`, e)
+      }
+    }
+
+    // ── Create every part, in order ───────────────────────────────────────────
+    const done: (CreatedPart & { toType?: unknown })[] = []
+    const allResolved: any[] = []
+    const skuPart = new Map<string, number>()
+    let toTypeActual: unknown = null
+    let toTypeWarning: string | null = null
+    for (let k = 1; k <= nParts; k++) {
+      const partLines = requestedParts[k - 1]
+      const prior = created.get(k)
+      if (prior) {
+        done.push(prior)
+        for (const l of sendable(partLines)) { allResolved.push(l); skuPart.set(l.sku, k) }
+        continue
+      }
+      // A part whose every line is inactive has nothing to send: no draft for it.
+      if (sendable(partLines).length === 0) {
+        console.log(`create-to: part ${k}/${nParts} has no transferable lines — skipped`)
+        continue
+      }
+
+      let r: Awaited<ReturnType<typeof createPart>>
+      try {
+        r = await createPart(partLines, k)
+      } catch (e) {
+        // Single TO: rethrow → the outer handler's 500, exactly as before.
+        if (!multi) throw e
+        // A throw mid-POST (network, unparseable Zoho body) is an UNKNOWN outcome.
+        r = { ok: false as const, sure: false, error: String(e) }
+      }
+
+      if (!r.ok) {
+        if (!multi) {
+          // Single TO: exactly the old responses (502, `skipped` on the 400 path).
+          return json({ ok: false, ...('was400' in r && r.was400 ? { skipped } : {}), error: r.error }, 502)
+        }
+        // ⚠ Partial: say exactly what exists. Prior parts are real drafts; this one
+        // either certainly does not exist (sure) or MAY exist (not sure) — in which
+        // case a human checks Zoho's Reason filter for "k/n" before resuming.
+        const made = done.map((d) => `${d.part}/${nParts} = ${d.transfer_order_number}`).join(', ')
+        const error =
+          (made ? `Created ${made}. ` : '') +
+          `Part ${k}/${nParts} failed: ${r.error}` +
+          (r.sure ? '' : ` — Zoho did not confirm, so part ${k}/${nParts} MAY exist: ` +
+            `search Zoho Transfer Orders by Reason "${partReason(reason, k, nParts)}" before resuming.`)
+        console.error(`create-to: split ${requestId ?? '(no requestId)'} → ${toDsId} stopped at part ${k}/${nParts}: ${r.error}`)
+        return json({
+          ok: false, partial: done.length > 0, partsTotal: nParts, failedPart: k, sure: r.sure,
+          parts: done.map(({ toType: _t, ...d }) => d), skipped, zohoOrgId: org, error,
+        }, 502)
+      }
+
+      const to = r.to
+      const units = r.partResolved.reduce((a: number, l: any) => a + l.quantity_transfer, 0)
+      // Skips that fall in THIS part only — the nightly digest maps skipped SKUs to
+      // TO numbers, and a split must not attribute one SKU to every part.
+      const partSkus = new Set(partLines.map((l: any) => l.sku.trim()))
+      const partSkipped = multi ? skipped.filter((s) => partSkus.has(s.sku)) : skipped
+      await audit({
         at: new Date().toISOString(), by, toDsId,
-        lineCount: resolved.length,
-        units: resolved.reduce((a: number, l: any) => a + l.quantity_transfer, 0),
+        lineCount: r.partResolved.length,
+        units,
         // Only when something was actually dropped — an empty array on every entry
         // would be noise on a row the nightly digest reads. The digest names these
         // for the admin; the ground team only ever sees a count.
-        ...(skipped.length ? { requested: skus.length, skipped } : {}),
+        ...(partSkipped.length ? { requested: multi ? partLines.length : skus.length, skipped: partSkipped } : {}),
         transfer_order_id: to.transfer_order_id,
         transfer_order_number: to.transfer_order_number,
+        ...(multi ? { requestId, linesHash, part: k, parts: nParts } : {}),
       })
-      await supabase.from('params').upsert({
-        id: 'toAudit',
-        payload: { entries: entries.slice(0, AUDIT_KEEP) },
-        updated_at: new Date().toISOString(),
-      })
-    } catch (e) { console.error('toAudit write failed (non-fatal):', e) }
+      done.push({ part: k, parts: nParts, transfer_order_id: to.transfer_order_id,
+        transfer_order_number: to.transfer_order_number, lineCount: r.partResolved.length, units })
+      for (const l of r.partResolved) { allResolved.push(l); skuPart.set(l.sku, k) }
+      if (k === 1 || toTypeActual === null) toTypeActual = r.toTypeActual
+      if (r.toTypeWarning) toTypeWarning = r.toTypeWarning
+      console.log(`create-to: DRAFT ${to.transfer_order_number} → ${toDsId}` +
+        (multi ? ` (part ${k}/${nParts})` : '') + `, ${r.partResolved.length} lines, by ${by}`)
+    }
+    resolved = allResolved
+    const first = done[0]
 
     // ── Fill snapshot (additive params row; best-effort — same swallow-on-fail as
     // audit, so an analytics write can NEVER block a TO). The client computes it
     // from its full plan (only the client knows Req vs Actual and the shortfall);
     // we just persist it. Dedupe by (ds, batchKey) so re-generating the same DS in
     // a batch replaces its snapshot; keep the last SNAPSHOT_KEEP.
+    // A split TO's snapshot is written ONCE, here, after every part exists — never
+    // half a plan — with each SKU's part and every TO number (toSplit.ts).
     if (body.snapshot && typeof body.snapshot === 'object' && body.snapshot.ds === toDsId) {
       try {
         const { data: sRow } = await supabase.from('params').select('payload').eq('id', 'toSnapshots').maybeSingle()
         const prev = Array.isArray(sRow?.payload?.entries) ? sRow.payload.entries : []
-        const snap = { ...body.snapshot, by, at: new Date().toISOString(),
-          transfer_order_number: to.transfer_order_number }
+        const snap = stampSnapshotParts(
+          { ...body.snapshot, by, at: new Date().toISOString(), transfer_order_number: first.transfer_order_number },
+          skuPart, done.map((d) => d.transfer_order_number))
         const kept = prev.filter((e: any) => !(e.ds === snap.ds && e.batchKey === snap.batchKey))
         kept.unshift(snap)
         await supabase.from('params').upsert({
@@ -472,16 +608,18 @@ Deno.serve(async (req) => {
       } catch (e) { console.error('toSnapshots write failed (non-fatal):', e) }
     }
 
-    console.log(`create-to: DRAFT ${to.transfer_order_number} → ${toDsId}, ${resolved.length} of ` +
-      `${skus.length} lines, by ${by}, TO Type ${JSON.stringify(toTypeActual)}` +
+    console.log(`create-to: DONE ${done.map((d) => d.transfer_order_number).join(' + ')} → ${toDsId}, ` +
+      `${resolved.length} of ${skus.length} lines, by ${by}, TO Type ${JSON.stringify(toTypeActual)}` +
       (skipped.length ? ` — SKIPPED ${skipped.length} inactive: ${skipped.map((s) => s.sku).join(', ')}` : ''))
     // toType/toTypeWarning are additive: the tool ignores unknown keys today (no
     // frontend change shipped with this), but they make the state inspectable.
+    // Top-level transfer_order_* stay = part 1, so a caller that predates `parts`
+    // still gets a valid TO and the right total `lines`.
     return json({
       ok: true,
-      transfer_order_id: to.transfer_order_id,
-      transfer_order_number: to.transfer_order_number,
-      status: to.status,
+      transfer_order_id: first.transfer_order_id,
+      transfer_order_number: first.transfer_order_number,
+      status: 'draft',
       toDsId,
       lines: resolved,
       zohoOrgId: org,
@@ -491,6 +629,7 @@ Deno.serve(async (req) => {
       skipped,
       toType: toTypeActual,
       ...(toTypeWarning ? { toTypeWarning } : {}),
+      parts: done,
     })
   } catch (err) {
     console.error('create-to error:', err)
