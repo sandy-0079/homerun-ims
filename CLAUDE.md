@@ -430,7 +430,6 @@ which numbers are taken.
 | 7 | Read-only config visibility for non-admins | add `logic` + `overrides` to `PUBLIC_TABS`, disable inputs; copy the Plywood config pattern |
 | 23 | DS06 cluster assignment | DS06, DS07 and DS08 have no cluster; an ops decision, clusters exist only in prose |
 | 24 | Day-of-week-aware invoice row-count floor | no floor exists in code today; add one weekday-aware, since a flat one cries wolf every Sunday |
-| 27 | `params/binLocations` is rot | 1,148 entries, **20 joinable**; either rebuild against current SKU codes or delete the row — check the join rate before believing it |
 | 28 | Browser Apply strips `toTargets.invValue` | digest loses its ₹ line until the next nightly run; one line in `applyAndRun` |
 | 29 | SKU Ceiling follow-ups | sheet sync, outlier discovery report, the rate-based DC gap (81 SKUs), a DOC cap for Fixed Unit Floor |
 | 31 | Purchase/Move follow-ups | hysteresis on `status` (operator's call), dropping absent SKUs from `res`, the `Sell` flag |
@@ -482,7 +481,7 @@ let the next feature silently reuse a taken number.
 | 24 | Day-of-week-aware invoice row-count floor | **open** | Open Work § |
 | 25 | D-3 recheck re-fetches ~585 invoices to change ~2 rows | **open** | Open Work § |
 | 26 | Reverse TO list — a count sheet, not a report | 2026-08-07 | Stock Health Tab § |
-| 27 | `params/binLocations` is rot — 98.3% unjoinable | **open** | Open Work § |
+| 27 | `params/binLocations` is rot — 98.3% unjoinable | closed 2026-10-07 (rebuilt; Google Sheet source) | archive, Closed open-work items |
 | 28 | Browser Apply strips `toTargets.invValue` | **open** | Open Work § |
 | 29 | SKU Ceiling follow-ups | **open** | Open Work § |
 | 30 | Two floor-sheet reader gaps | closed 2026-09-07 | archive, Closed open-work items |

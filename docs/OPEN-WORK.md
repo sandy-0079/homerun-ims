@@ -151,18 +151,6 @@ runbook, deleted in `5c87347` (2026-08-04), and nothing in `sync-invoices`, `nig
 `scripts/` checks a row count. So this item is really "add a row-count floor at all, weekday-aware from
 the start". The existing guards are the unknown-SKU rate (`assessCoverage`) and `MAX_LOST_PCT`.
 
-### 27. `params/binLocations` is rot — 98.3% of it cannot be joined
-Measured 2026-08-07: **1,148 entries**, keyed by **pre-July SKU codes** (`HAR-TEL-HET-4732-SC-450`,
-`WIR-FRL-POL-250-BLU-300-1`). Only **20 (1.7%)** match a current `skuMaster` key — the rest were
-orphaned by the ~2026-07-01 Zoho re-code, the same event behind the invoice unknown-SKU story.
-**Nothing in `src/` reads the row**, so nothing is broken today; it is a trap for whoever finds it and
-assumes it is usable.
-- **The concrete loss:** the Reverse TO list (item 26) is a *physical walk* of the store, and sorting
-  it by bin would cut the walk substantially. It sorts Category → Brand → Item Name instead, purely
-  because bin data cannot be joined. This is the first real consumer bin locations would have had.
-- Either rebuild it against current SKU codes (an ops task, not a code one) or delete the row. Do not
-  wire anything to it first — **check the join rate before believing it**, which is the whole lesson.
-
 ### 28. A browser Apply strips `toTargets.invValue`, so the digest loses its ₹ line
 Measured 2026-08-15: `params/toTargets.invValue` was **null** with `refreshedAt` at 06:38 IST — a
 browser **Apply & Re-run Model**, not either nightly slot. `api/run-engine.js` stamps `invValue`

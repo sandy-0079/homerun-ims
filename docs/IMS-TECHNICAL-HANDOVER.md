@@ -806,6 +806,7 @@ safe; nested ones need inline `??` defaults (see C7).
 | `params/networkConfigs` | Saved network scenarios |
 | `params/toTargets` | Serialized Min/Max for the TO tool |
 | `params/binLocations` | SKU → DC bin, for TO pick-path ordering |
+| `params/innerCasePacks` | SKU → inner case pack, rounds TO Qty (written by the TO tool's script) |
 
 **Use `src/paramConfigRows.js` — do not hand-roll this.** `loadParamConfigRows()` is the single list of
 which configs live in their own row; all three load sites call it, and `applyAndRun` strips them before
@@ -896,8 +897,10 @@ Separate repo `~/Documents/GitHub/homerun-to`, separate Vercel project, separate
 
 Own repo, own build, own Vercel project, own Supabase Auth. **A bug or bad deploy there cannot touch
 IMS.** Chosen over a shared multi-entry build specifically for failure isolation. It shares only prod
-Supabase data, read-only, and in Phase 1 writes nothing there — the one write path is creating draft
-Zoho TOs via the `create-to` edge function.
+Supabase data. The app's one write path is creating draft Zoho TOs via the `create-to` edge function
+(which also records `params/toAudit` / `toSnapshots`). Two local scripts there write reference rows
+from the DC team's Google Sheets: `params/binLocations` (pick path) and `params/innerCasePacks`
+(2026-10-07). IMS never writes either; it only offers a read-only Inner Case Pack download.
 
 ## G2. What it reads
 
@@ -907,6 +910,8 @@ Zoho TOs via the `create-to` edge function.
 | **CS DS** | `stockDataAccounting[sku][ds].stock_on_hand` | **Accounting** (Bills & Invoices) |
 | **CS DC** | `stockData[sku].DC.stock_on_hand` | **Physical** (Shipments & Receives) |
 | **In Transit** | `stockDataAccounting[sku][ds].in_transit` | Zoho `quantity_in_transit`, from the **stock** sync |
+| Inner case pack | `params/innerCasePacks` (TO-tool script, from the DC team's sheet) | absent → 1 |
+| DC bin | `params/binLocations` (TO-tool script, from the DC team's sheet) | pick-path order only |
 
 **⚠ The two stock bases are different on purpose** — accounting at the stores, physical at the DC. And In
 Transit comes from the *stock* sync, not orders-sync, so orders-sync timing is irrelevant to TO
@@ -923,6 +928,11 @@ Req    =  max(0, round(Max − CS DS − In Transit))      (net of in-transit)
 Then the DC allocates **100% of its stock for that SKU** across the stores that need it. If short,
 allocation is **proportional by need with largest-remainder rounding** — the biggest fractional part
 wins the leftover unit. It never over-sends: `cap = floor(dcAvail)`.
+
+**Inner case packs (2026-10-07):** for a SKU with a pack > 1, TO Qty is Req rounded **up** to the pack.
+If the DC is short it hands out whole packs first, then the loose units neediest-store-first; ties go to
+the bigger Req. Pack-1 SKUs keep the proportional split above exactly. Fill rate stays against raw Req —
+top-ups are capped out. Authoritative detail: `homerun-to/CLAUDE.md` Status 2026-10-07.
 
 **Fill states:**
 

@@ -656,6 +656,24 @@ The pre-July trim warning **expired 2026-09-28**, when the 90-day window reached
 Moved **verbatim** out of `docs/OPEN-WORK.md` on 2026-09-28. They were kept there "for the reasoning",
 and the reasoning is archive material. The IDs stay taken; see the index in root `CLAUDE.md`.
 
+### 27. ✅ CLOSED 2026-10-07 — `params/binLocations` was rot (98.3% unjoinable)
+Rebuilt by the TO tool against current SKU codes on 2026-08-08 (1,345 SKUs), refreshed 2026-09-08,
+and on 2026-10-07 moved to the DC team's **"DC Bin Location" Google Sheet** as its source
+(`homerun-to/scripts/build-binlocations.mjs`): **1,789 bins, every stored bin joinable, every TO
+target a sheet row.** The refresh script prints the join rate on every run, which is the lesson below
+made permanent. Still unbuilt and still valid: sorting the Reverse TO list (item 26) by bin.
+Original entry, verbatim:
+Measured 2026-08-07: **1,148 entries**, keyed by **pre-July SKU codes** (`HAR-TEL-HET-4732-SC-450`,
+`WIR-FRL-POL-250-BLU-300-1`). Only **20 (1.7%)** match a current `skuMaster` key — the rest were
+orphaned by the ~2026-07-01 Zoho re-code, the same event behind the invoice unknown-SKU story.
+**Nothing in `src/` reads the row**, so nothing is broken today; it is a trap for whoever finds it and
+assumes it is usable.
+- **The concrete loss:** the Reverse TO list (item 26) is a *physical walk* of the store, and sorting
+  it by bin would cut the walk substantially. It sorts Category → Brand → Item Name instead, purely
+  because bin data cannot be joined. This is the first real consumer bin locations would have had.
+- Either rebuild it against current SKU codes (an ops task, not a code one) or delete the row. Do not
+  wire anything to it first — **check the join rate before believing it**, which is the whole lesson.
+
 ### 30. ✅ CLOSED 2026-09-07 — two floor-sheet reader gaps (found 2026-08-26)
 Both latent, both the invoice-round-trip shape — a writer and a reader that disagree, failing `ok: true`.
 Kept for the reasoning; **both are fixed**, and the ineffective report now carries **four** reasons
