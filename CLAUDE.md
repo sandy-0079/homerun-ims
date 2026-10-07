@@ -344,8 +344,9 @@ Two facts worth carrying even when you are nowhere near the engine:
 
 **`src/tabs/CLAUDE.md`** covers the Stock Health tab (health tags, the location universe,
 the DS-Req-Covered helper, KPI cards, PO/TO columns, the Reverse TO count sheet) and the
-Tool Output Download tab (the five cards, the frozen PO column contract, status
-normalisation, Zero Sale SKUs, and the freshness gate on every download). It loads
+Tool Output Download tab (the seven cards, the frozen PO column contract, status
+normalisation, Zero Sale SKUs, Inner Case Pack + Purchase Prices, and the freshness gate on
+every download). It loads
 automatically when you open anything under `src/tabs/`.
 
 ⚠ **Overview, SKU Detail, Upload Data, Logic Tweaker and Manual Overrides live inline in
@@ -387,6 +388,12 @@ server-side constant, and it **drops inactive SKUs from a TO rather than failing
 transfer** — Zoho refuses an entire TO if any line names an inactive item. And since
 2026-10-01 it **splits a TO over 800 lines into equal drafts** (`Internal Transfer 1/2`, `2/2`),
 because Zoho refuses one whose `line_items` exceed its cap.
+
+**Inner case packs (2026-10-07):** the TO tool rounds every TO Qty up to the SKU's inner case pack,
+from **`params/innerCasePacks`** — written ONLY by the TO tool's `scripts/build-innercasepacks.mjs`
+from the DC team's Google Sheet (as `params/binLocations` is by `build-binlocations.mjs`). Nothing in
+this repo writes either row; the engine never reads them. This repo's only touch is the read-only
+**Inner Case Pack - Mid Mile** download card (`src/refDataCsv.js`, see `src/tabs/CLAUDE.md`).
 
 **Hook in this repo (in `main`):** `applyAndRun` in `App.jsx` serializes the DC-inv Active
 slice of engine results (`{name, category, brand, perDS:{ds:{min,max}}}`) to **`params/toTargets`** after
@@ -490,6 +497,7 @@ let the next feature silently reuse a taken number.
 | 39 | DS08 has no stock cron | closed 2026-09-25 | sync architecture § |
 | 40 | Stock sync `per_page` probe, then re-plan the cycle | **open** | Open Work § |
 | 41 | Split-shipment invoices | **open** | Open Work § |
+| 42 | Tool Output: Inner Case Pack - Mid Mile + Purchase Prices cards | **LIVE 2026-10-07** | `src/tabs/CLAUDE.md` Tool Output § · `src/refDataCsv.js` |
 
 
 ## Deferred
