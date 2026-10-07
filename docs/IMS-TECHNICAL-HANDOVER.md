@@ -906,7 +906,7 @@ from the DC team's Google Sheets: `params/binLocations` (pick path) and `params/
 
 | value | source | basis |
 |---|---|---|
-| Min / Max | `params/toTargets` — DC-inventorised **Active** slice only, ~1,565 SKUs | — |
+| Min / Max | `params/toTargets` — DC-inventorised **Active** slice only, 2,609 SKUs (2026-10-07) | — |
 | **CS DS** | `stockDataAccounting[sku][ds].stock_on_hand` | **Accounting** (Bills & Invoices) |
 | **CS DC** | `stockData[sku].DC.stock_on_hand` | **Physical** (Shipments & Receives) |
 | **In Transit** | `stockDataAccounting[sku][ds].in_transit` | Zoho `quantity_in_transit`, from the **stock** sync |
