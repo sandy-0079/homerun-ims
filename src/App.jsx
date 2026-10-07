@@ -12,6 +12,8 @@ import { normalisePolicy } from "./skuPolicy";
 import { computeInvValue } from "./invValue";
 import { DS_COLORS, DS_COLOR, DC_COLOR } from "./dsColors";
 import { summariseZeroSale, buildZeroSaleCsv, zeroSaleFilename, ZERO_SALE_CSV_HEADERS } from "./zeroSaleCsv";
+import { buildInnerCasePackCsv, buildPurchasePriceCsv, innerCasePackFilename, purchasePriceFilename,
+  countPricedSkus, INNER_CASE_PACK_CSV_HEADERS, PURCHASE_PRICE_CSV_HEADERS } from "./refDataCsv";
 
 import {
   ROLLING_DAYS, DS_LIST, MOVEMENT_TIERS_DEFAULT,
@@ -2576,6 +2578,19 @@ const outputFreshness = useMemo(
   () => assessOutputFreshness({ pageThrough: outputDemandThrough, liveThrough: provRaw.invoiceLiveThrough }),
   [outputDemandThrough, provRaw.invoiceLiveThrough],
 );
+// Inner Case Pack card footnote: when params/innerCasePacks was last written (by the TO
+// tool's refresh script). A ~30-byte select, re-read each time the tab is opened; the
+// pack values themselves are fetched on click so the file is always live.
+const [packsAt, setPacksAt] = useState(null);
+useEffect(() => {
+  if (tab !== "output") return;
+  let cancelled = false;
+  loadPayloadKey("params", "innerCasePacks", "refreshedAt").then((v) => { if (!cancelled) setPacksAt(v); });
+  return () => { cancelled = true; };
+}, [tab]);
+const fmtStamp = (iso) => iso
+  ? new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+  : null;
 // Zero-sale SKU lists for the three trailing windows.
 //
 // ⚠ Derived from RAW `invoiceData`, NOT from `results` — the engine already publishes
@@ -3419,6 +3434,49 @@ const zeroSaleLists = useMemo(
                       downloadCsvFile(zeroSaleFilename(w),csv);
                     },
                   }))}
+                />
+
+                {/* ── Inner Case Pack - Mid Mile ─────────────────────────────────────
+                    Reads params/innerCasePacks, which the TO tool (homerun-to) writes from
+                    the DC team's Google Sheet — this repo never writes it. Fetched ON CLICK,
+                    so a tab open for hours still downloads what the TO tool is using now.
+                    Not engine output; gated on the banner only so no button stays live
+                    under "downloads are disabled". See src/refDataCsv.js. */}
+                <DownloadCard
+                  title="Inner Case Pack - Mid Mile"
+                  accent="#0F766E"
+                  blurb={<>The inner case pack each SKU ships in from DC. The TO tool rounds every transfer up to a whole pack. SKUs not in the team&apos;s sheet read <b>1</b> — exactly what the TO tool applies to them.</>}
+                  shape={`${INNER_CASE_PACK_CSV_HEADERS.length} columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
+                  cta="⬇ Download Inner Case Pack"
+                  footnote={packsAt?`updated ${fmtStamp(packsAt)}`:null}
+                  disabled={outputFreshness.blocked}
+                  onClick={async ()=>{
+                    const row=await loadFromSupabase("params","innerCasePacks");
+                    if(!row?.packs){alert("Could not load inner case packs — try again in a minute.");return;}
+                    const csv=buildInnerCasePackCsv({skuMaster,packs:row.packs});
+                    if(!csv){alert("No SKU Master loaded — nothing to download.");return;}
+                    setPacksAt(row.refreshedAt??null);
+                    downloadCsvFile(innerCasePackFilename(),csv);
+                  }}
+                />
+
+                {/* ── Purchase Prices ────────────────────────────────────────────────
+                    priceData = Zoho's 12-MONTH AVERAGE purchase price (sync-catalogue
+                    nightly), the same figure the engine prices with — NOT the current
+                    purchase rate, hence the column name. Blank, never 0, when unpriced. */}
+                <DownloadCard
+                  title="Purchase Prices"
+                  accent="#B45309"
+                  blurb={<>Each SKU&apos;s <b>average purchase price over the last 12 months</b>, from Zoho — the price the model uses for price tags and inventory value. Not the latest purchase rate. Blank where Zoho has no purchase in the window.</>}
+                  shape={`${PURCHASE_PRICE_CSV_HEADERS.length} columns · ${countPricedSkus(skuMaster,priceData).toLocaleString()} priced of ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
+                  cta="⬇ Download Purchase Prices"
+                  footnote={provRaw.catalogueAt?`catalogue synced ${fmtStamp(provRaw.catalogueAt)}`:null}
+                  disabled={outputFreshness.blocked}
+                  onClick={()=>{
+                    const csv=buildPurchasePriceCsv({skuMaster,priceData});
+                    if(!csv){alert("No SKU Master loaded — nothing to download.");return;}
+                    downloadCsvFile(purchasePriceFilename(),csv);
+                  }}
                 />
 
               </div>

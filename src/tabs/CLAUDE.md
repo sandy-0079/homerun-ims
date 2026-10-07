@@ -144,8 +144,8 @@ rather than on every session.
 
 ## Tool Output Download Tab
 
-**Five download cards, no table** (rebuilt 2026-08-03 — commits `9a64dee`, `bf35922`, `f3958a7`;
-fifth card added 2026-09-17, `b0473c0`).
+**Seven download cards, no table** (rebuilt 2026-08-03 — commits `9a64dee`, `bf35922`, `f3958a7`;
+fifth card added 2026-09-17, `b0473c0`; sixth + seventh 2026-10-07).
 The Min/Max table that used to fill this tab is gone: it was virtualised so it cost little to render,
 but every number it showed is in SKU Detail, Overview, Stock Health or Manual Overrides, and the tab is
 called *Download*. Removing it also retired `outputRows`, `outputScrollTop` and `visibleOutput`.
@@ -157,6 +157,24 @@ called *Download*. Removing it also retired `outputRows`, `outputScrollTop` and 
 | Tool Output — DC | `IMS_Output_DC.csv` | 5 cols · unchanged |
 | SKU Master | `SKU_Master.csv` | **10 cols** · Status normalised · `Purchase`/`Move` after Status |
 | **Zero Sale SKUs** (row 2, under PO) | `Zero_Sale_SKUs_L<N>D_<from>_to_<to>.csv` | **9 cols** · 3 buttons (60/75/90 Days) |
+| **Inner Case Pack - Mid Mile** (row 2) | `Inner_Case_Pack_Mid_Mile_<date>.csv` | **6 cols** · all master SKUs |
+| **Purchase Prices** (row 2) | `Purchase_Prices_<date>.csv` | **6 cols** · all master SKUs |
+
+### Inner Case Pack + Purchase Prices — reference data, not engine output (2026-10-07)
+`src/refDataCsv.js` + tests. Columns `Item Name · SKU · Category · Brand · Status · <value>`, every
+master SKU, Category → Brand → Name with **uncategorised last**. Gated on the freshness banner only
+(not `results`) — neither file reads the engine.
+- **Inner Case Pack** reads `params/innerCasePacks`, **written by the TO tool** (homerun-to
+  `scripts/build-innercasepacks.mjs`, from the DC team's Google Sheet) — this repo never writes it.
+  Fetched **on click**, so a long-open tab still downloads what the TO tool is applying now. The row
+  stores only packs > 1; the file prints **1** for every other SKU because that is what the TO tool
+  applies. Footnote = the row's `refreshedAt` (a tiny `payload->refreshedAt` select on opening the tab).
+- **Purchase Prices** = `priceData` = Zoho's **12-month average** purchase price (`sync-catalogue`,
+  `PRICE_MONTHS = 12`) — **not** the current purchase rate; the header says `Avg Purchase Price 12 mo (₹)`.
+  ⚠ No comma in that header: `(12 mo, ₹)` unquoted split the header into 7 columns (caught by test).
+  Unpriced → **blank, never 0**. ⚠ The card's count is `countPricedSkus` (master SKUs with a price),
+  NOT `Object.keys(priceData).length` — priceData also holds ~116 SKUs absent from the master
+  (2,568 keys vs 2,452 priced rows, 2026-10-07).
 
 ### ⚠⚠ The PO column order is a FROZEN CONTRACT
 `src/poTargetsCsv.js` — `PO_CSV_HEADERS`:
