@@ -46,7 +46,7 @@ on every session. Verified 2026-09-17, not assumed.
 | `src/engine/strategies/plywoodV2/CLAUDE.md` | Plywood v2 — ENGINE only; its tab was retired 2026-09-17 | touching that directory |
 | `supabase/functions/CLAUDE.md` | Zoho API contracts, rate limits, token singleflight, crons, `create-to`, row inventory, deploy hazards, log recipes | touching `supabase/functions/` |
 | `src/tabs/CLAUDE.md` | Stock Health + Tool Output UI, CSV contracts, freshness gate | touching `src/tabs/` |
-| `docs/HANDOFF-2026-09-18-ds07-ds08.md` | DS07/DS08 go-live record + the order for the next store | before opening a store |
+| `docs/runbooks/opening-a-store.md` | the order for opening a store, and what breaks if you change it | before opening a store |
 | `docs/OPEN-WORK.md` | full open-work entries | read deliberately |
 | `docs/CHANGELOG-ARCHIVE.md` | everything shipped | read deliberately |
 | `docs/retired/README.md` | tabs removed 2026-09-17 (OOS Simulation, Plywood v2) + how to restore | read deliberately |
@@ -491,7 +491,7 @@ let the next feature silently reuse a taken number.
 | 34 | Two dry-run scripts had drifted | closed 2026-09-08 | archive, Closed open-work items |
 | 35 | Remove the Manual Overrides tab | **open** | Open Work § |
 | 36 | Remove the dormant Plywood v2 engine | **open** | Open Work § + `docs/retired/README.md` |
-| 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | wired 2026-09-18 · **DS07 LIVE 2026-09-22** · **DS08 LIVE 2026-09-25** | Opening Shortly § in `src/engine/CLAUDE.md` · `docs/HANDOFF-2026-09-18-ds07-ds08.md` · spec in `docs/superpowers/specs/` |
+| 37 | DS07 HAL + DS08 Rajajinagar wired ahead of go-live; DS Seed retired | wired 2026-09-18 · **DS07 LIVE 2026-09-22** · **DS08 LIVE 2026-09-25** · checks closed 2026-10-08 | Opening Shortly § in `src/engine/CLAUDE.md` · `docs/runbooks/opening-a-store.md` · spec in `docs/superpowers/specs/` |
 | 38 | `sync-stock` empty-body path syncs every branch | **open** | Open Work § |
 | 39 | DS08 has no stock cron | closed 2026-09-25 | sync architecture § |
 | 40 | Stock sync `per_page` probe, then re-plan the cycle | **open** | Open Work § |
