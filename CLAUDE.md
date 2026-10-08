@@ -437,7 +437,7 @@ which numbers are taken.
 | 36 | The **Plywood v2 engine** is still in the tree | tab retired 2026-09-17, engine kept; 21 files / 184 KB, reachable from nothing. ⚠ the Logic Tweaker option must go in the SAME change |
 | 38 | `sync-stock` empty-body path syncs every branch | 8 branches = 4 sequential pairs ≈ 128s against a 150s wall clock; latent (no caller does it) but our change made it worse |
 | 40 | Stock sync `per_page` probe | only safe route to a ~10-min stock cycle; never compress the stagger |
-| 41 | Split-shipment invoices (from 09-24) | parked at +₹0.22L; re-run `scripts/whatif-order-collapse.mjs` ~10 Oct |
+| 41 | Split-shipment invoices (from 09-24) | **decided 2026-10-08: build** the order-line merge; spec + build plan in Open Work |
 | — | *Later, not urgent* | IMS reads the canonical stored result instead of recomputing client-side |
 
 

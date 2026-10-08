@@ -279,30 +279,31 @@ Goal (2026-09-25): all stores fresh within ~10 min. **Not by compressing the sta
 timeouts. **Route: `per_page` > 200** (untested; ~14 pages → ~3 per chain). Order: (1) measure
 per-group `execution_time_ms` — ⚠ the documented `logs.all` endpoint returned **410 Gone** on
 2026-09-25; (2) probe ONE branch outside :35–:50; (3) re-plan the slots.
-### 41. Split-shipment invoices — measured 2026-09-28, parked; re-run ~10 Oct, close or build by ~8 Nov
-**From 2026-09-24 Zoho raises one invoice per shipment**, so one Shopify order can span several invoices
-(ops splits in real time). **The engine is mostly immune:** it counts one invoice **line** as one order
-(`oMap` → ABQ, `collectOrderQtys` → Fixed Unit Floor P90, `orderLines` → Plywood bulk filter), so only a
-**same-SKU** split changes an input: 50 shipped 25 + 25 reads as two orders of 25.
+### 41. Split-shipment invoices — DECIDED 2026-10-08: build the merge (not started)
+**From 2026-09-24 Zoho raises one invoice per shipment.** The engine counts one invoice **line** as one
+order (`oMap` → ABQ, `collectOrderQtys` → Fixed Unit Floor P90, `orderLines` → Plywood bulk filter), so a
+**same-SKU** split (100 shipped 50 + 50) reads as two orders of 50. Total demand is unaffected; **order
+size is understated**: FUF floors and ABQ run low, and Plywood runs slightly high (bulk orders pass as regular).
 
-**Baseline 2026-09-28** (window 08-14 → 09-27, only **4/45 days** post-change): repeated lines 0.38% of
-rows before, 1.00% after. Merging post-change rows: **7 cells, 4 SKUs, +₹0.22L Min (0.026%)**. Merging all
-history: 18 cells, 11 SKUs, +₹0.46L. Largest move: `PZVXV` DS04 Max 88 → 116 (unpriced, so ₹0). Direction
-is mixed: FUF/ABQ rise, Plywood can fall. Invoices ran about 1% above orders, so **no cron impact**. Straight-line estimate
-at a full window: about 40 SKUs / ₹2–2.5L.
+| reading (`scripts/whatif-order-collapse.mjs`) | window post-change | repeated lines | POST merge |
+|---|---|---|---|
+| 2026-09-28 | 4/45 days | 1.00% (pre-change 0.38%) | 7 cells · 4 SKUs · +₹0.22L Min |
+| **2026-10-08** | 14/45 days | **1.81%**, rising | **34 cells · 22 SKUs · +₹0.85L Min**: FUF 21 (18 up, 0 down), Plywood 13 (1.10% of its cells; 8 down) |
 
-**If built:** merge rows by `(shopifyOrder, sku, ds, date)` right after `applyAttribution` in `runEngine`
-(stored rows, sync and crons untouched; both `toTargets` writers get it). ⚠ **Same-date merge only**, and
-⚠ **never treat identical lines as duplicates**. Both are explained in the header of
-`scripts/whatif-order-collapse.mjs`. Open: whether the DC-only branch merges across DSs. Independently,
-the Upload card (`inputSummary.js`) labels distinct `shopifyOrder` as "invoices"; it is orders now.
+Projection at a full window: about ₹2.7L or more, crossing the ₹2L bar by ~8 Nov. **Operator decided to
+build now.** Ops checked 5 "fully-doubled" orders in Zoho and **all were genuine splits** (`HR/26/151789`
+`X9SH7` 50 + 50 = 100 ordered; 1 + 1 = 2 ordered on `HR/26/152779`), so demand data is correct and
+**summing is right**.
 
-**Decision bar (suggested; the operator's call):** build if the post-change merge moves ≥ ~1% of
-FUF/Plywood cells, or ≥ ₹2L Min, or any SKU's Min drops ≥ 25%.
+**The fix:** merge rows by `(order, sku, ds, date)`, summing qty, in one function called right after
+`applyAttribution` in `runEngine`. Stored rows, sync and crons stay untouched, and both `toTargets` writers get it.
+- **Normalise the order ref first:** split on `,`, trim, dedupe, so **any** repeat count collapses. 91
+  refs (312 rows, since July) repeat one order: 88 twice, 3 **three times** (`HR/26/127245`). Likely a
+  Zoho/Shopify sync quirk; 0 combine different orders. Test 2× and 3×. Unnormalised, a split whose invoices carry `X` and `X,X` won't merge (`HR/26/154685`).
+- ⚠ **Same-date only**, and ⚠ **never drop identical lines as duplicates**. See the script header.
+- Blank refs (13 rows on 10-05): leave unmerged. Measured identical result either way.
+- Open: whether the DC-only branch merges across DSs. Also relabel `inputSummary.js` "invoices" → "orders".
 
-**Prompt:** *"Re-run the item #41 split-shipment what-if: snapshot the live inputs
-(`scripts/snapshot-engine-inputs.mjs`), run `scripts/whatif-order-collapse.mjs`, and compare against the
-2026-09-28 baseline in `docs/OPEN-WORK.md` #41. Tell me: how full the window is post-change, the
-repeated-line rate trend, POST vs ALL cells/SKUs/₹, the top movers and their strategy, and whether it
-clears the decision bar. List the fully-doubled orders so I can check one in Zoho. Read-only: no Zoho
-calls, no code changes, no push."*
+**Build plan:** a test pinning "split order = unsplit order" (ABQ and FUF) → a frozen-snapshot
+before/after replay (`snapshot-engine-inputs` + `dump-engine-output` + `diff-engine-dumps`), expecting
+about the POST shape above → the operator reviews it → push outside the 14:30 / 20:30 IST TO windows.
