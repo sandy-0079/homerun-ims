@@ -187,6 +187,8 @@ Run the check after editing any of them — it proves nothing was lost against t
   - Both functions do a **fresh read immediately before writing** to prevent race condition from parallel runs.
   - Sync functions only read/write `team_data/global`. They never touch `team_data/invoice_data`.
 - **team_data row separation:** `invoiceData` lives in `team_data/invoice_data` (written once on CSV upload). All other app data + sync data lives in `team_data/global`. This keeps the global payload ~1-2MB vs ~7MB, preventing Supabase Disk IO budget exhaustion from hourly syncs.
+  ⚠ **That figure is stale: the global row was 7.5 MB on 2026-10-12** (stock 5.4 MB), and a browser upload
+  colliding with a stock-sync write now times out silently (Open Work #43).
 - **⚠ Input sizes drift fast — measured live 2026-09-07, and several figures below are older.**
   `invoiceData` **94,819 rows · 90 dates · 2026-06-09 → 2026-09-06** · `skuMaster` **2,573** ·
   `newSKUQty` **1,869** · `priceData` **2,185** · `skuCeiling` **815** (0 at ship on 2026-08-15 — ops
@@ -437,6 +439,7 @@ which numbers are taken.
 | 36 | The **Plywood v2 engine** is still in the tree | tab retired 2026-09-17, engine kept; 21 files / 184 KB, reachable from nothing. ⚠ the Logic Tweaker option must go in the SAME change |
 | 38 | `sync-stock` empty-body path syncs every branch | 8 branches = 4 sequential pairs ≈ 128s against a 150s wall clock; latent (no caller does it) but our change made it worse |
 | 40 | Stock sync `per_page` probe | only safe route to a ~10-min stock cycle; never compress the stagger |
+| 43 | A failed Upload Data save is silent | a 7.5 MB row write timed out against a stock sync and the floors were lost with no error; retry + alert + no write after a failed read |
 | 41 | Split-shipment invoices (from 09-24) | **decided 2026-10-08: build** the order-line merge; spec + build plan in Open Work |
 | — | *Later, not urgent* | IMS reads the canonical stored result instead of recomputing client-side |
 
@@ -451,7 +454,7 @@ one reason: **the numbers are stable IDs that appear in commit messages and PRs,
 are never renumbered or reused** — and an index that left the file with the entries would
 let the next feature silently reuse a taken number.
 
-**Highest used: 41. `33` was never used (a gap, not a free slot, leave it). Next: 42.**
+**Highest used: 43. `33` was never used (a gap, not a free slot, leave it). Next: 44.**
 
 | # | what | shipped | live documentation |
 |---|---|---|---|
@@ -497,6 +500,7 @@ let the next feature silently reuse a taken number.
 | 40 | Stock sync `per_page` probe, then re-plan the cycle | **open** | Open Work § |
 | 41 | Split-shipment invoices | **open** | Open Work § |
 | 42 | Tool Output: Inner Case Pack - Mid Mile + Purchase Prices cards | **LIVE 2026-10-07** | `src/tabs/CLAUDE.md` Tool Output § · `src/refDataCsv.js` |
+| 43 | A failed Upload Data save is silent (floors lost 2026-10-12) | **open** | Open Work § |
 
 
 ## Deferred

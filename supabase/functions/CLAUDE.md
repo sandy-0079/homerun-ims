@@ -409,9 +409,12 @@ still gated and empty would have been wasted requests; DS08 got one the day it w
   it, 500 = the function caught an error and returned, 504 = gateway gave up (function may still finish).
 - **Edge function logs are reachable without the dashboard** — the CLI (v2.75.0) has no `functions logs`,
   but the Management API does: `POST /v1/projects/{ref}/database/query` for SQL, and
-  `GET /v1/projects/{ref}/analytics/endpoints/logs.all?sql=…&iso_timestamp_start=…` for
-  `function_logs` / `function_edge_logs` (⚠ that `logs.all` path returned **410 Gone** on 2026-09-25 — find its
-  replacement before relying on it). Token lives in the macOS keychain
+  `GET /v1/projects/{ref}/analytics/endpoints/logs?sql=…&iso_timestamp_start=…&iso_timestamp_end=…`
+  (`logs.all` is **410 Gone**). **Verified 2026-10-12:** ClickHouse SQL over ONE table, `logs`, filtered by
+  `source` (`edge_logs`, `postgres_logs`, `postgrest_logs`, `function_logs`); NOT `source_name` as Supabase's
+  changelog says. `event_message` is `METHOD | STATUS | URL | UA` for edge logs; other fields are in
+  `log_attributes['…']`. `select *` returns "Backend error", so name the columns. The `unnest(metadata)` SQL
+  below predates this and won't run as written. Token lives in the macOS keychain
   (`security find-generic-password -s "Supabase CLI" -w`, `go-keyring-base64:` prefixed). **Send a browser
   `User-Agent`** or Cloudflare answers `403 error code: 1010`. Cap queries at 1000 rows — split by time
   window to attribute logs per invocation. ⚠ **An `order by timestamp asc limit 1000` that HITS the cap

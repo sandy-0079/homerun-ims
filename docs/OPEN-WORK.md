@@ -279,31 +279,43 @@ Goal (2026-09-25): all stores fresh within ~10 min. **Not by compressing the sta
 timeouts. **Route: `per_page` > 200** (untested; ~14 pages → ~3 per chain). Order: (1) measure
 per-group `execution_time_ms` — ⚠ the documented `logs.all` endpoint returned **410 Gone** on
 2026-09-25; (2) probe ONE branch outside :35–:50; (3) re-plan the slots.
+### 43. A failed Upload Data save is SILENT (floors lost 2026-10-12)
+**From the logs:** 13:05 IST, **Clear** (writes `newSKUQty: {}`, 200), then upload. Its `POST /team_data`
+collided with the stock sync writing the same row → `57014 statement timeout` → 500. `saveToSupabase` only logs
+to the console; `saveTeamData` ignores the result and stamps `uploadProvenance` anyway. Stored floors were **EMPTY
+13:05–14:08**, while `toTargets` (Apply, from browser memory) had them. IMS lost them on reload; TO tool didn't.
+**Why now:** `team_data/global` is **7.5 MB** (stock 5.4 MB, 2026-10-12), written by the crons at :05–:20 IST
+and by the TO tool's "Pull fresh stock" (busy ~13:45–14:30, ~19:45–20:30 IST).
+**Fix (agreed, not started)** in `saveTeamData`/`saveToSupabase`, all Upload Data inputs:
+1. On `57014`/5xx, **re-read fresh and retry** (≤2).
+2. Still failing: **alert**, no provenance stamp, no Apply as if it saved.
+3. **Never write when the fresh read failed.** `loadFromSupabase` returns null on error, and `?? {}` would
+   write a payload holding only the changed key: a whole-row wipe.
+4. **Clear** asks to confirm; an upload already replaces everything.
+Tests first. Later: stock keys in their own row (as #13 did for invoices).
+**Workaround:** no Clear before upload; avoid sync windows; reload + check before Apply.
+
 ### 41. Split-shipment invoices — DECIDED 2026-10-08: build the merge (not started)
 **From 2026-09-24 Zoho raises one invoice per shipment.** The engine counts one invoice **line** as one
 order (`oMap` → ABQ, `collectOrderQtys` → Fixed Unit Floor P90, `orderLines` → Plywood bulk filter), so a
 **same-SKU** split (100 shipped 50 + 50) reads as two orders of 50. Total demand is unaffected; **order
-size is understated**: FUF floors and ABQ run low, and Plywood runs slightly high (bulk orders pass as regular).
+size is understated**: FUF floors and ABQ run low; Plywood slightly high (bulk passes as regular).
 
-| reading (`scripts/whatif-order-collapse.mjs`) | window post-change | repeated lines | POST merge |
-|---|---|---|---|
-| 2026-09-28 | 4/45 days | 1.00% (pre-change 0.38%) | 7 cells · 4 SKUs · +₹0.22L Min |
-| **2026-10-08** | 14/45 days | **1.81%**, rising | **34 cells · 22 SKUs · +₹0.85L Min**: FUF 21 (18 up, 0 down), Plywood 13 (1.10% of its cells; 8 down) |
+Readings (`scripts/whatif-order-collapse.mjs`, POST merge): 09-28, 4/45 days post-change, repeated lines 1.00% →
+7 cells, +₹0.22L Min. **10-08, 14/45 days, 1.81% and rising → 34 cells, 22 SKUs, +₹0.85L Min** (FUF 21, all up;
+Plywood 13, 1.10% of its cells, 8 down).
 
-Projection at a full window: about ₹2.7L or more, crossing the ₹2L bar by ~8 Nov. **Operator decided to
-build now.** Ops checked 5 "fully-doubled" orders in Zoho and **all were genuine splits** (`HR/26/151789`
-`X9SH7` 50 + 50 = 100 ordered; 1 + 1 = 2 ordered on `HR/26/152779`), so demand data is correct and
-**summing is right**.
+Projects to about ₹2.7L or more by ~8 Nov; **operator decided to build now.** Ops checked 5 "fully-doubled"
+orders in Zoho: **all genuine splits** (e.g. `HR/26/151789` 50 + 50 = 100 ordered), so **summing is right**.
 
 **The fix:** merge rows by `(order, sku, ds, date)`, summing qty, in one function called right after
 `applyAttribution` in `runEngine`. Stored rows, sync and crons stay untouched, and both `toTargets` writers get it.
-- **Normalise the order ref first:** split on `,`, trim, dedupe, so **any** repeat count collapses. 91
-  refs (312 rows, since July) repeat one order: 88 twice, 3 **three times** (`HR/26/127245`). Likely a
-  Zoho/Shopify sync quirk; 0 combine different orders. Test 2× and 3×. Unnormalised, a split whose invoices carry `X` and `X,X` won't merge (`HR/26/154685`).
+- **Normalise the order ref first:** split on `,`, trim, dedupe. 91 refs since July repeat one order (88 twice,
+  3 **three times**, e.g. `HR/26/127245`); 0 combine different orders. Test 2× and 3×. Unnormalised, `X` and
+  `X,X` on one split won't merge (`HR/26/154685`).
 - ⚠ **Same-date only**, and ⚠ **never drop identical lines as duplicates**. See the script header.
-- Blank refs (13 rows on 10-05): leave unmerged. Measured identical result either way.
-- Open: whether the DC-only branch merges across DSs. Also relabel `inputSummary.js` "invoices" → "orders".
+- Blank refs: leave unmerged (identical result). Open: does the DC-only branch merge across DSs? Also relabel
+  `inputSummary.js` "invoices" → "orders".
 
-**Build plan:** a test pinning "split order = unsplit order" (ABQ and FUF) → a frozen-snapshot
-before/after replay (`snapshot-engine-inputs` + `dump-engine-output` + `diff-engine-dumps`), expecting
-about the POST shape above → the operator reviews it → push outside the 14:30 / 20:30 IST TO windows.
+**Build plan:** test "split = unsplit" (ABQ, FUF) → frozen-snapshot replay (snapshot + dump + diff scripts) →
+operator review → push outside TO windows.
