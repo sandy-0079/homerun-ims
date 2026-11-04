@@ -4,6 +4,7 @@ import { partitionInactive, skipSetGrew, type SkippedLine } from '../_shared/toL
 import {
   splitParts, partReason, linesFingerprint, findCreatedParts, stampSnapshotParts, type CreatedPart,
 } from '../_shared/toSplit.ts'
+import { keepRecentDays } from '../_shared/snapshotRetention.ts'
 
 // ─── create-to — creates Zoho Transfer Orders as DRAFTS, and nothing else ─────
 // Spec: homerun-to/docs/superpowers/specs/2026-07-10-task6b-draft-to-design.md
@@ -79,7 +80,15 @@ const TO_TYPE_VALUE = 'Mid Mile'      // must match the dropdown option EXACTLY
 // ~12 TOs/day raised in two windows => roughly 2 refreshes/day.
 const ITEM_MAP_TTL_HOURS = 0.5
 const AUDIT_KEEP = 200
-const SNAPSHOT_KEEP = 48 // ~8 batches × 6 DSes — comfortably covers the last-2 compare
+// Fill snapshots are kept by DAY, not by count (2026-11, grouped TOs): the TO tool
+// now raises a DS's restock as up to three group TOs (Bags / Ply / Bin Items), so a
+// day can hold ~24 snapshots and a count of 48 would cover only ~2 days. A
+// snapshot's day = `day` (grouped, operating day 08:00→08:00 IST) else `date`
+// (older Afternoon/Evening batches). Rule + hard cap: _shared/snapshotRetention.ts.
+const SNAPSHOT_DAYS = 7
+// Group ids the TO tool sends (bags | ply | bin | all). Recorded on audit entries
+// so the tool can show "already raised today" per group; anything else is dropped.
+const TO_GROUP_RE = /^(bags|ply|bin|all)$/
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -320,6 +329,7 @@ Deno.serve(async (req) => {
     // definitely exists and is not created again. Only consulted for a split TO.
     const requestId = typeof body.requestId === 'string' && body.requestId.trim()
       ? body.requestId.trim().slice(0, 64) : undefined
+    const group = typeof body.group === 'string' && TO_GROUP_RE.test(body.group) ? body.group : undefined
     const linesHash = linesFingerprint(lines)
     let created = new Map<number, CreatedPart>()
     if (multi && requestId) {
@@ -572,6 +582,7 @@ Deno.serve(async (req) => {
         transfer_order_id: to.transfer_order_id,
         transfer_order_number: to.transfer_order_number,
         ...(multi ? { requestId, linesHash, part: k, parts: nParts } : {}),
+        ...(group ? { group } : {}),
       })
       done.push({ part: k, parts: nParts, transfer_order_id: to.transfer_order_id,
         transfer_order_number: to.transfer_order_number, lineCount: r.partResolved.length, units })
@@ -588,7 +599,8 @@ Deno.serve(async (req) => {
     // audit, so an analytics write can NEVER block a TO). The client computes it
     // from its full plan (only the client knows Req vs Actual and the shortfall);
     // we just persist it. Dedupe by (ds, batchKey) so re-generating the same DS in
-    // a batch replaces its snapshot; keep the last SNAPSHOT_KEEP.
+    // a batch replaces its snapshot (a grouped batchKey is `day·group`, so a
+    // re-raised group replaces only its own); keep the last SNAPSHOT_DAYS days.
     // A split TO's snapshot is written ONCE, here, after every part exists — never
     // half a plan — with each SKU's part and every TO number (toSplit.ts).
     if (body.snapshot && typeof body.snapshot === 'object' && body.snapshot.ds === toDsId) {
@@ -602,7 +614,7 @@ Deno.serve(async (req) => {
         kept.unshift(snap)
         await supabase.from('params').upsert({
           id: 'toSnapshots',
-          payload: { entries: kept.slice(0, SNAPSHOT_KEEP) },
+          payload: { entries: keepRecentDays(kept, SNAPSHOT_DAYS) },
           updated_at: new Date().toISOString(),
         })
       } catch (e) { console.error('toSnapshots write failed (non-fatal):', e) }
