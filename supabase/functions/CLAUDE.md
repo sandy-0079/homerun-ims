@@ -509,6 +509,20 @@ The TO tool itself is a separate repo (`~/Documents/GitHub/homerun-to`, authorit
 Zoho transfer orders. It is the only **write** path into Zoho in this project, so its
 failure modes are ops-visible immediately.
 
+**Grouped TOs — DEPLOYED 2026-11-04, `create-to` v15 → v16** (`f477de9`; anon → 401 and
+preflight 200 re-verified). The TO tool now raises a DS's restock as up to three TOs a day
+(Bags / Ply / Bin Items, or All groups). Two server changes, nothing else:
+- **Snapshot retention is by DAY:** `keepRecentDays(kept, SNAPSHOT_DAYS = 7)`
+  (`_shared/snapshotRetention.ts`, tested) replaces `slice(0, SNAPSHOT_KEEP = 48)` — 48 entries
+  would cover ~2 days at up to 24 snapshots/day. Day = `day` (grouped, operating day
+  08:00→08:00 IST) else `date` (old batches); keeps the 7 most recent days *that have
+  snapshots*; hard cap 400 entries. Row ~1.3 MB at deploy; expected ~2–2.5 MB at steady state.
+- **Audit entries carry `group`** (`bags|ply|bin|all`, regex-validated; anything else dropped)
+  so the tool can show "already raised today" per group.
+- Snapshot dedupe is unchanged — still the client's `(ds, batchKey)`; a grouped batchKey is
+  `day·group`, so a re-raised group replaces only its own snapshot. The Reason text
+  (`… - Bags`) is composed client-side and passed in `reason`, as before.
+
 **⚠⚠ Split TOs (`_shared/toSplit.ts`) — DEPLOYED 2026-10-01, `create-to` v14 → v15, prod-verified:
 1,342-line DS07 plan → TO-07229 + TO-07230 (671 + 671, ~8 s apart; deleted after).** Zoho refuses a TO over its line cap —
 `400 Looks like the key line_items has exceeded the size`, nothing created. First hit 2026-09-30
