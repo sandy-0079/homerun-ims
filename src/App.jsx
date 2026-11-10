@@ -2658,14 +2658,24 @@ const zeroSaleLists = useMemo(
   const hydTabShown=tabForCity(hydTab,HYD_TABS);
   // Waits for Bangalore params + own-row configs (networkConfigs is null until loaded),
   // because Hyderabad's defaults are copied from them. Loads once per page.
+  // Seeds from `savedParams` (the APPLIED Bangalore params), so unapplied Logic
+  // Tweaker edits never leak into Hyderabad's copy. If the own-row configs never
+  // arrive (loadParamConfigRows threw), it proceeds after 10s with Bangalore plywood
+  // capacities treated as empty — Hyderabad uses its own defaults — and says so,
+  // rather than showing "Loading Hyderabad…" forever.
   const hydLoadStarted=useRef(false);
   useEffect(()=>{
-    if(city!=="hyd"||hydLoadStarted.current||networkConfigs===null) return;
-    hydLoadStarted.current=true;
-    loadHydState(params,{plywoodNetworkConfig:params.plywoodNetworkConfig,networkConfigs})
-      .then(setHydState)
-      .catch(e=>setHydState({floors:{},floorsUploadedAt:null,hydParams:null,hydPlywood:null,stored:{params:false,plywood:false},loadErrors:[String(e?.message||e)]}));
-  },[city,networkConfigs,params]);
+    if(city!=="hyd"||hydLoadStarted.current) return;
+    const start=(nc,note)=>{
+      hydLoadStarted.current=true;
+      loadHydState(savedParams,{plywoodNetworkConfig:savedParams.plywoodNetworkConfig,networkConfigs:nc})
+        .then(st=>setHydState(note?{...st,loadErrors:[...(st.loadErrors||[]),note]}:st))
+        .catch(e=>setHydState({floors:{},floorsUploadedAt:null,hydParams:null,hydPlywood:null,stored:{params:false,plywood:false},loadErrors:[String(e?.message||e),...(note?[note]:[])]}));
+    };
+    if(networkConfigs!==null){start(networkConfigs);return;}
+    const t=setTimeout(()=>{if(!hydLoadStarted.current)start({},"Bangalore plywood config not loaded — Hyderabad plywood uses defaults");},10000);
+    return ()=>clearTimeout(t);
+  },[city,networkConfigs,savedParams]);
   const hydRun=useMemo(
     ()=>city==="hyd"&&hydState
       ?safeHydRun(()=>runHydEngine({invoiceData,skuMaster,priceData,deadStock:deadStock instanceof Set?deadStock:new Set(deadStock||[]),floors:hydState.floors,hydParams:hydState.hydParams,hydPlywood:hydState.hydPlywood}))
@@ -2675,7 +2685,9 @@ const zeroSaleLists = useMemo(
   useEffect(()=>{document.title=CITY_THEME[city].title;},[city]);
   // Never applies anything: unsaved Bangalore Logic Tweaker changes block the switch.
   const switchCity=()=>{
-    if(changedCount>0){alert("Apply or discard your Bangalore Logic Tweaker changes first.");return;}
+    // `hasChanges` (full params diff, as handleTabClick uses) — `changedCount` alone misses
+    // keys such as pincodeConfig and the plywood own-row configs.
+    if(hasChanges||changedCount>0){alert("Apply or discard your Bangalore Logic Tweaker changes first.");return;}
     const next=otherCity(city);
     if(next==="hyd") setHydTab(tabForCity(tab,HYD_TABS));
     else setTab(tabForCity(hydTabShown,NAV_TABS));
