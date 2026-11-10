@@ -1027,7 +1027,7 @@ const DateOrderChart = ({ data, color, minVal, maxVal }) => {
   );
 };
 
-function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRange, priceData,
+export function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRange, priceData,
   skuId, setSkuId, searchVal, setSearchVal,
   period, setPeriod, dateFrom, setDateFrom, dateTo, setDateTo,
   dsView, setDsView }) {
@@ -1406,7 +1406,7 @@ function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRang
   );
 }
 
-function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange,
+export function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange,
   period, setPeriod, dateFrom, setDateFrom, dateTo, setDateTo,
   store, setStore, drill, setDrill, onNavigateToSKU }) {
 
