@@ -16,6 +16,7 @@ import HydPlywoodPanel from "./HydPlywoodPanel.jsx";
 import StockHealthTab from "../StockHealthTab.jsx";
 import HydStockNotice from "./HydStockNotice.jsx";
 import { HYD_DS_LIST } from "../../city.js";
+import { hydReadFailed } from "../../hyd/hydStore.js";
 
 // Sync Now for Pati: its own group, never a branch added to a Bangalore group.
 const HYD_SYNC_GROUPS = [["HYDS01"]];
@@ -34,6 +35,9 @@ export default function HydShell(props) {
   if (!hydState) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
   return (
     <div>
+      {hydReadFailed(hydState) && (
+        <div style={banner("error")}><b>Hyderabad data could not be read — downloads and saves are disabled until reload.</b></div>
+      )}
       <Errors hydState={hydState} hydRun={hydRun} />
       {tab === "overview" && <HydOverview {...props} />}
       {tab === "skuDetail" && <HydSkuDetail {...props} />}
@@ -50,7 +54,7 @@ export default function HydShell(props) {
         <StockHealthTab results={hydRun?.results ?? null} skuMaster={props.skuMaster}
           stockData={props.stockData || {}} stockDataAccounting={props.stockDataAccounting || {}}
           uploadedAtPerDS={props.uploadedAtPerDS}
-          dsList={HYD_DS_LIST} includeDC={false} syncGroups={HYD_SYNC_GROUPS}
+          dsList={HYD_DS_LIST} includeDC={false} syncGroups={HYD_SYNC_GROUPS} syncOrders={false}
           defaultDS="HYDS01" filePrefix="Hyderabad_" />
       )}
     </div>

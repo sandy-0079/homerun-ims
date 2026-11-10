@@ -202,17 +202,26 @@ function fmtDate(d) {
   } catch { return d; }
 }
 
+// Kicks off sync-orders alongside Sync Now's first stock group. sync-orders
+// rewrites Bangalore's team_data/global row and covers no Hyderabad store, so a
+// city that passes syncOrders={false} must never invoke it. Never rejects.
+export function startOrdersSync(client, syncOrders) {
+  if (!syncOrders) return Promise.resolve();
+  return client.functions.invoke('sync-orders').catch(() => {});
+}
+
 // Optional props (Hyderabad). Bangalore passes NONE of them, and each default is
 // exactly the constant this tab used before they existed:
 //   dsList     — store tabs, in order (DS_LIST)
 //   includeDC  — the DC tab and every DC-derived element: DC Stock column, TO
 //                pills/filter/columns, DS Req Covered, Reverse TO list (true)
 //   syncGroups — Sync Now's branch groups (SYNC_GROUPS, which mirrors the crons)
+//   syncOrders — Sync Now also runs sync-orders (true; Hyderabad passes false)
 //   defaultDS  — the tab selected on load ("DS01")
 //   filePrefix — prepended to both CSV filenames ("")
 export default function StockHealthTab({
   results, skuMaster, stockData, stockDataAccounting, uploadedAtPerDS, onSyncComplete, poData, toData,
-  dsList = DS_LIST, includeDC = true, syncGroups = SYNC_GROUPS, defaultDS = "DS01", filePrefix = "",
+  dsList = DS_LIST, includeDC = true, syncGroups = SYNC_GROUPS, syncOrders = true, defaultDS = "DS01", filePrefix = "",
 }) {
   const [selectedDS,  setSelectedDS]  = useState(defaultDS);
   const [selectedCat, setSelectedCat] = useState(null);
@@ -302,7 +311,7 @@ export default function StockHealthTab({
       } catch { /* lease unavailable — degrade to a session-less but still-paced sync */ }
 
       // Orders alongside the first stock group (different Zoho endpoints/rate bucket).
-      const orders = supabase.functions.invoke('sync-orders').catch(() => {});
+      const orders = startOrdersSync(supabase, syncOrders);
 
       // Stock: cron groups with a 90s minimum gap between group starts; cooldown
       // skips advance immediately. Failed groups get one paced retry at the end.
@@ -340,7 +349,7 @@ export default function StockHealthTab({
       try { setSyncLockRow(await readSyncLock()); } catch { /* next poll corrects */ }
       setSyncing(false);
     }
-  }, [syncing, onSyncComplete, readSyncLock, syncGroups]);
+  }, [syncing, onSyncComplete, readSyncLock, syncGroups, syncOrders]);
 
   // ── DS-level summary (tab EC badges) ───────────────────────────────────────
   const dsSummary = useMemo(() => {
@@ -834,7 +843,9 @@ export default function StockHealthTab({
             {syncMsg && (
               <span style={{ fontSize: 10, color: "#B45309", whiteSpace: "nowrap" }}>{syncMsg}</span>
             )}
-            <button
+            {/* Hidden while a no-DC store has never synced: its stock sync is not
+                enabled yet, so the pending note above the table says so instead. */}
+            {!stockPending && <button
               onClick={handleSyncNow}
               disabled={syncing || inCooldown || !!foreignSync}
               title={foreignSync
@@ -853,7 +864,7 @@ export default function StockHealthTab({
             >
               {syncing ? "Syncing…" : foreignSync ? `⏳ ${sourceLabel(foreignSync.source)} syncing…`
                 : inCooldown ? `Synced ${minsAgo}m ago` : "↻ Sync Now"}
-            </button>
+            </button>}
           </div>
         </div>
 

@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("../supabase.js", () => ({ supabase: {}, READ_ONLY: true }));
 
-import StockHealthTab from "./StockHealthTab.jsx";
+import StockHealthTab, { startOrdersSync } from "./StockHealthTab.jsx";
 import { HYD_DS_LIST } from "../city.js";
 
 const meta = (name, inventorisedAt) => ({ name, category: "Tiles", brand: "X", status: "Active", inventorisedAt });
@@ -36,7 +36,7 @@ const renderBlr = () => renderToStaticMarkup(
 const renderHyd = (uploadedAtPerDS = {}) => renderToStaticMarkup(
   <StockHealthTab results={hydResults} skuMaster={{}} stockData={blrStock} stockDataAccounting={{}}
     uploadedAtPerDS={uploadedAtPerDS} dsList={HYD_DS_LIST} includeDC={false}
-    syncGroups={[["HYDS01"]]} defaultDS="HYDS01" filePrefix="Hyderabad_" />,
+    syncGroups={[["HYDS01"]]} syncOrders={false} defaultDS="HYDS01" filePrefix="Hyderabad_" />,
 );
 
 describe("StockHealthTab — Bangalore (no new props)", () => {
@@ -49,6 +49,16 @@ describe("StockHealthTab — Bangalore (no new props)", () => {
     expect(html).toContain("All TO Status");
     expect(html).toContain("Download Reverse TO list");
     expect(html).not.toContain("HYDS01");
+  });
+
+  it("keeps Sync Now", () => {
+    expect(renderBlr()).toContain("Sync Now");
+  });
+
+  it("Sync Now still kicks off sync-orders by default", async () => {
+    const invoke = vi.fn().mockResolvedValue({});
+    await startOrdersSync({ functions: { invoke } }, true);
+    expect(invoke).toHaveBeenCalledWith("sync-orders");
   });
 });
 
@@ -78,5 +88,16 @@ describe("StockHealthTab — Hyderabad (one store, no DC)", () => {
 
   it("drops the note once HYDS01 has synced", () => {
     expect(renderHyd({ HYDS01: "2026-11-10T00:00:00Z" })).not.toContain("Live stock for HYDS01");
+  });
+
+  it("hides Sync Now while HYDS01 has never synced, and shows it once it has", () => {
+    expect(renderHyd()).not.toContain("Sync Now");
+    expect(renderHyd({ HYDS01: "2026-11-10T00:00:00Z" })).toContain("Sync Now");
+  });
+
+  it("syncOrders=false never invokes sync-orders (a Bangalore row)", async () => {
+    const invoke = vi.fn().mockResolvedValue({});
+    await startOrdersSync({ functions: { invoke } }, false);
+    expect(invoke).not.toHaveBeenCalled();
   });
 });
