@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { getZohoToken } from '../_shared/zohoToken.ts'
 import { zohoFetchWithRetry } from '../_shared/zohoClient.ts'
+import { resolveBranches, EXPLICIT_ONLY } from '../_shared/stockBranches.ts'
 
 // ─── Branch ID → DS mapping (Zoho Inventory org 60075214606) ─────────────────
 const BRANCHES: Record<string, string> = {
@@ -16,6 +17,8 @@ const BRANCHES: Record<string, string> = {
   // here moves no target — it only lets stock/PO/TO data accumulate from day one.
   DS07: '3915979000030598119',
   DS08: '3915979000030600296',
+  // Hyderabad. Zoho location name: "HYDS01 Pati". EXPLICIT_ONLY: never in an empty-body sync.
+  HYDS01: '3915979000169622634',
 }
 
 const COOLDOWN_MINS = 15
@@ -179,10 +182,7 @@ Deno.serve(async (req) => {
       return json({ ok: true })
     }
 
-    const requested = Array.isArray(body.branches) ? body.branches : []
-    const branchesToSync = requested.length > 0
-      ? requested.filter((ds: string) => BRANCHES[ds])
-      : Object.keys(BRANCHES)
+    const branchesToSync = resolveBranches(body.branches, BRANCHES, EXPLICIT_ONLY)
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId : null
 
     // 1. Read current payload (cooldown check + base for merge)
