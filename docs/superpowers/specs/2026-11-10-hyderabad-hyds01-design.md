@@ -195,6 +195,22 @@ store list comes from that row's keys, and it looks up stock only for those stor
 button sends explicit branch lists, so the `stock-sync-5` change doesn't affect what it pulls. The
 builder **reads** `homerun-to` to confirm each of these and records the result here.
 
+**Verified 2026-11-10 (read only, `homerun-to` at `5955b19`; nothing there was changed):**
+- **Store list from `toTargets`.** `dsListFromTargets` (`src/constants.js:23`) unions the `perDS`
+  keys of every target and filters them through `DS_ORDER` (`src/constants.js:18`, DS01–DS08), so a
+  key not in `DS_ORDER` can never become a store; `src/App.jsx:294` builds `DS_LIST` from it. On the
+  IMS side `toTargets` is `buildToTargets(…, liveDsList(params))` (`src/App.jsx:2486`,
+  `api/run-engine.js:132`), and `liveDsList` derives from `DS_LIST`, which has no HYDS01 — so HYDS01
+  is excluded twice over.
+- **Stock only for those stores.** The TO plan reads `stockDataAccounting`/`stockData` per SKU of
+  `targets`, per store of `DS_LIST`, plus `DC` (`src/App.jsx:661-669`); freshness and the alarm are
+  judged over `TRADING_LOCS = ["DC", ...DS_LIST]` (`src/App.jsx:609-614`, `:640`). A HYDS01 key in
+  `stockData` / `stockUploadedAtPerDS` is never read.
+- **Pull button sends explicit branches.** `PULL_GROUPS` is `[["DC","DS01"], …, ["DS08"]]`
+  (`src/sync.js:25`, pinned by `src/sync.test.js:330`), and each group is invoked as
+  `{ branches: g.branches }` (`src/sync.js:206`). The `stock-sync-5` cron change does not reach it, and
+  `PULL_GROUPS` stays `["DS08"]` — adding HYDS01 would make the DC team's pull fetch Pati stock.
+
 ## 4. Architecture
 
 ### 4.1 Store universe

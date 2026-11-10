@@ -179,16 +179,8 @@ Listed so they are decisions, not omissions.
   ⚠ **Dropping from `skuMaster` on absence from the Zoho pull is a firm NO** — `assessCoverage` builds
   `knownSkus` from master keys, so it would push `unknownPct` past 1% and make **`sync-invoices` refuse
   to write**. One sync silently breaking another.
-- **Aligning the `Purchase` dropdown to `Yes`/`No`.** It is `ON`/`OFF` while `Move` is `Yes`/`No`. The
-  code accepts both deliberately (no dependency on a UI setting staying put), so this is cosmetic —
-  but two vocabularies on adjacent fields is a trap for whoever maintains them.
-- **A `Sell` flag, if the Shopify Draft signal is ever synced.** Today "we stopped selling this" lives
-  in Shopify, and with two fields it has to be written as *two* values (`N/N`) — a lossy encoding of
-  one fact. Don't build the field before the signal exists.
-- **"Sold at the DC *and* the DSes."** `Y/Y` understates the DC once the DC can sell: the DC target is a
-  pure replenishment buffer with no allowance for the DC's own retail sales, and those `DC01` rows are
-  today either reassigned to a DS by attribution (inflating it) or dropped by `tags90`. The precedent
-  for fixing it exists — `dcDetails.dsSeedAug` adds a synthetic rate into the DC calc.
+- Three lesser deferrals — the `Purchase` dropdown's `ON`/`OFF` vocabulary, a `Sell` flag, and "sold at
+  the DC *and* the DSes" — verbatim in `docs/CHANGELOG-ARCHIVE.md`, "Trimmed 2026-11-10".
 
 ### 35. Remove the Manual Overrides tab — decide editor-only vs the whole feature
 Queued 2026-09-17 alongside the tab retirement, to be looked at **before** item 36.
@@ -307,12 +299,17 @@ Spec: `docs/superpowers/specs/2026-11-10-hyderabad-hyds01-design.md`.
   Apply → `sync-stock` (diff `_shared/` vs deployed, named deploy, one `{"branches":["HYDS01"]}` call,
   then `supabase/staged/` SQL into `migrations/` with a fresh timestamp) → optional `sync-orders`
   `'HYDS01 Pati': 'HYDS01'`.
-- **⚠ In the same change as the cron:** `SYNC_GROUPS` (`StockHealthTab`) and homerun-to's
-  `PULL_GROUPS` still say `["DS08"]` and must become `["DS08","HYDS01"]`.
+- **⚠ Only the `stock-sync-5` cron changes for Pati stock.** Leave `SYNC_GROUPS` (`StockHealthTab`)
+  and homerun-to's `PULL_GROUPS` as `["DS08"]`: adding HYDS01 there makes Bangalore Sync Now and the
+  DC team's TO-tool pull fetch Pati stock, and needs a homerun-to deploy (spec §3.9 rules it out).
+  Pati has its own Sync Now group `["HYDS01"]` in the Hyderabad view (stock only, never `sync-orders`;
+  hidden until HYDS01 has synced once).
+- **Deliberate for now:** Bangalore's Zero Sale list and Data Health read raw `invoiceData`, HYDS01
+  rows included — same as `main`.
 - **Before the Engine flip:** a demand-freshness gate on the Hyderabad PO (none today; floors-only
   reads no demand); a Zoho "HYD Purchase" field — Bangalore's `Purchase = No` would zero 541
   engine-only SKUs at Pati (2026-11-10, spec §3.6). Later: nightly Pati floors-sheet sync; digest block.
-- Minors: `isActive` `status || "Active"` vs the engine's `??` · `saveHydPlywood` writes row 2 after
-  row 1 failed; a load error reads as "missing" · Pati Sync Now shares Bangalore's cooldown
-  (`uploadedAtPerDS`) · unfloored Supplier SKUs show 0/0 in Pati Stock Health · Pati floor parser: a
-  duplicate header wins silently, SKUs not case-normalised.
+- Minors: Pati Sync Now shares Bangalore's cooldown (`uploadedAtPerDS`) · unfloored Supplier SKUs
+  show 0/0 in Pati Stock Health · Pati floor parser: a duplicate header wins silently, SKUs not
+  case-normalised. (Fixed in final review: `isActive` `??`, `saveHydPlywood` short-circuit, a failed
+  read is no longer "missing" — it disables Hyderabad downloads and saves.)

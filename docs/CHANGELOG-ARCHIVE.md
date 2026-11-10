@@ -713,6 +713,19 @@ and by the TO tool's "Pull fresh stock" (busy ~13:45–14:30, ~19:45–20:30 IST
 
 ---
 
+### From Open Work #31 — three lesser Purchase/Move deferrals (moved during the HYDS01 final review)
+
+- **Aligning the `Purchase` dropdown to `Yes`/`No`.** It is `ON`/`OFF` while `Move` is `Yes`/`No`. The
+  code accepts both deliberately (no dependency on a UI setting staying put), so this is cosmetic —
+  but two vocabularies on adjacent fields is a trap for whoever maintains them.
+- **A `Sell` flag, if the Shopify Draft signal is ever synced.** Today "we stopped selling this" lives
+  in Shopify, and with two fields it has to be written as *two* values (`N/N`) — a lossy encoding of
+  one fact. Don't build the field before the signal exists.
+- **"Sold at the DC *and* the DSes."** `Y/Y` understates the DC once the DC can sell: the DC target is a
+  pure replenishment buffer with no allowance for the DC's own retail sales, and those `DC01` rows are
+  today either reassigned to a DS by attribution (inflating it) or dropped by `tags90`. The precedent
+  for fixing it exists — `dcDetails.dsSeedAug` adds a synthetic rate into the DC calc.
+
 ## Closed open-work items
 
 Moved **verbatim** out of `docs/OPEN-WORK.md` on 2026-09-28. They were kept there "for the reasoning",
