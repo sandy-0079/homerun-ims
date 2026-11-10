@@ -58,9 +58,25 @@ const DownloadCard=React.memo(({title,accent,blurb,shape,cta,footnote,primary,di
 /**
  * Tool Output Download tab — moved verbatim out of App.jsx. App still owns the state
  * (packsAt and its on-open fetch, the freshness gate, zero-sale lists) and passes it in.
+ *
+ * Hyderabad renders the same tab with three extra props. Every default is Bangalore's
+ * behaviour, and Bangalore's call site passes none of them:
+ * - `dsList` (default DS_LIST): the stores in the DS Level file.
+ * - `includeDC` (default true): false hides the DC card and Inner Case Pack - Mid Mile
+ *   (a DC→DS pack; a city with no DC has neither).
+ * - `poCard` (default none): replaces the PO card's file — `{ title, note, columns,
+ *   build: () => csv|null, filename: () => string }`. Bangalore's frozen PO path is
+ *   untouched when it is absent.
+ * - `downloadsDisabled` (default false): disables every card (Hyderabad: a failed read).
+ * The Zero Sale card renders only when `zeroSaleLists` is given (Bangalore always gives it).
  */
 export default function ToolOutputTab({ results, skuMaster, params, priceData, coreOverrides, provRaw,
-  outputDemandThrough, outputFreshness, zeroSaleLists, packsAt, setPacksAt, fmtStamp }) {
+  outputDemandThrough, outputFreshness, zeroSaleLists, packsAt, setPacksAt, fmtStamp,
+  dsList = DS_LIST, includeDC = true, poCard = null, downloadsDisabled = false }) {
+  // ⚠ Bangalore's DS Level card says "15 columns" but writes 3 + 2×8 = 19 (stale since
+  // DS07/DS08). Kept verbatim for Bangalore so this change renders byte-identically;
+  // other store lists get the computed count.
+  const dsLevelColumns = dsList === DS_LIST ? 15 : 3 + dsList.length * 2;
   return (
           !results?<div style={{textAlign:"center",padding:80,color:HR.muted,fontSize:13}}>Loading data, please wait...</div>:(
             <div style={{display:"flex",flexDirection:"column",height:"100%",gap:12}}>
@@ -102,15 +118,21 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                     POs rather than an error. Anything new goes AFTER DS06 Max. */}
                 <DownloadCard
                   primary
-                  title="PO Team Download"
+                  title={poCard?poCard.title:"PO Team Download"}
                   accent="#F97316"
-                  blurb={<>Min/Max targets for raising POs. One row per SKU with <b>DC and DS01–DS06 side by side</b>, plus Inventorised At and Status so the sheet can filter out Supplier and inactive items.</>}
-                  shape={`${buildPoCsvHeaders(liveDsList(params)).length} columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
-                  cta="⬇ PO Team Download"
+                  blurb={poCard?poCard.note:<>Min/Max targets for raising POs. One row per SKU with <b>DC and DS01–DS06 side by side</b>, plus Inventorised At and Status so the sheet can filter out Supplier and inactive items.</>}
+                  shape={`${poCard?poCard.columns:buildPoCsvHeaders(liveDsList(params)).length} columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
+                  cta={poCard?`⬇ ${poCard.title}`:"⬇ PO Team Download"}
                   footnote={outputDemandThrough?`demand through ${outputDemandThrough}`:null}
                   hint="Filter on Status = Active and Inventorised At ≠ Supplier in your sheet."
-                  disabled={!results||outputFreshness.blocked}
+                  disabled={!results||outputFreshness.blocked||downloadsDisabled}
                   onClick={async ()=>{
+                    if(poCard){
+                      const csv=poCard.build();
+                      if(!csv){alert("No SKU Master loaded — nothing to download.");return;}
+                      downloadCsvFile(poCard.filename(),csv);
+                      return;
+                    }
                     const csv=buildPoTargetsCsv({skuMaster,results,coreOverrides,dsList:liveDsList(params)});
                     if(!csv){alert("No SKU Master loaded — nothing to download.");return;}
 
@@ -130,14 +152,14 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                   title="Tool Output — DS Level"
                   accent={HR.green}
                   blurb="Per-store Min/Max only, no DC column. Manual overrides are applied, so this matches what the stores are actually stocked to."
-                  shape={`15 columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
+                  shape={`${dsLevelColumns} columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
                   cta="⬇ Download DS Level"
-                  disabled={!results||outputFreshness.blocked}
+                  disabled={!results||outputFreshness.blocked||downloadsDisabled}
                   onClick={()=>{
-                    const hdr=["Item Name","SKU","Category",...DS_LIST.flatMap(d=>[`${d} Min`,`${d} Max`])].join(",");
+                    const hdr=["Item Name","SKU","Category",...dsList.flatMap(d=>[`${d} Min`,`${d} Max`])].join(",");
                     const rows=Object.values(skuMaster).map(s=>{
                       const r=results[s.sku];
-                      const dsCols=DS_LIST.flatMap(d=>{
+                      const dsCols=dsList.flatMap(d=>{
                         const st=r?.stores[d]||{min:0,max:0};
                         const ov=coreOverrides[s.sku]?.[d];
                         const min=ov?Math.max(st.min,ov.min):st.min;
@@ -156,13 +178,13 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                 />
 
                 {/* ── Tool Output DC ── */}
-                <DownloadCard
+                {includeDC&&(<DownloadCard
                   title="Tool Output — DC"
                   accent="#0077A8"
                   blurb="DC Min/Max only. Note DS-inventorised and Supplier SKUs read 0/0 here by design — they never flow through the DC."
                   shape={`5 columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
                   cta="⬇ Download DC"
-                  disabled={!results||outputFreshness.blocked}
+                  disabled={!results||outputFreshness.blocked||downloadsDisabled}
                   onClick={()=>{
                     const hdr=["Item Name","SKU","Category","DC Min","DC Max"].join(",");
                     const rows=Object.values(skuMaster).map(s=>{
@@ -177,7 +199,7 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                     });
                     downloadCsvFile("IMS_Output_DC.csv",[hdr,...rows].join("\n"));
                   }}
-                />
+                />)}
 
                 {/* ── SKU Master ── */}
                 <DownloadCard
@@ -186,7 +208,7 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                   blurb="The catalogue as the model sees it — category, brand and status, plus the Price Tag and Top-N volume tag the engine assigned to each SKU."
                   shape={`8 columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
                   cta="⬇ Download SKU Master"
-                  disabled={!results||outputFreshness.blocked}
+                  disabled={!results||outputFreshness.blocked||downloadsDisabled}
                   onClick={()=>{
                     const hdr=["Item Name","Inventorised At","SKU","Category","Status","Purchase","Move","Brand","Price Tag","Top N"].join(",");
                     const rows=Object.values(skuMaster).map(s=>{
@@ -231,13 +253,13 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                     params the model was last run with. It is gated on the same banner
                     anyway: one live button under "downloads are disabled" reads as a
                     bug, and the gate costs nothing here. */}
-                <DownloadCard
+                {zeroSaleLists&&(<DownloadCard
                   title="Zero Sale SKUs"
                   accent="#DC2626"
                   blurb={<>Active SKUs that sold <b>nothing, anywhere</b>, across the trailing window — a delisting shortlist. Supplier, Dead Stock and DC-only SKUs are all kept in; filter them in the sheet on <b>Inventorised At</b> and <b>Status</b>. ⚠ The master holds no created-date, so a <b>SKU added last week looks identical to one dead for a year</b> — check age before delisting.</>}
                   shape={`${ZERO_SALE_CSV_HEADERS.length} columns · ${zeroSaleLists.windows.map(w=>w.available?w.skus.length.toLocaleString():"—").join(" / ")} SKUs`}
                   footnote={zeroSaleLists.activeCount?`of ${zeroSaleLists.activeCount.toLocaleString()} active SKUs`:null}
-                  disabled={!results||outputFreshness.blocked}
+                  disabled={!results||outputFreshness.blocked||downloadsDisabled}
                   actions={zeroSaleLists.windows.map(w=>({
                     label:`${w.days} Days`,
                     // ⚠ RETENTION_DAYS = 90 trims the invoice row nightly, so L90D sits
@@ -257,7 +279,7 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                       downloadCsvFile(zeroSaleFilename(w),csv);
                     },
                   }))}
-                />
+                />)}
 
                 {/* ── Inner Case Pack - Mid Mile ─────────────────────────────────────
                     Reads params/innerCasePacks, which the TO tool (homerun-to) writes from
@@ -265,14 +287,14 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                     so a tab open for hours still downloads what the TO tool is using now.
                     Not engine output; gated on the banner only so no button stays live
                     under "downloads are disabled". See src/refDataCsv.js. */}
-                <DownloadCard
+                {includeDC&&(<DownloadCard
                   title="Inner Case Pack - Mid Mile"
                   accent="#0F766E"
                   blurb={<>The inner case pack each SKU ships in from DC. The TO tool rounds every transfer up to a whole pack. SKUs not in the team&apos;s sheet read <b>1</b> — exactly what the TO tool applies to them.</>}
                   shape={`${INNER_CASE_PACK_CSV_HEADERS.length} columns · ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
                   cta="⬇ Download Inner Case Pack"
                   footnote={packsAt?`updated ${fmtStamp(packsAt)}`:null}
-                  disabled={outputFreshness.blocked}
+                  disabled={outputFreshness.blocked||downloadsDisabled}
                   onClick={async ()=>{
                     const row=await loadFromSupabase("params","innerCasePacks");
                     if(!row?.packs){alert("Could not load inner case packs — try again in a minute.");return;}
@@ -281,7 +303,7 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                     setPacksAt(row.refreshedAt??null);
                     downloadCsvFile(innerCasePackFilename(),csv);
                   }}
-                />
+                />)}
 
                 {/* ── Purchase Prices ────────────────────────────────────────────────
                     priceData = Zoho's 12-MONTH AVERAGE purchase price (sync-catalogue
@@ -294,7 +316,7 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                   shape={`${PURCHASE_PRICE_CSV_HEADERS.length} columns · ${countPricedSkus(skuMaster,priceData).toLocaleString()} priced of ${Object.keys(skuMaster).length.toLocaleString()} SKUs`}
                   cta="⬇ Download Purchase Prices"
                   footnote={provRaw.catalogueAt?`catalogue synced ${fmtStamp(provRaw.catalogueAt)}`:null}
-                  disabled={outputFreshness.blocked}
+                  disabled={outputFreshness.blocked||downloadsDisabled}
                   onClick={()=>{
                     const csv=buildPurchasePriceCsv({skuMaster,priceData});
                     if(!csv){alert("No SKU Master loaded — nothing to download.");return;}

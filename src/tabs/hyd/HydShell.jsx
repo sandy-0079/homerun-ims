@@ -7,10 +7,12 @@
 //     blrParams /* Bangalore's applied params, for "Reset to Bangalore" */,
 //     setTab /* switch the Hyderabad tab — Overview's SKU row opens SKU Detail */,
 //     OverviewTabComponent, SKUDetailTabComponent /* Bangalore's own screens, passed in
-//       by App.jsx: importing them from App here would be a circular import */ }
+//       by App.jsx: importing them from App here would be a circular import */,
+//     outputDemandThrough, outputFreshness, provRaw, fmtStamp /* App's Tool Output gate +
+//       footnotes: both cities compute from the same invoice row, so one gate serves both */ }
 import React, { useMemo, useState } from "react";
 import { card, note, banner } from "./hydStyles.js";
-import HydToolOutput from "./HydToolOutput.jsx";
+import ToolOutputTab from "../ToolOutputTab.jsx";
 import HydUploadPanel from "./HydUploadPanel.jsx";
 import HydLogicTweaker from "./HydLogicTweaker.jsx";
 import HydPlywoodPanel from "./HydPlywoodPanel.jsx";
@@ -18,12 +20,19 @@ import StockHealthTab from "../StockHealthTab.jsx";
 import HydStockNotice from "./HydStockNotice.jsx";
 import { HYD_DS_LIST, hydRowsOnly } from "../../city.js";
 import { hydReadFailed } from "../../hyd/hydStore.js";
+import { buildHydPoCsv, hydPoCsvFilename, HYD_PO_CSV_HEADERS } from "../../hyd/hydPoCsv.js";
+import { isFloorsOnly } from "../../hyd/hydParams.js";
+import { todayLocalIso } from "./hydStyles.js";
 
 // Sync Now for Pati: its own group, never a branch added to a Bangalore group.
 const HYD_SYNC_GROUPS = [["HYDS01"]];
 // SKU Detail's "not trading yet" gate: Bangalore's openingDSList names Bangalore
 // stores, so Hyderabad passes its own (empty) list. A constant keeps the memo stable.
 const HYD_OPENING = [];
+// Tool Output: Pati has no Bangalore manual overrides, and no Inner Case Pack card (no DC).
+const NO_OVERRIDES = {};
+const NOOP = () => {};
+const UNKNOWN_FRESHNESS = { state: "unknown", blocked: false, pageThrough: null, liveThrough: null };
 
 function Errors({ hydState, hydRun }) {
   const errors = [...(hydState?.loadErrors || []), ...(hydRun?.error ? [`engine: ${hydRun.error}`] : [])];
@@ -90,7 +99,29 @@ export default function HydShell(props) {
           dateTo={sdDateTo} setDateTo={setSdDateTo}
           dsView={sdDsView} setDsView={setSdDsView} />
       )}
-      {tab === "output" && <HydToolOutput {...props} />}
+      {tab === "output" && (
+        // Bangalore's Tool Output tab: Hyderabad PO (its own frozen 9-column file), DS Level
+        // for HYDS01, SKU Master, Purchase Prices. DC + Inner Case Pack hidden (no DC).
+        // Zero Sale is hidden (zeroSaleLists={null}): it is a delisting shortlist for the
+        // shared catalogue, so a Pati-only "sold nothing" list would put SKUs that sell in
+        // Bangalore on it, and its windows count the dates PRESENT in the rows, which for
+        // Pati rows are Pati's sale days, not calendar days.
+        <ToolOutputTab {...storeProps}
+          results={hydRun?.results ?? null} skuMaster={props.skuMaster || {}} params={hydState.hydParams}
+          priceData={props.priceData || {}} coreOverrides={NO_OVERRIDES}
+          provRaw={props.provRaw || {}} fmtStamp={props.fmtStamp || NOOP}
+          outputDemandThrough={props.outputDemandThrough ?? null}
+          outputFreshness={props.outputFreshness || UNKNOWN_FRESHNESS}
+          zeroSaleLists={null} packsAt={null} setPacksAt={NOOP}
+          downloadsDisabled={hydReadFailed(hydState)}
+          poCard={{
+            title: "PO — Hyderabad (HYDS01 Pati)",
+            note: <>Every master SKU with <b>Pati&apos;s Min/Max</b> and Hyderabad&apos;s effective Purchase decision. Targets only — no stock. Mode: <b>{isFloorsOnly(hydState.hydParams, "HYDS01") ? "Floors only" : "Engine"}</b>.</>,
+            columns: HYD_PO_CSV_HEADERS.length,
+            build: () => buildHydPoCsv({ skuMaster: props.skuMaster, hydResults: hydRun?.results, floors: hydState.floors, hydParams: hydState.hydParams }),
+            filename: () => hydPoCsvFilename(todayLocalIso()),
+          }} />
+      )}
       {tab === "upload" && <HydUploadPanel {...props} />}
       {tab === "logic" && <HydLogicTweaker {...props} />}
       {tab === "plywood" && <HydPlywoodPanel {...props} />}

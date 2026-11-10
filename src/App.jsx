@@ -3952,7 +3952,9 @@ const zeroSaleLists = useMemo(
             uploadedAtPerDS={stockUploadedAtPerDS}
             hydState={hydState} setHydState={setHydState} hydRun={hydRun}
             blrParams={savedParams} setTab={setHydTab}
-            OverviewTabComponent={OverviewTab} SKUDetailTabComponent={SKUDetailTab}/>
+            OverviewTabComponent={OverviewTab} SKUDetailTabComponent={SKUDetailTab}
+            outputDemandThrough={outputDemandThrough} outputFreshness={outputFreshness}
+            provRaw={provRaw} fmtStamp={fmtStamp}/>
         </div>
       )}
       {/* Toast notification */}

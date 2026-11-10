@@ -10,7 +10,15 @@ vi.mock("../../supabase.js", () => ({
   READ_ONLY: true, blockedWrites: () => [],
 }));
 
+// Wrap the real Tool Output tab so the props HydShell passes can be inspected.
+let toolOutputProps = null;
+vi.mock("../ToolOutputTab.jsx", async (importOriginal) => {
+  const real = (await importOriginal()).default;
+  return { default: (p) => { toolOutputProps = p; return real(p); } };
+});
+
 import HydShell from "./HydShell.jsx";
+import { buildHydPoCsv } from "../../hyd/hydPoCsv.js";
 // Bangalore's own screens, passed in as App.jsx does (spec §9).
 import { OverviewTab, SKUDetailTab } from "../../App.jsx";
 const SCREENS = { OverviewTabComponent: OverviewTab, SKUDetailTabComponent: SKUDetailTab };
@@ -145,6 +153,24 @@ describe("HydShell renders every tab", () => {
     expect(html).toContain("Apply (Hyderabad)");
   });
 
+  it("tool output: Bangalore's card grid without DC / Inner Case Pack / Zero Sale; PO is Hyderabad's file", () => {
+    const st = stateFor(true);
+    const html = render("output", st);
+    expect(html).toContain("Tool Output — DS Level");
+    expect(html).toContain("SKU Master");
+    expect(html).toContain("Purchase Prices");
+    expect(html).toContain("⬇ PO — Hyderabad (HYDS01 Pati)");
+    expect(html).toContain("9 columns · 3 SKUs");
+    expect(html).toContain("Floors only");
+    for (const absent of ["Tool Output — DC", "Inner Case Pack - Mid Mile", "Zero Sale SKUs", "PO Team Download"]) expect(html).not.toContain(absent);
+    expect(toolOutputProps.dsList).toEqual(["HYDS01"]);
+    expect(toolOutputProps.includeDC).toBe(false);
+    expect(toolOutputProps.poCard.filename()).toMatch(/^PO_Hyderabad_\d{4}-\d{2}-\d{2}\.csv$/);
+    const hydRun = runHydEngine({ invoiceData, skuMaster, priceData, deadStock: new Set(), floors: st.floors, hydParams: st.hydParams, hydPlywood: st.hydPlywood });
+    expect(toolOutputProps.poCard.build()).toBe(buildHydPoCsv({ skuMaster, hydResults: hydRun.results, floors: st.floors, hydParams: st.hydParams }));
+    expect(toolOutputProps.poCard.build().split("\n")[0]).toContain('"HYDS01 Min","HYDS01 Max","Purchase"');
+  });
+
   it("stock health: no Sync Now for Pati while its stock has never synced", () => {
     const html = render("stockHealth", stateFor(true));
     expect(html).not.toContain("Sync Now");
@@ -161,7 +187,7 @@ describe("HydShell — a failed Hyderabad read disables downloads and saves", ()
 
   it("healthy read: no banner, PO / Apply / Save enabled", () => {
     expect(render("output", healthy())).not.toContain("could not be read");
-    expect(disabledButton(render("output", healthy()), "PO_Hyderabad_")).toBe(false);
+    expect(disabledButton(render("output", healthy()), "PO — Hyderabad")).toBe(false);
     expect(disabledButton(render("logic", healthy()), "Apply \\(Hyderabad\\)")).toBe(false);
     expect(disabledButton(render("plywood", healthy()), "Save \\(Hyderabad\\)")).toBe(false);
   });
@@ -173,7 +199,7 @@ describe("HydShell — a failed Hyderabad read disables downloads and saves", ()
   });
 
   it("disables the PO download, Logic Tweaker Apply and Plywood Save", () => {
-    expect(disabledButton(render("output", failed()), "PO_Hyderabad_")).toBe(true);
+    expect(disabledButton(render("output", failed()), "PO — Hyderabad")).toBe(true);
     expect(disabledButton(render("logic", failed()), "Apply \\(Hyderabad\\)")).toBe(true);
     expect(disabledButton(render("plywood", failed()), "Save \\(Hyderabad\\)")).toBe(true);
   });
