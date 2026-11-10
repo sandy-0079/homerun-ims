@@ -7,8 +7,8 @@ import {
 import { HYD_HIDDEN_KEYS, isFloorsOnly } from "./hydParams.js";
 
 describe("strategy options", () => {
-  it("every option value is one Bangalore's Logic Tweaker offers (drift guard on App.jsx)", () => {
-    const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+  it("every option value is one Bangalore's Logic Tweaker offers (drift guard on LogicTweakerTab.jsx)", () => {
+    const app = readFileSync(new URL("../tabs/LogicTweakerTab.jsx", import.meta.url), "utf8");
     for (const { value } of HYD_STRATEGY_OPTIONS) {
       expect(app).toContain(`<option value="${value}">`);
     }
