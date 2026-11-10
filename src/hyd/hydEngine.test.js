@@ -252,6 +252,16 @@ describe("runHydEngine — rules for both modes", () => {
     expect(hydPurchaseOf("A", { skuMaster: { A: noStatus }, floors: {}, floorsOnly: false })).toBe("Yes");
   });
 
+  it("an empty-string status is inactive (runEngine's ?? rule, not ||)", () => {
+    const blank = sku("A", { status: "" });
+    const { results, report } = run({
+      inv: networkRows(), master: { A: blank }, floors: { A: { HYDS01: { min: 2, max: 4 } } },
+    });
+    expect(results.A.stores.HYDS01).toMatchObject({ min: 0, max: 0, logicTag: "Inactive in Zoho" });
+    expect(report.inactiveFloored).toEqual(["A"]);
+    expect(hydPurchaseOf("A", { skuMaster: { A: blank }, floors: { A: { HYDS01: { min: 1, max: 2 } } }, floorsOnly: false })).toBe("No");
+  });
+
   it("a SKU absent from the master gets no target and Purchase No", () => {
     const { results } = run({ inv: [...networkRows(), ...patiRows("GONE", 10)], master: { A: sku("A") }, hydParams: engineMode() });
     expect(results.GONE).toBeUndefined();

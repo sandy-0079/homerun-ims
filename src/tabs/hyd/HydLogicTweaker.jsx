@@ -4,7 +4,7 @@
 import React, { useMemo, useState } from "react";
 import { runHydEngine } from "../../hyd/hydEngine.js";
 import { isFloorsOnly } from "../../hyd/hydParams.js";
-import { saveHydParams } from "../../hyd/hydStore.js";
+import { saveHydParams, hydReadFailed } from "../../hyd/hydStore.js";
 import { flattenParamRows, setParamPath } from "../../hyd/hydParamRows.js";
 import {
   HYD_EDITOR_EXCLUDED_KEYS, HYD_NON_NETWORK_OPTIONS, PLYWOOD_CATEGORY,
@@ -135,7 +135,8 @@ export default function HydLogicTweaker({ isAdmin, invoiceData, skuMaster, price
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(base);
   // A first save is allowed unchanged: it creates the Hyderabad rows from today's copy.
-  const canSave = dirty || !hydState.stored?.params;
+  // Never after a failed read: the draft may be defaults over a row nobody read.
+  const canSave = (dirty || !hydState.stored?.params) && !hydReadFailed(hydState);
   const editorRows = flattenParamRows(draft, HYD_EDITOR_EXCLUDED_KEYS);
 
   const onEngine = () => {

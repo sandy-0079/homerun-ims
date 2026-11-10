@@ -2661,7 +2661,7 @@ const zeroSaleLists = useMemo(
       hydLoadStarted.current=true;
       loadHydState(savedParams,{plywoodNetworkConfig:savedParams.plywoodNetworkConfig,networkConfigs:nc})
         .then(st=>setHydState(note?{...st,loadErrors:[...(st.loadErrors||[]),note]}:st))
-        .catch(e=>setHydState({floors:{},floorsUploadedAt:null,hydParams:null,hydPlywood:null,stored:{params:false,plywood:false},loadErrors:[String(e?.message||e),...(note?[note]:[])]}));
+        .catch(e=>setHydState({floors:{},floorsUploadedAt:null,hydParams:null,hydPlywood:null,stored:{params:false,plywood:false},readFailed:{inputs:true,params:true,plywood:true},loadErrors:[String(e?.message||e),...(note?[note]:[])]}));
     };
     if(networkConfigs!==null){start(networkConfigs);return;}
     const t=setTimeout(()=>{if(!hydLoadStarted.current)start({},"Bangalore plywood config not loaded — Hyderabad plywood uses defaults");},10000);

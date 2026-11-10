@@ -2,6 +2,7 @@
 import React from "react";
 import { buildHydPoCsv, hydPoCsvFilename, HYD_PO_CSV_HEADERS } from "../../hyd/hydPoCsv.js";
 import { isFloorsOnly } from "../../hyd/hydParams.js";
+import { hydReadFailed } from "../../hyd/hydStore.js";
 import { downloadCsvFile } from "../../downloadCsv.js";
 import { card, h2, note, btn, banner, todayLocalIso } from "./hydStyles.js";
 
@@ -9,7 +10,8 @@ export default function HydToolOutput({ skuMaster, invoiceData, hydState, hydRun
   if (!hydState) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
   const results = hydRun?.results;
   const masterEmpty = !Object.keys(skuMaster || {}).length;
-  const disabled = !results || masterEmpty;
+  // A failed Hyderabad read means the floors/settings on screen may be defaults.
+  const disabled = !results || masterEmpty || hydReadFailed(hydState);
   const latest = (invoiceData || []).reduce((m, r) => (m === null || r.date > m ? r.date : m), null);
   const mode = isFloorsOnly(hydState.hydParams, "HYDS01") ? "Floors only" : "Engine";
 

@@ -3,7 +3,7 @@
 // Editable by admins; everyone else sees it read-only.
 import React, { useState } from "react";
 import { isFloorsOnly } from "../../hyd/hydParams.js";
-import { saveHydPlywood } from "../../hyd/hydStore.js";
+import { saveHydPlywood, hydReadFailed } from "../../hyd/hydStore.js";
 import { flattenParamRows, setParamPath } from "../../hyd/hydParamRows.js";
 import { isBrandOnAt, setBrandOnAt, capacityOf, setCapacity } from "../../hyd/hydPlywoodEdit.js";
 import { C, card, h2, note, table, th, td, btn, banner, NOT_SAVED_BEFORE, SETTINGS_UNREADABLE } from "./hydStyles.js";
@@ -38,7 +38,8 @@ export default function HydPlywoodPanel({ isAdmin, hydState, setHydState }) {
   const brands = Object.keys(cfg.brands || {}).sort();
   const dirty = JSON.stringify(draft) !== JSON.stringify(base);
   // A first save is allowed unchanged: it creates the Hyderabad rows from today's copy.
-  const canSave = dirty || !hydState.stored?.plywood;
+  // Never after a failed read: the draft may be defaults over a row nobody read.
+  const canSave = (dirty || !hydState.stored?.plywood) && !hydReadFailed(hydState);
   const ro = !isAdmin;
   const mode = isFloorsOnly(hydState.hydParams, STORE) ? "Floors only" : "Engine";
 

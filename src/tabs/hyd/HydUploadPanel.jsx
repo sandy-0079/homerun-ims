@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { parseHydFloorsCsv } from "../../hyd/hydFloors.js";
 import { runHydEngine } from "../../hyd/hydEngine.js";
-import { saveHydFloors } from "../../hyd/hydStore.js";
+import { saveHydFloors, hydReadFailed } from "../../hyd/hydStore.js";
 import { buildHydFloorsTemplateCsv } from "../../hyd/hydFloorsTemplate.js";
 import { uniqueOverrideSkus } from "../../hyd/hydStats.js";
 import { HYD_DS_LIST } from "../../city.js";
@@ -41,7 +41,7 @@ function Refusal({ parsed }) {
   );
 }
 
-function Preview({ parsed, dry, skuMaster, currentFloors }) {
+export function Preview({ parsed, dry, skuMaster, currentFloors }) {
   const overrides = uniqueOverrideSkus(dry?.report?.overrides);
   return (
     <div>
@@ -63,6 +63,9 @@ function Preview({ parsed, dry, skuMaster, currentFloors }) {
       <Collapsible title="Floor rows that override Purchase=OFF / Supplier / Dead Stock" count={overrides.length}>
         <SkuList items={overrides} skuMaster={skuMaster} render={o => o.reasons.join(", ")} />
       </Collapsible>
+      <Collapsible title="Pati sales outside the range" count={dry?.report?.outOfRangeSales?.length ?? 0}>
+        <SkuList items={dry?.report?.outOfRangeSales || []} skuMaster={skuMaster} />
+      </Collapsible>
     </div>
   );
 }
@@ -76,6 +79,8 @@ export default function HydUploadPanel({ isAdmin, invoiceData, skuMaster, priceD
   if (!hydState) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
 
   const currentFloors = hydState.floors || {};
+  // A failed Hyderabad read: never replace floors over a row nobody read.
+  const readFailed = hydReadFailed(hydState);
 
   const onFile = async (e) => {
     const file = e.target.files?.[0];
@@ -96,6 +101,7 @@ export default function HydUploadPanel({ isAdmin, invoiceData, skuMaster, priceD
   };
 
   const onReplace = async () => {
+    if (readFailed) return;
     const floors = pending.parsed.floors;
     setSaving(true);
     const ok = await saveHydFloors(floors);
@@ -140,7 +146,7 @@ export default function HydUploadPanel({ isAdmin, invoiceData, skuMaster, priceD
                 <div style={{ marginTop: 14, padding: "14px 16px", border: `2px solid ${C.blue}`, borderRadius: 8, background: C.blueBg }}>
                   <div style={{ fontSize: 22, fontWeight: 800, color: C.blue, letterSpacing: 1 }}>HYDERABAD</div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-                    <button style={btn(true, saving)} disabled={saving} onClick={onReplace}>
+                    <button style={btn(true, saving || readFailed)} disabled={saving || readFailed} onClick={onReplace}>
                       {saving ? "Saving…" : "Replace HYDERABAD floors"}
                     </button>
                     <button style={btn(false, saving)} disabled={saving} onClick={() => setPending(null)}>Cancel</button>

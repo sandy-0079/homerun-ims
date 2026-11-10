@@ -40,7 +40,9 @@ export const HYD_PAD_SKU = "__HYD_WINDOW_PAD__";
 // Engine convention (src/engine/CLAUDE.md, Active-only): a master row with NO status
 // counts as active; a SKU absent from the master, or a status present and not
 // "active" (case-insensitive), does not.
-const isActive = meta => !!meta && String(meta.status || "Active").trim().toLowerCase() === "active";
+// runEngine's Active-only rule: absent SKU (no meta) = inactive; a missing status
+// field = active (`??`, so an empty-string status is NOT active, as in runEngine).
+const isActive = meta => !!meta && String(meta.status ?? "Active").trim().toLowerCase() === "active";
 const isSupplier = meta => String(meta?.inventorisedAt ?? "").trim().toLowerCase() === "supplier";
 const floorAt = (floors, sku) => floors?.[sku]?.[STORE];
 const hasFloorOf = f => !!f && ((f.min || 0) > 0 || (f.max || 0) > 0);

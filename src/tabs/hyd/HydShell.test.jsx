@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-vi.mock("../../supabase.js", () => ({ loadFromSupabase: vi.fn(), saveToSupabase: vi.fn() }));
+vi.mock("../../supabase.js", () => ({ loadFromSupabase: vi.fn(), saveToSupabase: vi.fn(), supabase: {} }));
 
 import HydShell from "./HydShell.jsx";
 import { runHydEngine } from "../../hyd/hydEngine.js";
@@ -131,5 +131,38 @@ describe("HydShell renders every tab", () => {
     expect(html).toContain("Copied from Bangalore on");
     expect(html).toContain("Reset to Bangalore&#x27;s current values");
     expect(html).toContain("Apply (Hyderabad)");
+  });
+
+  it("stock health: no Sync Now for Pati while its stock has never synced", () => {
+    const html = render("stockHealth", stateFor(true));
+    expect(html).not.toContain("Sync Now");
+    expect(html).toContain("Live stock for HYDS01 starts once the stock sync is enabled");
+  });
+});
+
+describe("HydShell — a failed Hyderabad read disables downloads and saves", () => {
+  const disabledButton = (html, label) => new RegExp(`<button[^>]*disabled=""[^>]*>[^<]*${label}`).test(html);
+  // stored:false so Apply/Save are enabled on a healthy read (a first save is
+  // allowed unchanged) — the read failure is then the only thing disabling them.
+  const healthy = () => ({ ...stateFor(true), stored: { params: false, plywood: false } });
+  const failed = () => ({ ...healthy(), readFailed: { inputs: false, params: true, plywood: false }, loadErrors: ["params/hydGlobal: timeout"] });
+
+  it("healthy read: no banner, PO / Apply / Save enabled", () => {
+    expect(render("output", healthy())).not.toContain("could not be read");
+    expect(disabledButton(render("output", healthy()), "PO_Hyderabad_")).toBe(false);
+    expect(disabledButton(render("logic", healthy()), "Apply \\(Hyderabad\\)")).toBe(false);
+    expect(disabledButton(render("plywood", healthy()), "Save \\(Hyderabad\\)")).toBe(false);
+  });
+
+  it("shows the red banner on every tab", () => {
+    for (const tab of TABS) {
+      expect(render(tab, failed())).toContain("Hyderabad data could not be read — downloads and saves are disabled until reload");
+    }
+  });
+
+  it("disables the PO download, Logic Tweaker Apply and Plywood Save", () => {
+    expect(disabledButton(render("output", failed()), "PO_Hyderabad_")).toBe(true);
+    expect(disabledButton(render("logic", failed()), "Apply \\(Hyderabad\\)")).toBe(true);
+    expect(disabledButton(render("plywood", failed()), "Save \\(Hyderabad\\)")).toBe(true);
   });
 });
