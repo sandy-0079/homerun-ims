@@ -5,9 +5,8 @@ rules for Stock Health and the Tool Output Download tab: health tags, the locati
 universe, KPI cards, the PO/TO column sets, the CSV contracts and the freshness gate.
 
 **Tabs are also defined in `src/App.jsx`**, which is 3,921 lines and NOT in this
-directory — `ADMIN_TABS` / `PUBLIC_TABS` around line 3760, plus Overview, SKU Detail,
-Upload Data, Logic Tweaker and Manual Overrides, which live inline there rather than as
-files here. Editing App.jsx does not load this file; read it deliberately.
+directory — `ADMIN_TABS` / `PUBLIC_TABS`, plus Overview, SKU Detail and Manual Overrides,
+which live inline there (Tool Output, Logic Tweaker and Upload Data are files here since 2026-11-10). Editing App.jsx does not load this file; read it deliberately.
 
 **Read root `CLAUDE.md` too** (it loads automatically) for the cross-cutting rules — in
 particular `saveTeamData` / `BROWSER_OWNED_KEYS`, since several tabs write
@@ -19,6 +18,18 @@ particular `saveTeamData` / `BROWSER_OWNED_KEYS`, since several tabs write
 > `src/simWorker.js` are gone, along with `SimulationTab` and its 16 helpers in `App.jsx`. Anything
 > below describing them is history. Restore map + why no code was copied: `docs/retired/README.md`.
 `supabase/functions/CLAUDE.md` for the syncs that produce stock, PO and TO data.
+
+## Shared tab components serve both cities (Hyderabad, 2026-11-10)
+Hyderabad (`src/tabs/hyd/HydShell.jsx`) renders Bangalore's own screens, not copies:
+`ToolOutputTab.jsx` (`dsList`, `includeDC`, `poCard`, `downloadsDisabled`), `LogicTweakerTab.jsx`
+(`showNetworkSections`, `topSlot`, `leadTimeLabel`, `applyDisabled`, `extraChangelog`),
+`UploadDataTab.jsx` (`mode="hyd"`, `extraCards`), `StockHealthTab.jsx` (below), and `OverviewTab` /
+`SKUDetailTab`, exported from `App.jsx` and passed INTO HydShell as props (importing App there is
+circular), with `dsList`, `includeDC`, plus `periodDates` (Overview) / `openingList` (SKU Detail).
+HydShell passes no Bangalore write handler; Hyderabad writes only via `src/hyd/hydStore.js`.
+> ⚠ **Bangalore call sites pass no new props.** Extract by PURE MOVE first (its own commit, proven
+> text-identical), then add props whose defaults are Bangalore's behaviour, and prove Bangalore's
+> server render byte-identical before and after.
 
 > ⚠⚠ **A GREEN BUILD IS NOT EVIDENCE THAT JSX RUNS.** esbuild does not resolve undefined
 > identifiers, so `npm run build` says nothing about them. Run `npx eslint src/` **and read

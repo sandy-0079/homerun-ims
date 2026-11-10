@@ -311,5 +311,7 @@ Spec: `docs/superpowers/specs/2026-11-10-hyderabad-hyds01-design.md`.
   engine-only SKUs at Pati (2026-11-10, spec §3.6). Later: nightly Pati floors-sheet sync; digest block.
 - Minors: Pati Sync Now shares Bangalore's cooldown (`uploadedAtPerDS`) · unfloored Supplier SKUs
   show 0/0 in Pati Stock Health · Pati floor parser: a duplicate header wins silently, SKUs not
-  case-normalised. (Fixed in final review: `isActive` `??`, `saveHydPlywood` short-circuit, a failed
-  read is no longer "missing" — it disables Hyderabad downloads and saves.)
+  case-normalised.
+- **Bangalore display bugs kept for byte-identity (fix on `main`):** Logic Tweaker's pincode "+N
+  more" counts `Object.keys(missing)`, the wrong variable, not `cov.unmapped`; Tool Output's DS Level
+  card says "15 columns" but writes 19, and the PO blurb says "DS01–DS06" (writes DC + DS01–DS08).

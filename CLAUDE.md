@@ -39,7 +39,8 @@ hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
 > `team_data/hyd_inputs`, `params/hydGlobal`, `params/hydPlywoodNetworkConfig`,
 > `params/hydNetworkConfigs`. `team_data/global` and `BROWSER_OWNED_KEYS` gain nothing from the browser.
 > **Local testing: `VITE_READ_ONLY=1 npm run dev`** blocks every write and shows the row it would
-> have written. Follow-ups: Open Work #45.
+> have written. Hyderabad renders the shared tab components, never copies (`src/tabs/CLAUDE.md`).
+> Follow-ups: Open Work #45.
 
 
 ---

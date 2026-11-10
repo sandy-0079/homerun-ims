@@ -726,6 +726,11 @@ and by the TO tool's "Pull fresh stock" (busy ~13:45–14:30, ~19:45–20:30 IST
   today either reassigned to a DS by attribution (inflating it) or dropped by `tags90`. The precedent
   for fixing it exists — `dcDetails.dsSeedAug` adds a synthetic rate into the DC calc.
 
+### From Open Work #45 — fixed in the first build's final review (moved 2026-11-10)
+
+Fixed in final review: `isActive` `??`, `saveHydPlywood` short-circuit, a failed
+read is no longer "missing" — it disables Hyderabad downloads and saves.
+
 ## Closed open-work items
 
 Moved **verbatim** out of `docs/OPEN-WORK.md` on 2026-09-28. They were kept there "for the reasoning",
