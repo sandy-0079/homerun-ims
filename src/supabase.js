@@ -35,7 +35,20 @@ export async function loadPayloadKey(table, id, key) {
   return data?.[key] ?? null
 }
 
+// Local-testing guard: VITE_READ_ONLY=1 turns every browser write into a recorded no-op,
+// so `npm run dev` against the production project cannot change it.
+export const READ_ONLY = import.meta.env.VITE_READ_ONLY === '1'
+const _blocked = []
+export function blockedWrites() { return _blocked }
+
 export async function saveToSupabase(table, id, payload) {
+  if (READ_ONLY) {
+    _blocked.push({ table, id, at: new Date().toISOString() })
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('ims-readonly-write', { detail: { table, id } }))
+    }
+    return true
+  }
   const { error } = await supabase
     .from(table)
     .upsert({ id, payload, updated_at: new Date().toISOString() })

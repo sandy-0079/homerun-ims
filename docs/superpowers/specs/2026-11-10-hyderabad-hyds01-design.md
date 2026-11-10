@@ -134,8 +134,10 @@ constraint outranks every other goal here.
 - Same rules as the **nightly** Bangalore parser (`_shared/skuFloorSheet.ts`), **not** the lenient
   browser one: blank = 0, whole numbers only (anything else is rejected with the SKU and column named),
   Max raised to Min, **last row wins** for a repeated SKU, 0/0 or a deleted row = out of range.
-  *(Builder call)* Reuse that parser's logic with a store-column pattern and known-store list
-  supplied per city, rather than writing a third parser.
+  *(Builder call, amended 2026-11-10)* The Hyderabad parser is **new code in `src/hyd/hydFloors.js`**
+  mirroring the semantics of `_shared/skuFloorSheet.ts` (store-column pattern and known-store list supplied
+  per city), **not a reuse**: that file is bundled into the deployed nightly `sync-sku-floors`, so touching it
+  would change Bangalore's deployed code path.
 - **Refused in Hyderabad:** any `DC Min/Max` or Bangalore `DSxx` column. A Bangalore file uploaded in
   Hyderabad fails loudly.
 - *(Builder call, corrected after review)* **The Bangalore parsers are NOT changed.** A Hyderabad file
@@ -213,15 +215,13 @@ builder **reads** `homerun-to` to confirm each of these and records the result h
   from the live 4 Nov rows, so the snapshot must be re-measured before ship rather than assuming 0.
 
 ### 4.3 The Hyderabad engine run
-- `runEngine` gains an **optional** store-list argument (or an options object) that **defaults to
-  `DS_LIST`**. Every existing call site keeps passing nothing, so Bangalore runs byte-identical code
-  paths. The inertness proof (§5) is what proves it.
-- Hyderabad call: Hyderabad rows only, Hyderabad params, Hyderabad floors, store list `HYD_DS_LIST`,
-  no DC derivation, New DS Floor off (the floor sheet supersedes it), no attribution.
-- ⚠ **The store list must reach plywood too.** `plywoodNetwork.js` imports `DS_LIST` directly and
-  always builds a DC node. Thread the same optional list (default `DS_LIST`) into
-  `computePlywoodNetworkResults`, and add a "no DC" mode that skips the DC node and the DC term.
-  Bangalore calls pass nothing, and the §5.1 proof covers it.
+- *(amended 2026-11-10)* **The remap approach — no engine change.** The Hyderabad engine calls the
+  **unmodified** `runEngine` with Pati's rows relabelled `ds:"DS01"`, Hyderabad params, a neutralised
+  SKU-master clone (move "Yes", purchase "Yes", inventorisedAt "DS" unless already), no floors, ceilings,
+  dead stock or attribution, and a plywood config whose only node is DS01 with no DC. It then reads
+  `stores.DS01` back as HYDS01 and applies the Hyderabad pass below. `runEngine`, `plywoodNetwork.js` and
+  `DS_LIST` are not modified, so Bangalore code paths are untouched by construction. (This supersedes the
+  earlier plan to thread an optional store list through `runEngine` and plywood.)
 - A Hyderabad pass over the finished stores applies, in order: engine number → lead-time buffer and
   order cycle → floor lift → the flag rules of §3.2 → Active-only (always) → floors-only override (if
   the switch is off: target = floor for SKUs in the sheet, 0/0 otherwise).

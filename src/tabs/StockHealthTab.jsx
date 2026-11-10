@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from "react"
 import { DS_LIST } from "../engine/index.js";
 import { DS_COLOR } from "../dsColors.js";
 import { getHealthTag, applyDCReqCovered } from "../stockHealthTags.js";
-import { supabase } from "../supabase.js";
+import { supabase, READ_ONLY } from "../supabase.js";
 
 const SYNC_COOLDOWN_MINS = 15;
 
@@ -260,6 +260,7 @@ export default function StockHealthTab({
 
   const handleSyncNow = useCallback(async () => {
     if (syncing) return;
+    if (READ_ONLY) { alert("Read-only mode — sync not run"); return; }
     setSyncing(true);
     setSyncMsg("");
     const invokeSync = async (body) => {

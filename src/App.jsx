@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { supabase, loadFromSupabase, saveToSupabase, loadPayloadKey } from "./supabase";
+import { supabase, loadFromSupabase, saveToSupabase, loadPayloadKey, READ_ONLY, blockedWrites } from "./supabase";
 import { loadParamConfigRows } from "./paramConfigRows";
 import { buildTeamDataBundle } from "./teamDataBundle";
 import { resolveSource, assessSyncedInput, assessModel, assessOutputFreshness } from "./freshness";
@@ -1757,6 +1757,17 @@ function copyText(text) {
   if (_setToastMsg) { _setToastMsg("Copied to clipboard"); clearTimeout(_toastTimer); _toastTimer = setTimeout(() => _setToastMsg(""), 1500); }
 }
 
+function ReadOnlyBanner(){
+  const [n,setN]=useState(()=>blockedWrites().length);
+  useEffect(()=>{
+    const h=()=>setN(blockedWrites().length);
+    window.addEventListener("ims-readonly-write",h);
+    return()=>window.removeEventListener("ims-readonly-write",h);
+  },[]);
+  if(!READ_ONLY)return null;
+  return <div style={{width:"100%",background:"#B91C1C",color:"#fff",fontWeight:800,fontSize:12,textAlign:"center",padding:"6px 0",letterSpacing:0.5}}>READ-ONLY MODE — writes are blocked ({n} blocked)</div>;
+}
+
 export default function App(){
   const [tab,setTab]=useState("overview"),[pendingTab,setPending]=useState(null);
   const [toastMsg, setToastMsg] = useState("");
@@ -2647,6 +2658,7 @@ const zeroSaleLists = useMemo(
           :<button onClick={()=>setShowLoginModal(true)} style={{...S.btn(false),fontSize:11}}>🔐 Admin</button>
         }
       </div>
+      <ReadOnlyBanner/>
 
       {showLoginModal&&<AdminLoginModal onClose={()=>setShowLoginModal(false)} onSuccess={()=>{setIsAdmin(true);setShowLoginModal(false);}}/>}
 
