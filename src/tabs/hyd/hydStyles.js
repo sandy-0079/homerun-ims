@@ -11,7 +11,6 @@ export const card = {
   padding: "14px 16px", marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
 };
 
-export const h2 = { fontSize: 14, fontWeight: 700, color: C.blue, marginBottom: 8 };
 export const note = { fontSize: 11, color: C.muted, lineHeight: 1.5 };
 
 export const table = { width: "100%", borderCollapse: "collapse", fontSize: 11 };
@@ -19,13 +18,6 @@ export const th = { padding: "6px 8px", textAlign: "left", color: C.muted, backg
 export const td = { padding: "4px 8px", borderTop: `1px solid ${C.border}` };
 
 export const input = { background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 8px", color: C.text, fontSize: 12 };
-
-export const btn = (primary, disabled) => ({
-  padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
-  cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
-  border: `1px solid ${primary ? C.blue : C.border}`,
-  background: primary ? C.blue : C.white, color: primary ? C.white : C.text,
-});
 
 export const banner = (kind) => ({
   fontSize: 12, borderRadius: 6, padding: "8px 10px", marginBottom: 10, lineHeight: 1.5,
