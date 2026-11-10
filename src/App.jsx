@@ -35,6 +35,7 @@ import { readInitialCity, persistCity, dropHydRows } from "./city";
 import { CITY_THEME, CITY_TOGGLE, cityToggleStyle, cityHeaderStyle, hydTabsFor, tabForCity, cityUrl, safeLocalStorage, safeHydRun } from "./cityShell";
 import { loadHydState } from "./hyd/hydStore";
 import { runHydEngine } from "./hyd/hydEngine";
+import { isHydDraftDirty, guardHydDraft } from "./hyd/hydDraft";
 
 const LS = {
   get:(key)=>{try{const v=localStorage.getItem(key);return v?{value:v}:null;}catch{return null;}},
@@ -1654,6 +1655,7 @@ export default function App(){
   const [city,setCity]=useState(()=>readInitialCity(window.location.search,safeLocalStorage()));
   const [hydTab,setHydTab]=useState("overview");
   const [hydState,setHydState]=useState(null); // loaded lazily on first switch to Hyderabad
+  const [hydDraft,setHydDraft]=useState(null); // unsaved Hyderabad Logic Tweaker edits {base,value}
 
   const addChange = (msg) => setChangeLog(prev => [...prev, msg]);
   const [syncStatus,setSyncStatus]=useState("idle"); // "idle" | "saving" | "saved" | "error"
@@ -2519,12 +2521,16 @@ const zeroSaleLists = useMemo(
     [city,hydState,invoiceData,skuMaster,priceData,deadStock],
   );
   useEffect(()=>{document.title=CITY_THEME[city].title;},[city]);
+  // Unsaved Hyderabad Logic Tweaker draft: leaving it (Hyderabad tab or city switch) asks
+  // first; Cancel stays put, OK discards. Bangalore's own guard is untouched.
+  const leaveHydDraft=()=>guardHydDraft({dirty:city==="hyd"&&isHydDraftDirty(hydDraft,hydState?.hydParams),confirm:m=>window.confirm(m),discard:()=>setHydDraft(null)});
   // Never applies anything: unsaved Bangalore Logic Tweaker changes block the switch.
   const switchCity=(next)=>{
     if(next===city) return;
     // `hasChanges` (full params diff, as handleTabClick uses) — `changedCount` alone misses
     // keys such as pincodeConfig and the plywood own-row configs.
     if(hasChanges||changedCount>0){alert("Apply or discard your Bangalore Logic Tweaker changes first.");return;}
+    if(!leaveHydDraft()) return;
     if(next==="hyd") setHydTab(tabForCity(tab,HYD_TABS));
     else setTab(tabForCity(hydTabShown,NAV_TABS));
     setCity(next);
@@ -2555,7 +2561,7 @@ const zeroSaleLists = useMemo(
         <SyncBadge/>
         <div style={{flex:1}}/>
         {city==="hyd"
-          ?HYD_TABS.map(([t,l])=><button key={t} onClick={()=>setHydTab(t)} style={hydTabShown===t?{...S.btn(true),background:CITY_THEME.hyd.underline,border:`1px solid ${CITY_THEME.hyd.underline}`,color:HR.white}:S.btn(false)}>{l}</button>)
+          ?HYD_TABS.map(([t,l])=><button key={t} onClick={()=>{if(t!==hydTabShown&&!leaveHydDraft())return;setHydTab(t);}} style={hydTabShown===t?{...S.btn(true),background:CITY_THEME.hyd.underline,border:`1px solid ${CITY_THEME.hyd.underline}`,color:HR.white}:S.btn(false)}>{l}</button>)
           :<>
         <div style={{fontSize:10,color:HR.muted,marginRight:8,whiteSpace:"nowrap"}}>{dateRange}</div>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}
@@ -3197,7 +3203,8 @@ const zeroSaleLists = useMemo(
             blrParams={savedParams} setTab={setHydTab}
             OverviewTabComponent={OverviewTab} SKUDetailTabComponent={SKUDetailTab}
             outputDemandThrough={outputDemandThrough} outputFreshness={outputFreshness}
-            provRaw={provRaw} fmtStamp={fmtStamp}/>
+            provRaw={provRaw} fmtStamp={fmtStamp}
+            hydDraft={hydDraft} setHydDraft={setHydDraft}/>
         </div>
       )}
       {/* Toast notification */}

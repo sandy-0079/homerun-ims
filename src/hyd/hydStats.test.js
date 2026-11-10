@@ -34,6 +34,15 @@ describe("engineFlipImpact", () => {
   });
 });
 
+describe("engineFlipImpact — no DC in Hyderabad", () => {
+  it("Inv Value ignores a results.dc entry (computeInvValue includeDC:false)", () => {
+    const withDc = { results: { A: { stores: { HYDS01: { min: 1, max: 2 } }, dc: { min: 5, max: 9 } } } };
+    const out = engineFlipImpact(withDc, withDc, { A: 10 });
+    expect(out.before.invMax).toBe(20);
+    expect(out.after.invMax).toBe(20);
+  });
+});
+
 describe("zeroedByFlag", () => {
   const results = {
     sold: st(0, 0, { logicTag: "Flag: Purchase=OFF", engineMax: 3 }),

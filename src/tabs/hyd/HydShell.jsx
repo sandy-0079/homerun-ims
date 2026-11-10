@@ -9,12 +9,15 @@
 //     OverviewTabComponent, SKUDetailTabComponent /* Bangalore's own screens, passed in
 //       by App.jsx: importing them from App here would be a circular import */,
 //     outputDemandThrough, outputFreshness, provRaw, fmtStamp /* App's Tool Output gate +
-//       footnotes: both cities compute from the same invoice row, so one gate serves both */ }
+//       footnotes: both cities compute from the same invoice row, so one gate serves both */,
+//     hydDraft, setHydDraft /* the unsaved Logic Tweaker draft {base, value} — held by App so
+//       the city toggle and the Hyderabad tab bar can guard it (src/hyd/hydDraft.js) */ }
 import React, { useMemo, useState } from "react";
-import { card, note, banner } from "./hydStyles.js";
+import { card, note, banner, SETTINGS_UNREADABLE } from "./hydStyles.js";
 import ToolOutputTab from "../ToolOutputTab.jsx";
 import HydUploadPanel from "./HydUploadPanel.jsx";
-import HydLogicTweaker from "./HydLogicTweaker.jsx";
+import LogicTweakerTab from "../LogicTweakerTab.jsx";
+import HydLogicTop from "./HydLogicTop.jsx";
 import HydPlywoodPanel from "./HydPlywoodPanel.jsx";
 import StockHealthTab from "../StockHealthTab.jsx";
 import HydStockNotice from "./HydStockNotice.jsx";
@@ -23,6 +26,8 @@ import { hydReadFailed } from "../../hyd/hydStore.js";
 import { buildHydPoCsv, hydPoCsvFilename, HYD_PO_CSV_HEADERS } from "../../hyd/hydPoCsv.js";
 import { isFloorsOnly } from "../../hyd/hydParams.js";
 import { todayLocalIso } from "./hydStyles.js";
+import { hydDraftValue, isHydDraftDirty, hydOnlyChangelog } from "../../hyd/hydDraft.js";
+import { applyHydParams } from "../../hyd/hydApply.js";
 
 // Sync Now for Pati: its own group, never a branch added to a Bangalore group.
 const HYD_SYNC_GROUPS = [["HYDS01"]];
@@ -33,6 +38,8 @@ const HYD_OPENING = [];
 const NO_OVERRIDES = {};
 const NOOP = () => {};
 const UNKNOWN_FRESHNESS = { state: "unknown", blocked: false, pageThrough: null, liveThrough: null };
+// Logic Tweaker: the Bangalore-network sections are hidden, so their inputs are inert.
+const NO_ROWS = [];
 
 function Errors({ hydState, hydRun }) {
   const errors = [...(hydState?.loadErrors || []), ...(hydRun?.error ? [`engine: ${hydRun.error}`] : [])];
@@ -59,6 +66,11 @@ export default function HydShell(props) {
   const [sdDateFrom, setSdDateFrom] = useState("");
   const [sdDateTo, setSdDateTo] = useState("");
   const [sdDsView, setSdDsView] = useState("All");
+  // Logic Tweaker UI state (the draft itself is App's: props.hydDraft).
+  const [logicAdvanced, setLogicAdvanced] = useState(false);
+  const [logicConfirm, setLogicConfirm] = useState(false);
+  const [logicStatus, setLogicStatus] = useState(null);
+  const [applying, setApplying] = useState(false);
   const patiRows = useMemo(() => hydRowsOnly(invoiceData || []), [invoiceData]);
   // NETWORK dates (both cities), not Pati's own: the Hyderabad engine windows on the
   // network's last N dates (hydEngine.networkWindowDates), so "L45D" here is the same
@@ -71,6 +83,34 @@ export default function HydShell(props) {
   }, [invoiceData]);
   if (!hydState) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
   const storeProps = { dsList: HYD_DS_LIST, includeDC: false };
+
+  // Bangalore's Logic Tweaker over the Hyderabad draft. Apply writes only params/hydGlobal.
+  function renderLogic() {
+    if (!props.isAdmin) return <div style={card}><span style={note}>Logic Tweaker is admin-only.</span></div>;
+    const saved = hydState.hydParams;
+    if (!saved) return <div style={card}><span style={note}>{SETTINGS_UNREADABLE}</span></div>;
+    const draft = hydDraftValue(props.hydDraft, saved);
+    const dirty = isHydDraftDirty(props.hydDraft, saved);
+    const setDraft = (value) => props.setHydDraft?.({ base: saved, value });
+    const onApply = async (value) => {
+      setApplying(true);
+      const res = await applyHydParams({ draft: value, hydState, setHydState: props.setHydState, confirm: (m) => window.confirm(m) });
+      setApplying(false);
+      if (res) setLogicStatus(res);
+    };
+    return (
+      <LogicTweakerTab showNetworkSections={false} leadTimeLabel="Brand Lead Time (vendor → Pati)"
+        params={draft} savedParams={saved} saveParams={setDraft} setParams={setDraft}
+        onApply={onApply} hasChanges={dirty} applyDisabled={hydReadFailed(hydState) || applying}
+        extraChangelog={hydOnlyChangelog(saved, draft)}
+        skuMaster={props.skuMaster || {}} isAdmin blrInvoice={NO_ROWS} missing={NO_ROWS} uploading={null} handlePincodeMap={NOOP}
+        advancedOpen={logicAdvanced} setAdvancedOpen={setLogicAdvanced}
+        showLogicConfirm={logicConfirm} setShowLogicConfirm={setLogicConfirm}
+        topSlot={<HydLogicTop draft={draft} setDraft={setDraft} dirty={dirty} status={logicStatus}
+          hydState={hydState} hydRun={hydRun} blrParams={props.blrParams}
+          invoiceData={invoiceData} skuMaster={props.skuMaster} priceData={props.priceData} deadStock={props.deadStock} />} />
+    );
+  }
   return (
     <div>
       {hydReadFailed(hydState) && (
@@ -123,7 +163,7 @@ export default function HydShell(props) {
           }} />
       )}
       {tab === "upload" && <HydUploadPanel {...props} />}
-      {tab === "logic" && <HydLogicTweaker {...props} />}
+      {tab === "logic" && renderLogic()}
       {tab === "plywood" && <HydPlywoodPanel {...props} />}
       {tab === "stockHealth" && !noticeDismissed && (
         <HydStockNotice report={hydRun?.report} skuMaster={props.skuMaster} onDismiss={() => setNoticeDismissed(true)} />

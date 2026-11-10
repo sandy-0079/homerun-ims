@@ -41,7 +41,7 @@ export function zeroedByFlag(results, { demandOnly = true } = {}) {
 export function engineFlipImpact(beforeRun, afterRun, priceData) {
   const side = run => ({
     withTargets: Object.values(run?.results || {}).filter(hasTarget).length,
-    invMax: computeInvValue(run?.results || {}, priceData || {}, HYD_DS_LIST).max,
+    invMax: computeInvValue(run?.results || {}, priceData || {}, HYD_DS_LIST, { includeDC: false }).max, // no DC in Hyderabad
   });
   return {
     before: side(beforeRun),

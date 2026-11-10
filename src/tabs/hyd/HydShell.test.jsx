@@ -17,7 +17,15 @@ vi.mock("../ToolOutputTab.jsx", async (importOriginal) => {
   return { default: (p) => { toolOutputProps = p; return real(p); } };
 });
 
+// Same for the Logic Tweaker: the props HydShell passes (onApply, the draft) are inspected.
+let logicProps = null;
+vi.mock("../LogicTweakerTab.jsx", async (importOriginal) => {
+  const real = (await importOriginal()).default;
+  return { default: (p) => { logicProps = p; return real(p); } };
+});
+
 import HydShell from "./HydShell.jsx";
+import { saveToSupabase } from "../../supabase.js";
 import { buildHydPoCsv } from "../../hyd/hydPoCsv.js";
 // Bangalore's own screens, passed in as App.jsx does (spec §9).
 import { OverviewTab, SKUDetailTab } from "../../App.jsx";
@@ -146,11 +154,49 @@ describe("HydShell renders every tab", () => {
     expect(html).not.toContain("inactive in Zoho");
   });
 
-  it("logic tweaker shows the copied-from date and both buttons", () => {
+  it("logic tweaker is Bangalore's, with the Hyderabad top section and no network sections", () => {
     const html = render("logic", stateFor(true));
+    expect(html).toContain("Logic Tweaker");
+    expect(html).toContain("Hyderabad — HYDS01 Pati");
     expect(html).toContain("Copied from Bangalore on");
     expect(html).toContain("Reset to Bangalore&#x27;s current values");
-    expect(html).toContain("Apply (Hyderabad)");
+    expect(html).toContain("Pati: Floors only ⇄ Engine");
+    expect(html).toContain("Order cycle");
+    expect(html).toContain("Percentile Cover Params");
+    expect(html).toContain("Fixed Unit Floor Params");
+    expect(html).toContain("Brand Lead Time (vendor → Pati)");
+    expect(html).not.toContain("Brand Lead Time (DC)");
+    expect(html).toContain("Up to date"); // no draft
+    expect(logicProps.showNetworkSections).toBe(false);
+    expect(logicProps.savedParams).toBe(logicProps.params);
+  });
+
+  it("logic tweaker edits the draft from App (hydDraft); hydParams is only the saved side", () => {
+    const st = stateFor(true);
+    const value = { ...st.hydParams, overallPeriod: 60, floorsOnly: { HYDS01: false } };
+    let set = null;
+    const html = render("logic", st, { hydDraft: { base: st.hydParams, value }, setHydDraft: (d) => { set = d; } });
+    expect(logicProps.params).toBe(value);
+    expect(logicProps.savedParams).toBe(st.hydParams);
+    expect(logicProps.hasChanges).toBe(true);
+    expect(logicProps.extraChangelog).toEqual(["Pati: Floors only → Engine"]);
+    expect(html).toContain("Apply (2 changes)");
+    expect(html).toContain("Unsaved Hyderabad changes");
+    logicProps.saveParams({ ...value, overallPeriod: 30 });
+    expect(set).toEqual({ base: st.hydParams, value: { ...value, overallPeriod: 30 } });
+  });
+
+  it("logic Apply writes only params/hydGlobal (never applyAndRun / saveTeamData)", async () => {
+    saveToSupabase.mockReset();
+    saveToSupabase.mockResolvedValue(true);
+    const st = stateFor(true);
+    const value = { ...st.hydParams, orderCycleDays: 5 };
+    const setHydState = vi.fn();
+    render("logic", st, { hydDraft: { base: st.hydParams, value }, setHydState });
+    await logicProps.onApply(logicProps.params);
+    expect(saveToSupabase.mock.calls.map(c => `${c[0]}/${c[1]}`)).toEqual(["params/hydGlobal"]);
+    expect(saveToSupabase.mock.calls[0][2]).toBe(value);
+    expect(setHydState.mock.calls[0][0](st).hydParams).toBe(value);
   });
 
   it("tool output: Bangalore's card grid without DC / Inner Case Pack / Zero Sale; PO is Hyderabad's file", () => {
@@ -180,15 +226,20 @@ describe("HydShell renders every tab", () => {
 
 describe("HydShell — a failed Hyderabad read disables downloads and saves", () => {
   const disabledButton = (html, label) => new RegExp(`<button[^>]*disabled=""[^>]*>[^<]*${label}`).test(html);
-  // stored:false so Apply/Save are enabled on a healthy read (a first save is
-  // allowed unchanged) — the read failure is then the only thing disabling them.
+  // The shared Logic Tweaker's Apply: <button …><span>▶</span> Apply (n changes)
+  const applyButton = (html) => html.match(/<button([^>]*)><span>▶<\/span> Apply/);
+  const dirty = (st) => ({ hydDraft: { base: st.hydParams, value: { ...st.hydParams, overallPeriod: 60 } } });
+  // stored:false so Plywood Save is enabled on a healthy read (a first save is allowed
+  // unchanged), and a dirty Logic draft so Apply is — the read failure is then the only
+  // thing disabling them.
   const healthy = () => ({ ...stateFor(true), stored: { params: false, plywood: false } });
   const failed = () => ({ ...healthy(), readFailed: { inputs: false, params: true, plywood: false }, loadErrors: ["params/hydGlobal: timeout"] });
 
   it("healthy read: no banner, PO / Apply / Save enabled", () => {
     expect(render("output", healthy())).not.toContain("could not be read");
     expect(disabledButton(render("output", healthy()), "PO — Hyderabad")).toBe(false);
-    expect(disabledButton(render("logic", healthy()), "Apply \\(Hyderabad\\)")).toBe(false);
+    const h = healthy();
+    expect(applyButton(render("logic", h, dirty(h)))[1]).not.toContain('disabled=""');
     expect(disabledButton(render("plywood", healthy()), "Save \\(Hyderabad\\)")).toBe(false);
   });
 
@@ -200,7 +251,8 @@ describe("HydShell — a failed Hyderabad read disables downloads and saves", ()
 
   it("disables the PO download, Logic Tweaker Apply and Plywood Save", () => {
     expect(disabledButton(render("output", failed()), "PO — Hyderabad")).toBe(true);
-    expect(disabledButton(render("logic", failed()), "Apply \\(Hyderabad\\)")).toBe(true);
+    const f = failed();
+    expect(applyButton(render("logic", f, dirty(f)))[1]).toContain('disabled=""');
     expect(disabledButton(render("plywood", failed()), "Save \\(Hyderabad\\)")).toBe(true);
   });
 });

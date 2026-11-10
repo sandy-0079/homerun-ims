@@ -68,7 +68,15 @@ function TierSlider({label,value,min,max,step=1,onChange,color,disabled}){
  */
 export default function LogicTweakerTab({ params, savedParams, saveParams, setParams, onApply: applyAndRun,
   hasChanges, handlePincodeMap, blrInvoice, missing, skuMaster, uploading, isAdmin,
-  advancedOpen, setAdvancedOpen, showLogicConfirm, setShowLogicConfirm }) {
+  advancedOpen, setAdvancedOpen, showLogicConfirm, setShowLogicConfirm,
+  // Hyderabad props — every default is Bangalore's behaviour (Bangalore passes none of them):
+  //   showNetworkSections=false hides the Bangalore-network settings (New DS, Store Status,
+  //     pincode attribution, DC multipliers, plywood non-network picker + retired v2 option)
+  //     and their changelog lines; topSlot renders above the first section;
+  //   leadTimeLabel relabels Brand Lead Time; applyDisabled blocks Apply (failed read);
+  //   extraChangelog lists changes to keys this changelog does not know (Hyderabad-only).
+  showNetworkSections = true, topSlot = null, leadTimeLabel = "Brand Lead Time (DC)",
+  applyDisabled = false, extraChangelog = null }) {
   // ── Changelog: diff params vs savedParams ──
   const logicChangelog=[];
   const s=savedParams,c=params;
@@ -79,8 +87,8 @@ export default function LogicTweakerTab({ params, savedParams, saveParams, setPa
   if(c.pctDocCap!==s.pctDocCap) logicChangelog.push(`PCT DOC cap (Premium/High): ${s.pctDocCap}D → ${c.pctDocCap}D`);
   if(c.pctDocCapLow!==s.pctDocCapLow) logicChangelog.push(`PCT DOC cap (Medium/Low): ${s.pctDocCapLow??60}D → ${c.pctDocCapLow}D`);
   if(c.pctMinNZD!==s.pctMinNZD) logicChangelog.push(`PCT min NZD: ${s.pctMinNZD} → ${c.pctMinNZD}`);
-  if(c.plywoodNonNetworkStrategy!==s.plywoodNonNetworkStrategy) logicChangelog.push(`Plywood non-network strategy: ${s.plywoodNonNetworkStrategy||"percentile_cover"} → ${c.plywoodNonNetworkStrategy||"percentile_cover"}`);
-  {
+  if(showNetworkSections&&c.plywoodNonNetworkStrategy!==s.plywoodNonNetworkStrategy) logicChangelog.push(`Plywood non-network strategy: ${s.plywoodNonNetworkStrategy||"percentile_cover"} → ${c.plywoodNonNetworkStrategy||"percentile_cover"}`);
+  if(showNetworkSections){
     const cm=(c.pincodeConfig||{}).mode||"location", sm=(s.pincodeConfig||{}).mode||"location";
     const label=m=>m==="shippingCode"?"customer pincode":"fulfilling location";
     if(cm!==sm) logicChangelog.push(`Demand attribution: ${label(sm)} → ${label(cm)}`);
@@ -90,19 +98,19 @@ export default function LogicTweakerTab({ params, savedParams, saveParams, setPa
   if(c.spikeMultiplier!==s.spikeMultiplier) logicChangelog.push(`Spike multiplier: ${s.spikeMultiplier}× → ${c.spikeMultiplier}×`);
   if(c.spikePctFrequent!==s.spikePctFrequent) logicChangelog.push(`Spike frequent: ${s.spikePctFrequent}% → ${c.spikePctFrequent}%`);
   if(c.spikePctOnce!==s.spikePctOnce) logicChangelog.push(`Spike once: ${s.spikePctOnce}% → ${c.spikePctOnce}%`);
-  if(c.skuFloorDCMultMin!==s.skuFloorDCMultMin) logicChangelog.push(`SKU floor DC min mult: ${s.skuFloorDCMultMin} → ${c.skuFloorDCMultMin}`);
-  if(c.skuFloorDCMultMax!==s.skuFloorDCMultMax) logicChangelog.push(`SKU floor DC max mult: ${s.skuFloorDCMultMax} → ${c.skuFloorDCMultMax}`);
-  if(JSON.stringify(c.dcDeadMult)!==JSON.stringify(s.dcDeadMult)) logicChangelog.push(`Dead stock DC multiplier changed`);
+  if(showNetworkSections&&c.skuFloorDCMultMin!==s.skuFloorDCMultMin) logicChangelog.push(`SKU floor DC min mult: ${s.skuFloorDCMultMin} → ${c.skuFloorDCMultMin}`);
+  if(showNetworkSections&&c.skuFloorDCMultMax!==s.skuFloorDCMultMax) logicChangelog.push(`SKU floor DC max mult: ${s.skuFloorDCMultMax} → ${c.skuFloorDCMultMax}`);
+  if(showNetworkSections&&JSON.stringify(c.dcDeadMult)!==JSON.stringify(s.dcDeadMult)) logicChangelog.push(`Dead stock DC multiplier changed`);
   if(JSON.stringify(c.movIntervals)!==JSON.stringify(s.movIntervals)) logicChangelog.push(`Movement tag boundaries changed`);
   if(JSON.stringify(c.priceTiers)!==JSON.stringify(s.priceTiers)) logicChangelog.push(`Price tag boundaries changed`);
-  if(JSON.stringify(c.newDSList)!==JSON.stringify(s.newDSList)) logicChangelog.push(`New DS list changed`);
-  {const co=c.openingDSList??OPENING_DS_DEFAULT, so=s.openingDSList??OPENING_DS_DEFAULT;
+  if(showNetworkSections&&JSON.stringify(c.newDSList)!==JSON.stringify(s.newDSList)) logicChangelog.push(`New DS list changed`);
+  if(showNetworkSections){const co=c.openingDSList??OPENING_DS_DEFAULT, so=s.openingDSList??OPENING_DS_DEFAULT;
    if(JSON.stringify(co)!==JSON.stringify(so)){
      const opened=so.filter(d=>!co.includes(d)), closed=co.filter(d=>!so.includes(d));
      if(opened.length) logicChangelog.push(`${opened.join(", ")} went LIVE (was Opening Shortly)`);
      if(closed.length) logicChangelog.push(`${closed.join(", ")} set to Opening Shortly`);
    }}
-  if(c.newDSFloorTopN!==s.newDSFloorTopN) logicChangelog.push(`New DS floor top N: ${s.newDSFloorTopN} → ${c.newDSFloorTopN}`);
+  if(showNetworkSections&&c.newDSFloorTopN!==s.newDSFloorTopN) logicChangelog.push(`New DS floor top N: ${s.newDSFloorTopN} → ${c.newDSFloorTopN}`);
   const blt={...DEFAULT_PARAMS.brandLeadTimeDays,...(c.brandLeadTimeDays||{})};
   const sblt=s.brandLeadTimeDays||{};
   if(blt._default!==sblt._default) logicChangelog.push(`Brand lead time default: ${sblt._default??2}D → ${blt._default}D`);
@@ -129,6 +137,7 @@ export default function LogicTweakerTab({ params, savedParams, saveParams, setPa
   if(fu.maxAdditive!==sfu.maxAdditive)logicChangelog.push(`Fixed floor max additive: ${sfu.maxAdditive} → ${fu.maxAdditive}`);
   if((fu.minNZD??2)!==(sfu.minNZD??2))logicChangelog.push(`Fixed floor min order-days: ${sfu.minNZD??2} → ${fu.minNZD??2}`);
   if((fu.spikeCapMult??5)!==(sfu.spikeCapMult??5))logicChangelog.push(`Fixed floor spike cap: ${sfu.spikeCapMult??5}× → ${fu.spikeCapMult??5}×`);
+  if(extraChangelog) logicChangelog.push(...extraChangelog);
 
   // ── Shared locals ──
   const pc=params.percentileCover||DEFAULT_PARAMS.percentileCover;
@@ -206,13 +215,15 @@ export default function LogicTweakerTab({ params, savedParams, saveParams, setPa
             ↩ Reset
           </button>}
           <button
-            disabled={!hasChanges}
-            onClick={hasChanges?()=>setShowLogicConfirm(true):undefined}
-            style={{background:hasChanges?HR.yellow:"#E5E5E5",color:hasChanges?HR.black:"#999",border:"none",padding:"7px 20px",borderRadius:7,cursor:hasChanges?"pointer":"not-allowed",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:6}}>
+            disabled={!hasChanges||applyDisabled}
+            onClick={hasChanges&&!applyDisabled?()=>setShowLogicConfirm(true):undefined}
+            style={{background:hasChanges&&!applyDisabled?HR.yellow:"#E5E5E5",color:hasChanges&&!applyDisabled?HR.black:"#999",border:"none",padding:"7px 20px",borderRadius:7,cursor:hasChanges&&!applyDisabled?"pointer":"not-allowed",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:6}}>
             {hasChanges?<><span>▶</span> Apply {logicChangelog.length>0?`(${logicChangelog.length} changes)`:""}</>:<><span>✓</span> Up to date</>}
           </button>
         </div>
       </div>
+
+      {topSlot}
 
       {/* ── STRATEGY ROUTING (full width) ── */}
       <Section title="Category → Strategy Map" icon="📋" accent="#7C3AED"
@@ -241,13 +252,13 @@ export default function LogicTweakerTab({ params, savedParams, saveParams, setPa
                             {cat === "Plywood, MDF & HDHMR" && (
                               <option value="network_design">Network Design</option>
                             )}
-                            {cat === "Plywood, MDF & HDHMR" && (
+                            {showNetworkSections && cat === "Plywood, MDF & HDHMR" && (
                               <option value="network_design_v2">Network Design v2</option>
                             )}
                           </select>
                         </td>
                       </tr>
-                      {cat === "Plywood, MDF & HDHMR" && (csC[cat] === "network_design" || csC[cat] === "network_design_v2") && (
+                      {showNetworkSections && cat === "Plywood, MDF & HDHMR" && (csC[cat] === "network_design" || csC[cat] === "network_design_v2") && (
                         <tr style={{background:"#F5F0FF"}}>
                           <td style={{...S.td,fontSize:10,color:HR.muted,paddingLeft:24}}>↳ Non-network brands (e.g. Merino)</td>
                           <td style={{...S.td,textAlign:"center"}}>
@@ -351,7 +362,7 @@ export default function LogicTweakerTab({ params, savedParams, saveParams, setPa
 
         {/* RIGHT: DC Inputs */}
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <Section title="Brand Lead Time (DC)" icon="🚚" accent="#7C3AED"
+          <Section title={leadTimeLabel} icon="🚚" accent="#7C3AED"
             summary={`Default ${bltC._default||3}d · ${configuredBrands.length} brand override${configuredBrands.length!==1?"s":""}`}>
             <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -558,6 +569,7 @@ export default function LogicTweakerTab({ params, savedParams, saveParams, setPa
                     onChange={v=>{const next=[...ptC];next[i]=v;saveParams({...params,priceTiers:next});}}/>;
                 })}
               </Section>
+              {showNetworkSections&&<>
               <Section title="New Dark Store Logic" icon="" accent={HR.yellowDark}
                 summary={`${(params.newDSList||[]).join(", ")||"None"} · Top ${params.newDSFloorTopN} SKUs`}>
                 <div style={{...S.card,marginBottom:10,padding:"12px 14px"}}>
@@ -739,6 +751,7 @@ export default function LogicTweakerTab({ params, savedParams, saveParams, setPa
                   </div>
                 </div>
               </Section>
+              </>}
             </div>
 
           </div>
