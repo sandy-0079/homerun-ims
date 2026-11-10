@@ -95,7 +95,7 @@ export const PO_NUMERIC_COL_COUNT = poNumericColCount();
 // Text fields are quoted (item names contain commas, and really do contain quotes —
 // e.g. a floor drain described as 5" x 5"). Numbers are left UNQUOTED so Sheets reads
 // them as numbers rather than text, which is what the PO team's formulas need.
-const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+export const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
 /** A missing engine entry or store yields 0, never blank — blanks break SUM and
  *  comparison in Sheets, and 0/0 is the honest value for a SKU with no target. */
