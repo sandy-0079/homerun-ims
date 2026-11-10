@@ -44,4 +44,10 @@ describe("computeInvValue — must reproduce the Overview KPI card exactly", () 
     expect(computeInvValue({}, {}, DS)).toEqual({ min: 0, max: 0 });
     expect(computeInvValue(null, null, DS)).toEqual({ min: 0, max: 0 });
   });
+
+  it("includeDC:false drops the DC (a no-DC city); omitted keeps it", () => {
+    const res = { A: sku({ DS01: { min: 1, max: 2 } }, { min: 5, max: 6 }) };
+    expect(computeInvValue(res, { A: 10 }, DS, { includeDC: false })).toEqual({ min: 10, max: 20 });
+    expect(computeInvValue(res, { A: 10 }, DS)).toEqual({ min: 60, max: 80 });
+  });
 });

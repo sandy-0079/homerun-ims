@@ -22,9 +22,10 @@
  * @param results   runEngine output: { [sku]: { stores: { [ds]: {min,max} }, dc: {min,max} } }
  * @param priceData { [sku]: unitPrice }
  * @param dsList    DS codes to include, alongside the DC
+ * @param opts      { includeDC = true } — false for a city with no DC (Hyderabad)
  * @returns {{min:number,max:number}} rupees, rounded — as the card displays them
  */
-export function computeInvValue(results, priceData, dsList) {
+export function computeInvValue(results, priceData, dsList, { includeDC = true } = {}) {
   let min = 0, max = 0;
   for (const [sku, r] of Object.entries(results || {})) {
     // `|| 0` rather than `?? 0`: a SKU absent from priceData must contribute zero,
@@ -34,6 +35,7 @@ export function computeInvValue(results, priceData, dsList) {
       min += (r?.stores?.[ds]?.min || 0) * p;
       max += (r?.stores?.[ds]?.max || 0) * p;
     }
+    if (!includeDC) continue;
     min += (r?.dc?.min || 0) * p;
     max += (r?.dc?.max || 0) * p;
   }

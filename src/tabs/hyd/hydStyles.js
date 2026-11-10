@@ -41,8 +41,6 @@ export const fmtInr = (v) => {
   return "₹" + Math.round(v).toLocaleString();
 };
 
-export const fmtNum = (v) => (v == null || Number.isNaN(v) ? "–" : Number(v).toLocaleString());
-
 /** Local calendar date YYYY-MM-DD, as Bangalore's PO download names its file. */
 export const todayLocalIso = () => {
   const d = new Date(), p = (n) => String(n).padStart(2, "0");

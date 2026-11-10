@@ -2,16 +2,6 @@
 import React, { useState } from "react";
 import { C, card, input } from "./hydStyles.js";
 
-export function Kpi({ label, value, sub }) {
-  return (
-    <div style={{ ...card, marginBottom: 0, padding: "10px 12px" }}>
-      <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginTop: 2 }}>{value}</div>
-      {sub && <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{sub}</div>}
-    </div>
-  );
-}
-
 export function Collapsible({ title, count, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (

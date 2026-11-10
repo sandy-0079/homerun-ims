@@ -10,7 +10,7 @@ import { normaliseStatus } from "./skuStatus";
 import { parseSkuCeilingCsv, buildSkuCeilingCsv } from "./skuCeilingCsv";
 import { normalisePolicy } from "./skuPolicy";
 import { computeInvValue } from "./invValue";
-import { DS_COLORS, DS_COLOR, DC_COLOR } from "./dsColors";
+import { DS_COLORS, DS_COLOR, DC_COLOR, storeColor } from "./dsColors";
 import { summariseZeroSale, buildZeroSaleCsv, zeroSaleFilename, ZERO_SALE_CSV_HEADERS } from "./zeroSaleCsv";
 import { buildInnerCasePackCsv, buildPurchasePriceCsv, innerCasePackFilename, purchasePriceFilename,
   countPricedSkus, INNER_CASE_PACK_CSV_HEADERS, PURCHASE_PRICE_CSV_HEADERS } from "./refDataCsv";
@@ -766,10 +766,6 @@ const SD_PERIODS = [
   { key: "L7D",  label: "L7D",  days: 7 },
   { key: "CUSTOM", label: "Custom" },
 ];
-// Derived, not hardcoded: this list omitted DS06 for three weeks after go-live while
-// the rest of SKUDetailTab already used DS_LIST, so DS06 data existed but had no
-// per-store view. Deriving means a DS07 needs one edit (engine/constants.js).
-const SD_DS_OPTS = ["All", ...DS_LIST];
 
 function filterInvoiceByPeriod(invoiceData, periodKey, dateFrom, dateTo, invoiceDateRange) {
   if (!invoiceData || !invoiceData.length) return [];
@@ -817,8 +813,8 @@ const SPIKE_TAG_COLORS = {
 // Supplier, exactly like a trading store's card for the same SKU. Reading the tag
 // would make the badge vanish on ~1 SKU in 6, which is worse than not having it:
 // a reassurance that is silently absent some of the time is one you stop trusting.
-const StrategyCard = ({ dsId, dsIndex, storeData, meta, params, opening = false }) => {
-  const dc = DS_COLOR(dsIndex);
+const StrategyCard = ({ dsId, dsIndex, storeData, meta, params, opening = false, color }) => {
+  const dc = color ?? DS_COLOR(dsIndex);
   const s = storeData || {};
   const det = s.strategyDetails || null;
   const stratTag = s.strategyTag || "standard";
@@ -1030,7 +1026,15 @@ const DateOrderChart = ({ data, color, minVal, maxVal }) => {
 export function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceDateRange, priceData,
   skuId, setSkuId, searchVal, setSearchVal,
   period, setPeriod, dateFrom, setDateFrom, dateTo, setDateTo,
-  dsView, setDsView }) {
+  dsView, setDsView,
+  // Store list (spec §9). Defaults are Bangalore's: DS_LIST, a DC card, and the
+  // openingDSList gate. Hyderabad passes ["HYDS01"], includeDC=false, openingList=[].
+  dsList = DS_LIST, includeDC = true, openingList }) {
+
+  // Derived, not hardcoded: this list omitted DS06 for three weeks after go-live while
+  // the rest of SKUDetailTab already used DS_LIST, so DS06 data existed but had no
+  // per-store view. Deriving means a DS07 needs one edit (engine/constants.js).
+  const dsOpts = useMemo(() => ["All", ...dsList], [dsList]);
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [hlIdx, setHlIdx] = useState(-1);
@@ -1102,9 +1106,9 @@ export function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceD
   // place a gated store is worth SEEING: a DS07 card reading 0/0 is how you confirm
   // the gate is doing its job before go-live. The PO CSV and the TO tool, which feed
   // other people's decisions, still show only trading stores.
-  const dsCards = useMemo(() => (dsView === "All" ? DS_LIST : [dsView]), [dsView]);
+  const dsCards = useMemo(() => (dsView === "All" ? dsList : [dsView]), [dsView, dsList]);
   const openingSet = useMemo(
-    () => new Set(params?.openingDSList ?? OPENING_DS_DEFAULT), [params?.openingDSList]);
+    () => new Set(openingList ?? params?.openingDSList ?? OPENING_DS_DEFAULT), [openingList, params?.openingDSList]);
 
   // ── Align the headline numbers with the end of the DS picker above them ────
   // ⚠ MEASURED, NOT A PERCENTAGE. Row 1's width is not fixed: selecting `Custom`
@@ -1260,13 +1264,13 @@ export function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceD
               {periodLabel && <span style={{fontSize:11,color:HR.textSoft,fontWeight:500}}>{periodLabel}</span>}
               <div style={{width:1,height:20,background:HR.border,margin:"0 4px"}} />
               <div style={{display:"flex",borderRadius:6,overflow:"hidden",border:`1px solid ${HR.border}`}}>
-                {SD_DS_OPTS.map(d => {
-                  const di = DS_LIST.indexOf(d), col = di >= 0 ? DS_COLOR(di).header : HR.muted;
+                {dsOpts.map(d => {
+                  const di = dsList.indexOf(d), col = di >= 0 ? storeColor(d, dsList).header : HR.muted;
                   const isActive = dsView === d;
                   return (
                     <button key={d} onClick={() => setDsView(d)}
                       title={di >= 0 && openingSet.has(d) ? `${d} — not trading yet` : undefined}
-                      style={{padding:"4px 9px",background:isActive?(di>=0?DS_COLOR(di).header:HR.yellow):HR.white,color:isActive?HR.white:col,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700,
+                      style={{padding:"4px 9px",background:isActive?(di>=0?storeColor(d, dsList).header:HR.yellow):HR.white,color:isActive?HR.white:col,border:"none",borderRight:`1px solid ${HR.border}`,cursor:"pointer",fontSize:11,fontWeight:700,
                               opacity: di >= 0 && openingSet.has(d) && !isActive ? 0.55 : 1}}>
                       {d}
                     </button>
@@ -1352,8 +1356,8 @@ export function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceD
           {/* Charts section */}
           {(() => {
             const dsLabel = dsView === "All" ? "All DS Combined" : dsView;
-            const di = DS_LIST.indexOf(dsView);
-            const chartColor = di >= 0 ? DS_COLOR(di).header : HR.yellowDark;
+            const di = dsList.indexOf(dsView);
+            const chartColor = di >= 0 ? storeColor(dsView, dsList).header : HR.yellowDark;
             const storeMin = dsView !== "All" && res.stores?.[dsView] ? res.stores[dsView].min : null;
             const storeMax = dsView !== "All" && res.stores?.[dsView] ? res.stores[dsView].max : null;
             const totalOrders = Object.values(freqData).reduce((a, b) => a + b, 0);
@@ -1392,14 +1396,16 @@ export function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceD
                        gridTemplateColumns:`repeat(${dsCards.length <= 4 ? dsCards.length : Math.ceil(dsCards.length / 2)}, minmax(0,1fr))`,
                        gap:10,marginBottom:12}}>
             {dsCards.map(ds => {
-              const di = DS_LIST.indexOf(ds);
-              return <StrategyCard key={ds} dsId={ds} dsIndex={di} storeData={res.stores?.[ds]}
+              const di = dsList.indexOf(ds);
+              return <StrategyCard key={ds} dsId={ds} dsIndex={di} color={storeColor(ds, dsList)} storeData={res.stores?.[ds]}
                        meta={res.meta} params={params} opening={openingSet.has(ds)} />;
             })}
           </div>
-          <div style={{marginBottom:12}}>
-            <DCCard dcData={res.dc} meta={res.meta} params={params} horizontal />
-          </div>
+          {includeDC && (
+            <div style={{marginBottom:12}}>
+              <DCCard dcData={res.dc} meta={res.meta} params={params} horizontal />
+            </div>
+          )}
         </>
       )}
     </div>
@@ -1408,7 +1414,10 @@ export function SKUDetailTab({ invoiceData, skuMaster, results, params, invoiceD
 
 export function OverviewTab({ invoiceData, results, priceData, params, invoiceDateRange,
   period, setPeriod, dateFrom, setDateFrom, dateTo, setDateTo,
-  store, setStore, drill, setDrill, onNavigateToSKU }) {
+  store, setStore, drill, setDrill, onNavigateToSKU,
+  // Store list (spec §9). Defaults are Bangalore's: DS_LIST plus the DC.
+  // Hyderabad passes ["HYDS01"] and includeDC=false.
+  dsList = DS_LIST, includeDC = true }) {
 
   const [sortKey, setSortKey] = useState("invMax");
   const [sortAsc, setSortAsc] = useState(false);
@@ -1457,9 +1466,9 @@ export function OverviewTab({ invoiceData, results, priceData, params, invoiceDa
     // this figure every morning; an inline copy here is how the email would come to
     // quietly disagree with the card it is meant to summarise. Same reasoning as
     // src/toTargets.js having two writers on one builder.
-    const { min: invMin, max: invMax } = computeInvValue(results, priceData, DS_LIST);
+    const { min: invMin, max: invMax } = computeInvValue(results, priceData, dsList, { includeDC });
     return { activeCt, skusSold, zeroSale, invMin, invMax };
-  }, [activeSkus, filteredInv, results, priceData]);
+  }, [activeSkus, filteredInv, results, priceData, dsList, includeDC]);
 
   // Helper: get inv min/max for a SKU given store selection
   const getInv = useCallback((r, field) => {
@@ -1468,8 +1477,8 @@ export function OverviewTab({ invoiceData, results, priceData, params, invoiceDa
     if (store !== "All") return r.stores[store]?.[field] || 0;
     // "All" = full network (DS01–DS05 + DC) so table rollups tie out to the KPI cards,
     // which always include DC (see kpis useMemo above).
-    return DS_LIST.reduce((s, ds) => s + (r.stores[ds]?.[field] || 0), 0) + (r.dc?.[field] || 0);
-  }, [store]);
+    return dsList.reduce((s, ds) => s + (r.stores[ds]?.[field] || 0), 0) + (includeDC ? (r.dc?.[field] || 0) : 0);
+  }, [store, dsList, includeDC]);
 
   // Helper: get sold qty for a SKU given store selection
   const getSoldQty = useCallback((sku) => {
@@ -1559,14 +1568,17 @@ export function OverviewTab({ invoiceData, results, priceData, params, invoiceDa
           const invMax = getInv(r, "max") * (priceData[r.sku] || 0);
           const covMin = getCov(invMin, soldVal);
           const covMax = getCov(invMax, soldVal);
-          const dailyAvg = store === "DC" ? 0 : store !== "All" ? (r.stores[store]?.dailyAvg || 0) : DS_LIST.reduce((s, ds) => s + (r.stores[ds]?.dailyAvg || 0), 0);
+          const dailyAvg = store === "DC" ? 0 : store !== "All" ? (r.stores[store]?.dailyAvg || 0) : dsList.reduce((s, ds) => s + (r.stores[ds]?.dailyAvg || 0), 0);
           const abq = store !== "All" && store !== "DC" ? (r.stores[store]?.abq || 0) : 0;
-          const mvTag = store === "DC" ? (r.dc?.mvTag || "—") : store !== "All" ? (r.stores[store]?.mvTag || "—") : (r.dc?.mvTag || "—");
+          // "All" reads the DC's movement (network-wide); with no DC, a one-store list
+          // reads its store's movement, and a several-store list has no single answer.
+          const mvTag = store === "DC" ? (r.dc?.mvTag || "—") : store !== "All" ? (r.stores[store]?.mvTag || "—")
+            : includeDC ? (r.dc?.mvTag || "—") : dsList.length === 1 ? (r.stores[dsList[0]]?.mvTag || "—") : "—";
           return { key: r.sku, sku: r.sku, label: r.meta?.name || r.sku, meta: r.meta, mvTag, priceTag: r.meta?.priceTag || "No Price", dailyAvg, abq, soldQty, soldVal, invMin, invMax, covMin, covMax, stores: r.stores, dc: r.dc, soldPerDay: periodDays > 0 ? soldVal / periodDays : 0 };
         }).sort((a, b) => { const av = a[sortKey] ?? 0, bv = b[sortKey] ?? 0; return sortAsc ? av - bv : bv - av; });
     }
     return [];
-  }, [results, allEntries, drill, filteredInv, getSoldQty, getSoldVal, getInv, getCov, priceData, store, sortKey, sortAsc]);
+  }, [results, allEntries, drill, filteredInv, getSoldQty, getSoldVal, getInv, getCov, priceData, store, sortKey, sortAsc, dsList, includeDC]);
 
   const thS = { ...S.th, fontSize: 10, padding: "6px 8px", textAlign: "center", position: "sticky", top: 0, zIndex: 2, background: "#F5E6C8", color: HR.text, borderBottom: "2px solid " + HR.yellow };
   const sortTh = (label, key) => (
@@ -1624,9 +1636,9 @@ export function OverviewTab({ invoiceData, results, priceData, params, invoiceDa
         </span>
         <select value={store} onChange={e => setStore(e.target.value)}
           style={{ ...S.input, fontSize: 11, padding: "4px 8px", marginLeft: "auto" }}>
-          <option value="All">All Locations (incl. DC)</option>
-          {DS_LIST.map(ds => <option key={ds} value={ds}>{ds}</option>)}
-          <option value="DC">DC</option>
+          <option value="All">{includeDC ? "All Locations (incl. DC)" : "All Locations"}</option>
+          {dsList.map(ds => <option key={ds} value={ds}>{ds}</option>)}
+          {includeDC && <option value="DC">DC</option>}
         </select>
         <span style={{ fontSize: 10, color: HR.muted, fontWeight: 600 }}>{periodDays}D</span>
       </div>
@@ -4263,7 +4275,8 @@ const zeroSaleLists = useMemo(
             stockData={stockData} stockDataAccounting={stockDataAccounting}
             uploadedAtPerDS={stockUploadedAtPerDS}
             hydState={hydState} setHydState={setHydState} hydRun={hydRun}
-            blrParams={savedParams}/>
+            blrParams={savedParams} setTab={setHydTab}
+            OverviewTabComponent={OverviewTab} SKUDetailTabComponent={SKUDetailTab}/>
         </div>
       )}
       {/* Toast notification */}

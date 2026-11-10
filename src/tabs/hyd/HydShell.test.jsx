@@ -5,9 +5,15 @@ import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-vi.mock("../../supabase.js", () => ({ loadFromSupabase: vi.fn(), saveToSupabase: vi.fn(), supabase: {} }));
+vi.mock("../../supabase.js", () => ({
+  loadFromSupabase: vi.fn(), saveToSupabase: vi.fn(), supabase: {}, loadPayloadKey: vi.fn(),
+  READ_ONLY: true, blockedWrites: () => [],
+}));
 
 import HydShell from "./HydShell.jsx";
+// Bangalore's own screens, passed in as App.jsx does (spec §9).
+import { OverviewTab, SKUDetailTab } from "../../App.jsx";
+const SCREENS = { OverviewTabComponent: OverviewTab, SKUDetailTabComponent: SKUDetailTab };
 import { runHydEngine } from "../../hyd/hydEngine.js";
 import { buildHydParamsFromBangalore, buildHydPlywoodFromBangalore } from "../../hyd/hydParams.js";
 
@@ -38,7 +44,7 @@ const render = (tab, hydState, extra = {}) => {
   return renderToStaticMarkup(
     <HydShell tab={tab} isAdmin invoiceData={invoiceData} skuMaster={skuMaster} priceData={priceData} deadStock={new Set()}
       stockData={{}} stockDataAccounting={{}} uploadedAtPerDS={{}} hydState={hydState} setHydState={() => {}} hydRun={hydRun}
-      blrParams={{ overallPeriod: 45 }} {...extra} />,
+      blrParams={{ overallPeriod: 45 }} {...SCREENS} {...extra} />,
   );
 };
 
@@ -57,12 +63,18 @@ describe("HydShell renders every tab", () => {
     expect(render("overview", null)).toContain("Loading Hyderabad");
   });
 
-  it("overview shows the mode and the four report lists", () => {
+  it("overview is Bangalore's Overview with HYDS01 only — no DC in the store picker", () => {
     const html = render("overview", stateFor(true));
-    expect(html).toContain("Floors only");
-    expect(html).toContain("Floor SKUs inactive in Zoho");
-    expect(html).toContain("Pati sales outside the range");
-    expect(html).toContain("Floor SKUs not in the SKU master");
+    expect(html).toContain("Inv Value Max");
+    expect(html).toContain('<option value="HYDS01">HYDS01</option>');
+    expect(html).toContain('<option value="All" selected="">All Locations</option>');
+    expect(html).not.toContain("incl. DC");
+    expect(html).not.toContain('value="DC"');
+    expect(html).not.toContain('value="DS01"');
+  });
+
+  it("sku detail is Bangalore's SKU Detail (its search box renders)", () => {
+    expect(render("skuDetail", stateFor(true))).toContain("Search by SKU ID or name");
   });
 
   it("load errors and an engine error are surfaced, not thrown", () => {
@@ -91,7 +103,7 @@ describe("HydShell renders every tab", () => {
     const st = stateFor(true);
     const html = (tab) => renderToStaticMarkup(
       <HydShell tab={tab} isAdmin={false} invoiceData={invoiceData} skuMaster={skuMaster} priceData={priceData} deadStock={new Set()}
-        hydState={st} setHydState={() => {}} hydRun={null} blrParams={{}} />);
+        hydState={st} setHydState={() => {}} hydRun={null} blrParams={{}} {...SCREENS} />);
     expect(html("plywood")).not.toContain("Save (Hyderabad)");
     expect(html("upload")).toContain("admin-only");
     expect(html("logic")).toContain("admin-only");

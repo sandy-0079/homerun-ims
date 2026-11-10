@@ -37,3 +37,15 @@ export const DC_COLOR = { bg:"#EAF9FF", header:"#0077A8", text:"#004D70" };
  *  a negative index (an unknown store) falls back to the DC colour. */
 export const DS_COLOR = (i) =>
   i < 0 ? DC_COLOR : (DS_COLORS[i] ?? DS_COLORS[DS_COLORS.length - 1]);
+
+// Stores outside Bangalore's DS_LIST carry their own colour, keyed by code rather than
+// position: Hyderabad's list is ["HYDS01"], where position 0 would borrow DS01's gold.
+// #1F5FA8 is Hyderabad's city colour (cityShell.js CITY_THEME.hyd).
+const OTHER_CITY_COLORS = {
+  HYDS01: { bg:"#E6F0FA", header:"#1F5FA8", text:"#123F70" },
+};
+
+/** Colour for a store within `dsList`. For a Bangalore store this is exactly
+ *  DS_COLOR(dsList.indexOf(ds)); a store not in `dsList` falls back to the DC colour. */
+export const storeColor = (ds, dsList) =>
+  OTHER_CITY_COLORS[ds] ?? DS_COLOR(dsList.indexOf(ds));
