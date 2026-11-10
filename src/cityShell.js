@@ -1,6 +1,5 @@
 // App-shell helpers for the city switch: header label/tint, the Hyderabad tab
 // list, and the ?city= URL. Pure, so App.jsx carries only the wiring.
-import { CITIES } from "./city.js";
 
 export const CITY_THEME = {
   blr: { headerBg: "#FFF8DC", underline: "#F5C400", label: "#7A5C00", title: "IMS · Bangalore" },
@@ -9,8 +8,19 @@ export const CITY_THEME = {
 
 const themeOf = city => CITY_THEME[city] || CITY_THEME.blr;
 
-// Rendered next to the "HomeRun" logo, so the header reads "HomeRun · HYDERABAD ▾".
-export const cityHeaderLabel = city => `· ${(CITIES[city] || CITIES.blr).label} ▾`;
+// The BLR | HYD segmented toggle at the right of the header. The selected city is
+// filled in its own colour; the other is muted, so the current city reads at a glance.
+export const CITY_TOGGLE = [["blr", "BLR"], ["hyd", "HYD"]];
+
+const TOGGLE_FILL = { blr: { bg: "#F5C400", fg: "#1A1A1A" }, hyd: { bg: "#1F5FA8", fg: "#FFFFFF" } };
+
+export const cityToggleStyle = (city, selected) => ({
+  border: "none", margin: 0, padding: "4px 10px", fontFamily: "inherit", fontSize: 11,
+  letterSpacing: 0.5, cursor: selected ? "default" : "pointer",
+  fontWeight: selected ? 800 : 600,
+  background: selected ? (TOGGLE_FILL[city] || TOGGLE_FILL.blr).bg : "#FFFFFF",
+  color: selected ? (TOGGLE_FILL[city] || TOGGLE_FILL.blr).fg : "#888870",
+});
 
 // The tint replaces only the background and the bottom border; height and layout stay.
 export const cityHeaderStyle = (base, city) => ({
@@ -29,8 +39,6 @@ const HYD_ADMIN_TABS = [...HYD_PUBLIC_TABS, ["upload", "Upload Data"], ["logic",
 export const hydTabsFor = isAdmin => (isAdmin ? HYD_ADMIN_TABS : HYD_PUBLIC_TABS);
 
 export const tabForCity = (tab, tabs) => (tabs.some(([t]) => t === tab) ? tab : "overview");
-
-export const otherCity = city => (city === "hyd" ? "blr" : "hyd");
 
 // Relative URL with ?city= set, for history.replaceState.
 export function cityUrl(href, city) {

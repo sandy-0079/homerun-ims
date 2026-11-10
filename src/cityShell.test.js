@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  CITY_THEME, cityHeaderLabel, cityHeaderStyle, hydTabsFor, tabForCity, otherCity, cityUrl,
+  CITY_THEME, CITY_TOGGLE, cityToggleStyle, cityHeaderStyle, hydTabsFor, tabForCity, cityUrl,
   safeHydRun,
 } from "./cityShell.js";
 
@@ -10,9 +10,12 @@ describe("city shell", () => {
     expect(CITY_THEME.hyd).toEqual({ headerBg: "#E6F0FA", underline: "#1F5FA8", label: "#1F5FA8", title: "IMS · Hyderabad" });
   });
 
-  it("header label", () => {
-    expect(cityHeaderLabel("blr")).toBe("· BANGALORE ▾");
-    expect(cityHeaderLabel("hyd")).toBe("· HYDERABAD ▾");
+  it("toggle is BLR | HYD, selected city filled in its colour, the other muted", () => {
+    expect(CITY_TOGGLE).toEqual([["blr", "BLR"], ["hyd", "HYD"]]);
+    expect(cityToggleStyle("blr", true)).toMatchObject({ background: "#F5C400", color: "#1A1A1A", fontWeight: 800 });
+    expect(cityToggleStyle("hyd", true)).toMatchObject({ background: "#1F5FA8", color: "#FFFFFF", fontWeight: 800 });
+    expect(cityToggleStyle("hyd", false)).toMatchObject({ background: "#FFFFFF", color: "#888870", fontWeight: 600 });
+    expect(cityToggleStyle("blr", false)).toMatchObject({ background: "#FFFFFF", color: "#888870" });
   });
 
   it("header style replaces only background and bottom border", () => {
@@ -40,10 +43,6 @@ describe("city shell", () => {
     expect(tabForCity("logic", hydTabsFor(false))).toBe("overview");
   });
 
-  it("otherCity toggles", () => {
-    expect(otherCity("blr")).toBe("hyd");
-    expect(otherCity("hyd")).toBe("blr");
-  });
 
   it("cityUrl sets ?city= and keeps path, other params and hash", () => {
     expect(cityUrl("https://x.app/", "hyd")).toBe("/?city=hyd");

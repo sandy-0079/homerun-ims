@@ -32,7 +32,7 @@ import StockHealthTab from "./tabs/StockHealthTab";
 import HydShell from "./tabs/hyd/HydShell";
 import { downloadCsvFile } from "./downloadCsv";
 import { readInitialCity, persistCity, dropHydRows } from "./city";
-import { CITY_THEME, cityHeaderLabel, cityHeaderStyle, hydTabsFor, tabForCity, otherCity, cityUrl, safeLocalStorage, safeHydRun } from "./cityShell";
+import { CITY_THEME, CITY_TOGGLE, cityToggleStyle, cityHeaderStyle, hydTabsFor, tabForCity, cityUrl, safeLocalStorage, safeHydRun } from "./cityShell";
 import { loadHydState } from "./hyd/hydStore";
 import { runHydEngine } from "./hyd/hydEngine";
 
@@ -2675,11 +2675,11 @@ const zeroSaleLists = useMemo(
   );
   useEffect(()=>{document.title=CITY_THEME[city].title;},[city]);
   // Never applies anything: unsaved Bangalore Logic Tweaker changes block the switch.
-  const switchCity=()=>{
+  const switchCity=(next)=>{
+    if(next===city) return;
     // `hasChanges` (full params diff, as handleTabClick uses) — `changedCount` alone misses
     // keys such as pincodeConfig and the plywood own-row configs.
     if(hasChanges||changedCount>0){alert("Apply or discard your Bangalore Logic Tweaker changes first.");return;}
-    const next=otherCity(city);
     if(next==="hyd") setHydTab(tabForCity(tab,HYD_TABS));
     else setTab(tabForCity(hydTabShown,NAV_TABS));
     setCity(next);
@@ -2702,7 +2702,6 @@ const zeroSaleLists = useMemo(
     <div style={S.app}>
       <div style={cityHeaderStyle(S.header,city)}>
         <HomeRunLogo/>
-        <button onClick={switchCity} title="Switch city" style={{background:"none",border:"none",padding:0,margin:0,cursor:"pointer",fontSize:13,fontWeight:700,color:CITY_THEME[city].label,whiteSpace:"nowrap",flexShrink:0,fontFamily:"inherit"}}>{cityHeaderLabel(city)}</button>
         <SyncBadge/>
         <div style={{flex:1}}/>
         {city==="hyd"
@@ -2711,6 +2710,9 @@ const zeroSaleLists = useMemo(
         <div style={{fontSize:10,color:HR.muted,marginRight:8,whiteSpace:"nowrap"}}>{dateRange}</div>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}
           </>}
+        <div role="group" aria-label="City" style={{display:"flex",flexShrink:0,border:"1px solid #E0E0D0",borderRadius:6,overflow:"hidden",marginLeft:4}}>
+          {CITY_TOGGLE.map(([c,l])=><button key={c} onClick={()=>switchCity(c)} aria-pressed={city===c} title={c==="blr"?"Bangalore":"Hyderabad"} style={cityToggleStyle(c,city===c)}>{l}</button>)}
+        </div>
         {isAdmin
           ?<button onClick={handleLogout} style={{...S.btn(false),fontSize:11,color:"#B91C1C",borderColor:"#FECACA"}}>🔓 Logout</button>
           :<button onClick={()=>setShowLoginModal(true)} style={{...S.btn(false),fontSize:11}}>🔐 Admin</button>
