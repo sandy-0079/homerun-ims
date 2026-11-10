@@ -158,6 +158,11 @@ describe("runHydEngine — engine mode (after the flip)", () => {
     expect(report.overrides).toContainEqual({ sku: "F", reason: "Purchase=OFF" });
   });
 
+  it("engine mode, no floor and no Pati sales → No demand", () => {
+    const { results } = run({ inv: networkRows(), master: { Q: sku("Q") }, hydParams: engineMode() });
+    expect(results.Q.stores.HYDS01).toMatchObject({ min: 0, max: 0, logicTag: "No demand", source: "none" });
+  });
+
   it("engine-only SKU with Purchase=OFF → 0/0", () => {
     const { results } = run({
       inv: [...networkRows(), ...patiRows("P", 10)],
@@ -234,6 +239,29 @@ describe("runHydEngine — rules for both modes", () => {
     const blr = WINDOW.map(date => ({ sku: "A", ds: "DS01", date, qty: 99 }));
     const args = { master: { A: sku("A") }, floors: { A: { HYDS01: { min: 1, max: 2 } } }, hydParams: engineMode() };
     expect(run({ inv: [...base, ...blr], ...args })).toEqual(run({ inv: base, ...args }));
+  });
+
+  it("a master row with no status field counts as active", () => {
+    const { status, ...noStatus } = sku("A");
+    void status;
+    const { results, report } = run({
+      inv: networkRows(), master: { A: noStatus }, floors: { A: { HYDS01: { min: 2, max: 4 } } },
+    });
+    expect(results.A.stores.HYDS01).toMatchObject({ min: 2, max: 4, logicTag: "Hyd Floor" });
+    expect(report.inactiveFloored).toEqual([]);
+    expect(hydPurchaseOf("A", { skuMaster: { A: noStatus }, floors: {}, floorsOnly: false })).toBe("Yes");
+  });
+
+  it("a SKU absent from the master gets no target and Purchase No", () => {
+    const { results } = run({ inv: [...networkRows(), ...patiRows("GONE", 10)], master: { A: sku("A") }, hydParams: engineMode() });
+    expect(results.GONE).toBeUndefined();
+    expect(hydPurchaseOf("GONE", { skuMaster: { A: sku("A") }, floors: { GONE: { HYDS01: { min: 1, max: 2 } } }, floorsOnly: false })).toBe("No");
+  });
+
+  it("pad rows never appear in results or the report", () => {
+    const { results, report } = run({ inv: [...networkRows(), ...patiRows("A", 2)], master: { A: sku("A") }, hydParams: engineMode() });
+    expect(results[HYD_PAD_SKU]).toBeUndefined();
+    expect(JSON.stringify(report)).not.toContain(HYD_PAD_SKU);
   });
 
   it("unknown sku gets no target", () => {

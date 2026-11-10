@@ -18,6 +18,7 @@
 //   "Flag: Dead Stock"          engine mode, no floor, on the Dead Stock list → 0/0
 //   "Hyd Floor (beats engine)"  engine mode, the floor exceeds engine+buffer on Min or Max
 //   "Hyd Engine"                engine mode, engine+buffer is the target (≥ any floor)
+//   "No demand"                 engine mode, no floor, no Pati sales in the window → 0/0
 // `source` is "floor" | "engine" | "none" (zeroed), for the same audit.
 
 import { runEngine } from "../engine/runEngine.js";
@@ -36,7 +37,10 @@ const ENGINE_DS = "DS01";
  *  from results (it is not in the master). */
 export const HYD_PAD_SKU = "__HYD_WINDOW_PAD__";
 
-const isActive = meta => String(meta?.status ?? "").trim().toLowerCase() === "active";
+// Engine convention (src/engine/CLAUDE.md, Active-only): a master row with NO status
+// counts as active; a SKU absent from the master, or a status present and not
+// "active" (case-insensitive), does not.
+const isActive = meta => !!meta && String(meta.status || "Active").trim().toLowerCase() === "active";
 const isSupplier = meta => String(meta?.inventorisedAt ?? "").trim().toLowerCase() === "supplier";
 const floorAt = (floors, sku) => floors?.[sku]?.[STORE];
 const hasFloorOf = f => !!f && ((f.min || 0) > 0 || (f.max || 0) > 0);
@@ -172,6 +176,7 @@ export function runHydEngine({ invoiceData, skuMaster, priceData, deadStock, flo
         const floorWins = fMin > b.min || fMax > b.max;
         logicTag = floorWins ? "Hyd Floor (beats engine)" : "Hyd Engine";
         source = floorWins ? "floor" : "engine";
+        if (!hasFloor && !qty[sku] && min === 0 && max === 0) { logicTag = "No demand"; source = "none"; }
       }
     }
     max = Math.max(max, min);
