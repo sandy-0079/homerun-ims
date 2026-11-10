@@ -8,14 +8,14 @@ export const CITY_THEME = {
 
 const themeOf = city => CITY_THEME[city] || CITY_THEME.blr;
 
-// The BLR | HYD segmented toggle at the right of the header. The selected city is
+// The BLR | HYD segmented toggle, centred in the header between the logo and the tabs. The selected city is
 // filled in its own colour; the other is muted, so the current city reads at a glance.
 export const CITY_TOGGLE = [["blr", "BLR"], ["hyd", "HYD"]];
 
 const TOGGLE_FILL = { blr: { bg: "#F5C400", fg: "#1A1A1A" }, hyd: { bg: "#1F5FA8", fg: "#FFFFFF" } };
 
 export const cityToggleStyle = (city, selected) => ({
-  border: "none", margin: 0, padding: "4px 10px", fontFamily: "inherit", fontSize: 11,
+  border: "none", margin: 0, padding: "5px 14px", fontFamily: "inherit", fontSize: 12,
   letterSpacing: 0.5, cursor: selected ? "default" : "pointer",
   fontWeight: selected ? 800 : 600,
   background: selected ? (TOGGLE_FILL[city] || TOGGLE_FILL.blr).bg : "#FFFFFF",

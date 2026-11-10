@@ -71,7 +71,7 @@ constraint outranks every other goal here.
 - The stored key is **`HYDS01`**, matching Zoho. Bangalore keys (`DS01`–`DS08`, `DC`) are unchanged.
 - **City is the top-level scope in the UI.** One global switch, Bangalore / Hyderabad (option A in
   the mockups).
-- A **`BLR | HYD` segmented toggle** at the right of the header, just before Admin/Logout: the
+- A **`BLR | HYD` segmented toggle** centred in the header between the logo and "Period Considered"/the tabs: the
   selected city is filled in its colour, the other muted; clicking the selected one does nothing
   (*amended 2026-11-10 at the operator's request; was a "HomeRun · HYDERABAD ▾" label*). Tint pair 1: **Bangalore warm cream**
   (close to today's look, brand-yellow underline), **Hyderabad cool blue**. The header never scrolls
