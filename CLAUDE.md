@@ -71,9 +71,10 @@ on every session. Verified 2026-09-17, not assumed.
 > and the exact failure this split exists to avoid. **Always wrap paths in backticks**; the
 > import parser skips code spans. `scripts/check-claude-md.mjs` asserts zero `@`-imports.
 
-> ⚠ **`src/App.jsx` is 3,921 lines and is NOT in `src/tabs/`.** Overview, SKU Detail,
-> Upload Data, Logic Tweaker and Manual Overrides live inline there, so editing them loads
-> **no** directory file. Read `src/tabs/CLAUDE.md` deliberately when working in App.jsx.
+> ⚠ **`src/App.jsx` is NOT in `src/tabs/`.** Overview, SKU Detail and Manual Overrides live
+> inline there, so editing them loads **no** directory file. Read `src/tabs/CLAUDE.md`
+> deliberately when working in App.jsx. Tool Output, Logic Tweaker and Upload Data are in
+> `src/tabs/` (`ToolOutputTab.jsx`, `LogicTweakerTab.jsx`, `UploadDataTab.jsx`).
 
 ### Keeping these files small
 
@@ -365,9 +366,10 @@ normalisation, Zero Sale SKUs, Inner Case Pack + Purchase Prices, and the freshn
 every download). It loads
 automatically when you open anything under `src/tabs/`.
 
-⚠ **Overview, SKU Detail, Upload Data, Logic Tweaker and Manual Overrides live inline in
-`src/App.jsx`, not in `src/tabs/`** — so that file does NOT load when you edit them. Read
-`src/tabs/CLAUDE.md` deliberately when working in App.jsx.
+⚠ **Overview, SKU Detail and Manual Overrides live inline in `src/App.jsx`, not in
+`src/tabs/`** — so that file does NOT load when you edit them. Read `src/tabs/CLAUDE.md`
+deliberately when working in App.jsx. Tool Output, Logic Tweaker and Upload Data are in
+`src/tabs/` (`ToolOutputTab.jsx`, `LogicTweakerTab.jsx`, `UploadDataTab.jsx`).
 
 Two consequences that reach beyond the tabs:
 

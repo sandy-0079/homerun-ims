@@ -4,7 +4,7 @@
 rules for Stock Health and the Tool Output Download tab: health tags, the location
 universe, KPI cards, the PO/TO column sets, the CSV contracts and the freshness gate.
 
-**Tabs are also defined in `src/App.jsx`**, which is 3,921 lines and NOT in this
+**Tabs are also defined in `src/App.jsx`**, which is NOT in this
 directory — `ADMIN_TABS` / `PUBLIC_TABS`, plus Overview, SKU Detail and Manual Overrides,
 which live inline there (Tool Output, Logic Tweaker and Upload Data are files here since 2026-11-10). Editing App.jsx does not load this file; read it deliberately.
 
