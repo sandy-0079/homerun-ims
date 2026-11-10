@@ -29,6 +29,11 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, Res
 import BasketAnalysisTab from "./tabs/BasketAnalysisTab";
 import PlywoodNetworkTab from "./tabs/PlywoodNetworkTab";
 import StockHealthTab from "./tabs/StockHealthTab";
+import HydShell from "./tabs/hyd/HydShell";
+import { readInitialCity, persistCity, dropHydRows } from "./city";
+import { CITY_THEME, cityHeaderLabel, cityHeaderStyle, hydTabsFor, tabForCity, otherCity, cityUrl, safeLocalStorage, safeHydRun } from "./cityShell";
+import { loadHydState } from "./hyd/hydStore";
+import { runHydEngine } from "./hyd/hydEngine";
 
 const HR = {
   yellow:"#F5C400",yellowDark:"#D4A800",black:"#1A1A1A",white:"#FFFFFF",
@@ -1805,6 +1810,14 @@ export default function App(){
   const [infoCard, setInfoCard] = useState(null); // key of card whose column info tooltip is visible
   const [modelSnapshot, setModelSnapshot] = useState(null); // stats frozen at last model run — drives data health strip
   const [networkConfigs, setNetworkConfigs] = useState(null);
+  // ── City (Bangalore / Hyderabad) ─────────────────────────────────────────
+  // ⚠ `city` is deliberately NOT a dependency of any Bangalore effect or memo:
+  // every Bangalore load, sync and engine run happens exactly as before whatever
+  // the city. `tab` stays the Bangalore tab; Hyderabad has its own `hydTab`, so
+  // switching city never mounts or re-keys a Bangalore component.
+  const [city,setCity]=useState(()=>readInitialCity(window.location.search,safeLocalStorage()));
+  const [hydTab,setHydTab]=useState("overview");
+  const [hydState,setHydState]=useState(null); // loaded lazily on first switch to Hyderabad
 
   const addChange = (msg) => setChangeLog(prev => [...prev, msg]);
   const [syncStatus,setSyncStatus]=useState("idle"); // "idle" | "saving" | "saved" | "error"
@@ -2568,9 +2581,15 @@ const invoiceDateRange = useMemo(() => {
 //
 // Returns `invoiceData` itself when the mode is "location", so the off-path costs
 // nothing and the reference stays stable.
+//
+// Bangalore DISPLAY only: drops Hyderabad (HYDS01) rows. Same reference as
+// `invoiceData` when there is no Hyderabad row. ⚠ Never use it on a write path
+// (upload, saveTeamData, ⬇ Data backup) — that would delete the Hyderabad rows from
+// the stored invoice row. `runEngine` filters on its own.
+const blrInvoice = useMemo(() => dropHydRows(invoiceData || []), [invoiceData]);
 const attributedInvoice = useMemo(
-  () => applyAttribution(invoiceData, params.pincodeConfig),
-  [invoiceData, params.pincodeConfig],
+  () => applyAttribution(blrInvoice, params.pincodeConfig),
+  [blrInvoice, params.pincodeConfig],
 );
 
   /* skusByMov removed — was only used by old Dashboard filtering */
@@ -2634,6 +2653,37 @@ const zeroSaleLists = useMemo(
   const PUBLIC_TABS=[["overview","Overview"],["skuDetail","SKU Detail"],["baskets","Baskets"],["plywood","Plywood"],["stockHealth","Stock Health"],["output","Tool Output Download"]];
   const NAV_TABS=isAdmin?ADMIN_TABS:PUBLIC_TABS;
 
+  // ── Hyderabad (lazy: nothing below does any work while city==="blr") ──────
+  const HYD_TABS=hydTabsFor(isAdmin);
+  const hydTabShown=tabForCity(hydTab,HYD_TABS);
+  // Waits for Bangalore params + own-row configs (networkConfigs is null until loaded),
+  // because Hyderabad's defaults are copied from them. Loads once per page.
+  const hydLoadStarted=useRef(false);
+  useEffect(()=>{
+    if(city!=="hyd"||hydLoadStarted.current||networkConfigs===null) return;
+    hydLoadStarted.current=true;
+    loadHydState(params,{plywoodNetworkConfig:params.plywoodNetworkConfig,networkConfigs})
+      .then(setHydState)
+      .catch(e=>setHydState({floors:{},floorsUploadedAt:null,hydParams:null,hydPlywood:null,stored:{params:false,plywood:false},loadErrors:[String(e?.message||e)]}));
+  },[city,networkConfigs,params]);
+  const hydRun=useMemo(
+    ()=>city==="hyd"&&hydState
+      ?safeHydRun(()=>runHydEngine({invoiceData,skuMaster,priceData,deadStock:deadStock instanceof Set?deadStock:new Set(deadStock||[]),floors:hydState.floors,hydParams:hydState.hydParams,hydPlywood:hydState.hydPlywood}))
+      :null,
+    [city,hydState,invoiceData,skuMaster,priceData,deadStock],
+  );
+  useEffect(()=>{document.title=CITY_THEME[city].title;},[city]);
+  // Never applies anything: unsaved Bangalore Logic Tweaker changes block the switch.
+  const switchCity=()=>{
+    if(changedCount>0){alert("Apply or discard your Bangalore Logic Tweaker changes first.");return;}
+    const next=otherCity(city);
+    if(next==="hyd") setHydTab(tabForCity(tab,HYD_TABS));
+    else setTab(tabForCity(hydTabShown,NAV_TABS));
+    setCity(next);
+    persistCity(next,safeLocalStorage());
+    try{window.history.replaceState(window.history.state,"",cityUrl(window.location.href,next));}catch{}
+  };
+
   // Sync status indicator
   const SyncBadge = () => {
     if(syncStatus==="idle") return null;
@@ -2647,12 +2697,17 @@ const zeroSaleLists = useMemo(
 
   return(
     <div style={S.app}>
-      <div style={S.header}>
+      <div style={cityHeaderStyle(S.header,city)}>
         <HomeRunLogo/>
+        <button onClick={switchCity} title="Switch city" style={{background:"none",border:"none",padding:0,margin:0,cursor:"pointer",fontSize:13,fontWeight:700,color:CITY_THEME[city].label,whiteSpace:"nowrap",flexShrink:0,fontFamily:"inherit"}}>{cityHeaderLabel(city)}</button>
         <SyncBadge/>
         <div style={{flex:1}}/>
+        {city==="hyd"
+          ?HYD_TABS.map(([t,l])=><button key={t} onClick={()=>setHydTab(t)} style={S.btn(hydTabShown===t)}>{l}</button>)
+          :<>
         <div style={{fontSize:10,color:HR.muted,marginRight:8,whiteSpace:"nowrap"}}>{dateRange}</div>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}
+          </>}
         {isAdmin
           ?<button onClick={handleLogout} style={{...S.btn(false),fontSize:11,color:"#B91C1C",borderColor:"#FECACA"}}>🔓 Logout</button>
           :<button onClick={()=>setShowLoginModal(true)} style={{...S.btn(false),fontSize:11}}>🔐 Admin</button>
@@ -2735,7 +2790,8 @@ const zeroSaleLists = useMemo(
       )}
 
 
-      <div style={S.pageWrap}>
+      {/* Bangalore stays mounted (hidden) in Hyderabad so returning re-mounts nothing. */}
+      <div style={city==="hyd"?{...S.pageWrap,display:"none"}:S.pageWrap}>
 
         {tab==="upload"&&isAdmin&&(
   <div style={{display:"flex",flexDirection:"column",gap:12}}>
@@ -3190,7 +3246,7 @@ const zeroSaleLists = useMemo(
             </div>
           ):(
             <OverviewTab
-              invoiceData={invoiceData} results={results} priceData={priceData} params={params}
+              invoiceData={blrInvoice} results={results} priceData={priceData} params={params}
               invoiceDateRange={invoiceDateRange}
               period={ovPeriod} setPeriod={setOvPeriod}
               dateFrom={ovDateFrom} setDateFrom={setOvDateFrom}
@@ -4037,7 +4093,7 @@ const zeroSaleLists = useMemo(
                 const on=pc.mode==="shippingCode";
                 // Coverage against the invoice data actually loaded, so the number
                 // reflects what a re-run would really do — not the sheet in isolation.
-                const cov=summariseCoverage(invoiceData,map);
+                const cov=summariseCoverage(blrInvoice,map);
                 const topMissing=cov.unmapped.slice(0,6);
                 return (
               <Section title="Demand Attribution — which DS gets credited" icon="" accent="#7C3AED"
@@ -4192,6 +4248,16 @@ const zeroSaleLists = useMemo(
 
 {tab==="overrides"&&isAdmin&&<OverridesTab coreOverrides={coreOverrides} saveCoreOverrides={saveCoreOverrides} priceData={priceData} results={results} newSKUQty={newSKUQty} skuMaster={skuMaster} params={params}/>}
       </div>{/* end pageWrap */}
+      {city==="hyd"&&(
+        <div style={S.pageWrap}>
+          <HydShell tab={hydTabShown} isAdmin={isAdmin}
+            invoiceData={invoiceData} skuMaster={skuMaster} priceData={priceData}
+            deadStock={deadStock instanceof Set?deadStock:new Set(deadStock||[])}
+            stockData={stockData} stockDataAccounting={stockDataAccounting}
+            uploadedAtPerDS={stockUploadedAtPerDS}
+            hydState={hydState} setHydState={setHydState} hydRun={hydRun}/>
+        </div>
+      )}
       {/* Toast notification */}
       {toastMsg && (
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:HR.black,color:HR.white,padding:"8px 20px",borderRadius:8,fontSize:12,fontWeight:600,zIndex:9999,boxShadow:"0 4px 12px rgba(0,0,0,0.2)"}}>{toastMsg}</div>
