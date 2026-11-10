@@ -7,7 +7,7 @@ import { NOT_SAVED_BEFORE } from "../tabs/hyd/hydStyles.js";
 export async function applyHydParams({ draft, hydState, setHydState, confirm }) {
   // Never after a failed read: what is on screen may be defaults over a row nobody read.
   if (hydReadFailed(hydState)) return { kind: "error", text: "Hyderabad data could not be read — reload before applying." };
-  if (!hydState?.stored?.params && !confirm(NOT_SAVED_BEFORE)) return null;
+  if (hydState?.stored?.params === false && !confirm(NOT_SAVED_BEFORE)) return null;
   const ok = await saveHydParams(draft);
   if (!ok) return { kind: "error", text: "Save failed — Hyderabad settings were NOT changed." };
   setHydState(s => ({ ...s, hydParams: draft, stored: { ...s.stored, params: true } }));

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildHydFloorsTemplateCsv, HYD_FLOORS_TEMPLATE_HEADER, buildOutOfRangeTemplate, outOfRangeTemplateFilename } from "./hydFloorsTemplate.js";
+import { buildHydFloorsTemplateCsv, HYD_FLOORS_TEMPLATE_HEADER, buildOutOfRangeTemplate, outOfRangeTemplateFilename, soldWithoutFloor } from "./hydFloorsTemplate.js";
 import { parseHydFloorsCsv } from "./hydFloors.js";
 
 describe("buildHydFloorsTemplateCsv", () => {
@@ -46,5 +46,17 @@ describe("buildOutOfRangeTemplate — SKUs sold at Pati with no floor, as a shee
   });
   it("filename", () => {
     expect(outOfRangeTemplateFilename("2026-11-10")).toBe("Hyderabad_floors_to_fill_2026-11-10.csv");
+  });
+});
+
+describe("soldWithoutFloor", () => {
+  it("keeps only SKUs active in Zoho and present in the SKU master (hydEngine's isActive)", () => {
+    const master = { A: { name: "A" }, B: { status: "Active" }, C: { status: " active " }, D: { status: "Inactive" }, E: { status: "" } };
+    // A: no status = active; D inactive; E empty-string status = NOT active; Q absent from the master.
+    expect(soldWithoutFloor(["A", "B", "C", "D", "E", "Q"], master)).toEqual(["A", "B", "C"]);
+  });
+  it("empty / missing input → []", () => {
+    expect(soldWithoutFloor(undefined, {})).toEqual([]);
+    expect(soldWithoutFloor(["A"], undefined)).toEqual([]);
   });
 });

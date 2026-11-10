@@ -68,11 +68,13 @@ const DownloadCard=React.memo(({title,accent,blurb,shape,cta,footnote,primary,di
  *   build: () => csv|null, filename: () => string }`. Bangalore's frozen PO path is
  *   untouched when it is absent.
  * - `downloadsDisabled` (default false): disables every card (Hyderabad: a failed read).
+ * - `filePrefix` (default ""): prepended to the DS Level and SKU Master filenames, so a
+ *   Hyderabad file never shares a name with Bangalore's.
  * The Zero Sale card renders only when `zeroSaleLists` is given (Bangalore always gives it).
  */
 export default function ToolOutputTab({ results, skuMaster, params, priceData, coreOverrides, provRaw,
   outputDemandThrough, outputFreshness, zeroSaleLists, packsAt, setPacksAt, fmtStamp,
-  dsList = DS_LIST, includeDC = true, poCard = null, downloadsDisabled = false }) {
+  dsList = DS_LIST, includeDC = true, poCard = null, downloadsDisabled = false, filePrefix = "" }) {
   // ⚠ Bangalore's DS Level card says "15 columns" but writes 3 + 2×8 = 19 (stale since
   // DS07/DS08). Kept verbatim for Bangalore so this change renders byte-identically;
   // other store lists get the computed count.
@@ -173,7 +175,7 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                         ...dsCols,
                       ].join(",");
                     });
-                    downloadCsvFile("IMS_Output_DS.csv",[hdr,...rows].join("\n"));
+                    downloadCsvFile(`${filePrefix}IMS_Output_DS.csv`,[hdr,...rows].join("\n"));
                   }}
                 />
 
@@ -237,7 +239,7 @@ export default function ToolOutputTab({ results, skuMaster, params, priceData, c
                         topN,
                       ].join(",");
                     });
-                    downloadCsvFile("SKU_Master.csv",[hdr,...rows].join("\n"));
+                    downloadCsvFile(`${filePrefix}SKU_Master.csv`,[hdr,...rows].join("\n"));
                   }}
                 />
 

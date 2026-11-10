@@ -101,3 +101,23 @@ describe("StockHealthTab — Hyderabad (one store, no DC)", () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 });
+
+describe("StockHealthTab — downloadsDisabled (Hyderabad: a failed read)", () => {
+  const dlButtons = (html) => html.match(/<button[^>]*>[^<]*⬇ Download[^<]*/g) || [];
+  it("default (Bangalore): both downloads enabled, no tooltip", () => {
+    const btns = dlButtons(renderBlr());
+    expect(btns).toHaveLength(2); // Download All SKUs + Reverse TO list
+    for (const b of btns) { expect(b).not.toContain("disabled"); expect(b).not.toContain("title="); }
+  });
+  it("downloadsDisabled disables every download, with the reload tooltip", () => {
+    const html = renderToStaticMarkup(
+      <StockHealthTab results={blrResults} skuMaster={{}} stockData={blrStock} stockDataAccounting={{}}
+        uploadedAtPerDS={{ DS01: "2026-11-01T00:00:00Z", DC: "2026-11-01T00:00:00Z" }} poData={{}} toData={{}} downloadsDisabled />);
+    const btns = dlButtons(html);
+    expect(btns).toHaveLength(2);
+    for (const b of btns) {
+      expect(b).toContain('disabled=""');
+      expect(b).toContain('title="Hyderabad data could not be read — reload"');
+    }
+  });
+});

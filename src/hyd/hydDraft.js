@@ -1,5 +1,6 @@
 // The Hyderabad Logic Tweaker draft: unsaved edits to hydState.hydParams. Held by
 // App.jsx as {base, value} so the city toggle and the Hyderabad tab bar can guard it.
+// The Hyderabad Plywood draft has the same shape (vs hydState.hydPlywood) and the same guard.
 // A draft is tied to the hydParams object it started from, so an Apply (which sets a
 // new hydParams) discards it without an effect. Pure: no React, no Supabase.
 import { isFloorsOnly } from "./hydParams.js";
@@ -20,6 +21,13 @@ export function guardHydDraft({ dirty, confirm, discard }) {
   if (!confirm(HYD_DISCARD_PROMPT)) return false;
   discard();
   return true;
+}
+
+/** Any unsaved Hyderabad edit: the Logic Tweaker draft (vs hydParams) or the Plywood
+ *  draft (vs hydPlywood). Both drafts are {base, value}, held by App. */
+export function isAnyHydDraftDirty({ hydDraft, hydPlywoodDraft, hydState }) {
+  if (!hydState) return false;
+  return isHydDraftDirty(hydDraft, hydState.hydParams) || isHydDraftDirty(hydPlywoodDraft, hydState.hydPlywood);
 }
 
 const STORE = "HYDS01";

@@ -28,8 +28,13 @@ function Capacity({ label, value, onChange, disabled }) {
   );
 }
 
-export default function HydPlywoodPanel({ isAdmin, hydState, setHydState }) {
-  const [edit, setEdit] = useState(null); // {base, value}
+export default function HydPlywoodPanel({ isAdmin, hydState, setHydState, hydPlywoodDraft, setHydPlywoodDraft }) {
+  // The draft {base, value} is App's when it passes one (so leaving the tab or city with
+  // unsaved edits is guarded, as for the Logic Tweaker); local state otherwise.
+  const [localEdit, setLocalEdit] = useState(null);
+  const lifted = typeof setHydPlywoodDraft === "function";
+  const edit = lifted ? hydPlywoodDraft : localEdit;
+  const setEdit = lifted ? setHydPlywoodDraft : setLocalEdit;
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null);
   const base = hydState?.hydPlywood;

@@ -36,7 +36,7 @@ import { readInitialCity, persistCity, dropHydRows } from "./city";
 import { CITY_THEME, CITY_TOGGLE, cityToggleStyle, cityHeaderStyle, hydTabsFor, tabForCity, cityUrl, safeLocalStorage, safeHydRun } from "./cityShell";
 import { loadHydState } from "./hyd/hydStore";
 import { runHydEngine } from "./hyd/hydEngine";
-import { isHydDraftDirty, guardHydDraft } from "./hyd/hydDraft";
+import { isAnyHydDraftDirty, guardHydDraft } from "./hyd/hydDraft";
 
 const LS = {
   get:(key)=>{try{const v=localStorage.getItem(key);return v?{value:v}:null;}catch{return null;}},
@@ -1298,8 +1298,8 @@ export function OverviewTab({ invoiceData, results, priceData, params, invoiceDa
     if (!r) return 0;
     if (store === "DC") return r.dc?.[field] || 0;
     if (store !== "All") return r.stores[store]?.[field] || 0;
-    // "All" = full network (DS01–DS05 + DC) so table rollups tie out to the KPI cards,
-    // which always include DC (see kpis useMemo above).
+    // "All" = full network (every store in dsList, plus DC when includeDC) so table rollups
+    // tie out to the KPI cards, which follow the same rule (see kpis useMemo above).
     return dsList.reduce((s, ds) => s + (r.stores[ds]?.[field] || 0), 0) + (includeDC ? (r.dc?.[field] || 0) : 0);
   }, [store, dsList, includeDC]);
 
@@ -1645,6 +1645,7 @@ export default function App(){
   const [hydTab,setHydTab]=useState("overview");
   const [hydState,setHydState]=useState(null); // loaded lazily on first switch to Hyderabad
   const [hydDraft,setHydDraft]=useState(null); // unsaved Hyderabad Logic Tweaker edits {base,value}
+  const [hydPlywoodDraft,setHydPlywoodDraft]=useState(null); // unsaved Hyderabad Plywood edits {base,value}
 
   const addChange = (msg) => setChangeLog(prev => [...prev, msg]);
   const [syncStatus,setSyncStatus]=useState("idle"); // "idle" | "saving" | "saved" | "error"
@@ -2510,9 +2511,9 @@ const zeroSaleLists = useMemo(
     [city,hydState,invoiceData,skuMaster,priceData,deadStock],
   );
   useEffect(()=>{document.title=CITY_THEME[city].title;},[city]);
-  // Unsaved Hyderabad Logic Tweaker draft: leaving it (Hyderabad tab or city switch) asks
-  // first; Cancel stays put, OK discards. Bangalore's own guard is untouched.
-  const leaveHydDraft=()=>guardHydDraft({dirty:city==="hyd"&&isHydDraftDirty(hydDraft,hydState?.hydParams),confirm:m=>window.confirm(m),discard:()=>setHydDraft(null)});
+  // Unsaved Hyderabad Logic Tweaker or Plywood draft: leaving it (Hyderabad tab or city
+  // switch) asks first; Cancel stays put, OK discards both. Bangalore's own guard is untouched.
+  const leaveHydDraft=()=>guardHydDraft({dirty:city==="hyd"&&isAnyHydDraftDirty({hydDraft,hydPlywoodDraft,hydState}),confirm:m=>window.confirm(m),discard:()=>{setHydDraft(null);setHydPlywoodDraft(null);}});
   // Never applies anything: unsaved Bangalore Logic Tweaker changes block the switch.
   const switchCity=(next)=>{
     if(next===city) return;
@@ -2764,6 +2765,7 @@ const zeroSaleLists = useMemo(
             outputDemandThrough={outputDemandThrough} outputFreshness={outputFreshness}
             provRaw={provRaw} fmtStamp={fmtStamp}
             hydDraft={hydDraft} setHydDraft={setHydDraft}
+            hydPlywoodDraft={hydPlywoodDraft} setHydPlywoodDraft={setHydPlywoodDraft}
             inputSummaries={inputSummaries} inputProvenance={inputProvenance}/>
         </div>
       )}

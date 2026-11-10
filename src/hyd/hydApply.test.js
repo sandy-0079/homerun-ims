@@ -25,6 +25,13 @@ describe("applyHydParams — Hyderabad Apply writes only params/hydGlobal", () =
     expect(next.floors).toBe(st.floors);
     expect(res.kind).toBe("info");
   });
+  it("first-save prompt only when params/hydGlobal is known NOT stored (stored.params === false)", async () => {
+    const setHydState = vi.fn(), confirm = vi.fn(() => true);
+    const st = stateWith();
+    delete st.stored; // unknown (e.g. an older hydState shape): not a first save
+    await applyHydParams({ draft, hydState: st, setHydState, confirm });
+    expect(confirm).not.toHaveBeenCalled();
+  });
   it("first save asks with the NOT_SAVED_BEFORE text; Cancel writes nothing", async () => {
     const setHydState = vi.fn(), confirm = vi.fn(() => false);
     const res = await applyHydParams({ draft, hydState: stateWith({ stored: { params: false } }), setHydState, confirm });

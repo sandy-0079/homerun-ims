@@ -76,6 +76,18 @@ describe("ToolOutputTab — Bangalore defaults", () => {
 });
 
 describe("ToolOutputTab — Hyderabad props", () => {
+  it("filePrefix (default \"\") prefixes the DS Level and SKU Master filenames", () => {
+    const blrCards = cardProps(blr);
+    blrCards["Tool Output — DS Level"].onClick();
+    blrCards["SKU Master"].onClick();
+    expect(downloads.map(d => d.filename)).toEqual(["IMS_Output_DS.csv", "SKU_Master.csv"]);
+    downloads.length = 0;
+    const hydCards = cardProps({ ...hyd, filePrefix: "Hyderabad_" });
+    hydCards["Tool Output — DS Level"].onClick();
+    hydCards["SKU Master"].onClick();
+    expect(downloads.map(d => d.filename)).toEqual(["Hyderabad_IMS_Output_DS.csv", "Hyderabad_SKU_Master.csv"]);
+  });
+
   it("hides the DC, Inner Case Pack and Zero Sale cards; the PO card comes from poCard", () => {
     const h = html(hyd);
     expect(h).not.toContain("Tool Output — DC");

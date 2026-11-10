@@ -191,7 +191,7 @@ describe("HydShell renders every tab", () => {
     expect((html.match(/type="file"/g) || []).length).toBe(1); // the Hyderabad floors card only
     expect(html).not.toContain("Apply &amp; Re-run Model");
     expect(html).not.toContain("🗑 Clear");
-    expect(html).toContain("2 SKUs sold at Pati have no floor");
+    expect(html).toContain("1 SKUs sold at Pati have no floor"); // B; Z is not in the SKU master
     expect(html).toContain("⬇ Download as floor template");
     expect(html).toContain("1 floor SKUs are inactive in Zoho");
     expect(html).toContain("2 floor SKUs override Bangalore flags"); // A deduped
@@ -270,6 +270,24 @@ describe("HydShell renders every tab", () => {
     expect(logicProps.extraChangelog).toEqual([]);
   });
 
+  it("\"(not saved yet)\" label uses the same predicate (stored.params === false)", () => {
+    expect(render("logic", { ...stateFor(true), stored: { params: false, plywood: true } })).toContain("not saved yet");
+    const unknown = { ...stateFor(true) };
+    delete unknown.stored;
+    expect(render("logic", unknown)).not.toContain("not saved yet");
+    expect(render("logic", stateFor(true))).not.toContain("not saved yet");
+  });
+
+  it("plywood edits live in App's draft (hydPlywoodDraft) so leaving can be guarded", () => {
+    const st = stateFor(true);
+    const value = { ...st.hydPlywood, networkConfigs: { ...st.hydPlywood.networkConfigs, HYDS01: { thick: { capacity: 77 }, thin: { capacity: 5 } } } };
+    const html = render("plywood", st, { hydPlywoodDraft: { base: st.hydPlywood, value }, setHydPlywoodDraft: () => {} });
+    expect(html).toContain("Unsaved Hyderabad plywood changes");
+    expect(html).toContain('value="77"');
+    // A draft from an older hydPlywood (after a save) is ignored.
+    expect(render("plywood", st, { hydPlywoodDraft: { base: { ...st.hydPlywood }, value }, setHydPlywoodDraft: () => {} })).not.toContain("Unsaved Hyderabad plywood changes");
+  });
+
   it("once stored, no edits means Up to date (no first-save line)", () => {
     render("logic", stateFor(true));
     expect(logicProps.hasChanges).toBe(false);
@@ -298,6 +316,7 @@ describe("HydShell renders every tab", () => {
     for (const absent of ["Tool Output — DC", "Inner Case Pack - Mid Mile", "Zero Sale SKUs", "PO Team Download"]) expect(html).not.toContain(absent);
     expect(toolOutputProps.dsList).toEqual(["HYDS01"]);
     expect(toolOutputProps.includeDC).toBe(false);
+    expect(toolOutputProps.filePrefix).toBe("Hyderabad_");
     expect(toolOutputProps.poCard.filename()).toMatch(/^PO_Hyderabad_\d{4}-\d{2}-\d{2}\.csv$/);
     const hydRun = runHydEngine({ invoiceData, skuMaster, priceData, deadStock: new Set(), floors: st.floors, hydParams: st.hydParams, hydPlywood: st.hydPlywood });
     expect(toolOutputProps.poCard.build()).toBe(buildHydPoCsv({ skuMaster, hydResults: hydRun.results, floors: st.floors, hydParams: st.hydParams }));
@@ -341,5 +360,39 @@ describe("HydShell — a failed Hyderabad read disables downloads and saves", ()
     const f = failed();
     expect(applyButton(render("logic", f, dirty(f)))[1]).toContain('disabled=""');
     expect(disabledButton(render("plywood", failed()), "Save \\(Hyderabad\\)")).toBe(true);
+  });
+});
+
+describe("HydShell — invariant: a failed read disables EVERY Hyderabad download and save", () => {
+  // Every control that downloads a file or writes a row: a <button> whose text is a
+  // download (⬇ / Download), a save, an Apply or a Replace.
+  const CONTROL = /⬇|Download|Save|Apply|Replace/;
+  const controls = (html) => [...html.matchAll(/<button([^>]*)>([\s\S]*?)<\/button>/g)]
+    .map(m => ({ attrs: m[1], text: m[2].replace(/<[^>]+>/g, "").trim() }))
+    .filter(c => CONTROL.test(c.text));
+  const failed = () => ({ ...stateFor(true), stored: { params: false, plywood: false },
+    readFailed: { inputs: true, params: false, plywood: false }, loadErrors: ["team_data/hyd_inputs: timeout"] });
+  // A report with an active SKU sold out of range, so the floor-template download renders.
+  const runWithReport = (st) => {
+    const run = runHydEngine({ invoiceData, skuMaster, priceData, deadStock: new Set(), floors: st.floors, hydParams: st.hydParams, hydPlywood: st.hydPlywood });
+    return { ...run, report: { ...run.report, outOfRangeSales: ["A"] } };
+  };
+
+  it("every tab, every control", () => {
+    const st = failed();
+    const seen = [];
+    for (const tab of TABS) {
+      const html = render(tab, st, { hydRun: runWithReport(st), hydDraft: { base: st.hydParams, value: { ...st.hydParams, overallPeriod: 60 } } });
+      for (const c of controls(html)) {
+        seen.push(`${tab}: ${c.text}`);
+        expect(c.attrs, `${tab}: ${c.text}`).toContain('disabled=""');
+      }
+    }
+    // The invariant is only as good as its coverage: each known control must have been seen.
+    for (const label of ["output: ⬇ PO — Hyderabad", "output: ⬇ Download DS Level", "output: ⬇ Download SKU Master",
+      "output: ⬇ Download Purchase Prices", "upload: ⬇ Download as floor template", "upload: ⬇ Template (current floors)",
+      "logic: ▶ Apply", "plywood: Save (Hyderabad)", "stockHealth: ⬇ Download All SKUs"]) {
+      expect(seen.some(s => s.startsWith(label)), `${label} not rendered — invariant has a gap`).toBe(true);
+    }
   });
 });

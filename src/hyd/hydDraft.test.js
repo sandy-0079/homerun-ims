@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { hydDraftValue, isHydDraftDirty, guardHydDraft, hydOnlyChangelog, HYD_DISCARD_PROMPT } from "./hydDraft.js";
+import { hydDraftValue, isHydDraftDirty, guardHydDraft, hydOnlyChangelog, HYD_DISCARD_PROMPT, isAnyHydDraftDirty } from "./hydDraft.js";
 
 const base = { overallPeriod: 45, floorsOnly: { HYDS01: true }, orderCycleDays: 3 };
 
@@ -58,5 +58,28 @@ describe("hydOnlyChangelog — Hyderabad-only keys Bangalore's changelog does no
   });
   it("missing floorsOnly reads as floors only (fail-safe)", () => {
     expect(hydOnlyChangelog({}, { floorsOnly: { HYDS01: true } })).toEqual([]);
+  });
+});
+
+describe("isAnyHydDraftDirty (Logic Tweaker draft OR Plywood draft)", () => {
+  const plywood = { plywoodNetworkConfig: { brands: {} }, networkConfigs: { HYDS01: { thick: { capacity: 10 } } } };
+  const hydState = { hydParams: base, hydPlywood: plywood };
+  it("clean when neither draft differs", () => {
+    expect(isAnyHydDraftDirty({ hydDraft: null, hydPlywoodDraft: null, hydState })).toBe(false);
+    expect(isAnyHydDraftDirty({ hydDraft: { base, value: { ...base } }, hydPlywoodDraft: { base: plywood, value: { ...plywood } }, hydState })).toBe(false);
+  });
+  it("dirty when only the Logic Tweaker draft differs", () => {
+    expect(isAnyHydDraftDirty({ hydDraft: { base, value: { ...base, overallPeriod: 60 } }, hydPlywoodDraft: null, hydState })).toBe(true);
+  });
+  it("dirty when only the Plywood draft differs", () => {
+    const value = { ...plywood, networkConfigs: { HYDS01: { thick: { capacity: 20 } } } };
+    expect(isAnyHydDraftDirty({ hydDraft: null, hydPlywoodDraft: { base: plywood, value }, hydState })).toBe(true);
+  });
+  it("a plywood draft from an older hydPlywood (after a save) is not dirty", () => {
+    const old = { ...plywood };
+    expect(isAnyHydDraftDirty({ hydDraft: null, hydPlywoodDraft: { base: old, value: { ...old, x: 1 } }, hydState })).toBe(false);
+  });
+  it("no hydState → clean", () => {
+    expect(isAnyHydDraftDirty({ hydDraft: null, hydPlywoodDraft: null, hydState: null })).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 // The Hyderabad floor-sheet template: the header parseHydFloorsCsv expects,
 // prefilled with the current in-range floors so ops can edit and re-upload.
 import { q } from "../poTargetsCsv.js";
+import { isActive } from "./hydEngine.js";
 
 export const HYD_FLOORS_TEMPLATE_HEADER = ["SKU", "Item Name", "Category", "HYDS01 Min", "HYDS01 Max"];
 
@@ -25,6 +26,14 @@ export function buildOutOfRangeTemplate(skus, skuMaster) {
     return [q(sku), q(m.name || ""), q(m.category || ""), "", ""].join(",");
   });
   return [HYD_FLOORS_TEMPLATE_HEADER.join(","), ...lines].join("\n");
+}
+
+/** The "sold at Pati with no floor" list: hydRun.report.outOfRangeSales narrowed to SKUs
+ *  active in Zoho and present in the SKU master (hydEngine's isActive). An inactive or
+ *  unknown SKU cannot be given a floor that does anything — the other floor-sheet lists
+ *  cover those — so it is not offered as a row to fill in. */
+export function soldWithoutFloor(skus, skuMaster) {
+  return (skus || []).filter(sku => isActive(skuMaster?.[sku]));
 }
 
 export const outOfRangeTemplateFilename = (isoDate) => `Hyderabad_floors_to_fill_${isoDate}.csv`;

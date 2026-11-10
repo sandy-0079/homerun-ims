@@ -123,6 +123,7 @@ function pctFine(n, total) {
 // CSV field quoting. Item names carry commas and the odd embedded quote.
 const q = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
 
+const DOWNLOADS_DISABLED_TIP = "Hyderabad data could not be read — reload";
 const downloadCsv = (csv, filename) => {
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -221,9 +222,11 @@ export function startOrdersSync(client, syncOrders) {
 //   syncOrders — Sync Now also runs sync-orders (true; Hyderabad passes false)
 //   defaultDS  — the tab selected on load ("DS01")
 //   filePrefix — prepended to both CSV filenames ("")
+//   downloadsDisabled — disables both CSV downloads (false; Hyderabad: a failed read)
 export default function StockHealthTab({
   results, skuMaster, stockData, stockDataAccounting, uploadedAtPerDS, onSyncComplete, poData, toData,
   dsList = DS_LIST, includeDC = true, syncGroups = SYNC_GROUPS, syncOrders = true, defaultDS = "DS01", filePrefix = "",
+  downloadsDisabled = false,
 }) {
   const [selectedDS,  setSelectedDS]  = useState(defaultDS);
   const [selectedCat, setSelectedCat] = useState(null);
@@ -1025,6 +1028,7 @@ export default function StockHealthTab({
           </span>
           {filteredRows.length > 0 && (
             <button
+              disabled={downloadsDisabled} title={downloadsDisabled ? DOWNLOADS_DISABLED_TIP : undefined}
               onClick={() => {
                 const isDCTab = selectedDS === "DC";
                 // `dcFed` === !isDCTab whenever the city has a DC (Bangalore).
@@ -1067,7 +1071,7 @@ export default function StockHealthTab({
                 downloadCsv(csv, `${filePrefix}stock-health-${selectedDS}${selectedCat ? `-${selectedCat}` : ""}${filterTag ? `-${TC[filterTag].label}` : ""}.csv`);
               }}
               style={{
-                display: "flex", alignItems: "center", gap: 4, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 4, cursor: downloadsDisabled ? "not-allowed" : "pointer",
                 border: `1px solid ${HR.border}`, borderRadius: 5, padding: "3px 8px",
                 background: HR.surface, color: HR.textSoft, fontSize: 10,
                 fontWeight: 600, whiteSpace: "nowrap", fontFamily: "inherit",
@@ -1085,6 +1089,7 @@ export default function StockHealthTab({
               Physical tabs — see `reverseToRows`. */}
           {dcFed && reverseToRows.length > 0 && (
             <button
+              disabled={downloadsDisabled} title={downloadsDisabled ? DOWNLOADS_DISABLED_TIP : undefined}
               onClick={() => {
                 // ⚠ ALWAYS every Excess row at this location — deliberately
                 // IGNORES the category / brand / search / tag filters. This is a
@@ -1124,7 +1129,7 @@ export default function StockHealthTab({
                   `${filePrefix}Reverse_TO_List_${selectedDS}_Accounting_${today}.csv`);
               }}
               style={{
-                display: "flex", alignItems: "center", gap: 4, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 4, cursor: downloadsDisabled ? "not-allowed" : "pointer",
                 border: `1px solid ${TC.excess.borderColor}`, borderRadius: 5, padding: "3px 8px",
                 background: TC.excess.cardBg, color: TC.excess.cardText, fontSize: 10,
                 fontWeight: 700, whiteSpace: "nowrap", fontFamily: "inherit",

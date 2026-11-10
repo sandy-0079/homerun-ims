@@ -11,7 +11,7 @@
 import React, { useState } from "react";
 import { hydReadFailed } from "../../hyd/hydStore.js";
 import { prepareHydFloors, replaceHydFloors, inRangeCount } from "../../hyd/hydFloorsReplace.js";
-import { buildHydFloorsTemplateCsv, buildOutOfRangeTemplate, outOfRangeTemplateFilename } from "../../hyd/hydFloorsTemplate.js";
+import { buildHydFloorsTemplateCsv, buildOutOfRangeTemplate, outOfRangeTemplateFilename, soldWithoutFloor } from "../../hyd/hydFloorsTemplate.js";
 import { uniqueOverrideSkus } from "../../hyd/hydStats.js";
 import { downloadCsvFile } from "../../downloadCsv.js";
 import { HR, S } from "../../appStyles.js";
@@ -30,6 +30,9 @@ const REASON_TEXT = {
 // Bangalore's Upload Data button styles (UploadDataTab's btnS / tplBtnS), same values.
 const uploadBtn = { background: HR.green, color: HR.white, padding: "5px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 600, border: "none", whiteSpace: "nowrap" };
 const tplBtn = { background: "#EAF9FF", color: "#0077A8", border: "1px solid #A5F3FC", padding: "5px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" };
+// A failed Hyderabad read disables every download and save (the banner says so).
+const tplBtnOff = { ...tplBtn, background: "#E5E5E5", color: "#999", border: `1px solid ${HR.border}`, cursor: "not-allowed" };
+const READ_FAILED_TIP = "Hyderabad data could not be read — reload";
 const actBtn = (primary, off) => ({ background: off ? "#E5E5E5" : primary ? BLUE : HR.white, color: off ? "#999" : primary ? HR.white : HR.text,
   border: primary && !off ? "none" : `1px solid ${HR.border}`, padding: "7px 16px", borderRadius: 7, cursor: off ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 800 });
 
@@ -123,7 +126,8 @@ export default function HydFloorsCard({ invoiceData, skuMaster, priceData, deadS
   const readFailed = hydReadFailed(hydState);
 
   const report = hydRun?.report || {};
-  const noFloor = report.outOfRangeSales || [];
+  // Active in Zoho and in the SKU master only — inactive / unknown floor SKUs have their own lists.
+  const noFloor = soldWithoutFloor(report.outOfRangeSales, skuMaster);
   const inactive = report.inactiveFloored || [];
   const overrides = uniqueOverrideSkus(report.overrides);
   const unknown = report.unknownFloorSkus || [];
@@ -147,6 +151,7 @@ export default function HydFloorsCard({ invoiceData, skuMaster, priceData, deadS
 
   const downloadNoFloor = (e) => {
     e.preventDefault(); // inside <summary>: download, don't toggle the list
+    if (readFailed) return;
     const csv = buildOutOfRangeTemplate(noFloor, skuMaster);
     if (csv) downloadCsvFile(outOfRangeTemplateFilename(todayLocalIso()), csv);
   };
@@ -178,7 +183,8 @@ export default function HydFloorsCard({ invoiceData, skuMaster, priceData, deadS
         <div style={{ margin: "6px 0" }}>
           {noFloor.length > 0 && (
             <FloorList icon="⚠" tone="#92400E" text="SKUs sold at Pati have no floor" items={noFloor} skuMaster={skuMaster}
-              action={<button onClick={downloadNoFloor} style={tplBtn}>⬇ Download as floor template</button>} />
+              action={<button onClick={downloadNoFloor} style={readFailed ? tplBtnOff : tplBtn} disabled={readFailed}
+                title={readFailed ? READ_FAILED_TIP : undefined}>⬇ Download as floor template</button>} />
           )}
           {inactive.length > 0 && <FloorList icon="⚠" tone="#B91C1C" text="floor SKUs are inactive in Zoho (they stay 0/0)" items={inactive} skuMaster={skuMaster} />}
           {overrides.length > 0 && (
@@ -190,7 +196,8 @@ export default function HydFloorsCard({ invoiceData, skuMaster, priceData, deadS
 
         <div style={{ marginTop: "auto", display: "flex", gap: 5, flexWrap: "wrap" }}>
           <label style={{ ...uploadBtn, cursor: "pointer" }}>⬆ Upload CSV<input type="file" accept=".csv,text/csv" onChange={onFile} style={{ display: "none" }} /></label>
-          <button onClick={() => downloadCsvFile("SKU_Floors_Hyderabad_template.csv", buildHydFloorsTemplateCsv(currentFloors, skuMaster))} style={tplBtn}>
+          <button onClick={() => downloadCsvFile("SKU_Floors_Hyderabad_template.csv", buildHydFloorsTemplateCsv(currentFloors, skuMaster))}
+            style={readFailed ? tplBtnOff : tplBtn} disabled={readFailed} title={readFailed ? READ_FAILED_TIP : undefined}>
             ⬇ Template (current floors)
           </button>
         </div>

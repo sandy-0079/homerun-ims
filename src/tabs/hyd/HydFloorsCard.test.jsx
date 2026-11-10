@@ -26,7 +26,7 @@ describe("HydFloorsCard", () => {
 
   it("shows the four floor-sheet lists with their counts (overrides deduped)", () => {
     const html = render({ report: report() });
-    expect(html).toContain("3 SKUs sold at Pati have no floor");
+    expect(html).toContain("2 SKUs sold at Pati have no floor"); // Q is not in the SKU master
     expect(html).toContain("1 floor SKUs are inactive in Zoho");
     expect(html).toContain("2 floor SKUs override Bangalore flags"); // A once, D once
     expect(html).toContain("2 floor SKUs are not in the SKU master");
@@ -40,6 +40,29 @@ describe("HydFloorsCard", () => {
     expect(html).not.toContain("have no floor");
     expect(html).not.toContain("inactive in Zoho");
     expect(html).toContain("Nothing to fix in the floor sheet");
+  });
+
+  it("the no-floor list keeps only SKUs active in Zoho and in the SKU master", () => {
+    const master = { ...skuMaster, D: { name: "Delta", status: "Inactive" } };
+    const html = renderToStaticMarkup(<HydFloorsCard skuMaster={master} hydState={hydState} setHydState={() => {}} hydRun={{ report: report() }} />);
+    expect(html).toContain("1 SKUs sold at Pati have no floor"); // B only: D inactive, Q unknown
+    const none = renderToStaticMarkup(<HydFloorsCard skuMaster={master} hydState={hydState} setHydState={() => {}} hydRun={{ report: report({ outOfRangeSales: ["D", "Q"] }) }} />);
+    expect(none).not.toContain("have no floor");
+    expect(none).not.toContain("Download as floor template");
+  });
+
+  it("a failed Hyderabad read disables both template downloads, with the reload tooltip", () => {
+    const tip = 'title="Hyderabad data could not be read — reload"';
+    const ok = render({ report: report() });
+    expect(ok).not.toContain(tip);
+    expect(ok).toMatch(/<button(?![^>]*disabled)[^>]*>⬇ Template \(current floors\)/);
+    const failed = render({ report: report() }, { ...hydState, readFailed: { inputs: true } });
+    for (const label of ["⬇ Template \\(current floors\\)", "⬇ Download as floor template"]) {
+      const m = failed.match(new RegExp(`<button([^>]*)>${label}`));
+      expect(m, label).not.toBe(null);
+      expect(m[1]).toContain('disabled=""');
+      expect(m[1]).toContain(tip);
+    }
   });
 
   it("renders before the engine has run (no report)", () => {

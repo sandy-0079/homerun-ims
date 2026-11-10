@@ -13,7 +13,9 @@
 //     hydDraft, setHydDraft /* the unsaved Logic Tweaker draft {base, value} — held by App so
 //       the city toggle and the Hyderabad tab bar can guard it (src/hyd/hydDraft.js) */,
 //     inputSummaries, inputProvenance /* App's Upload Data counts + provenance pills, shown on
-//       the shared (read-only) cards of Hyderabad's Upload Data */ }
+//       the shared (read-only) cards of Hyderabad's Upload Data */,
+//     hydPlywoodDraft, setHydPlywoodDraft /* the unsaved Plywood draft {base, value} — held by
+//       App for the same guard; passed through to HydPlywoodPanel */ }
 import React, { useMemo, useState } from "react";
 import { card, note, banner, SETTINGS_UNREADABLE } from "./hydStyles.js";
 import ToolOutputTab from "../ToolOutputTab.jsx";
@@ -173,7 +175,7 @@ export default function HydShell(props) {
           outputDemandThrough={props.outputDemandThrough ?? null}
           outputFreshness={props.outputFreshness || UNKNOWN_FRESHNESS}
           zeroSaleLists={null} packsAt={null} setPacksAt={NOOP}
-          downloadsDisabled={hydReadFailed(hydState)}
+          downloadsDisabled={hydReadFailed(hydState)} filePrefix="Hyderabad_"
           poCard={{
             title: "PO — Hyderabad (HYDS01 Pati)",
             note: <>Every master SKU with <b>Pati&apos;s Min/Max</b> and Hyderabad&apos;s effective Purchase decision. Targets only — no stock. Mode: <b>{isFloorsOnly(hydState.hydParams, "HYDS01") ? "Floors only" : "Engine"}</b>.</>,
@@ -192,7 +194,7 @@ export default function HydShell(props) {
           stockData={props.stockData || {}} stockDataAccounting={props.stockDataAccounting || {}}
           uploadedAtPerDS={props.uploadedAtPerDS}
           dsList={HYD_DS_LIST} includeDC={false} syncGroups={HYD_SYNC_GROUPS} syncOrders={false}
-          defaultDS="HYDS01" filePrefix="Hyderabad_" />
+          defaultDS="HYDS01" filePrefix="Hyderabad_" downloadsDisabled={hydReadFailed(hydState)} />
       )}
     </div>
   );

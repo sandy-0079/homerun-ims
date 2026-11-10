@@ -61,7 +61,7 @@ export default function HydLogicTop({ draft, setDraft, dirty, status, hydState, 
         <div style={{ fontWeight: 700, color: HR.text, fontSize: 13 }}>Hyderabad — HYDS01 Pati</div>
         <span style={{ fontSize: 11, color: HR.muted }}>
           Copied from Bangalore on {fmtWhen(draft.copiedFromBangaloreAt)}
-          {!hydState.stored?.params && " (not saved yet — this is today's copy)"}
+          {hydState.stored?.params === false && " (not saved yet — this is today's copy)"}
         </span>
         <div style={{ flex: 1 }} />
         <button onClick={onReset} style={S.btn(false)}>Reset to Bangalore&apos;s current values</button>
