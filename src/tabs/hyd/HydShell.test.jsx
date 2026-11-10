@@ -97,6 +97,23 @@ describe("HydShell renders every tab", () => {
     expect(html).not.toContain('value="DS01"');
   });
 
+  it("overview counts WINDOW days (network dates), not Pati's sale days", () => {
+    // Pati sold on 11-01 and 11-02; the network window is 11-01..11-03 (DS01 sold on 11-03).
+    const html = render("overview", stateFor(true));
+    expect(html).toMatch(/>3D<\/span>/);
+    expect(html).toContain("(3D)");
+    expect(html).not.toMatch(/>2D<\/span>/);
+  });
+
+  it("Bangalore's Overview without the prop still counts the dates present in its rows", () => {
+    const html = renderToStaticMarkup(<OverviewTab invoiceData={invoiceData.filter(r => r.ds === "HYDS01")} results={null} priceData={priceData}
+      params={{}} invoiceDateRange={{ min: "2026-11-01", max: "2026-11-03", dates: ["2026-11-01", "2026-11-02", "2026-11-03"] }}
+      period="L90D" setPeriod={() => {}} dateFrom="" setDateFrom={() => {}} dateTo="" setDateTo={() => {}}
+      store="All" setStore={() => {}} drill={null} setDrill={() => {}} onNavigateToSKU={() => {}} />);
+    expect(html).toMatch(/>2D<\/span>/);
+    expect(html).toContain("(2D)");
+  });
+
   it("sku detail is Bangalore's SKU Detail (its search box renders)", () => {
     expect(render("skuDetail", stateFor(true))).toContain("Search by SKU ID or name");
   });
@@ -139,6 +156,13 @@ describe("HydShell renders every tab", () => {
     expect(html).not.toContain(">DC<");
     expect(html).toContain("Alpha");
     expect(html).toContain("Live stock for HYDS01 starts once the stock sync is enabled");
+  });
+
+  it("stock health paints HYDS01 in Hyderabad's blue (as Overview / SKU Detail), not DS01's gold", () => {
+    const html = render("stockHealth", stateFor(true));
+    const tabBtn = html.match(/<button[^>]*>HYDS01</)[0];
+    expect(tabBtn).toContain("#1F5FA8");
+    expect(tabBtn).not.toContain("#B8860B");
   });
 
   it("stock health is Bangalore's screen with no floor-sheet notice (the lists moved to Upload Data)", () => {
@@ -236,6 +260,14 @@ describe("HydShell renders every tab", () => {
     expect(logicProps.extraChangelog).toEqual(["First save — creates Hyderabad's own copy (params/hydGlobal)"]);
     expect(html).toContain("Apply (1 changes)");
     expect(html.match(/<button([^>]*)><span>▶<\/span> Apply/)[1]).not.toContain('disabled=""');
+  });
+
+  it("first save only when params/hydGlobal is known NOT stored (stored.params === false)", () => {
+    const st = { ...stateFor(true) };
+    delete st.stored;
+    render("logic", st);
+    expect(logicProps.hasChanges).toBe(false);
+    expect(logicProps.extraChangelog).toEqual([]);
   });
 
   it("once stored, no edits means Up to date (no first-save line)", () => {

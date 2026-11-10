@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { DS_LIST } from "../engine/index.js";
-import { DS_COLOR } from "../dsColors.js";
+import { storeColor } from "../dsColors.js";
 import { getHealthTag, applyDCReqCovered } from "../stockHealthTags.js";
 import { supabase, READ_ONLY } from "../supabase.js";
 
@@ -137,8 +137,10 @@ const downloadCsv = (csv, filename) => {
 // this whole tab the moment DS_LIST gained DS07 (2026-09-18). Both halves of the fix
 // matter: the palette is now shared so it cannot fall behind, and DS_COLOR clamps so
 // a future store degrades to a borrowed colour instead of throwing. See dsColors.js.
+// storeColor === DS_COLOR(dsList.indexOf(ds)) for every Bangalore store; HYDS01 gets
+// Hyderabad's blue (as on Overview / SKU Detail) instead of DS01's gold by position.
 function dsAccent(ds, dsList) {
-  return DS_COLOR(dsList.indexOf(ds)).header;
+  return storeColor(ds, dsList).header;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────

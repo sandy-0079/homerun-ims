@@ -1,7 +1,7 @@
 // The Hyderabad floors card — the one ACTIVE card on Hyderabad's Upload Data (spec §9),
 // rendered first by the shared UploadDataTab (extraCards) in Bangalore's card style.
 //
-// Upload flow (unchanged from the first build's HydUploadPanel): parse with
+// Upload flow (src/hyd/hydFloorsReplace.js, unchanged from the first build's HydUploadPanel): parse with
 // parseHydFloorsCsv → preview with a dry runHydEngine on the NEW floors → confirm
 // "Replace HYDERABAD floors" → saveHydFloors (team_data/hyd_inputs only). A refused file
 // writes nothing; Replace is disabled after a failed Hyderabad read.
@@ -9,12 +9,10 @@
 // The "fix your floor sheet" lists for the CURRENT floors (hydRun.report) live here too —
 // they used to be a notice above Pati's Stock Health, which is now identical to Bangalore's.
 import React, { useState } from "react";
-import { parseHydFloorsCsv } from "../../hyd/hydFloors.js";
-import { runHydEngine } from "../../hyd/hydEngine.js";
-import { saveHydFloors, hydReadFailed } from "../../hyd/hydStore.js";
+import { hydReadFailed } from "../../hyd/hydStore.js";
+import { prepareHydFloors, replaceHydFloors, inRangeCount } from "../../hyd/hydFloorsReplace.js";
 import { buildHydFloorsTemplateCsv, buildOutOfRangeTemplate, outOfRangeTemplateFilename } from "../../hyd/hydFloorsTemplate.js";
 import { uniqueOverrideSkus } from "../../hyd/hydStats.js";
-import { HYD_DS_LIST } from "../../city.js";
 import { downloadCsvFile } from "../../downloadCsv.js";
 import { HR, S } from "../../appStyles.js";
 import { C, table, th, td, banner, fmtWhen, todayLocalIso } from "./hydStyles.js";
@@ -29,15 +27,13 @@ const REASON_TEXT = {
   invalid_value: "Some cells are not whole numbers. Fix them and upload again.",
 };
 
-const inRangeCount = floors => Object.values(floors || {}).filter(f => (f?.HYDS01?.min || 0) > 0 || (f?.HYDS01?.max || 0) > 0).length;
-
 // Bangalore's Upload Data button styles (UploadDataTab's btnS / tplBtnS), same values.
 const uploadBtn = { background: HR.green, color: HR.white, padding: "5px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 600, border: "none", whiteSpace: "nowrap" };
 const tplBtn = { background: "#EAF9FF", color: "#0077A8", border: "1px solid #A5F3FC", padding: "5px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" };
 const actBtn = (primary, off) => ({ background: off ? "#E5E5E5" : primary ? BLUE : HR.white, color: off ? "#999" : primary ? HR.white : HR.text,
   border: primary && !off ? "none" : `1px solid ${HR.border}`, padding: "7px 16px", borderRadius: 7, cursor: off ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 800 });
 
-function Refusal({ parsed }) {
+export function Refusal({ parsed }) {
   return (
     <div style={banner("error")}>
       <div style={{ fontWeight: 700 }}>Refused — nothing was written.</div>
@@ -139,28 +135,14 @@ export default function HydFloorsCard({ invoiceData, skuMaster, priceData, deadS
     if (!file) return;
     setStatus(null);
     const text = await file.text();
-    const parsed = parseHydFloorsCsv(text, { dsList: HYD_DS_LIST, knownSkus: new Set(Object.keys(skuMaster || {})) });
-    let dry = null;
-    if (parsed.ok) {
-      try {
-        dry = runHydEngine({ invoiceData, skuMaster, priceData, deadStock, floors: parsed.floors, hydParams: hydState.hydParams, hydPlywood: hydState.hydPlywood });
-      } catch (err) {
-        dry = { error: err?.message || String(err) };
-      }
-    }
+    const { parsed, dry } = prepareHydFloors(text, { invoiceData, skuMaster, priceData, deadStock, hydState });
     setPending({ fileName: file.name, parsed, dry });
   };
 
+  // Writes team_data/hyd_inputs only; hydState changes only after a true save.
   const onReplace = async () => {
-    if (readFailed) return;
-    const floors = pending.parsed.floors;
-    setSaving(true);
-    let ok = false;
-    try { ok = await saveHydFloors(floors); } catch { ok = false; } finally { setSaving(false); }
-    if (!ok) { setStatus({ kind: "error", text: "Save failed — Hyderabad floors were NOT changed." }); return; }
-    setHydState(s => ({ ...s, floors, floorsUploadedAt: new Date().toISOString() }));
-    setPending(null);
-    setStatus({ kind: "info", text: `Hyderabad floors replaced: ${inRangeCount(floors).toLocaleString()} SKUs in range.` });
+    const ok = await replaceHydFloors({ floors: pending.parsed.floors, hydState, setHydState, setSaving, setStatus });
+    if (ok) setPending(null);
   };
 
   const downloadNoFloor = (e) => {

@@ -15,7 +15,6 @@ import HydParamEditor from "./HydParamEditor.jsx";
 const PURPLE = "#7C3AED", PURPLE_BG = "#F5F3FF";
 const note = { fontSize: 11, color: HR.muted, lineHeight: 1.5 };
 const sectionTitle = { fontSize: 12, fontWeight: 700, color: "#555", borderBottom: `2px solid ${HR.yellow}`, paddingBottom: 4, marginBottom: 12 };
-const th = { padding: "5px 10px", textAlign: "left", color: HR.muted, fontWeight: 600, borderBottom: `1px solid ${HR.border}` };
 
 const STORE = "HYDS01";
 
@@ -81,7 +80,7 @@ export default function HydPlywoodPanel({ isAdmin, hydState, setHydState }) {
       <div style={{ ...S.card, marginBottom: 12 }}>
         <div style={sectionTitle}>Brands stocked at Pati</div>
         <table style={{ ...S.table, maxWidth: 360 }}>
-          <thead><tr><th style={th}>Brand</th><th style={th}>HYDS01</th></tr></thead>
+          <thead><tr><th style={S.th}>Brand</th><th style={S.th}>HYDS01</th></tr></thead>
           <tbody>
             {brands.map(b => (
               <tr key={b}>

@@ -102,7 +102,7 @@ export default function HydShell(props) {
     // try/finally inside runHydApply: a thrown save can't leave Apply stuck disabled.
     const onApply = (value) => runHydApply({ draft: value, hydState, setHydState: props.setHydState,
       confirm: (m) => window.confirm(m), setApplying, setStatus: setLogicStatus });
-    const firstSave = !hydState.stored?.params;
+    const firstSave = hydState.stored?.params === false;
     return (
       <LogicTweakerTab showNetworkSections={false} leadTimeLabel="Brand Lead Time (vendor → Pati)"
         params={draft} savedParams={saved} saveParams={setDraft} setParams={setDraft}
@@ -140,7 +140,7 @@ export default function HydShell(props) {
       {tab === "overview" && OverviewTab && (
         <OverviewTab {...storeProps}
           invoiceData={patiRows} results={hydRun?.results ?? null} priceData={props.priceData || {}}
-          params={hydState.hydParams} invoiceDateRange={invoiceDateRange}
+          params={hydState.hydParams} invoiceDateRange={invoiceDateRange} periodDates={invoiceDateRange.dates}
           period={ovPeriod} setPeriod={setOvPeriod}
           dateFrom={ovDateFrom} setDateFrom={setOvDateFrom}
           dateTo={ovDateTo} setDateTo={setOvDateTo}

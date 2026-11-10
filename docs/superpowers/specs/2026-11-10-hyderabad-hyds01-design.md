@@ -92,6 +92,8 @@ constraint outranks every other goal here.
   and a dismissible notice on Hyderabad Stock Health. **Not** as a PO CSV column. The same two places
   list floor rows that override Purchase=OFF / Supplier / Dead Stock, plus Pati sales outside the
   range.
+- *Superseded by §9:* the Stock Health notice is gone (Pati's Stock Health is Bangalore's screen);
+  these lists moved to the Hyderabad floors card on Upload Data.
 
 ### 3.3 Settings and the switch
 - Hyderabad has **its own copy** of Bangalore's settings (taken from Bangalore's live values on the day

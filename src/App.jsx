@@ -1230,7 +1230,11 @@ export function OverviewTab({ invoiceData, results, priceData, params, invoiceDa
   store, setStore, drill, setDrill, onNavigateToSKU,
   // Store list (spec §9). Defaults are Bangalore's: DS_LIST plus the DC.
   // Hyderabad passes ["HYDS01"] and includeDC=false.
-  dsList = DS_LIST, includeDC = true }) {
+  dsList = DS_LIST, includeDC = true,
+  // Day universe for the period's day count (soldPerDay, "nD", "Showing"). Default:
+  // the dates present in the filtered rows. Hyderabad passes the NETWORK dates, since
+  // Pati-only rows would count Pati's sale days and inflate soldPerDay.
+  periodDates }) {
 
   const [sortKey, setSortKey] = useState("invMax");
   const [sortAsc, setSortAsc] = useState(false);
@@ -1239,10 +1243,16 @@ export function OverviewTab({ invoiceData, results, priceData, params, invoiceDa
     filterInvoiceByPeriod(invoiceData, period, dateFrom, dateTo, invoiceDateRange),
     [invoiceData, period, dateFrom, dateTo, invoiceDateRange]);
 
+  // Only when periodDates is passed: its dates inside the selected period (same filter).
+  const windowDates = useMemo(() => periodDates
+    ? filterInvoiceByPeriod(periodDates.map(date => ({ date })), period, dateFrom, dateTo, invoiceDateRange).map(r => r.date)
+    : null, [periodDates, period, dateFrom, dateTo, invoiceDateRange]);
+
   const periodDays = useMemo(() => {
+    if (windowDates) return windowDates.length;
     const dates = new Set(filteredInv.map(r => r.date));
     return dates.size;
-  }, [filteredInv]);
+  }, [filteredInv, windowDates]);
 
   // Build sold qty/value maps from filtered invoices
   const soldMaps = useMemo(() => {
@@ -1404,11 +1414,11 @@ export function OverviewTab({ invoiceData, results, priceData, params, invoiceDa
   // Period label for "Showing" display
   const ovPeriodLabel = useMemo(() => {
     if (!filteredInv.length) return "";
-    const dates = [...new Set(filteredInv.map(r => r.date))].sort();
+    const dates = windowDates ? [...windowDates].sort() : [...new Set(filteredInv.map(r => r.date))].sort();
     if (!dates.length) return "";
     const fmt = d => { const dt = new Date(d + "T00:00:00"); return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }); };
     return `${fmt(dates[0])} → ${fmt(dates[dates.length - 1])} (${dates.length}D)`;
-  }, [filteredInv]);
+  }, [filteredInv, windowDates]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
