@@ -8,7 +8,7 @@ export const CITY_THEME = {
 
 const themeOf = city => CITY_THEME[city] || CITY_THEME.blr;
 
-// The BLR | HYD segmented toggle, centred in the header between the logo and the tabs. The selected city is
+// The BLR | HYD segmented toggle, right after the HomeRun logo in the header. The selected city is
 // filled in its own colour; the other is muted, so the current city reads at a glance.
 export const CITY_TOGGLE = [["blr", "BLR"], ["hyd", "HYD"]];
 

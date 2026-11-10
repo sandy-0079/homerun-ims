@@ -2702,13 +2702,12 @@ const zeroSaleLists = useMemo(
     <div style={S.app}>
       <div style={cityHeaderStyle(S.header,city)}>
         <HomeRunLogo/>
-        <SyncBadge/>
-        <div style={{flex:1}}/>
-        {/* City toggle sits centred in the free space between the logo and the period/tabs,
-            so it reads as a page-level control rather than another tab. */}
-        <div role="group" aria-label="City" style={{display:"flex",flexShrink:0,border:"1px solid #E0E0D0",borderRadius:6,overflow:"hidden",boxShadow:"0 1px 2px rgba(0,0,0,0.06)"}}>
+        {/* City toggle sits right after the logo, away from the tab buttons, so it reads as a
+            page-level control rather than another tab. */}
+        <div role="group" aria-label="City" style={{display:"flex",flexShrink:0,border:"1px solid #E0E0D0",borderRadius:6,overflow:"hidden",boxShadow:"0 1px 2px rgba(0,0,0,0.06)",marginLeft:10}}>
           {CITY_TOGGLE.map(([c,l])=><button key={c} onClick={()=>switchCity(c)} aria-pressed={city===c} title={c==="blr"?"Bangalore":"Hyderabad"} style={cityToggleStyle(c,city===c)}>{l}</button>)}
         </div>
+        <SyncBadge/>
         <div style={{flex:1}}/>
         {city==="hyd"
           ?HYD_TABS.map(([t,l])=><button key={t} onClick={()=>setHydTab(t)} style={hydTabShown===t?{...S.btn(true),background:CITY_THEME.hyd.underline,border:`1px solid ${CITY_THEME.hyd.underline}`,color:HR.white}:S.btn(false)}>{l}</button>)
