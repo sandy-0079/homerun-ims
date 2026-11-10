@@ -28,6 +28,10 @@ const SourcePill=React.memo(({prov,note})=>{
   );
 });
 
+// Hyderabad mode: a shared card is visibly inert, and says where it is managed.
+const SHARED_CARD = {opacity:0.7};
+const SHARED_NOTE = <div style={{fontSize:10,color:HR.muted,fontStyle:"italic"}}>Shared — managed in Bangalore</div>;
+
 /**
  * Upload Data tab — moved verbatim out of App.jsx. App still owns the state and
  * every write: the upload handlers, clearData and applyAndRun (passed in as onApply)
@@ -38,7 +42,16 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
   infoCard, setInfoCard, inputProvenance, inputSummaries, invoiceData, invoiceDateRange,
   minReqQty, missing, modelDirty, modelRunSuccess, modelSnapshot, modelState, newSKUQty,
   params, priceData, provRaw, results, showRunConfirm, setShowRunConfirm, skuCeiling,
-  skuMaster, uniqueSold, uploadedFiles, uploading, zeroSale }) {
+  skuMaster, uniqueSold, uploadedFiles, uploading, zeroSale,
+  // Hyderabad (spec §9). Both default to today's Bangalore render.
+  //   mode="hyd": the shared/Bangalore cards render inert — the "Shared — managed in
+  //   Bangalore" note in place of their upload/template/data/clear buttons, so no file
+  //   input and no path to a Bangalore handler (each one writes a Bangalore row). Also
+  //   hides Apply & Re-run Model (applyAndRun writes Bangalore's params/toTargets), its
+  //   confirm modal, the success banner and the model-run diagnostics below the cards.
+  //   extraCards: rendered first in the cards area (Hyderabad's floors card).
+  mode = "blr", extraCards = null }) {
+  const shared = mode === "hyd";
   return (
   <div style={{display:"flex",flexDirection:"column",gap:12}}>
 
@@ -46,7 +59,7 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <h2 style={{color:HR.yellowDark,margin:0,fontSize:16}}>Data Inputs</h2>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
+        {!shared&&<div style={{display:"flex",alignItems:"center",gap:10}}>
         {/* Model freshness, sitting left of the Apply button. NOT redundant with that
             button: it tracks `modelDirty`, a SESSION flag — did YOU change something
             since YOUR last Apply. This compares STORED timestamps, so it catches what
@@ -86,12 +99,12 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
             </button>
           );
         })()}
-        </div>
+        </div>}
       </div>
     </div>
 
     {/* ── Success banner ── */}
-    {modelRunSuccess && (
+    {!shared && modelRunSuccess && (
       <div style={{background:"#D1FAE5",border:"1px solid #6EE7B7",borderRadius:8,padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
         <span style={{fontSize:18}}>✅</span>
         <div>
@@ -102,7 +115,7 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
     )}
 
     {/* ── Run confirm modal ── */}
-    {showRunConfirm && (
+    {!shared && showRunConfirm && (
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}}>
         <div style={{background:HR.white,borderRadius:12,padding:28,maxWidth:440,width:"90%",boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
           <div style={{fontWeight:800,color:HR.text,fontSize:15,marginBottom:4}}>Re-run Model?</div>
@@ -260,7 +273,7 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
         // drift apart visually. `item.note` supplies the pill tooltip, which is what
         // lets SKU Floors sit in AUTO while honestly reporting itself as manual.
         const renderUploadCard = (item) => (
-            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130,...(shared?SHARED_CARD:{})}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                   <div style={{display:"flex",alignItems:"center",gap:5}}>
                     <span style={{fontWeight:700,color:HR.text,fontSize:12}}>{item.label}</span>
@@ -280,12 +293,12 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
                 <div style={{marginTop:"auto"}}>
                   {uploadedFiles[item.key]&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles[item.key]}</div>}
                   {uploading===item.key&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  {shared?SHARED_NOTE:<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                     <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={item.handler} style={{display:"none"}}/></label>
                     <button onClick={()=>{const t=templates[item.key];dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
                     {item.hasData&&<button onClick={()=>{const csv=buildDataCSV(item.key);if(csv)dlCSV(item.key+"_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
                     {item.hasData&&<button onClick={()=>clearData(item.key)} style={clrBtnS}>🗑 Clear</button>}
-                  </div>
+                  </div>}
                 </div>
               </div>
         );
@@ -296,6 +309,8 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
         const clrBtnS = {background:"#FEE2E2",color:"#B91C1C",border:"1px solid #FECACA",padding:"5px 10px",borderRadius:5,cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"};
 
         return(<>
+          {/* Hyderabad's own cards (its floors card) sit first; Bangalore passes none. */}
+          {extraCards}
           {/* ── AUTO bucket. Tinted panel + accent border + solid badge, because a
                  small uppercase heading was too quiet to separate the two groups. ── */}
           <div style={{background:"#F7FCFF",border:`1px solid ${DC_COLOR.header}33`,borderLeft:`4px solid ${DC_COLOR.header}`,borderRadius:8,padding:"10px 12px 12px",marginBottom:16}}>
@@ -308,7 +323,7 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
 
             {/* Invoice card */}
-            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130,...(shared?SHARED_CARD:{})}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                 <div style={{display:"flex",alignItems:"center",gap:5}}>
                   <span style={{fontWeight:700,color:HR.text,fontSize:12}}>Invoice Data</span>
@@ -328,17 +343,17 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
               <div style={{marginTop:"auto"}}>
                 {uploadedFiles.invoiceData&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles.invoiceData}</div>}
                 {uploading==="invoiceData"&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
-                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {shared?SHARED_NOTE:<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                   <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handleInvoice} style={{display:"none"}}/></label>
                   <button onClick={()=>{const t=templates.invoiceData;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
                   {invoiceData.length>0&&<button onClick={()=>{const csv=buildDataCSV("invoiceData");if(csv)dlCSV("invoiceData_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
                   {invoiceData.length>0&&<button onClick={()=>clearData("invoiceData")} style={clrBtnS}>🗑 Clear</button>}
-                </div>
+                </div>}
               </div>
             </div>
 
             {/* SKU Master card */}
-            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130,...(shared?SHARED_CARD:{})}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                 <div style={{display:"flex",alignItems:"center",gap:5}}>
                   <span style={{fontWeight:700,color:HR.text,fontSize:12}}>SKU Master</span>
@@ -357,7 +372,7 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
               <div style={{marginTop:"auto"}}>
                 {uploadedFiles.skuMaster&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles.skuMaster}</div>}
                 {uploading==="skuMaster"&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
-                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {shared?SHARED_NOTE:<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                   <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handleSKU} style={{display:"none"}}/></label>
                   <button onClick={()=>{const t=templates.skuMaster;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
                   {Object.keys(skuMaster).length>0&&<button onClick={()=>{
@@ -368,12 +383,12 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
                     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="skuMaster_data.csv";a.click();
                   }} style={dlBtnS}>⬇ Data</button>}
                   {Object.keys(skuMaster).length>0&&<button onClick={()=>clearData("skuMaster")} style={clrBtnS}>🗑 Clear</button>}
-                </div>
+                </div>}
               </div>
             </div>
 
             {/* Purchase Prices card */}
-            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130}}>
+            <div style={{...S.card,display:"flex",flexDirection:"column",minHeight:130,...(shared?SHARED_CARD:{})}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                 <div style={{display:"flex",alignItems:"center",gap:5}}>
                   <span style={{fontWeight:700,color:HR.text,fontSize:12}}>Purchase Prices</span>
@@ -392,12 +407,12 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
               <div style={{marginTop:"auto"}}>
                 {uploadedFiles.priceData&&<div style={{fontSize:9,color:"#6B7280",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📄 {uploadedFiles.priceData}</div>}
                 {uploading==="priceData"&&<div style={{height:3,background:"#E5E5E5",borderRadius:2,overflow:"hidden",marginBottom:6}}><div style={{height:"100%",width:"30%",background:HR.green,borderRadius:2,animation:"upload-progress 1.2s ease-in-out infinite"}}/></div>}
-                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {shared?SHARED_NOTE:<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                   <label style={{...btnS(HR.green,""),cursor:"pointer"}}>⬆ Upload CSV<input type="file" accept=".csv" onChange={handlePrice} style={{display:"none"}}/></label>
                   <button onClick={()=>{const t=templates.priceData;dlTemplate(t.file,t.headers,t.rows);}} style={tplBtnS}>⬇ Template</button>
                   {Object.keys(priceData).length>0&&<button onClick={()=>{const csv=buildDataCSV("priceData");if(csv)dlCSV("priceData_data.csv",csv);}} style={dlBtnS}>⬇ Data</button>}
                   {Object.keys(priceData).length>0&&<button onClick={()=>clearData("priceData")} style={clrBtnS}>🗑 Clear</button>}
-                </div>
+                </div>}
               </div>
             </div>
 
@@ -437,7 +452,7 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
              (i.e. as of the last run) when one exists; a snapshot taken before
              `invoiceCount` was recorded falls back to rows AND relabels itself, rather
              than presenting rows under an "Invoices" heading. ── */}
-      <div style={{display:"flex",gap:0,background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8,overflow:"hidden",marginTop:4}}>
+      {!shared&&(<div style={{display:"flex",gap:0,background:HR.surface,border:`1px solid ${HR.border}`,borderRadius:8,overflow:"hidden",marginTop:4}}>
         {(()=>{
           const s=modelSnapshot;
           const mis=s?s.missingCount:missing.length;
@@ -458,10 +473,10 @@ export default function UploadDataTab({ onApply: applyAndRun, changeLog, clearDa
             <div style={{fontSize:c.small?9:13,fontWeight:c.small?400:700,color:c.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.value}</div>
           </div>
         ))}
-      </div>
+      </div>)}
 
       {/* ── Errors: missing SKUs ── */}
-      {missing.length>0&&(
+      {!shared&&missing.length>0&&(
         <div style={{...S.card,marginTop:8,border:`1px solid ${HR.yellow}`}}>
           <div style={{fontWeight:700,color:HR.yellowDark,marginBottom:3,fontSize:13}}>⚠ {missing.length} SKUs in Invoice not Active in SKU Master</div>
           <div style={{fontSize:11,color:HR.muted,marginBottom:10}}>These SKUs have sales but are missing or inactive in SKU Master. Each one is either absent from the catalogue or not Active in it, so the engine gives it no Min/Max.</div>

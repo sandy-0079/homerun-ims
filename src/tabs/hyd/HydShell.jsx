@@ -11,23 +11,26 @@
 //     outputDemandThrough, outputFreshness, provRaw, fmtStamp /* App's Tool Output gate +
 //       footnotes: both cities compute from the same invoice row, so one gate serves both */,
 //     hydDraft, setHydDraft /* the unsaved Logic Tweaker draft {base, value} — held by App so
-//       the city toggle and the Hyderabad tab bar can guard it (src/hyd/hydDraft.js) */ }
+//       the city toggle and the Hyderabad tab bar can guard it (src/hyd/hydDraft.js) */,
+//     inputSummaries, inputProvenance /* App's Upload Data counts + provenance pills, shown on
+//       the shared (read-only) cards of Hyderabad's Upload Data */ }
 import React, { useMemo, useState } from "react";
 import { card, note, banner, SETTINGS_UNREADABLE } from "./hydStyles.js";
 import ToolOutputTab from "../ToolOutputTab.jsx";
-import HydUploadPanel from "./HydUploadPanel.jsx";
+import UploadDataTab from "../UploadDataTab.jsx";
+import HydFloorsCard from "./HydFloorsCard.jsx";
 import LogicTweakerTab from "../LogicTweakerTab.jsx";
 import HydLogicTop from "./HydLogicTop.jsx";
 import HydPlywoodPanel from "./HydPlywoodPanel.jsx";
 import StockHealthTab from "../StockHealthTab.jsx";
-import HydStockNotice from "./HydStockNotice.jsx";
 import { HYD_DS_LIST, hydRowsOnly } from "../../city.js";
 import { hydReadFailed } from "../../hyd/hydStore.js";
 import { buildHydPoCsv, hydPoCsvFilename, HYD_PO_CSV_HEADERS } from "../../hyd/hydPoCsv.js";
 import { isFloorsOnly } from "../../hyd/hydParams.js";
 import { todayLocalIso } from "./hydStyles.js";
 import { hydDraftValue, isHydDraftDirty, hydOnlyChangelog } from "../../hyd/hydDraft.js";
-import { applyHydParams } from "../../hyd/hydApply.js";
+import { runHydApply } from "../../hyd/hydApply.js";
+import { summariseInputs } from "../../inputSummary.js";
 
 // Sync Now for Pati: its own group, never a branch added to a Bangalore group.
 const HYD_SYNC_GROUPS = [["HYDS01"]];
@@ -40,6 +43,11 @@ const NOOP = () => {};
 const UNKNOWN_FRESHNESS = { state: "unknown", blocked: false, pageThrough: null, liveThrough: null };
 // Logic Tweaker: the Bangalore-network sections are hidden, so their inputs are inert.
 const NO_ROWS = [];
+// Spec §3.3: the copy must be freezable on creation, so a never-stored params/hydGlobal
+// enables Apply with no edits, and the changelog says what that Apply does.
+export const FIRST_SAVE_LINE = "First save — creates Hyderabad's own copy (params/hydGlobal)";
+// Upload Data: shared cards' provenance pill when App passes none.
+const NO_PROVENANCE = { source: "none", level: "unknown", note: "Provenance is shown in Bangalore", at: null };
 
 function Errors({ hydState, hydRun }) {
   const errors = [...(hydState?.loadErrors || []), ...(hydRun?.error ? [`engine: ${hydRun.error}`] : [])];
@@ -49,9 +57,8 @@ function Errors({ hydState, hydRun }) {
 
 export default function HydShell(props) {
   const { tab, hydState, hydRun, invoiceData, OverviewTabComponent: OverviewTab, SKUDetailTabComponent: SKUDetailTab } = props;
-  // Stock Health notice dismissal: this page session only (survives tab switches,
-  // not a reload). Before the early return — hooks must run on every render.
-  const [noticeDismissed, setNoticeDismissed] = useState(false);
+  // Upload Data's ⓘ hover (UI only). Before the early return — hooks run on every render.
+  const [infoCard, setInfoCard] = useState(null);
   // Overview / SKU Detail UI state — Hyderabad's own, so switching city never carries
   // Bangalore's store or drill (e.g. "DS03") into a one-store list. Same initial
   // values as Bangalore's in App.jsx.
@@ -92,23 +99,36 @@ export default function HydShell(props) {
     const draft = hydDraftValue(props.hydDraft, saved);
     const dirty = isHydDraftDirty(props.hydDraft, saved);
     const setDraft = (value) => props.setHydDraft?.({ base: saved, value });
-    const onApply = async (value) => {
-      setApplying(true);
-      const res = await applyHydParams({ draft: value, hydState, setHydState: props.setHydState, confirm: (m) => window.confirm(m) });
-      setApplying(false);
-      if (res) setLogicStatus(res);
-    };
+    // try/finally inside runHydApply: a thrown save can't leave Apply stuck disabled.
+    const onApply = (value) => runHydApply({ draft: value, hydState, setHydState: props.setHydState,
+      confirm: (m) => window.confirm(m), setApplying, setStatus: setLogicStatus });
+    const firstSave = !hydState.stored?.params;
     return (
       <LogicTweakerTab showNetworkSections={false} leadTimeLabel="Brand Lead Time (vendor → Pati)"
         params={draft} savedParams={saved} saveParams={setDraft} setParams={setDraft}
-        onApply={onApply} hasChanges={dirty} applyDisabled={hydReadFailed(hydState) || applying}
-        extraChangelog={hydOnlyChangelog(saved, draft)}
+        onApply={onApply} hasChanges={dirty || firstSave} applyDisabled={hydReadFailed(hydState) || applying}
+        extraChangelog={[...hydOnlyChangelog(saved, draft), ...(firstSave ? [FIRST_SAVE_LINE] : [])]}
         skuMaster={props.skuMaster || {}} isAdmin blrInvoice={NO_ROWS} missing={NO_ROWS} uploading={null} handlePincodeMap={NOOP}
         advancedOpen={logicAdvanced} setAdvancedOpen={setLogicAdvanced}
         showLogicConfirm={logicConfirm} setShowLogicConfirm={setLogicConfirm}
         topSlot={<HydLogicTop draft={draft} setDraft={setDraft} dirty={dirty} status={logicStatus}
           hydState={hydState} hydRun={hydRun} blrParams={props.blrParams}
           invoiceData={invoiceData} skuMaster={props.skuMaster} priceData={props.priceData} deadStock={props.deadStock} />} />
+    );
+  }
+  // Bangalore's Upload Data in "hyd" mode: the Hyderabad floors card first (the only
+  // active card), every other card shared and inert. NO Bangalore handler is passed —
+  // each one writes a Bangalore row via saveTeamData / applyAndRun.
+  function renderUpload() {
+    if (!props.isAdmin) return <div style={card}><span style={note}>Upload Data is admin-only.</span></div>;
+    const inputSummaries = props.inputSummaries || summariseInputs({ invoiceData: invoiceData || [], skuMaster: props.skuMaster || {},
+      priceData: props.priceData || {}, minReqQty: {}, newSKUQty: {}, deadStock: props.deadStock || new Set(), skuCeiling: {} });
+    const inputProvenance = props.inputProvenance || Object.fromEntries(Object.keys(inputSummaries).map(k => [k, NO_PROVENANCE]));
+    return (
+      <UploadDataTab mode="hyd" inputSummaries={inputSummaries} inputProvenance={inputProvenance}
+        infoCard={infoCard} setInfoCard={setInfoCard} uploadedFiles={NO_OVERRIDES} uploading={null}
+        extraCards={<HydFloorsCard invoiceData={invoiceData} skuMaster={props.skuMaster} priceData={props.priceData}
+          deadStock={props.deadStock} hydState={hydState} setHydState={props.setHydState} hydRun={hydRun} />} />
     );
   }
   return (
@@ -162,12 +182,9 @@ export default function HydShell(props) {
             filename: () => hydPoCsvFilename(todayLocalIso()),
           }} />
       )}
-      {tab === "upload" && <HydUploadPanel {...props} />}
+      {tab === "upload" && renderUpload()}
       {tab === "logic" && renderLogic()}
       {tab === "plywood" && <HydPlywoodPanel {...props} />}
-      {tab === "stockHealth" && !noticeDismissed && (
-        <HydStockNotice report={hydRun?.report} skuMaster={props.skuMaster} onDismiss={() => setNoticeDismissed(true)} />
-      )}
       {tab === "stockHealth" && (
         // One store, no DC. No poData/toData: Pati has no TOs, and its POs reach
         // Stock Health only once sync-orders covers HYDS01, so the PO columns read "—".

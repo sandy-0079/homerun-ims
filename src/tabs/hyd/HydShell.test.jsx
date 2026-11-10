@@ -24,6 +24,13 @@ vi.mock("../LogicTweakerTab.jsx", async (importOriginal) => {
   return { default: (p) => { logicProps = p; return real(p); } };
 });
 
+// And Upload Data: HydShell must pass mode="hyd" and none of Bangalore's handlers.
+let uploadProps = null;
+vi.mock("../UploadDataTab.jsx", async (importOriginal) => {
+  const real = (await importOriginal()).default;
+  return { default: (p) => { uploadProps = p; return real(p); } };
+});
+
 import HydShell from "./HydShell.jsx";
 import { saveToSupabase } from "../../supabase.js";
 import { buildHydPoCsv } from "../../hyd/hydPoCsv.js";
@@ -31,6 +38,7 @@ import { buildHydPoCsv } from "../../hyd/hydPoCsv.js";
 import { OverviewTab, SKUDetailTab } from "../../App.jsx";
 const SCREENS = { OverviewTabComponent: OverviewTab, SKUDetailTabComponent: SKUDetailTab };
 import { runHydEngine } from "../../hyd/hydEngine.js";
+import { summariseInputs } from "../../inputSummary.js";
 import { buildHydParamsFromBangalore, buildHydPlywoodFromBangalore } from "../../hyd/hydParams.js";
 
 const skuMaster = {
@@ -133,25 +141,47 @@ describe("HydShell renders every tab", () => {
     expect(html).toContain("Live stock for HYDS01 starts once the stock sync is enabled");
   });
 
-  it("stock health shows the floor/range notice with counts when the report has entries", () => {
+  it("stock health is Bangalore's screen with no floor-sheet notice (the lists moved to Upload Data)", () => {
+    const report = {
+      inactiveFloored: ["C"],
+      overrides: [{ sku: "A", reason: "Purchase=OFF" }],
+      outOfRangeSales: ["B", "Z"],
+      unknownFloorSkus: ["Q"],
+    };
+    const html = render("stockHealth", stateFor(true), { hydRun: { results: null, report } });
+    for (const absent of ["Dismiss", "inactive in Zoho", "override Bangalore flags", "sold at Pati", "Pati floor sheet"]) expect(html).not.toContain(absent);
+  });
+
+  it("upload is Bangalore's Upload Data: the Hyderabad floors card first and active, every other card shared", () => {
     const report = {
       inactiveFloored: ["C"],
       overrides: [{ sku: "A", reason: "Purchase=OFF" }, { sku: "A", reason: "Supplier" }, { sku: "B", reason: "Dead Stock" }],
       outOfRangeSales: ["B", "Z"],
-      unknownFloorSkus: [],
+      unknownFloorSkus: ["Q"],
     };
-    const html = render("stockHealth", stateFor(true), { hydRun: { results: null, report } });
+    const html = render("upload", stateFor(true), { hydRun: { results: null, report } });
+    expect(html).toContain("Data Inputs");
+    expect(html.indexOf("SKU Floors - HYDERABAD")).toBeGreaterThan(-1);
+    expect(html.indexOf("SKU Floors - HYDERABAD")).toBeLessThan(html.indexOf("Invoice Data"));
+    expect(html.split("Shared — managed in Bangalore").length - 1).toBe(7);
+    expect((html.match(/type="file"/g) || []).length).toBe(1); // the Hyderabad floors card only
+    expect(html).not.toContain("Apply &amp; Re-run Model");
+    expect(html).not.toContain("🗑 Clear");
+    expect(html).toContain("2 SKUs sold at Pati have no floor");
+    expect(html).toContain("⬇ Download as floor template");
     expect(html).toContain("1 floor SKUs are inactive in Zoho");
     expect(html).toContain("2 floor SKUs override Bangalore flags"); // A deduped
-    expect(html).toContain("2 SKUs sold at Pati but not in range");
-    expect(html).toContain("Dismiss");
+    expect(html).toContain("1 floor SKUs are not in the SKU master");
+    expect(uploadProps.mode).toBe("hyd");
+    for (const h of ["onApply", "clearData", "handleInvoice", "handleSKU", "handlePrice", "handleNSQ", "handleMRQ", "handleDead", "handleCeiling", "setShowRunConfirm"]) {
+      expect(uploadProps[h], h).toBeUndefined(); // no Bangalore handler is even passed
+    }
   });
 
-  it("stock health shows no notice when all three lists are empty", () => {
-    const report = { inactiveFloored: [], overrides: [], outOfRangeSales: [], unknownFloorSkus: ["Q"] };
-    const html = render("stockHealth", stateFor(true), { hydRun: { results: null, report } });
-    expect(html).not.toContain("Dismiss");
-    expect(html).not.toContain("inactive in Zoho");
+  it("upload: the shared cards show App's counts when App passes them", () => {
+    const inputSummaries = summariseInputs({ invoiceData, skuMaster, priceData, minReqQty: {}, newSKUQty: {}, deadStock: new Set(), skuCeiling: {} });
+    render("upload", stateFor(true), { inputSummaries });
+    expect(uploadProps.inputSummaries).toBe(inputSummaries);
   });
 
   it("logic tweaker is Bangalore's, with the Hyderabad top section and no network sections", () => {
@@ -197,6 +227,31 @@ describe("HydShell renders every tab", () => {
     expect(saveToSupabase.mock.calls.map(c => `${c[0]}/${c[1]}`)).toEqual(["params/hydGlobal"]);
     expect(saveToSupabase.mock.calls[0][2]).toBe(value);
     expect(setHydState.mock.calls[0][0](st).hydParams).toBe(value);
+  });
+
+  it("first save: Apply is enabled with no edits when params/hydGlobal was never stored (spec §3.3)", () => {
+    const st = { ...stateFor(true), stored: { params: false, plywood: true } };
+    const html = render("logic", st);
+    expect(logicProps.hasChanges).toBe(true);
+    expect(logicProps.extraChangelog).toEqual(["First save — creates Hyderabad's own copy (params/hydGlobal)"]);
+    expect(html).toContain("Apply (1 changes)");
+    expect(html.match(/<button([^>]*)><span>▶<\/span> Apply/)[1]).not.toContain('disabled=""');
+  });
+
+  it("once stored, no edits means Up to date (no first-save line)", () => {
+    render("logic", stateFor(true));
+    expect(logicProps.hasChanges).toBe(false);
+    expect(logicProps.extraChangelog).toEqual([]);
+  });
+
+  it("a THROWN Hyderabad save does not escape onApply (applying is released; error status, not a crash)", async () => {
+    saveToSupabase.mockReset();
+    saveToSupabase.mockRejectedValue(new Error("fetch failed"));
+    const st = stateFor(true);
+    const setHydState = vi.fn();
+    render("logic", st, { hydDraft: { base: st.hydParams, value: { ...st.hydParams, orderCycleDays: 5 } }, setHydState });
+    await expect(logicProps.onApply(logicProps.params)).resolves.toBeUndefined();
+    expect(setHydState).not.toHaveBeenCalled();
   });
 
   it("tool output: Bangalore's card grid without DC / Inner Case Pack / Zero Sale; PO is Hyderabad's file", () => {

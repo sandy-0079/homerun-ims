@@ -14,3 +14,17 @@ export function buildHydFloorsTemplateCsv(floors, skuMaster) {
     });
   return [HYD_FLOORS_TEMPLATE_HEADER.join(","), ...lines].join("\n");
 }
+
+/** The SKUs sold at Pati with no floor (hydRun.report.outOfRangeSales), as a floor
+ *  sheet to fill in: Item Name + Category for the category team, Min/Max blank (blank
+ *  reads as 0, so an unfilled row stays out of range). `null` when there is nothing. */
+export function buildOutOfRangeTemplate(skus, skuMaster) {
+  if (!skus || !skus.length) return null;
+  const lines = skus.map(sku => {
+    const m = skuMaster?.[sku] || {};
+    return [q(sku), q(m.name || ""), q(m.category || ""), "", ""].join(",");
+  });
+  return [HYD_FLOORS_TEMPLATE_HEADER.join(","), ...lines].join("\n");
+}
+
+export const outOfRangeTemplateFilename = (isoDate) => `Hyderabad_floors_to_fill_${isoDate}.csv`;

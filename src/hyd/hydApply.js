@@ -13,3 +13,18 @@ export async function applyHydParams({ draft, hydState, setHydState, confirm }) 
   setHydState(s => ({ ...s, hydParams: draft, stored: { ...s.stored, params: true } }));
   return { kind: "info", text: "Hyderabad settings applied (params/hydGlobal). Bangalore settings were not touched." };
 }
+
+/** The Hyderabad Logic Tweaker's onApply. try/finally so a THROWN save (a network
+ *  error, not a `false` return) can never leave `applying` stuck — which would keep
+ *  Apply disabled until reload — and the throw becomes an error status, not a silence. */
+export async function runHydApply({ draft, hydState, setHydState, confirm, setApplying, setStatus }) {
+  setApplying(true);
+  try {
+    const res = await applyHydParams({ draft, hydState, setHydState, confirm });
+    if (res) setStatus(res);
+  } catch (err) {
+    setStatus({ kind: "error", text: `Save failed — Hyderabad settings were NOT changed. (${err?.message || err})` });
+  } finally {
+    setApplying(false);
+  }
+}

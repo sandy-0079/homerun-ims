@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../supabase.js", () => ({ saveToSupabase: vi.fn(async () => true), supabase: {}, loadFromSupabase: vi.fn() }));
 import { saveToSupabase } from "../supabase.js";
-import { applyHydParams } from "./hydApply.js";
+import { applyHydParams, runHydApply } from "./hydApply.js";
 import { NOT_SAVED_BEFORE } from "../tabs/hyd/hydStyles.js";
 
 const draft = { overallPeriod: 60, floorsOnly: { HYDS01: false }, orderCycleDays: 3 };
@@ -52,5 +52,37 @@ describe("applyHydParams — Hyderabad Apply writes only params/hydGlobal", () =
     const res = await applyHydParams({ draft, hydState: stateWith(), setHydState, confirm: () => true });
     expect(setHydState).not.toHaveBeenCalled();
     expect(res).toEqual({ kind: "error", text: "Save failed — Hyderabad settings were NOT changed." });
+  });
+});
+
+describe("runHydApply — the Logic Tweaker's onApply: `applying` can never stick", () => {
+  const spies = () => ({ setApplying: vi.fn(), setStatus: vi.fn(), setHydState: vi.fn() });
+  it("success: applying true then false, status is the save result", async () => {
+    const s = spies();
+    await runHydApply({ draft, hydState: stateWith(), confirm: () => true, ...s });
+    expect(s.setApplying.mock.calls).toEqual([[true], [false]]);
+    expect(s.setStatus.mock.calls[0][0].kind).toBe("info");
+  });
+  it("a THROWN save (network error) still clears applying and surfaces an error status", async () => {
+    saveToSupabase.mockImplementation(async () => { throw new Error("fetch failed"); });
+    const s = spies();
+    await expect(runHydApply({ draft, hydState: stateWith(), confirm: () => true, ...s })).resolves.toBeUndefined();
+    expect(s.setApplying.mock.calls).toEqual([[true], [false]]);
+    expect(s.setStatus).toHaveBeenCalledWith({ kind: "error", text: "Save failed — Hyderabad settings were NOT changed. (fetch failed)" });
+    expect(s.setHydState).not.toHaveBeenCalled();
+  });
+  it("a throwing setHydState is caught the same way", async () => {
+    const s = spies();
+    s.setHydState.mockImplementation(() => { throw new Error("boom"); });
+    await runHydApply({ draft, hydState: stateWith(), confirm: () => true, ...s });
+    expect(s.setApplying.mock.calls).toEqual([[true], [false]]);
+    expect(s.setStatus.mock.calls[0][0].kind).toBe("error");
+  });
+  it("Cancel on the first-save prompt: no status change, applying cleared", async () => {
+    const s = spies();
+    await runHydApply({ draft, hydState: stateWith({ stored: { params: false } }), confirm: () => false, ...s });
+    expect(s.setApplying.mock.calls).toEqual([[true], [false]]);
+    expect(s.setStatus).not.toHaveBeenCalled();
+    expect(saveToSupabase).not.toHaveBeenCalled();
   });
 });

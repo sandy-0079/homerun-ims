@@ -2753,7 +2753,8 @@ const zeroSaleLists = useMemo(
             OverviewTabComponent={OverviewTab} SKUDetailTabComponent={SKUDetailTab}
             outputDemandThrough={outputDemandThrough} outputFreshness={outputFreshness}
             provRaw={provRaw} fmtStamp={fmtStamp}
-            hydDraft={hydDraft} setHydDraft={setHydDraft}/>
+            hydDraft={hydDraft} setHydDraft={setHydDraft}
+            inputSummaries={inputSummaries} inputProvenance={inputProvenance}/>
         </div>
       )}
       {/* Toast notification */}
