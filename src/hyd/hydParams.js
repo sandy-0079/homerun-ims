@@ -4,6 +4,9 @@
 export const HYD_HIDDEN_KEYS = [
   "newDSList", "openingDSList", "pincodeConfig", "dsCapacities",
   "plywoodNetworkConfig", "plywoodNetworkV2Config", "activeDSCount",
+  // DC parameters (spec §3.3): Hyderabad has no DC — its dc is discarded and
+  // newDSList is [] — so these are inert there and hidden.
+  "dcMult", "dcDeadMult", "skuFloorDCMultMin", "skuFloorDCMultMax", "newDSFloorTopN",
 ];
 
 const clone = (v) => (v === undefined ? undefined : structuredClone(v));

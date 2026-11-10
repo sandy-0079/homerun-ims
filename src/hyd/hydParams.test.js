@@ -26,6 +26,20 @@ const netCfg = () => ({
   global: { thickBoundaryMm: 9 },
 });
 
+describe("HYD_HIDDEN_KEYS", () => {
+  it("hides the Bangalore-only settings, DC parameters included (spec §3.3)", () => {
+    expect([...HYD_HIDDEN_KEYS].sort()).toEqual([
+      "activeDSCount", "dcDeadMult", "dcMult", "dsCapacities", "newDSFloorTopN", "newDSList", "openingDSList",
+      "pincodeConfig", "plywoodNetworkConfig", "plywoodNetworkV2Config", "skuFloorDCMultMax", "skuFloorDCMultMin",
+    ]);
+  });
+  it("every DC key really exists in Bangalore's defaults (so hiding it is not a typo)", () => {
+    for (const k of ["dcMult", "dcDeadMult", "skuFloorDCMultMin", "skuFloorDCMultMax", "newDSFloorTopN"]) {
+      expect(DEFAULT_PARAMS).toHaveProperty(k);
+    }
+  });
+});
+
 describe("buildHydParamsFromBangalore", () => {
   it("drops hidden keys, keeps the rest deep-equal, adds hyd keys", () => {
     const src = blr();

@@ -2706,7 +2706,7 @@ const zeroSaleLists = useMemo(
         <SyncBadge/>
         <div style={{flex:1}}/>
         {city==="hyd"
-          ?HYD_TABS.map(([t,l])=><button key={t} onClick={()=>setHydTab(t)} style={hydTabShown===t?{...S.btn(true),background:CITY_THEME.hyd.underline,borderColor:CITY_THEME.hyd.underline,color:HR.white}:S.btn(false)}>{l}</button>)
+          ?HYD_TABS.map(([t,l])=><button key={t} onClick={()=>setHydTab(t)} style={hydTabShown===t?{...S.btn(true),background:CITY_THEME.hyd.underline,border:`1px solid ${CITY_THEME.hyd.underline}`,color:HR.white}:S.btn(false)}>{l}</button>)
           :<>
         <div style={{fontSize:10,color:HR.muted,marginRight:8,whiteSpace:"nowrap"}}>{dateRange}</div>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}

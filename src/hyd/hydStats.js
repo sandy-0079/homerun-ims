@@ -84,12 +84,18 @@ export function patiDailySales(invoiceData, sku, windowDates) {
 }
 
 /** SKUs zeroed by each Bangalore-origin flag (engine mode). Each SKU is counted
- *  once, under the flag its logicTag names — the first that applied. */
-export function zeroedByFlag(results) {
+ *  once, under the flag its logicTag names — the first that applied.
+ *  `demandOnly` (default) counts only SKUs the engine would otherwise have stocked
+ *  (engineMax > 0): runHydEngine tags the flag before looking at demand, so most
+ *  carriers of a flag have no Pati sales and would be 0/0 anyway. */
+export function zeroedByFlag(results, { demandOnly = true } = {}) {
   const out = Object.fromEntries(FLAGS.map(f => [f, 0]));
   for (const r of Object.values(results || {})) {
-    const tag = storeOf(r)?.logicTag || "";
-    const flag = tag.startsWith("Flag: ") ? tag.slice(6) : null;
+    const s = storeOf(r);
+    const tag = s?.logicTag || "";
+    if (!tag.startsWith("Flag: ")) continue;
+    if (demandOnly && !((s.engineMax || 0) > 0)) continue;
+    const flag = tag.slice(6);
     if (flag in out) out[flag]++;
   }
   return out;
@@ -101,5 +107,10 @@ export function engineFlipImpact(beforeRun, afterRun, priceData) {
     withTargets: Object.values(run?.results || {}).filter(hasTarget).length,
     invMax: computeInvValue(run?.results || {}, priceData || {}, HYD_DS_LIST).max,
   });
-  return { before: side(beforeRun), after: side(afterRun), zeroedByFlag: zeroedByFlag(afterRun?.results) };
+  return {
+    before: side(beforeRun),
+    after: side(afterRun),
+    blockedByFlag: zeroedByFlag(afterRun?.results),
+    flaggedByFlag: zeroedByFlag(afterRun?.results, { demandOnly: false }),
+  };
 }

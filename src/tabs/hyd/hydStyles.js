@@ -58,3 +58,6 @@ export const fmtWhen = (iso) => {
 // Task 8 carry-in: a missing (or unreadable) stored row must not be overwritten silently.
 export const NOT_SAVED_BEFORE =
   "Hyderabad settings have not been saved before (or could not be read). Saving will create them from what you see. Continue?";
+
+// hydState exists but its settings are null (App.jsx's load .catch path).
+export const SETTINGS_UNREADABLE = "Hyderabad settings could not be loaded — see the error above.";

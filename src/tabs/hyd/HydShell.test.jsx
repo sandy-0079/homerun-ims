@@ -34,7 +34,7 @@ function stateFor(floorsOnly, storedOk = true) {
 }
 
 const render = (tab, hydState, extra = {}) => {
-  const hydRun = hydState ? runHydEngine({ invoiceData, skuMaster, priceData, deadStock: new Set(), floors: hydState.floors, hydParams: hydState.hydParams, hydPlywood: hydState.hydPlywood }) : null;
+  const hydRun = "hydRun" in extra ? extra.hydRun : hydState ? runHydEngine({ invoiceData, skuMaster, priceData, deadStock: new Set(), floors: hydState.floors, hydParams: hydState.hydParams, hydPlywood: hydState.hydPlywood }) : null;
   return renderToStaticMarkup(
     <HydShell tab={tab} isAdmin invoiceData={invoiceData} skuMaster={skuMaster} priceData={priceData} deadStock={new Set()}
       stockData={{}} stockDataAccounting={{}} uploadedAtPerDS={{}} hydState={hydState} setHydState={() => {}} hydRun={hydRun}
@@ -69,6 +69,15 @@ describe("HydShell renders every tab", () => {
     const html = render("overview", stateFor(true, false), { hydRun: { results: null, report: null, error: "kaboom" } });
     expect(html).toContain("params/hydGlobal: boom");
     expect(html).toContain("engine: kaboom");
+  });
+
+  it("null settings (load .catch path) say so instead of loading forever", () => {
+    const st = { ...stateFor(true, false), hydParams: null, hydPlywood: null };
+    for (const tab of ["logic", "plywood"]) {
+      const html = render(tab, st, { hydRun: null });
+      expect(html).toContain("Hyderabad settings could not be loaded");
+      expect(html).not.toContain("Loading Hyderabad");
+    }
   });
 
   it("plywood warns on a 0 capacity, and only then", () => {

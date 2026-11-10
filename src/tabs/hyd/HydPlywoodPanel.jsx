@@ -6,7 +6,7 @@ import { isFloorsOnly } from "../../hyd/hydParams.js";
 import { saveHydPlywood } from "../../hyd/hydStore.js";
 import { flattenParamRows, setParamPath } from "../../hyd/hydParamRows.js";
 import { isBrandOnAt, setBrandOnAt, capacityOf, setCapacity } from "../../hyd/hydPlywoodEdit.js";
-import { C, card, h2, note, table, th, td, btn, banner, NOT_SAVED_BEFORE } from "./hydStyles.js";
+import { C, card, h2, note, table, th, td, btn, banner, NOT_SAVED_BEFORE, SETTINGS_UNREADABLE } from "./hydStyles.js";
 import { NumField } from "./HydUi.jsx";
 import HydParamEditor from "./HydParamEditor.jsx";
 
@@ -30,7 +30,8 @@ export default function HydPlywoodPanel({ isAdmin, hydState, setHydState }) {
   const draft = edit && edit.base === base ? edit.value : base;
   const setDraft = value => setEdit({ base, value });
 
-  if (!hydState || !draft) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
+  if (!hydState) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
+  if (!draft) return <div style={card}><span style={note}>{SETTINGS_UNREADABLE}</span></div>;
 
   const cfg = draft.plywoodNetworkConfig || {};
   const nc = draft.networkConfigs || {};

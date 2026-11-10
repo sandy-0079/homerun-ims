@@ -68,20 +68,36 @@ describe("patiDailySales", () => {
 });
 
 describe("engineFlipImpact", () => {
-  it("counts targets, zeroed SKUs per flag, and Inv Value Max before → after", () => {
+  it("counts targets, demand blocked per flag, flag carriers, and Inv Value Max before → after", () => {
     const before = { results: { A: st(1, 2), B: st(0, 0) } };
     const after = { results: {
       A: st(1, 3), B: st(2, 2),
-      C: st(0, 0, { logicTag: "Flag: Purchase=OFF" }), D: st(0, 0, { logicTag: "Flag: Purchase=OFF" }),
-      E: st(0, 0, { logicTag: "Flag: Supplier" }), F: st(0, 0, { logicTag: "Flag: Dead Stock" }),
+      C: st(0, 0, { logicTag: "Flag: Purchase=OFF", engineMax: 4 }),  // Pati demand blocked
+      D: st(0, 0, { logicTag: "Flag: Purchase=OFF", engineMax: 0 }),  // flag, but no Pati sales
+      E: st(0, 0, { logicTag: "Flag: Supplier", engineMax: 1 }),
+      F: st(0, 0, { logicTag: "Flag: Dead Stock" }),                  // no engineMax at all
     } };
     expect(engineFlipImpact(before, after, { A: 10, B: 1 })).toEqual({
       before: { withTargets: 1, invMax: 20 },
       after: { withTargets: 2, invMax: 32 },
-      zeroedByFlag: { "Purchase=OFF": 2, Supplier: 1, "Dead Stock": 1 },
+      blockedByFlag: { "Purchase=OFF": 1, Supplier: 1, "Dead Stock": 0 },
+      flaggedByFlag: { "Purchase=OFF": 2, Supplier: 1, "Dead Stock": 1 },
     });
   });
-  it("zeroedByFlag tolerates missing results", () => {
+});
+
+describe("zeroedByFlag", () => {
+  const results = {
+    sold: st(0, 0, { logicTag: "Flag: Purchase=OFF", engineMax: 3 }),
+    unsold: st(0, 0, { logicTag: "Flag: Purchase=OFF", engineMax: 0 }),
+  };
+  it("counts only SKUs the engine would otherwise have stocked", () => {
+    expect(zeroedByFlag(results)["Purchase=OFF"]).toBe(1);
+  });
+  it("with demandOnly=false counts every flag carrier", () => {
+    expect(zeroedByFlag(results, { demandOnly: false })["Purchase=OFF"]).toBe(2);
+  });
+  it("tolerates missing results", () => {
     expect(zeroedByFlag(null)).toEqual({ "Purchase=OFF": 0, Supplier: 0, "Dead Stock": 0 });
   });
 });

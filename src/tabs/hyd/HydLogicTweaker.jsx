@@ -11,22 +11,23 @@ import {
   strategyOptionsFor, setCategoryStrategy, withFloorsOnly, resetHydParamsToBangalore,
 } from "../../hyd/hydSettings.js";
 import { engineFlipImpact } from "../../hyd/hydStats.js";
-import { C, card, h2, note, table, th, td, input, btn, banner, fmtInr, fmtWhen, NOT_SAVED_BEFORE } from "./hydStyles.js";
+import { C, card, h2, note, table, th, td, input, btn, banner, fmtInr, fmtWhen, NOT_SAVED_BEFORE, SETTINGS_UNREADABLE } from "./hydStyles.js";
 import { Collapsible, NumField } from "./HydUi.jsx";
 import HydParamEditor from "./HydParamEditor.jsx";
 
 const STORE = "HYDS01";
 
 function flipMessage(impact) {
-  const z = impact.zeroedByFlag;
+  const z = impact.blockedByFlag, f = impact.flaggedByFlag;
+  const line = k => `  ${k}: ${z[k].toLocaleString()}   (SKUs carrying the flag: ${f[k].toLocaleString()} — most have no Pati sales)`;
   return [
     "Switch Pati to ENGINE?",
     "",
     `SKUs with targets (now, as applied → with Engine): ${impact.before.withTargets.toLocaleString()} → ${impact.after.withTargets.toLocaleString()}`,
-    "Zeroed by a Bangalore flag (SKUs with no Hyderabad floor row):",
-    `  Purchase=OFF: ${z["Purchase=OFF"].toLocaleString()}`,
-    `  Supplier: ${z.Supplier.toLocaleString()}`,
-    `  Dead Stock: ${z["Dead Stock"].toLocaleString()}`,
+    "Pati demand blocked by a Bangalore flag (SKUs with Pati sales but no Hyderabad floor row):",
+    line("Purchase=OFF"),
+    line("Supplier"),
+    line("Dead Stock"),
     `Inv Value Max (now → with Engine): ${fmtInr(impact.before.invMax)} → ${fmtInr(impact.after.invMax)}`,
     "",
     "Nothing is saved until you click Apply (Hyderabad).",
@@ -129,7 +130,8 @@ export default function HydLogicTweaker({ isAdmin, invoiceData, skuMaster, price
   }, [skuMaster, draft]);
 
   if (!isAdmin) return <div style={card}><span style={note}>Logic Tweaker is admin-only.</span></div>;
-  if (!hydState || !draft) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
+  if (!hydState) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
+  if (!draft) return <div style={card}><span style={note}>{SETTINGS_UNREADABLE}</span></div>;
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(base);
   // A first save is allowed unchanged: it creates the Hyderabad rows from today's copy.

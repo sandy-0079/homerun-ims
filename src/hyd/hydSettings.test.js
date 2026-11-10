@@ -27,7 +27,8 @@ describe("strategy options", () => {
 
 describe("HYD_EDITOR_EXCLUDED_KEYS", () => {
   it("covers hidden keys and the dedicated controls", () => {
-    for (const k of [...HYD_HIDDEN_KEYS, "floorsOnly", "orderCycleDays", "brandLeadTimeDays", "categoryStrategies", "copiedFromBangaloreAt", "plywoodNonNetworkStrategy"]) {
+    for (const k of [...HYD_HIDDEN_KEYS, "floorsOnly", "orderCycleDays", "brandLeadTimeDays", "categoryStrategies", "copiedFromBangaloreAt", "plywoodNonNetworkStrategy",
+      "dcMult", "dcDeadMult", "skuFloorDCMultMin", "skuFloorDCMultMax", "newDSFloorTopN"]) {
       expect(HYD_EDITOR_EXCLUDED_KEYS).toContain(k);
     }
   });
