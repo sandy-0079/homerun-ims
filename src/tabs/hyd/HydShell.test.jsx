@@ -105,6 +105,27 @@ describe("HydShell renders every tab", () => {
     expect(html).toContain("Live stock for HYDS01 starts once the stock sync is enabled");
   });
 
+  it("stock health shows the floor/range notice with counts when the report has entries", () => {
+    const report = {
+      inactiveFloored: ["C"],
+      overrides: [{ sku: "A", reason: "Purchase=OFF" }, { sku: "A", reason: "Supplier" }, { sku: "B", reason: "Dead Stock" }],
+      outOfRangeSales: ["B", "Z"],
+      unknownFloorSkus: [],
+    };
+    const html = render("stockHealth", stateFor(true), { hydRun: { results: null, report } });
+    expect(html).toContain("1 floor SKUs are inactive in Zoho");
+    expect(html).toContain("2 floor SKUs override Bangalore flags"); // A deduped
+    expect(html).toContain("2 SKUs sold at Pati but not in range");
+    expect(html).toContain("Dismiss");
+  });
+
+  it("stock health shows no notice when all three lists are empty", () => {
+    const report = { inactiveFloored: [], overrides: [], outOfRangeSales: [], unknownFloorSkus: ["Q"] };
+    const html = render("stockHealth", stateFor(true), { hydRun: { results: null, report } });
+    expect(html).not.toContain("Dismiss");
+    expect(html).not.toContain("inactive in Zoho");
+  });
+
   it("logic tweaker shows the copied-from date and both buttons", () => {
     const html = render("logic", stateFor(true));
     expect(html).toContain("Copied from Bangalore on");

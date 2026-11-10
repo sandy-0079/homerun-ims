@@ -5,7 +5,7 @@
 //     stockData, stockDataAccounting, uploadedAtPerDS,
 //     hydState, setHydState, hydRun /* {results, report} | null */,
 //     blrParams /* Bangalore's applied params, for "Reset to Bangalore" */ }
-import React from "react";
+import React, { useState } from "react";
 import { card, note, banner } from "./hydStyles.js";
 import HydOverview from "./HydOverview.jsx";
 import HydSkuDetail from "./HydSkuDetail.jsx";
@@ -14,6 +14,7 @@ import HydUploadPanel from "./HydUploadPanel.jsx";
 import HydLogicTweaker from "./HydLogicTweaker.jsx";
 import HydPlywoodPanel from "./HydPlywoodPanel.jsx";
 import StockHealthTab from "../StockHealthTab.jsx";
+import HydStockNotice from "./HydStockNotice.jsx";
 import { HYD_DS_LIST } from "../../city.js";
 
 // Sync Now for Pati: its own group, never a branch added to a Bangalore group.
@@ -27,6 +28,9 @@ function Errors({ hydState, hydRun }) {
 
 export default function HydShell(props) {
   const { tab, hydState, hydRun } = props;
+  // Stock Health notice dismissal: this page session only (survives tab switches,
+  // not a reload). Before the early return — hooks must run on every render.
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
   if (!hydState) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
   return (
     <div>
@@ -37,6 +41,9 @@ export default function HydShell(props) {
       {tab === "upload" && <HydUploadPanel {...props} />}
       {tab === "logic" && <HydLogicTweaker {...props} />}
       {tab === "plywood" && <HydPlywoodPanel {...props} />}
+      {tab === "stockHealth" && !noticeDismissed && (
+        <HydStockNotice report={hydRun?.report} skuMaster={props.skuMaster} onDismiss={() => setNoticeDismissed(true)} />
+      )}
       {tab === "stockHealth" && (
         // One store, no DC. No poData/toData: Pati has no TOs, and its POs reach
         // Stock Health only once sync-orders covers HYDS01, so the PO columns read "—".
