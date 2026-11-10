@@ -333,3 +333,46 @@ Bangalore.
   Locations URL, 2026-11-10). It is used for `sync-stock`'s `BRANCHES.HYDS01`.
 - Where the category team keeps the master Hyderabad sheet (a Google Sheet, exported to CSV for upload
   for now). A nightly sync is a later phase.
+
+## 9. Addendum (2026-11-10, operator): Hyderabad looks identical to Bangalore
+
+**Why:** one team uses both cities, so the tool must be consistent. The first build used separate,
+simpler Hyderabad screens to keep Bangalore safe. The operator now wants Hyderabad to render the
+SAME screens as Bangalore, still with no Bangalore behaviour change.
+
+**Decisions (operator, 2026-11-10):**
+
+- **Overview, SKU Detail:** Hyderabad renders Bangalore's own components, with a store list
+  (`["HYDS01"]`, no DC) and Pati's invoice rows. Same pattern as Stock Health.
+- **Tool Output Download:** the inline block becomes its own component (pure move first). Hyderabad
+  shows the same card grid with the cards that apply: Hyderabad PO (its frozen 9-column file), DS-level
+  file, SKU Master, Purchase Prices. DC and Inner Case Pack cards are hidden (no DC).
+- **Logic Tweaker:** the inline block becomes its own component (pure move first). In Hyderabad it edits
+  the Hyderabad settings draft and Apply writes only `params/hydGlobal`. The Floors only ⇄ Engine switch
+  and "Reset to Bangalore's current values" sit in a Hyderabad-only section at the top.
+  - **Hidden in Hyderabad:** the Bangalore-network sections (New DS list, Store Status /
+    `openingDSList`, pincode attribution, Dead Stock DC multiplier, SKU Floor DC multipliers,
+    plywood non-network strategy picker).
+  - **Brand Lead Time stays visible.** It drives Pati's vendor lead-time buffer (§3.3) and is
+    relabelled for Hyderabad.
+- **Upload Data:** the inline block becomes its own component (pure move first). Hyderabad shows the
+  same card layout. Only the **Hyderabad floors** card is active. Invoices, SKU master, prices, dead
+  stock and ceilings are org-wide or Bangalore inputs, shown with a "shared — managed in Bangalore" note
+  and no upload.
+- **The three "fix your floor sheet" lists move to the Hyderabad floors card:** sold at Pati with no
+  floor (with **"Download as floor template"**: a CSV of those SKUs with Item Name, Category and blank
+  HYDS01 Min/Max), floor SKUs inactive in Zoho, and floors overriding Bangalore flags. The notice above
+  Pati's Stock Health is **removed**, so Stock Health is identical to Bangalore's.
+- **Plywood:** Hyderabad keeps its own panel, **restyled** to Bangalore's look. Bangalore's tab designs an
+  8-store network with a DC fallback, and reusing it for one store would be a rewrite.
+
+**Safety (binding):**
+
+- Every extraction from `App.jsx` is done in two commits:
+  1. A **pure move**, proven text-identical by normalising indentation and diffing old block vs new
+     component body. The only allowed differences are the function wrapper and the props destructure.
+  2. A separate commit adding the Hyderabad props, with defaults that leave Bangalore unchanged.
+- Overview and SKU Detail are proven by a byte-identical server render of the Bangalore default props,
+  before and after.
+- Final gates as in §5: Bangalore engine cells, PO CSV and `toTargets`, plus the operator's read-only
+  test.
