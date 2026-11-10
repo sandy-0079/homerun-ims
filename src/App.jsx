@@ -30,6 +30,7 @@ import BasketAnalysisTab from "./tabs/BasketAnalysisTab";
 import PlywoodNetworkTab from "./tabs/PlywoodNetworkTab";
 import StockHealthTab from "./tabs/StockHealthTab";
 import HydShell from "./tabs/hyd/HydShell";
+import { downloadCsvFile } from "./downloadCsv";
 import { readInitialCity, persistCity, dropHydRows } from "./city";
 import { CITY_THEME, cityHeaderLabel, cityHeaderStyle, hydTabsFor, tabForCity, otherCity, cityUrl, safeLocalStorage, safeHydRun } from "./cityShell";
 import { loadHydState } from "./hyd/hydStore";
@@ -116,16 +117,6 @@ const SourcePill=React.memo(({prov,note})=>{
     </span>
   );
 });
-
-/** Trigger a browser download of CSV text. Mirrors the `dlCSV` helper inside the Upload
- *  tab's block, which is out of scope on the Tool Output tab; kept separate rather than
- *  hoisting that one, so this change touches nothing in Upload. */
-function downloadCsvFile(filename,csv){
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-  a.download=filename;
-  a.click();
-}
 
 /**
  * One download on the Tool Output tab.
@@ -2715,7 +2706,7 @@ const zeroSaleLists = useMemo(
         <SyncBadge/>
         <div style={{flex:1}}/>
         {city==="hyd"
-          ?HYD_TABS.map(([t,l])=><button key={t} onClick={()=>setHydTab(t)} style={S.btn(hydTabShown===t)}>{l}</button>)
+          ?HYD_TABS.map(([t,l])=><button key={t} onClick={()=>setHydTab(t)} style={hydTabShown===t?{...S.btn(true),background:CITY_THEME.hyd.underline,borderColor:CITY_THEME.hyd.underline,color:HR.white}:S.btn(false)}>{l}</button>)
           :<>
         <div style={{fontSize:10,color:HR.muted,marginRight:8,whiteSpace:"nowrap"}}>{dateRange}</div>
         {NAV_TABS.map(([t,l])=><button key={t} onClick={()=>handleTabClick(t)} style={S.btn(tab===t)}>{l}</button>)}
@@ -4267,7 +4258,8 @@ const zeroSaleLists = useMemo(
             deadStock={deadStock instanceof Set?deadStock:new Set(deadStock||[])}
             stockData={stockData} stockDataAccounting={stockDataAccounting}
             uploadedAtPerDS={stockUploadedAtPerDS}
-            hydState={hydState} setHydState={setHydState} hydRun={hydRun}/>
+            hydState={hydState} setHydState={setHydState} hydRun={hydRun}
+            blrParams={savedParams}/>
         </div>
       )}
       {/* Toast notification */}

@@ -1,0 +1,107 @@
+// Hyderabad Plywood: which network brands Pati stocks, Pati's thick/thin
+// capacity, and the global network params. Saves only Hyderabad's own rows.
+// Editable by admins; everyone else sees it read-only.
+import React, { useState } from "react";
+import { isFloorsOnly } from "../../hyd/hydParams.js";
+import { saveHydPlywood } from "../../hyd/hydStore.js";
+import { flattenParamRows, setParamPath } from "../../hyd/hydParamRows.js";
+import { isBrandOnAt, setBrandOnAt, capacityOf, setCapacity } from "../../hyd/hydPlywoodEdit.js";
+import { C, card, h2, note, table, th, td, btn, banner, NOT_SAVED_BEFORE } from "./hydStyles.js";
+import { NumField } from "./HydUi.jsx";
+import HydParamEditor from "./HydParamEditor.jsx";
+
+const STORE = "HYDS01";
+
+function Capacity({ label, value, onChange, disabled }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 6 }}>
+      <span style={{ width: 110 }}>{label}</span>
+      <NumField value={value} onChange={onChange} disabled={disabled} />
+      {value <= 0 && <span style={{ color: C.red, fontWeight: 700 }}>⚠ 0 = no cap — Pati's {label.toLowerCase()} would be unlimited</span>}
+    </div>
+  );
+}
+
+export default function HydPlywoodPanel({ isAdmin, hydState, setHydState }) {
+  const [edit, setEdit] = useState(null); // {base, value}
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+  const base = hydState?.hydPlywood;
+  const draft = edit && edit.base === base ? edit.value : base;
+  const setDraft = value => setEdit({ base, value });
+
+  if (!hydState || !draft) return <div style={card}><span style={note}>Loading Hyderabad…</span></div>;
+
+  const cfg = draft.plywoodNetworkConfig || {};
+  const nc = draft.networkConfigs || {};
+  const brands = Object.keys(cfg.brands || {}).sort();
+  const dirty = JSON.stringify(draft) !== JSON.stringify(base);
+  // A first save is allowed unchanged: it creates the Hyderabad rows from today's copy.
+  const canSave = dirty || !hydState.stored?.plywood;
+  const ro = !isAdmin;
+  const mode = isFloorsOnly(hydState.hydParams, STORE) ? "Floors only" : "Engine";
+
+  const onSave = async () => {
+    const msg = (hydState.stored?.plywood ? "" : NOT_SAVED_BEFORE + "\n\n")
+      + "Save plywood settings for HYDERABAD (params/hydPlywoodNetworkConfig, params/hydNetworkConfigs)? Bangalore plywood is not touched.";
+    if (!window.confirm(msg)) return;
+    setSaving(true);
+    const saved = draft;
+    const ok = await saveHydPlywood(saved);
+    setSaving(false);
+    if (!ok) { setStatus({ kind: "error", text: "Save failed — Hyderabad plywood may be partly saved; reload and check before retrying." }); return; }
+    setHydState(s => ({ ...s, hydPlywood: saved, stored: { ...s.stored, plywood: true } }));
+    setStatus({ kind: "info", text: "Hyderabad plywood settings saved." });
+  };
+
+  return (
+    <div>
+      <div style={{ ...card, display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ ...h2, marginBottom: 0 }}>Plywood — HYDERABAD (HYDS01 Pati)</div>
+        <div style={note}>Network Design, no DC. Follows the Pati switch (now: {mode}).</div>
+        <div style={{ flex: 1 }} />
+        {isAdmin && (
+          <button style={btn(true, !canSave || saving)} disabled={!canSave || saving} onClick={onSave}>
+            {saving ? "Saving…" : "Save (Hyderabad)"}
+          </button>
+        )}
+      </div>
+      {status && <div style={banner(status.kind)}>{status.text}</div>}
+      {dirty && <div style={banner("warn")}>Unsaved Hyderabad plywood changes.</div>}
+
+      <div style={card}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Brands stocked at Pati</div>
+        <table style={{ ...table, maxWidth: 360 }}>
+          <thead><tr><th style={th}>Brand</th><th style={th}>HYDS01</th></tr></thead>
+          <tbody>
+            {brands.map(b => (
+              <tr key={b}>
+                <td style={td}>{b}</td>
+                <td style={td}>
+                  <input type="checkbox" disabled={ro} checked={isBrandOnAt(cfg, b, STORE)}
+                    onChange={e => setDraft({ ...draft, plywoodNetworkConfig: setBrandOnAt(cfg, b, STORE, e.target.checked) })} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!brands.length && <div style={note}>No network brands configured.</div>}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Pati capacity</div>
+        {["thick", "thin"].map(kind => (
+          <Capacity key={kind} label={kind === "thick" ? "Thick sheets" : "Thin sheets"} disabled={ro}
+            value={capacityOf(nc, STORE, kind)}
+            onChange={v => setDraft({ ...draft, networkConfigs: setCapacity(nc, STORE, kind, v) })} />
+        ))}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Network parameters</div>
+        <HydParamEditor rows={flattenParamRows(cfg, ["brands"])} disabled={ro}
+          onChange={(keys, v) => setDraft({ ...draft, plywoodNetworkConfig: setParamPath(cfg, keys, v) })} />
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,97 @@
+// Smoke render of every Hyderabad tab (no React testing library in this repo:
+// react-dom/server is enough to prove each tab renders without throwing — the
+// class of bug `npm run build` cannot see, per src/tabs/CLAUDE.md).
+import { describe, it, expect, vi } from "vitest";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+vi.mock("../../supabase.js", () => ({ loadFromSupabase: vi.fn(), saveToSupabase: vi.fn() }));
+
+import HydShell from "./HydShell.jsx";
+import { runHydEngine } from "../../hyd/hydEngine.js";
+import { buildHydParamsFromBangalore, buildHydPlywoodFromBangalore } from "../../hyd/hydParams.js";
+
+const skuMaster = {
+  A: { sku: "A", name: "Alpha", category: "Tiles", brand: "X", status: "Active", purchase: "Yes" },
+  B: { sku: "B", name: "Beta", category: "Tiles", brand: "X", status: "Active", purchase: "No" },
+  C: { sku: "C", name: "Gamma", category: "Plywood, MDF & HDHMR", brand: "Greenply", status: "Inactive" },
+};
+const invoiceData = [
+  { date: "2026-11-01", ds: "HYDS01", sku: "A", qty: 3 },
+  { date: "2026-11-02", ds: "HYDS01", sku: "B", qty: 1 },
+  { date: "2026-11-03", ds: "DS01", sku: "A", qty: 9 },
+];
+const priceData = { A: 100, B: 50 };
+const floors = { A: { HYDS01: { min: 2, max: 4 } }, B: { HYDS01: { min: 1, max: 1 } }, C: { HYDS01: { min: 1, max: 1 } }, Z: { HYDS01: { min: 1, max: 1 } } };
+const hydPlywood = buildHydPlywoodFromBangalore(
+  { lookbackDays: 90, brands: { Greenply: { nodes: { DS01: { covers: ["DS01"] } } } } },
+  { DS07: { thick: { capacity: 300 }, thin: { capacity: 0 } } },
+);
+
+function stateFor(floorsOnly, storedOk = true) {
+  const hydParams = { ...buildHydParamsFromBangalore({ overallPeriod: 45, brandLeadTimeDays: { _default: 3 }, categoryStrategies: { Tiles: "percentile_cover" }, fixedUnitFloor: { minNZD: 2 } }, "2026-11-10T00:00:00Z"), floorsOnly: { HYDS01: floorsOnly } };
+  return { floors, floorsUploadedAt: null, hydParams, hydPlywood, stored: { params: storedOk, plywood: storedOk }, loadErrors: storedOk ? [] : ["params/hydGlobal: boom"] };
+}
+
+const render = (tab, hydState, extra = {}) => {
+  const hydRun = hydState ? runHydEngine({ invoiceData, skuMaster, priceData, deadStock: new Set(), floors: hydState.floors, hydParams: hydState.hydParams, hydPlywood: hydState.hydPlywood }) : null;
+  return renderToStaticMarkup(
+    <HydShell tab={tab} isAdmin invoiceData={invoiceData} skuMaster={skuMaster} priceData={priceData} deadStock={new Set()}
+      stockData={{}} stockDataAccounting={{}} uploadedAtPerDS={{}} hydState={hydState} setHydState={() => {}} hydRun={hydRun}
+      blrParams={{ overallPeriod: 45 }} {...extra} />,
+  );
+};
+
+const TABS = ["overview", "skuDetail", "stockHealth", "output", "plywood", "upload", "logic"];
+
+describe("HydShell renders every tab", () => {
+  for (const floorsOnly of [true, false]) {
+    for (const tab of TABS) {
+      it(`${tab} (${floorsOnly ? "floors only" : "engine"})`, () => {
+        expect(render(tab, stateFor(floorsOnly)).length).toBeGreaterThan(0);
+      });
+    }
+  }
+
+  it("shows the loading state before hydState arrives", () => {
+    expect(render("overview", null)).toContain("Loading Hyderabad");
+  });
+
+  it("overview shows the mode and the four report lists", () => {
+    const html = render("overview", stateFor(true));
+    expect(html).toContain("Floors only");
+    expect(html).toContain("Floor SKUs inactive in Zoho");
+    expect(html).toContain("Pati sales outside the range");
+    expect(html).toContain("Floor SKUs not in the SKU master");
+  });
+
+  it("load errors and an engine error are surfaced, not thrown", () => {
+    const html = render("overview", stateFor(true, false), { hydRun: { results: null, report: null, error: "kaboom" } });
+    expect(html).toContain("params/hydGlobal: boom");
+    expect(html).toContain("engine: kaboom");
+  });
+
+  it("plywood warns on a 0 capacity, and only then", () => {
+    const st = stateFor(true);
+    expect(render("plywood", st)).not.toContain("0 = no cap");
+    const nc = { ...st.hydPlywood.networkConfigs, HYDS01: { ...st.hydPlywood.networkConfigs.HYDS01, thin: { capacity: 0 } } };
+    expect(render("plywood", { ...st, hydPlywood: { ...st.hydPlywood, networkConfigs: nc } })).toContain("0 = no cap");
+  });
+
+  it("non-admin: plywood renders read-only, upload/logic refuse", () => {
+    const st = stateFor(true);
+    const html = (tab) => renderToStaticMarkup(
+      <HydShell tab={tab} isAdmin={false} invoiceData={invoiceData} skuMaster={skuMaster} priceData={priceData} deadStock={new Set()}
+        hydState={st} setHydState={() => {}} hydRun={null} blrParams={{}} />);
+    expect(html("plywood")).not.toContain("Save (Hyderabad)");
+    expect(html("upload")).toContain("admin-only");
+    expect(html("logic")).toContain("admin-only");
+  });
+
+  it("logic tweaker shows the copied-from date and both buttons", () => {
+    const html = render("logic", stateFor(true));
+    expect(html).toContain("Copied from Bangalore on");
+    expect(html).toContain("Reset to Bangalore&#x27;s current values");
+    expect(html).toContain("Apply (Hyderabad)");
+  });
+});
