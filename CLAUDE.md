@@ -28,6 +28,19 @@ hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
 > change. DS08 also needed its stock cron, `stock-sync-5`: **a new store gets its own stock slot, never
 > a third branch on an existing one** (that 429s; `supabase/functions/CLAUDE.md`).
 
+> **Hyderabad: `HYDS01` Pati (Zoho location `3915979000169622634`), a second city with NO DC** —
+> branch `hyderabad-hyds01`, built 2026-11-10, not yet deployed; spec
+> `docs/superpowers/specs/2026-11-10-hyderabad-hyds01-design.md`. **`DS_LIST` is unchanged**;
+> `HYD_DS_LIST`/`cityOf`/`dropHydRows` live in `src/city.js`, and a header city switch
+> (`?city=hyd|blr`) picks the shell. **The Bangalore engine drops HYDS01 rows before attribution**
+> (`dropHydRows`, first line of `runEngine`), and the Bangalore display tabs get the same filtered
+> rows. The Hyderabad engine is the **unmodified** `runEngine` fed Pati rows relabelled `DS01`
+> (`src/hyd/hydEngine.js`), browser-only; the nightly computes nothing for it. **New rows only:**
+> `team_data/hyd_inputs`, `params/hydGlobal`, `params/hydPlywoodNetworkConfig`,
+> `params/hydNetworkConfigs`. `team_data/global` and `BROWSER_OWNED_KEYS` gain nothing from the browser.
+> **Local testing: `VITE_READ_ONLY=1 npm run dev`** blocks every write and shows the row it would
+> have written. Follow-ups: Open Work #45.
+
 
 ---
 
@@ -441,6 +454,8 @@ which numbers are taken.
 | 40 | Stock sync `per_page` probe | only safe route to a ~10-min stock cycle; never compress the stagger |
 | 43 | A failed Upload Data save is silent | a 7.5 MB row write timed out against a stock sync and the floors were lost with no error; retry + alert + no write after a failed read |
 | 41 | Split-shipment invoices (from 09-24) | **decided 2026-10-08: build** the order-line merge; spec + build plan in Open Work |
+| 44 | `sync-invoices` `writeRow` swallows Supabase errors | a silent cursor-clear failure on 2026-11-08 left a stale cursor; its `merge_unsafe` refusal turned the digest red on good data |
+| 45 | Hyderabad (HYDS01) follow-ups | rollout steps, `SYNC_GROUPS`/`PULL_GROUPS` at cron time, PO freshness gate + Zoho "HYD Purchase" before the Engine flip |
 | — | *Later, not urgent* | IMS reads the canonical stored result instead of recomputing client-side |
 
 
@@ -454,7 +469,7 @@ one reason: **the numbers are stable IDs that appear in commit messages and PRs,
 are never renumbered or reused** — and an index that left the file with the entries would
 let the next feature silently reuse a taken number.
 
-**Highest used: 43. `33` was never used (a gap, not a free slot, leave it). Next: 44.**
+**Highest used: 45. `33` was never used (a gap, not a free slot, leave it). Next: 46.**
 
 | # | what | shipped | live documentation |
 |---|---|---|---|
@@ -501,6 +516,8 @@ let the next feature silently reuse a taken number.
 | 41 | Split-shipment invoices | **open** | Open Work § |
 | 42 | Tool Output: Inner Case Pack - Mid Mile + Purchase Prices cards | **LIVE 2026-10-07** | `src/tabs/CLAUDE.md` Tool Output § · `src/refDataCsv.js` |
 | 43 | A failed Upload Data save is silent (floors lost 2026-10-12) | **open** | Open Work § |
+| 44 | `sync-invoices` `writeRow` swallows Supabase errors (digest red 2026-11-08) | **open** | Open Work § |
+| 45 | Hyderabad (HYDS01 Pati) follow-ups | **open** | Open Work § · spec in `docs/superpowers/specs/` |
 
 
 ## Deferred

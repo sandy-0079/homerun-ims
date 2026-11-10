@@ -196,6 +196,27 @@ effect: every page load silently reverted attribution to "location" (₹7.95Cr v
 `toTargets` — written from in-memory params at Apply — stayed correct. Symptom was "the radio resets
 on reload"; cause was the engine reverting too. Adding a config row is now a one-line change there.
 
+### Hyderabad rows — filtered out here, computed by remap (branch `hyderabad-hyds01`, 2026-11-10)
+Spec `docs/superpowers/specs/2026-11-10-hyderabad-hyds01-design.md`; root `CLAUDE.md` has the overview.
+- **`runEngine`'s first line is `inv = dropHydRows(inv)`** (`src/city.js`), BEFORE `applyAttribution`.
+  Without it Pati rows reach Bangalore twice over: attribution (a pin mapped to a Bangalore store) and the
+  DC-only all-rows sum. ⚠ **A deny-list by city, never an allow-list of `DS_LIST`** — that would drop the
+  `DC01`/`HOMERUN` rows the engine reads today. One line covers App.jsx, `applyAndRun`,
+  `api/run-engine.js` and the replay scripts; never copy it to a call site.
+- **Proven inert (2026-11-10, live snapshot, 17 HYDS01 rows):** 1 of 29,421 cells moved — `HVS7M` DC
+  7/10 → 8/11, a `move:"No"` DC-only SKU whose one Pati sale (qty 1) was its only sale that day. That is
+  the intended effect. With the HYDS01 rows stripped: 0 cells. Stress (DS08's last 14 dates relabelled
+  HYDS01, 2,058 rows): 0, against 595 on `main`.
+- **The Hyderabad engine (`src/hyd/hydEngine.js`) is the UNMODIFIED `runEngine` fed Pati rows
+  relabelled `DS01`.** ⚠ Never pass `HYDS01`, or the filter above eats them. It uses a neutralised
+  master clone (move/purchase Yes, DS-inventorised), no floors, ceilings, dead stock or attribution, and a
+  plywood config whose only node is DS01. It reads `stores.DS01` back as HYDS01, then runs the Hyderabad
+  pass: buffer + order cycle → floor lift → flags → Active-only → floors-only.
+- **Window padding:** zero-qty `__HYD_WINDOW_PAD__` rows (on DS02) on every network-window date. They
+  make runEngine's own date window the NETWORK window, not Pati's sale days, which matters because PCT's
+  dailyAvg/DOC caps and recency divide by the date count. The pad SKU is not in the master, so it is
+  dropped from results, and a test pins that.
+
 ### Opening Shortly — a wired store that is not trading (`src/engine/openingStores.js`)
 
 **Replaced the DS Seed pass on 2026-09-18, and the inversion is the point.** DS Seed had to

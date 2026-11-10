@@ -651,6 +651,68 @@ The pre-July trim warning **expired 2026-09-28**, when the 90-day window reached
 
 ---
 
+## Trimmed 2026-11-10 (room for the Hyderabad docs)
+
+Moved **verbatim** to keep `docs/OPEN-WORK.md` and `supabase/functions/CLAUDE.md` inside their budgets
+when Open Work #44/#45 and the HYDS01 notes were added. The rules stay in the source files; these are
+the measurements and the incident narrative behind them.
+
+### From Open Work #25 — the two-night recheck measurement
+
+**The waste, now measured on two nights, and it reproduced almost exactly:**
+
+| night | recheck date | detail calls | of total | rows corrected |
+|---|---|---|---|---|
+| 1 (08-04) | 07-31 | 1,175 | of 2,408 | **2** (2 lighter) |
+| 2 (08-05) | 08-01 | ~1,143 | of 2,431 | **1** (1 lighter) |
+
+Half the night's calls, both nights, to move 1–2 rows. Night 2's recheck cost is derived from the row
+arithmetic (`old 08-01 = 1,143`) and confirmed by the chunk logs, which show the 08-01 pass consuming
+three of the six working invocations on its own. **This is no longer a one-night anecdote — the ratio is
+stable, which is what makes the splice worth costing out.**
+
+### From Open Work #20 — a corrected claim
+
+- ⚠ **An earlier version of this entry claimed `src/freshness.js` has no test file. That was wrong** —
+  `src/freshness.test.js` has existed since 2026-07-30 (37 tests as of 08-03). The gap is narrower than
+  stated: the module's *pure functions* are well covered; what is unpinned is the `autoAtFor` **map**,
+  which lives in `App.jsx` and is therefore not reachable from that suite. Extracting it is the whole
+  task.
+
+### From Open Work #41 — the split-shipment readings and the ops check
+
+Readings (`scripts/whatif-order-collapse.mjs`, POST merge): 09-28, 4/45 days post-change, repeated lines 1.00% →
+7 cells, +₹0.22L Min. **10-08, 14/45 days, 1.81% and rising → 34 cells, 22 SKUs, +₹0.85L Min** (FUF 21, all up;
+Plywood 13, 1.10% of its cells, 8 down).
+
+Projects to about ₹2.7L or more by ~8 Nov; **operator decided to build now.** Ops checked 5 "fully-doubled"
+orders in Zoho: **all genuine splits** (e.g. `HR/26/151789` 50 + 50 = 100 ordered), so **summing is right**.
+
+### From Open Work #43 — the 2026-10-12 log trace
+
+**From the logs:** 13:05 IST, **Clear** (writes `newSKUQty: {}`, 200), then upload. Its `POST /team_data`
+collided with the stock sync writing the same row → `57014 statement timeout` → 500. `saveToSupabase` only logs
+to the console; `saveTeamData` ignores the result and stamps `uploadProvenance` anyway. Stored floors were **EMPTY
+13:05–14:08**, while `toTargets` (Apply, from browser memory) had them. IMS lost them on reload; TO tool didn't.
+**Why now:** `team_data/global` is **7.5 MB** (stock 5.4 MB, 2026-10-12), written by the crons at :05–:20 IST
+and by the TO tool's "Pull fresh stock" (busy ~13:45–14:30, ~19:45–20:30 IST).
+
+### From `supabase/functions/CLAUDE.md` — the 2026-07-28 migration-ledger repair
+
+  - This had actually happened: `20260715000001` (zoho_auth_cache) was applied by hand, so the table existed while the ledger said "pending". Repaired 2026-07-28. **Fix the ledger, never delete the migration file** — the files are the replayable schema definition; a fresh project or DR restore would otherwise have no way to create the table, and the token helper is fail-safe so it would degrade silently into per-call minting.
+
+### From `supabase/functions/CLAUDE.md` — the 2026-07-28 manual-test incident
+
+- **⚠ Incident 2026-07-28 (self-inflicted, worth not repeating):** testing `sync-invoices` by hand pushed
+  **~1,900 Zoho calls through the org in 15 minutes**. Throughput collapsed from 24 to under 4 calls/sec
+  (the 429 backoff in `zohoClient` compounding) and **`stock-sync-3` missed its 13:41 UTC cycle** —
+  DS04/DS05 went an hour stale. It self-healed the next cycle. Lesson: `/invoices` tolerating 4 calls/sec
+  says nothing about total pressure on the org while five other crons share it. One run, then wait.
+  `_shared/syncCooldown.ts` now enforces a 15-min minimum between fresh runs (`force: true` bypasses it —
+  don't).
+
+---
+
 ## Closed open-work items
 
 Moved **verbatim** out of `docs/OPEN-WORK.md` on 2026-09-28. They were kept there "for the reasoning",

@@ -142,6 +142,14 @@ rather than on every session.
 > ordinary trading column — it opened with near-zero stock, so expect it to read short across the
 > board until its first TOs land rather than treating that as a data fault.
 
+**Optional props for Hyderabad (2026-11-10, branch `hyderabad-hyds01`):** `dsList`, `includeDC`,
+`syncGroups`, `defaultDS`, `filePrefix`. Bangalore passes **none**, and each default is the constant
+the tab used before they existed (header comment in `StockHealthTab.jsx`). Pati passes
+`["HYDS01"]` with `includeDC={false}`.
+> ⚠ **Gate DC UI on `dcFed` (`includeDC && selectedDS !== "DC"`), never on raw `selectedDS !== "DC"`.**
+> In a city with no DC every store tab satisfies the raw test, which would show DC Stock, TO pills and
+> the Reverse TO list on Pati. In Bangalore `dcFed` equals the old test exactly.
+
 ## Tool Output Download Tab
 
 **Seven download cards, no table** (rebuilt 2026-08-03 — commits `9a64dee`, `bf35922`, `f3958a7`;
@@ -152,7 +160,7 @@ called *Download*. Removing it also retired `outputRows`, `outputScrollTop` and 
 
 | card | file | shape |
 |---|---|---|
-| **PO Team Download** (orange, leftmost) | `PO_Targets_<today>_demand-thru-<date>.csv` | **20 cols** · all master SKUs |
+| **PO Team Download** (orange, leftmost) | `PO_Targets_<today>_demand-thru-<date>.csv` | **26 cols** (8 live stores) · all master SKUs |
 | Tool Output — DS Level | `IMS_Output_DS.csv` | 15 cols · unchanged |
 | Tool Output — DC | `IMS_Output_DC.csv` | 5 cols · unchanged |
 | SKU Master | `SKU_Master.csv` | **10 cols** · Status normalised · `Purchase`/`Move` after Status |
@@ -180,12 +188,15 @@ master SKU, Category → Brand → Name with **uncategorised last**. Gated on th
 `src/poTargetsCsv.js` — `PO_CSV_HEADERS`:
 ```
 Item Name · Inventorised At · SKU · Category · Brand · Status ·
-DC Min · DC Max · DS01 Min · DS01 Max · … · DS06 Min · DS06 Max
+DC Min · DC Max · DS01 Min · DS01 Max · … · DS08 Min · DS08 Max · Purchase · Move
 ```
+(Corrected 2026-11-10: this block said it ended at `DS06 Max`, stale since Purchase/Move were appended
+and DS07/DS08 went live.) The DS block is `liveDsList(params)`; a store going live inserts its pair
+there and shifts Purchase/Move right, announced to the PO team.
 The PO team's Google Sheet formulas key on column **POSITION**, so reordering or inserting a column
-**produces wrong purchase orders, not an error**. Anything added later goes **AFTER `DS06 Max`** — same
-rule as the Stock Health CSV's two appended columns. A test asserts the literal 20-column order so a
-reorder fails loudly.
+**produces wrong purchase orders, not an error**. Anything else added later goes **AFTER `Move`**,
+the same rule as the Stock Health CSV's two appended columns. `poTargetsCsv.test.js` pins the literal
+order, so a reorder fails loudly.
 - **⚠ Derive indices, never hardcode them.** Inserting `Brand` after `Category` on 2026-08-03 shifted all
   14 numeric columns one right and would have silently desynced both the test file and
   `scripts/verify-po-csv.mjs`, which had positions written in by hand. They now read
@@ -197,8 +208,18 @@ reorder fails loudly.
   the older files gave no way to do. A stable row set also stops formulas shifting when a SKU is
   deactivated.
 - Read-only re-check any time: `npx vite-node scripts/verify-po-csv.mjs` — asserts the header, that
-  **every** row has exactly 20 columns (one unescaped comma in an item name would shift that row alone),
+  **every** row has exactly the header's column count, 26 today (one unescaped comma in an item name would shift that row alone),
   and that the structural zeros hold.
+
+### Hyderabad PO file — `PO_Hyderabad_<YYYY-MM-DD>.csv` (branch `hyderabad-hyds01`, 2026-11-10)
+`src/hyd/hydPoCsv.js` (`HYD_PO_CSV_HEADERS`), shown only in the Hyderabad shell (`src/tabs/hyd/`).
+**Frozen 9-column header**, same rules as above, and only ever appended:
+`Item Name · Inventorised At · SKU · Category · Brand · Status · HYDS01 Min · HYDS01 Max · Purchase`.
+There is no `Move`, because Hyderabad has no DC. The PO team keeps a separate Hyderabad sheet.
+- **`Purchase` is Hyderabad's EFFECTIVE decision, from `hydPurchaseOf`** (`src/hyd/hydEngine.js`), not
+  Zoho's field (that holds Bangalore's decision). Floor row → Yes · inactive → No · no floor while
+  floors-only → No · after the Engine flip → Zoho's value. The PO, the screens and the pass all call it.
+- Not gated on demand freshness yet: floors-only targets read no demand (Open Work #45).
 
 ### ⚠ Status is normalised — and four spellings were live
 `src/skuStatus.js` `normaliseStatus`, shared by the PO file and the SKU Master CSV so the two can never

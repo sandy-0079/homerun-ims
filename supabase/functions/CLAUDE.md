@@ -172,6 +172,10 @@ still gated and empty would have been wasted requests; DS08 got one the day it w
   the day DS08 was ungated). It never joins `stock-sync-4`: three branches in one invocation is
   measured unsafe (6 concurrent chains 429 after a single group). One branch ≈ 28 requests/cycle,
   ~670/day. **The next store gets a slot or the `per_page` work (Open Work 40), never a third branch.**
+- **HYDS01 Pati (Hyderabad, `3915979000169622634`; branch `hyderabad-hyds01`, NOT deployed):** in
+  `sync-stock` `BRANCHES` but **explicit-only** (`_shared/stockBranches.ts` `EXPLICIT_ONLY`), so the
+  empty-body default (#38) is unchanged. Its cron change (`stock-sync-5` → `["DS08","HYDS01"]`, two
+  branches, not three) is staged in `supabase/staged/`, **not** `migrations/`, so no `db push` applies it early.
 - **⚠ `sync-sku-floors`' duplicated `DS_LIST` gained both**, and the ORDER matters: an unrecognised
   DS column is a hard stop, so DS07/DS08 columns had to reach the floor sheet only AFTER that deploy.
   Sheet-first fails the nightly sync with `unknown_ds` and leaves the previous floors live. **Done in
@@ -371,19 +375,17 @@ still gated and empty would have been wasted requests; DS08 got one the day it w
 - **Supabase statement timeout:** Concurrent reads/writes from multiple functions on the same large global row cause Postgres to cancel statements. Fix: 3-min stagger ensures each function's write completes before the next function's read starts (2-min stagger still collided when Zoho took ~100s/function).
 - **Supabase Disk IO budget:** Nano instance has 30-min daily burst (43 Mbps baseline). The 3-function architecture makes 12 Supabase ops/hour — with a 7MB payload (including invoiceData) this exhausted the Nano burst within hours. Fix: (1) upgrade to Pro + Micro compute (87 Mbps baseline, 60-min burst), (2) separate invoiceData into its own row reducing global payload to ~1-2MB. Together these make daily IO sustainable on Micro.
 - **Migration safety:** Never run `supabase db push` after manually executing a migration SQL in the SQL editor. The CLI doesn't know it already ran and will execute it again. Use `supabase migration repair --status applied <version>` to mark it as done without re-running.
-  - This had actually happened: `20260715000001` (zoho_auth_cache) was applied by hand, so the table existed while the ledger said "pending". Repaired 2026-07-28. **Fix the ledger, never delete the migration file** — the files are the replayable schema definition; a fresh project or DR restore would otherwise have no way to create the table, and the token helper is fail-safe so it would degrade silently into per-call minting.
+  - **Fix the ledger, never delete the migration file** — the files are the replayable schema (the
+    2026-07-28 `zoho_auth_cache` case is archived, "Trimmed 2026-11-10").
   - Check `supabase migration list` before any `db push`: unapplied-but-already-run migrations couple unrelated changes into one aborting transaction.
 - Each stock cron passes `{"branches":["DC","DS01"]}` in pg_net body; sync-stock reads this and fetches only those branches.
 - **Branch-level merge:** sync-stock merges `stockData[sku][ds]` at branch level on write — never replaces the full stockData object (would wipe sibling functions' branch data).
 - **Status codes:** 546 = Supabase killed the function (wall clock timeout); 500 = function caught an error and returned cleanly.
+- **⚠ supabase-js does not throw on a failed write; it returns `{error}`.** Read it on every write. `sync-invoices`'
+  `writeRow` doesn't, lost a cursor clear on 2026-11-08 and turned the digest red (Open Work #44).
 - **Rate limit recovery:** after 429 abuse, recovery takes 60+ min. Never rapid-deploy or trigger repeated manual syncs.
-- **⚠ Incident 2026-07-28 (self-inflicted, worth not repeating):** testing `sync-invoices` by hand pushed
-  **~1,900 Zoho calls through the org in 15 minutes**. Throughput collapsed from 24 to under 4 calls/sec
-  (the 429 backoff in `zohoClient` compounding) and **`stock-sync-3` missed its 13:41 UTC cycle** —
-  DS04/DS05 went an hour stale. It self-healed the next cycle. Lesson: `/invoices` tolerating 4 calls/sec
-  says nothing about total pressure on the org while five other crons share it. One run, then wait.
-  `_shared/syncCooldown.ts` now enforces a 15-min minimum between fresh runs (`force: true` bypasses it —
-  don't).
+- **One manual run, then wait** — five crons share the org's Zoho limit; `_shared/syncCooldown.ts` enforces
+  15 min (`force: true` bypasses it — don't). Incident 2026-07-28: `docs/CHANGELOG-ARCHIVE.md`, "Trimmed 2026-11-10".
 - **⚠ THE 429 CASCADE — a per-call backoff makes a concurrency problem worse, not better** (measured from
   edge logs, 2026-07-28). `sync-invoices` at `CONCURRENCY 8`:
 

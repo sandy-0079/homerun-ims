@@ -1,27 +1,22 @@
 # HomeRun IMS — open work (full entries)
 
-Lifted verbatim out of the root `CLAUDE.md` on 2026-09-17, unchanged. Root keeps a
-one-line index of every item — what it is, and how urgent — so the outstanding work stays
-visible on every session. This file holds the reasoning: the measurements, the rejected
-alternatives, and the ⚠ marks explaining why the obvious fix is wrong.
+Root `CLAUDE.md` keeps a one-line index of every item; this file holds the reasoning — the
+measurements, the rejected alternatives, and the ⚠ marks explaining why the obvious fix is wrong.
 
 **Read this before picking anything up.** Several entries exist specifically to stop
 someone re-deriving a conclusion that was already measured and rejected — item 25's
 "fetch only modified invoices" and item 31's hysteresis are both recorded as decisions,
 not oversights.
 
-**Numbers are stable IDs.** They appear in commit messages and PRs, so they are never
-renumbered or reused. The full index, and the next free number, is in root `CLAUDE.md` — kept
-in one place only, because a second copy here went stale (it read "next is 37" when 41 was taken).
+**Numbers are stable IDs** (commit messages, PRs): never renumbered or reused. The index and the
+next free number live only in root `CLAUDE.md` — a second copy here went stale.
 Closed items move to `docs/CHANGELOG-ARCHIVE.md`, "Closed open-work items".
 
 ---
 
 ## Open Work
 
-**Numbers are stable IDs** — they appear in commit messages and PRs, so they are never renumbered or
-reused. Items are listed in priority order, not numeric order. Everything shipped keeps its number in
-`docs/CHANGELOG-ARCHIVE.md`.
+Items are listed in priority order, not numeric order (IDs: see above).
 
 ### 19. The Zoho export locale is still `DD/MM/YYYY` — the documented rollback is unusable
 Measured again 2026-08-03: all rows. The date guard correctly refuses it (see the 2026-07-29 outage), so
@@ -50,17 +45,8 @@ used.** Not a code change; a Zoho setting. Cheap, and it is the emergency path.
 runway is real — but it **bought time, not a cure**, and there is now slack in the window precisely
 because the publish finishes two hours before the last slot.
 
-**The waste, now measured on two nights, and it reproduced almost exactly:**
-
-| night | recheck date | detail calls | of total | rows corrected |
-|---|---|---|---|---|
-| 1 (08-04) | 07-31 | 1,175 | of 2,408 | **2** (2 lighter) |
-| 2 (08-05) | 08-01 | ~1,143 | of 2,431 | **1** (1 lighter) |
-
-Half the night's calls, both nights, to move 1–2 rows. Night 2's recheck cost is derived from the row
-arithmetic (`old 08-01 = 1,143`) and confirmed by the chunk logs, which show the 08-01 pass consuming
-three of the six working invocations on its own. **This is no longer a one-night anecdote — the ratio is
-stable, which is what makes the splice worth costing out.**
+**The waste, measured on two nights (08-04, 08-05; table in `docs/CHANGELOG-ARCHIVE.md`, "Trimmed
+2026-11-10"):** about half the night's detail calls, to correct 1–2 rows. The ratio was stable.
 
 - **⚠ THE RECHECK IS NOT OPTIONAL, and the reason is not voids.** It catches four things, and *three*
   are under-counts (the expensive direction): an invoice **created** after the pull, a **line item
@@ -104,11 +90,7 @@ functions for observability alone.
 Extract `autoAtFor` from `App.jsx` and assert that **every input with an auto writer has a non-null
 `autoAt`** — literally the 2026-08-03 bug. Same shape as `invoiceCsvRoundTrip` / `paramConfigRows` /
 `teamDataBundle`.
-- ⚠ **An earlier version of this entry claimed `src/freshness.js` has no test file. That was wrong** —
-  `src/freshness.test.js` has existed since 2026-07-30 (37 tests as of 08-03). The gap is narrower than
-  stated: the module's *pure functions* are well covered; what is unpinned is the `autoAtFor` **map**,
-  which lives in `App.jsx` and is therefore not reachable from that suite. Extracting it is the whole
-  task.
+- `src/freshness.test.js` covers the pure functions; only the `autoAtFor` **map** is unpinned.
 
 ### 21. `demand through …` in the TO tool footer
 The IMS chip has it since 2026-08-03; the TO tool footer still shows only `refreshedAt` and flags stale
@@ -280,12 +262,8 @@ timeouts. **Route: `per_page` > 200** (untested; ~14 pages → ~3 per chain). Or
 per-group `execution_time_ms` — ⚠ the documented `logs.all` endpoint returned **410 Gone** on
 2026-09-25; (2) probe ONE branch outside :35–:50; (3) re-plan the slots.
 ### 43. A failed Upload Data save is SILENT (floors lost 2026-10-12)
-**From the logs:** 13:05 IST, **Clear** (writes `newSKUQty: {}`, 200), then upload. Its `POST /team_data`
-collided with the stock sync writing the same row → `57014 statement timeout` → 500. `saveToSupabase` only logs
-to the console; `saveTeamData` ignores the result and stamps `uploadProvenance` anyway. Stored floors were **EMPTY
-13:05–14:08**, while `toTargets` (Apply, from browser memory) had them. IMS lost them on reload; TO tool didn't.
-**Why now:** `team_data/global` is **7.5 MB** (stock 5.4 MB, 2026-10-12), written by the crons at :05–:20 IST
-and by the TO tool's "Pull fresh stock" (busy ~13:45–14:30, ~19:45–20:30 IST).
+A floors upload's write to the 7.5 MB `team_data/global` row hit a stock-sync write, timed out (`57014`),
+and was reported as saved; the floors were gone on reload (incident narrative archived, "Trimmed 2026-11-10").
 **Fix (agreed, not started)** in `saveTeamData`/`saveToSupabase`, all Upload Data inputs:
 1. On `57014`/5xx, **re-read fresh and retry** (≤2).
 2. Still failing: **alert**, no provenance stamp, no Apply as if it saved.
@@ -295,18 +273,21 @@ and by the TO tool's "Pull fresh stock" (busy ~13:45–14:30, ~19:45–20:30 IST
 Tests first. Later: stock keys in their own row (as #13 did for invoices).
 **Workaround:** no Clear before upload; avoid sync windows; reload + check before Apply.
 
+### 44. `sync-invoices` `writeRow` swallows Supabase errors (digest red 2026-11-08)
+`writeRow` never reads `{error}`. **2026-11-08:** after a good publish the cursor-clear write timed out
+silently; the buffer was already empty, so the next slot drained a **stale cursor** over nothing, refused
+`merge_unsafe`, and that refusal **overwrote `invoiceSyncStatus`** — digest red on good data. Manual
+cursor reset applied. **Fix (not started):** `writeRow` checks `{error}` and throws/logs; publish clears
+the **cursor before the buffer**. Same class as #43: a failed write nobody sees.
+
 ### 41. Split-shipment invoices — DECIDED 2026-10-08: build the merge (not started)
 **From 2026-09-24 Zoho raises one invoice per shipment.** The engine counts one invoice **line** as one
 order (`oMap` → ABQ, `collectOrderQtys` → Fixed Unit Floor P90, `orderLines` → Plywood bulk filter), so a
 **same-SKU** split (100 shipped 50 + 50) reads as two orders of 50. Total demand is unaffected; **order
 size is understated**: FUF floors and ABQ run low; Plywood slightly high (bulk passes as regular).
 
-Readings (`scripts/whatif-order-collapse.mjs`, POST merge): 09-28, 4/45 days post-change, repeated lines 1.00% →
-7 cells, +₹0.22L Min. **10-08, 14/45 days, 1.81% and rising → 34 cells, 22 SKUs, +₹0.85L Min** (FUF 21, all up;
-Plywood 13, 1.10% of its cells, 8 down).
-
-Projects to about ₹2.7L or more by ~8 Nov; **operator decided to build now.** Ops checked 5 "fully-doubled"
-orders in Zoho: **all genuine splits** (e.g. `HR/26/151789` 50 + 50 = 100 ordered), so **summing is right**.
+Readings 09-28 → 10-08 (+₹0.85L Min at 14/45 days, rising) and the ops check are archived ("Trimmed
+2026-11-10"). **Operator decided to build; the checked splits were genuine, so summing is right.**
 
 **The fix:** merge rows by `(order, sku, ds, date)`, summing qty, in one function called right after
 `applyAttribution` in `runEngine`. Stored rows, sync and crons stay untouched, and both `toTargets` writers get it.
@@ -319,3 +300,19 @@ orders in Zoho: **all genuine splits** (e.g. `HR/26/151789` 50 + 50 = 100 ordere
 
 **Build plan:** test "split = unsplit" (ABQ, FUF) → frozen-snapshot replay (snapshot + dump + diff scripts) →
 operator review → push outside TO windows.
+
+### 45. Hyderabad (`HYDS01` Pati) follow-ups — branch `hyderabad-hyds01`, 2026-11-10
+Spec: `docs/superpowers/specs/2026-11-10-hyderabad-hyds01-design.md`.
+- **Rollout (spec §6), each on the operator's go:** Vercel deploy → first Hyderabad floor upload +
+  Apply → `sync-stock` (diff `_shared/` vs deployed, named deploy, one `{"branches":["HYDS01"]}` call,
+  then `supabase/staged/` SQL into `migrations/` with a fresh timestamp) → optional `sync-orders`
+  `'HYDS01 Pati': 'HYDS01'`.
+- **⚠ In the same change as the cron:** `SYNC_GROUPS` (`StockHealthTab`) and homerun-to's
+  `PULL_GROUPS` still say `["DS08"]` and must become `["DS08","HYDS01"]`.
+- **Before the Engine flip:** a demand-freshness gate on the Hyderabad PO (none today; floors-only
+  reads no demand); a Zoho "HYD Purchase" field — Bangalore's `Purchase = No` would zero 541
+  engine-only SKUs at Pati (2026-11-10, spec §3.6). Later: nightly Pati floors-sheet sync; digest block.
+- Minors: `isActive` `status || "Active"` vs the engine's `??` · `saveHydPlywood` writes row 2 after
+  row 1 failed; a load error reads as "missing" · Pati Sync Now shares Bangalore's cooldown
+  (`uploadedAtPerDS`) · unfloored Supplier SKUs show 0/0 in Pati Stock Health · Pati floor parser: a
+  duplicate header wins silently, SKUs not case-normalised.
