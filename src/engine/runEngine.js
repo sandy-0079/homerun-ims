@@ -9,6 +9,7 @@ import {
 
 import { getPriceTag, getMovTag, getSpikeTag, computeStats } from "./utils.js";
 import { applyAttribution } from "./attribution.js";
+import { dropHydRows } from "../city.js";
 import { applyCeilingToStores, capFor, clampToCeiling } from "./skuCeiling.js";
 import { applyDeadStockToStores } from "./deadStock.js";
 import { applyOpeningToStores } from "./openingStores.js";
@@ -58,6 +59,9 @@ function collectOrderQtys(inv, skuId, dsId) {
  *   pass it.
  */
 export function runEngine(inv, skuM, mrq, pd, deadStockSet, nsq, p, ceilings = {}) {
+  // Hyderabad rows never reach the Bangalore engine (spec §4.2, docs/superpowers/specs/
+  // 2026-11-10-hyderabad-hyds01-design.md): deny-list by city, before attribution.
+  inv = dropHydRows(inv);
   // Resolve which DS each sale is credited to BEFORE anything reads `inv`.
   // Doing it here rather than at CSV-parse time keeps the raw pincode in the
   // stored rows, so switching attribution is a re-run, not a re-upload.
