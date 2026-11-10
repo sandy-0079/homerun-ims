@@ -29,7 +29,6 @@ const HR = {
   bg: "#F5F5F0", surface: "#FFFFFF", surfaceLight: "#F0F0E8",
   border: "#E0E0D0", muted: "#888870", text: "#1A1A1A", textSoft: "#444438",
 };
-const DS_AND_DC = [...DS_LIST, "DC"];
 
 // Zoho Inventory deep-link base (org migrated from Books → Inventory 2026-07-06).
 // ⚠ TRANSFER ORDERS NEED THE `/inventory` SEGMENT: `#/inventory/transferorders/{id}`.
@@ -96,10 +95,13 @@ function getLive(live) {
 // dropped, which hid ~₹64L of stock that is 100% excess by definition and is
 // precisely what the DS team needs in order to send it back to the DC.
 //
-// Inactive / Confirmation Pending and Supplier SKUs stay excluded.
-function inLocationUniverse(meta, isDC) {
+// Inactive / Confirmation Pending and Supplier SKUs stay excluded — except that a
+// city with NO DC (Hyderabad, `includeDC=false`) keeps Supplier SKUs: there a
+// Hyderabad floor row beats Inventorised At=Supplier (spec §3.2), so a Supplier
+// SKU can carry a store target, and dropping it would hide stock we hold.
+function inLocationUniverse(meta, isDC, keepSupplier = false) {
   const invAt = (meta.inventorisedAt || "DS").toLowerCase();
-  if (invAt === "supplier") return false;
+  if (invAt === "supplier" && !keepSupplier) return false;
   if ((meta.status || "Active").toLowerCase() !== "active") return false;
   if (isDC && invAt !== "dc") return false;   // "ds" SKUs bypass the DC entirely
   return true;
@@ -135,8 +137,8 @@ const downloadCsv = (csv, filename) => {
 // this whole tab the moment DS_LIST gained DS07 (2026-09-18). Both halves of the fix
 // matter: the palette is now shared so it cannot fall behind, and DS_COLOR clamps so
 // a future store degrades to a borrowed colour instead of throwing. See dsColors.js.
-function dsAccent(ds) {
-  return DS_COLOR(DS_LIST.indexOf(ds)).header;
+function dsAccent(ds, dsList) {
+  return DS_COLOR(dsList.indexOf(ds)).header;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -200,10 +202,19 @@ function fmtDate(d) {
   } catch { return d; }
 }
 
+// Optional props (Hyderabad). Bangalore passes NONE of them, and each default is
+// exactly the constant this tab used before they existed:
+//   dsList     — store tabs, in order (DS_LIST)
+//   includeDC  — the DC tab and every DC-derived element: DC Stock column, TO
+//                pills/filter/columns, DS Req Covered, Reverse TO list (true)
+//   syncGroups — Sync Now's branch groups (SYNC_GROUPS, which mirrors the crons)
+//   defaultDS  — the tab selected on load ("DS01")
+//   filePrefix — prepended to both CSV filenames ("")
 export default function StockHealthTab({
   results, skuMaster, stockData, stockDataAccounting, uploadedAtPerDS, onSyncComplete, poData, toData,
+  dsList = DS_LIST, includeDC = true, syncGroups = SYNC_GROUPS, defaultDS = "DS01", filePrefix = "",
 }) {
-  const [selectedDS,  setSelectedDS]  = useState("DS01");
+  const [selectedDS,  setSelectedDS]  = useState(defaultDS);
   const [selectedCat, setSelectedCat] = useState(null);
   const [filterTag,   setFilterTag]   = useState(null);
   const [filterBrand,    setFilterBrand]    = useState("All");
@@ -219,6 +230,17 @@ export default function StockHealthTab({
   const [stockMode,   setStockMode]   = useState("accounting"); // "physical" | "accounting"
 
   const allSkuRowsRef = useRef([]);
+
+  // Tab bar: the stores, then the DC when this city has one.
+  const locations = useMemo(() => (includeDC ? [...dsList, "DC"] : dsList), [dsList, includeDC]);
+  // A DS tab in a city WITH a DC: DC-inventorised SKUs arrive by TO, so the DC
+  // Stock column, TO pills, TO filter and Reverse TO list apply. With no DC every
+  // SKU is purchased straight into the store (PO path only).
+  const dcFed = includeDC && selectedDS !== "DC";
+  // No-DC city whose store has never been stock-synced (HYDS01 before Task 12's
+  // sync-stock change): render the targets with empty stock and say so, rather
+  // than the "Waiting for first sync" screen that hides them.
+  const stockPending = !includeDC && !uploadedAtPerDS?.[selectedDS];
 
   // Active stock dataset — switches based on selected mode
   const activeStockData = (stockMode === "accounting" && Object.keys(stockDataAccounting || {}).length > 0)
@@ -299,7 +321,7 @@ export default function StockHealthTab({
           failed.push(branches);
         }
       };
-      for (const g of SYNC_GROUPS) await runGroup(g);
+      for (const g of syncGroups) await runGroup(g);
       const retry = failed; failed = [];
       for (const g of retry) await runGroup(g);
       if (failed.length) setSyncMsg(`${failed.map(g => g.join('+')).join(', ')} failed — kept last snapshot`);
@@ -318,35 +340,35 @@ export default function StockHealthTab({
       try { setSyncLockRow(await readSyncLock()); } catch { /* next poll corrects */ }
       setSyncing(false);
     }
-  }, [syncing, onSyncComplete, readSyncLock]);
+  }, [syncing, onSyncComplete, readSyncLock, syncGroups]);
 
   // ── DS-level summary (tab EC badges) ───────────────────────────────────────
   const dsSummary = useMemo(() => {
     const s = {};
-    for (const ds of DS_AND_DC) s[ds] = { ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0 };
+    for (const ds of locations) s[ds] = { ec: 0, critical: 0, dsReqCovered: 0, okay: 0, excess: 0 };
     if (!results) return s;
     for (const [sku, res] of Object.entries(results)) {
       const meta = res.meta || {};
       // DS tabs: both "ds" and "dc" inventorised SKUs are relevant
-      if (inLocationUniverse(meta, false)) {
-        for (const ds of DS_LIST) {
+      if (inLocationUniverse(meta, false, !includeDC)) {
+        for (const ds of dsList) {
           const sr = res.stores?.[ds];
           const { ecs } = getLive(activeStockData[sku]?.[ds]);
           s[ds][getHealthTag(ecs, sr?.min || 0, sr?.max || 0, sr?.dailyAvg || 0)]++;
         }
       }
       // DC tab: only "dc" inventorised SKUs
-      if (inLocationUniverse(meta, true)) {
+      if (includeDC && inLocationUniverse(meta, true)) {
         const dc = res.dc;
         const { ecs } = getLive(activeStockData[sku]?.["DC"]);
-        const dcRos = DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0);
+        const dcRos = dsList.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0);
         let dcTag = getHealthTag(ecs, dc?.min || 0, dc?.max || 0, dcRos);
         dcTag = applyDCReqCovered(dcTag, { sku, ecs, min: dc?.min || 0, res, activeStockData });
         s["DC"][dcTag]++;
       }
     }
     return s;
-  }, [results, activeStockData]);
+  }, [results, activeStockData, locations, dsList, includeDC]);
 
   // ── All SKU rows for selected DS ───────────────────────────────────────────
   // Supplier-inventorised and inactive SKUs are excluded here using res.meta,
@@ -356,8 +378,10 @@ export default function StockHealthTab({
     const isDC = selectedDS === "DC";
     return Object.entries(results).flatMap(([sku, res]) => {
       const meta = res.meta || {};
-      if (!inLocationUniverse(meta, isDC)) return [];
-      const invAt = (meta.inventorisedAt || "DS").toLowerCase();
+      if (!inLocationUniverse(meta, isDC, !includeDC)) return [];
+      // No DC → no TOs: every SKU takes the PO path, so the row's routing key is
+      // "ds". `invAtLabel` below keeps the true Inventorised At for the CSV.
+      const invAt = includeDC ? (meta.inventorisedAt || "DS").toLowerCase() : "ds";
 
       // NO min/max gate and NO stock-record gate: a SKU with Min=Max=0 that still
       // holds stock must surface (it tags "excess" — 100% returnable), and one
@@ -375,7 +399,7 @@ export default function StockHealthTab({
       const ros = isDC
         ? (minMax.dcDetails?.dcOnly
             ? (minMax.dcDetails.dailyAvg || 0)
-            : DS_LIST.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0))
+            : dsList.reduce((sum, ds) => sum + (res.stores?.[ds]?.dailyAvg || 0), 0))
         : (res.stores?.[selectedDS]?.dailyAvg || 0);
       let tag = getHealthTag(ecs, min, max, ros);
       // DC tab only: reclassify Critical/Low-Stock to "DS Req Covered" when no supplier PO is needed.
@@ -398,7 +422,7 @@ export default function StockHealthTab({
         stockOnHand, afs, ecs, min, max, ros, tag, reorderQty,
       }];
     });
-  }, [results, selectedDS, activeStockData]);
+  }, [results, selectedDS, activeStockData, dsList, includeDC]);
 
   allSkuRowsRef.current = allSkuRows;
 
@@ -414,7 +438,7 @@ export default function StockHealthTab({
   // Falls back to physical only if accounting data is entirely absent, so a
   // missing accounting sync produces a usable file rather than an empty one.
   const reverseToRows = useMemo(() => {
-    if (!results || selectedDS === "DC") return [];
+    if (!results || !dcFed) return [];
     const store = Object.keys(stockDataAccounting || {}).length > 0 ? stockDataAccounting : stockData;
     const out = [];
     for (const [sku, res] of Object.entries(results)) {
@@ -437,7 +461,7 @@ export default function StockHealthTab({
     return out.sort((a, b) => a.category.localeCompare(b.category)
                            || a.brand.localeCompare(b.brand)
                            || a.name.localeCompare(b.name));
-  }, [results, selectedDS, stockDataAccounting, stockData]);
+  }, [results, selectedDS, stockDataAccounting, stockData, dcFed]);
 
   // ── Per-category totals (for nav badges + KPI cards) ──────────────────────
   const catTotals = useMemo(() => {
@@ -463,13 +487,13 @@ export default function StockHealthTab({
     for (const entry of Object.values(skuMaster || {})) {
       if ((entry.status || "Active").toLowerCase() !== "active") continue;
       const invAt = (entry.inventorisedAt || "DS").toLowerCase();
-      if (invAt === "supplier") continue;
+      if (invAt === "supplier" && includeDC) continue;   // see inLocationUniverse
       if (isDC && invAt !== "dc") continue;
       const cat = entry.category || "Uncategorized";
       map[cat] = (map[cat] || 0) + 1;
     }
     return map;
-  }, [skuMaster, selectedDS]);
+  }, [skuMaster, selectedDS, includeDC]);
 
   const masterTotal = useMemo(() =>
     Object.values(masterCatTotals).reduce((s, n) => s + n, 0),
@@ -756,9 +780,9 @@ export default function StockHealthTab({
 
         {/* ── DS Tab Bar ──────────────────────────────────────────────────── */}
         <div style={{ display: "flex", alignItems: "stretch", background: HR.surface, borderBottom: `2px solid ${HR.border}`, flexShrink: 0 }}>
-          {DS_AND_DC.map(ds => {
+          {locations.map(ds => {
             const isSelected = selectedDS === ds;
-            const accent = dsAccent(ds);
+            const accent = dsAccent(ds, dsList);
             const ecCount = dsSummary[ds]?.ec || 0;
             return (
               <button key={ds}
@@ -860,8 +884,8 @@ export default function StockHealthTab({
                   {selectedCat ? `${p}% of ${selectedCat}` : `${p}% of ${selectedDS}`}
                 </div>
 
-                {/* TO pills (DS tabs only) */}
-                {selectedDS !== "DC" && (
+                {/* TO pills (DS tabs of a city with a DC) */}
+                {dcFed && (
                   <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${cfg.cardBorder}`, display: "flex", gap: 3 }}>
                     {[
                       { k: "noTO",      label: "No TO",      tf: "No TO",      bg: "#F3F4F6", color: "#6B7280", border: "#D1D5DB" },
@@ -887,7 +911,7 @@ export default function StockHealthTab({
                 )}
 
                 {/* PO pills */}
-                <div style={{ marginTop: selectedDS !== "DC" ? 4 : 8, paddingTop: 6, borderTop: `1px solid ${cfg.cardBorder}`, display: "flex", gap: 3 }}>
+                <div style={{ marginTop: dcFed ? 4 : 8, paddingTop: 6, borderTop: `1px solid ${cfg.cardBorder}`, display: "flex", gap: 3 }}>
                   {[
                     { k: "noPO",    label: "No PO",   pf: "No PO",            bg: "#F3F4F6", color: "#6B7280", border: "#D1D5DB" },
                     { k: "delayed", label: "Delayed",  pf: "Delayed",          bg: "#FEE2E2", color: "#B91C1C", border: "#FECACA" },
@@ -945,7 +969,7 @@ export default function StockHealthTab({
             <option value="Delayed">Delayed</option>
             <option value="No PO">No PO</option>
           </select>
-          {selectedDS !== "DC" && (
+          {dcFed && (
             <select value={filterToStatus} onChange={e => setFilterToStatus(e.target.value)} style={SEL}>
               <option value="All">All TO Status</option>
               <option value="Draft">Picking</option>
@@ -990,10 +1014,11 @@ export default function StockHealthTab({
             <button
               onClick={() => {
                 const isDCTab = selectedDS === "DC";
+                // `dcFed` === !isDCTab whenever the city has a DC (Bangalore).
                 // Movement Tag + Inventorised At appended at the END so existing
                 // sheets/macros that reference column positions keep working.
                 const headers = ["SKU", "Item Name", "Brand", "Stock Health", "SoH", "AFS", "Min", "Max", "ROS", "Req Qty",
-                  ...(!isDCTab ? ["DC Stock"] : []),
+                  ...(dcFed ? ["DC Stock"] : []),
                   "Rep. Qty", "Rec Qty", "Date", "Est. Delivery", "Ref #", "Status",
                   "Movement Tag", "Inventorised At"];
                 const rows = filteredRows.map(r => {
@@ -1008,7 +1033,7 @@ export default function StockHealthTab({
                   const status    = isDCInv
                     ? (to ? (TO_STATUS_BADGE[to.status] ?? to.status) : "")
                     : (po ? (PO_STATUS_LABEL[getPoDisplayStatus(po)] ?? po.status) : "");
-                  const dcStockVal = !isDCTab && isDCInv
+                  const dcStockVal = dcFed && isDCInv
                     ? (() => { const dcLive = activeStockData[r.sku]?.["DC"]; return dcLive != null ? Math.max(0, getLive(dcLive).stockOnHand) : ""; })()
                     : "";
                   return [
@@ -1020,13 +1045,13 @@ export default function StockHealthTab({
                     r.min, r.max,
                     r.ros > 0 ? Math.round(r.ros) : 0,
                     r.reorderQty > 0 ? r.reorderQty : "",
-                    ...(!isDCTab ? [dcStockVal] : []),
+                    ...(dcFed ? [dcStockVal] : []),
                     repQty, recQty, date, delivery, refNum, status,
                     r.movTag, r.invAtLabel,
                   ];
                 });
                 const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-                downloadCsv(csv, `stock-health-${selectedDS}${selectedCat ? `-${selectedCat}` : ""}${filterTag ? `-${TC[filterTag].label}` : ""}.csv`);
+                downloadCsv(csv, `${filePrefix}stock-health-${selectedDS}${selectedCat ? `-${selectedCat}` : ""}${filterTag ? `-${TC[filterTag].label}` : ""}.csv`);
               }}
               style={{
                 display: "flex", alignItems: "center", gap: 4, cursor: "pointer",
@@ -1045,7 +1070,7 @@ export default function StockHealthTab({
               on the shelf, types the count into "SoH Counted", and "Reverse TO
               Qty" computes itself. Contents are identical on the Accounting and
               Physical tabs — see `reverseToRows`. */}
-          {selectedDS !== "DC" && reverseToRows.length > 0 && (
+          {dcFed && reverseToRows.length > 0 && (
             <button
               onClick={() => {
                 // ⚠ ALWAYS every Excess row at this location — deliberately
@@ -1083,7 +1108,7 @@ export default function StockHealthTab({
                 // built on accounting stock, and the name should say so on a
                 // sheet that outlives the download.
                 downloadCsv([headers.join(","), ...body].join("\n"),
-                  `Reverse_TO_List_${selectedDS}_Accounting_${today}.csv`);
+                  `${filePrefix}Reverse_TO_List_${selectedDS}_Accounting_${today}.csv`);
               }}
               style={{
                 display: "flex", alignItems: "center", gap: 4, cursor: "pointer",
@@ -1103,14 +1128,21 @@ export default function StockHealthTab({
             Run the model first to see stock health.
           </div>
         )}
-        {results && !hasStock && (
+        {results && !hasStock && !stockPending && (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: HR.muted, fontSize: 13 }}>
             Waiting for first sync — runs automatically every hour at :05 IST.
           </div>
         )}
 
+        {results && stockPending && (
+          <div style={{ margin: "0 14px 10px", padding: "8px 12px", borderRadius: 6, background: "#FEF3C7", border: "1px solid #FDE68A", color: "#92400E", fontSize: 11, flexShrink: 0 }}>
+            Live stock for {selectedDS} starts once the stock sync is enabled. Until then stock shows as —
+            and is counted as zero, so every SKU with a Min reads as short.
+          </div>
+        )}
+
         {/* ── SKU Table ───────────────────────────────────────────────────── */}
-        {results && hasStock && (
+        {results && (hasStock || stockPending) && (
           <div style={{ flex: 1, overflowY: "auto", overflowX: "auto", borderTop: `1px solid ${HR.border}` }}>
             <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
               {/* Column widths — order matches the <thead> array below:
@@ -1154,7 +1186,7 @@ export default function StockHealthTab({
                 <col style={{ width: 32 }} />
                 <col style={{ width: 34 }} />
                 <col style={{ width: 52 }} />
-                {selectedDS !== "DC" && <col style={{ width: 44 }} />}
+                {dcFed && <col style={{ width: 44 }} />}
                 <col style={{ width: 54 }} />
                 <col style={{ width: 58 }} />
                 <col style={{ width: 60 }} />
@@ -1175,7 +1207,7 @@ export default function StockHealthTab({
                     ["Max",            "center", "4px 4px", false, null        ],
                     ["ROS",            "center", "4px 4px", false, null        ],
                     ["Req Qty",        "center", "4px 4px", false, "reorderQty"],
-                    ...(selectedDS !== "DC" ? [["DC Stock", "center", "4px 4px", false, null]] : []),
+                    ...(dcFed ? [["DC Stock", "center", "4px 4px", false, null]] : []),
                     ["Rep. Qty",       "center", "4px 4px", false, null        ],
                     ["Rec Qty",        "center", "4px 4px", false, null        ],
                     ["Date",           "center", "4px 4px", false, "date"      ],
@@ -1215,7 +1247,7 @@ export default function StockHealthTab({
               <tbody>
                 {filteredRows.length === 0 && (
                   <tr>
-                    <td colSpan={selectedDS !== "DC" ? 17 : 16} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
+                    <td colSpan={dcFed ? 17 : 16} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
                       No SKUs match the current filter.
                     </td>
                   </tr>
@@ -1280,12 +1312,12 @@ export default function StockHealthTab({
 
                       {/* Stock on Hand — health tag highlight (ECS basis) */}
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, fontWeight: 600, color: cfg.textColor, background: cfg.ecsBg, fontVariantNumeric: "tabular-nums" }}>
-                        {Math.max(0, row.stockOnHand)}
+                        {stockPending ? "—" : Math.max(0, row.stockOnHand)}
                       </td>
 
                       {/* Available for Sale — reference only */}
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.textSoft, fontVariantNumeric: "tabular-nums" }}>
-                        {Math.max(0, row.afs)}
+                        {stockPending ? "—" : Math.max(0, row.afs)}
                       </td>
 
                       {/* Min */}
@@ -1305,7 +1337,7 @@ export default function StockHealthTab({
                       </td>
 
                       {/* DC Stock — DS tabs only, meaningful for DC-inv SKUs. SoH basis (matches ECS). */}
-                      {selectedDS !== "DC" && (() => {
+                      {dcFed && (() => {
                         const dcLive = activeStockData[row.sku]?.["DC"];
                         const dcSoh  = dcLive != null ? Math.max(0, getLive(dcLive).stockOnHand) : null;
                         const show   = row.invAt === "dc";

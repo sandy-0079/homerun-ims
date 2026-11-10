@@ -97,6 +97,14 @@ describe("HydShell renders every tab", () => {
     expect(html("logic")).toContain("admin-only");
   });
 
+  it("stock health shows Pati's targets with no DC tab, before its stock sync exists", () => {
+    const html = render("stockHealth", stateFor(true));
+    expect(html).toContain(">HYDS01<");
+    expect(html).not.toContain(">DC<");
+    expect(html).toContain("Alpha");
+    expect(html).toContain("Live stock for HYDS01 starts once the stock sync is enabled");
+  });
+
   it("logic tweaker shows the copied-from date and both buttons", () => {
     const html = render("logic", stateFor(true));
     expect(html).toContain("Copied from Bangalore on");
