@@ -140,6 +140,30 @@ describe("HydShell renders every tab", () => {
     expect(render("plywood", { ...st, hydPlywood: { ...st.hydPlywood, networkConfigs: nc } })).toContain("0 = no cap");
   });
 
+  it("plywood params: Bangalore's labels, no DC-only or raw camelCase keys", () => {
+    const st = stateFor(true);
+    const ply = { ...st.hydPlywood, plywoodNetworkConfig: { ...st.hydPlywood.plywoodNetworkConfig, dcCapacity: { thick: 400, thin: 400 }, maxCap: 20, bulkThresholdMultiplier: 2 } };
+    const html = render("plywood", { ...st, hydPlywood: ply });
+    expect(html).toContain("Global Settings");
+    expect(html).toContain("History Window");
+    expect(html).toContain("Max Sheets per Location");
+    expect(html).toContain("Bulk Multiplier (N×ABQ)");
+    for (const raw of ["dcCapacity", "lookbackDays", "maxCap", "bulkThresholdMultiplier"]) expect(html).not.toContain(raw);
+  });
+
+  it("plywood lists Pati's plywood SKUs with capacity used, or the empty state", () => {
+    const st = stateFor(true);
+    const html = render("plywood", st);
+    expect(html).toContain("Pati plywood SKUs");
+    expect(html).toContain("Gamma"); // plywood, has a Hyderabad floor (inactive → 0/0)
+    expect(html).toContain("Inactive in Zoho");
+    expect(html).toContain("Vertical Storage — Thick");
+    expect(html).toContain("Tub Storage — Thin");
+    expect(html).not.toContain("No plywood SKUs in Pati");
+    const { C, ...noPly } = floors;
+    expect(render("plywood", { ...st, floors: noPly })).toContain("No plywood SKUs in Pati&#x27;s range yet");
+  });
+
   it("non-admin: plywood renders read-only, upload/logic refuse", () => {
     const st = stateFor(true);
     const html = (tab) => renderToStaticMarkup(
