@@ -1,26 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { isBrandOnAt, setBrandOnAt, setCapacity, capacityOf } from "./hydPlywoodEdit.js";
+import { isBrandOnAt, setCapacity, capacityOf } from "./hydPlywoodEdit.js";
 
 const cfg = { lookbackDays: 90, brands: {
   Greenply: { nodes: { HYDS01: { covers: ["HYDS01"] } }, dcMultMin: 1 },
   Century: { nodes: {}, dcMultMin: 2 },
 } };
 
-describe("brand on/off at a store", () => {
+describe("brand presence at a store", () => {
   it("reads presence of the store's node", () => {
     expect(isBrandOnAt(cfg, "Greenply", "HYDS01")).toBe(true);
     expect(isBrandOnAt(cfg, "Century", "HYDS01")).toBe(false);
-  });
-  it("off removes the store from nodes; nothing else changes; no mutation", () => {
-    const out = setBrandOnAt(cfg, "Greenply", "HYDS01", false);
-    expect(out.brands.Greenply).toEqual({ nodes: {}, dcMultMin: 1 });
-    expect(out.lookbackDays).toBe(90);
-    expect(out.brands.Century).toBe(cfg.brands.Century);
-    expect(cfg.brands.Greenply.nodes.HYDS01).toBeDefined();
-  });
-  it("on adds a node covering itself", () => {
-    const out = setBrandOnAt(cfg, "Century", "HYDS01", true);
-    expect(out.brands.Century.nodes).toEqual({ HYDS01: { covers: ["HYDS01"] } });
   });
 });
 

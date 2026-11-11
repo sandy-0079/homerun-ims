@@ -151,6 +151,20 @@ describe("HydShell renders every tab", () => {
     for (const raw of ["dcCapacity", "lookbackDays", "maxCap", "bulkThresholdMultiplier"]) expect(html).not.toContain(raw);
   });
 
+  it("plywood: no brands table; Global Settings sits above capacity + SKU table; note lists brands at Pati from saved config", () => {
+    const st = stateFor(true);
+    const brands = { Action: {}, Archid: {}, Century: {}, Greenply: {}, Virgo: { nodes: { DS01: { covers: ["DS01"] } } } };
+    for (const b of ["Greenply", "Century", "Archid", "Action"]) brands[b] = { nodes: { HYDS01: { covers: ["HYDS01"] } } };
+    const html = render("plywood", { ...st, hydPlywood: { ...st.hydPlywood, plywoodNetworkConfig: { ...st.hydPlywood.plywoodNetworkConfig, brands } } });
+    expect(html).not.toContain("Brands stocked at Pati");
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).toContain("Brands on plywood logic at Pati: Action, Archid, Century, Greenply");
+    expect(html).not.toContain("Virgo,");
+    expect(html).toContain("other plywood brands follow the regular rule");
+    expect(html.indexOf("Global Settings")).toBeGreaterThan(-1);
+    expect(html.indexOf("Global Settings")).toBeLessThan(html.indexOf("Pati capacity"));
+  });
+
   it("plywood lists Pati's plywood SKUs with capacity used, or the empty state", () => {
     const st = stateFor(true);
     const html = render("plywood", st);

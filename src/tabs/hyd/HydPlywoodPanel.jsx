@@ -1,4 +1,4 @@
-// Hyderabad Plywood: which network brands Pati stocks, Pati's thick/thin
+// Hyderabad Plywood: Pati's thick/thin
 // capacity, Pati's plywood SKUs (targets + capacity used) and the global network
 // params with Bangalore's labels (DC-only keys hidden). Saves only Hyderabad's own rows.
 // Editable by admins; everyone else sees it read-only.
@@ -8,7 +8,7 @@ import { saveHydPlywood, hydReadFailed } from "../../hyd/hydStore.js";
 import { setParamPath } from "../../hyd/hydParamRows.js";
 import { hydPlywoodParamRows, HYD_PLYWOOD_GROUP_TITLE } from "../../hyd/hydPlywoodLabels.js";
 import { buildHydPlywoodRows, capacityState, HYD_PLYWOOD_EMPTY } from "../../hyd/hydPlywoodRows.js";
-import { isBrandOnAt, setBrandOnAt, capacityOf, setCapacity } from "../../hyd/hydPlywoodEdit.js";
+import { isBrandOnAt, capacityOf, setCapacity } from "../../hyd/hydPlywoodEdit.js";
 import { S, HR } from "../../appStyles.js";
 import { banner, NOT_SAVED_BEFORE, SETTINGS_UNREADABLE } from "./hydStyles.js";
 import { NumField } from "./HydUi.jsx";
@@ -156,7 +156,10 @@ export default function HydPlywoodPanel({ isAdmin, hydState, setHydState, hydPly
 
   const cfg = draft.plywoodNetworkConfig || {};
   const nc = draft.networkConfigs || {};
-  const brands = Object.keys(cfg.brands || {}).sort();
+  // Read-only truth from the saved config: network brands with a node at Pati. Other
+  // plywood brands follow the regular rule (plywoodNonNetworkStrategy).
+  const patiBrands = Object.keys(cfg.brands || {}).filter(b => isBrandOnAt(cfg, b, STORE)).sort((a, b) => a.localeCompare(b));
+  const brandsNote = `Brands on plywood logic at Pati: ${patiBrands.length ? patiBrands.join(", ") : "none"} — other plywood brands follow the regular rule.`;
   const dirty = JSON.stringify(draft) !== JSON.stringify(base);
   // A first save is allowed unchanged: it creates the Hyderabad rows from today's copy.
   // Never after a failed read: the draft may be defaults over a row nobody read.
@@ -192,23 +195,13 @@ export default function HydPlywoodPanel({ isAdmin, hydState, setHydState, hydPly
       {status && <div style={banner(status.kind)}>{status.text}</div>}
       {dirty && <div style={banner("warn")}>Unsaved Hyderabad plywood changes.</div>}
 
-      <div style={{ ...S.card, marginBottom: 12 }}>
-        <div style={sectionTitle}>Brands stocked at Pati</div>
-        <table style={{ ...S.table, maxWidth: 360 }}>
-          <thead><tr><th style={S.th}>Brand</th><th style={S.th}>HYDS01</th></tr></thead>
-          <tbody>
-            {brands.map(b => (
-              <tr key={b}>
-                <td style={S.td}>{b}</td>
-                <td style={S.td}>
-                  <input type="checkbox" disabled={ro} checked={isBrandOnAt(cfg, b, STORE)}
-                    onChange={e => setDraft({ ...draft, plywoodNetworkConfig: setBrandOnAt(cfg, b, STORE, e.target.checked) })} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!brands.length && <div style={note}>No network brands configured.</div>}
+      <div style={{ ...S.card, marginBottom: 12, padding: 0, overflow: "hidden" }}>
+        <div style={{ background: PURPLE_BG, padding: "12px 14px 14px" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: PURPLE, marginBottom: 10, letterSpacing: 0.2 }}>{HYD_PLYWOOD_GROUP_TITLE}</div>
+        <div style={{ ...note, marginBottom: 10 }} data-testid="hyd-ply-brands-note">{brandsNote}</div>
+        <HydParamEditor rows={hydPlywoodParamRows(cfg)} disabled={ro}
+          onChange={(keys, v) => setDraft({ ...draft, plywoodNetworkConfig: setParamPath(cfg, keys, v) })} />
+        </div>
       </div>
 
       <div style={{ ...S.card, marginBottom: 12, padding: "9px 14px", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", fontSize: 11 }}>
@@ -223,14 +216,6 @@ export default function HydPlywoodPanel({ isAdmin, hydState, setHydState, hydPly
 
       <PatiSkuTable rows={ply.rows} capacity={ply.capacity} boundary={boundary} floorsOnly={floorsOnly} lookbackDays={lookbackDays}
         thickCap={capacityOf(nc, STORE, "thick")} thinCap={capacityOf(nc, STORE, "thin")} />
-
-      <div style={{ ...S.card, marginBottom: 12, padding: 0, overflow: "hidden" }}>
-        <div style={{ background: PURPLE_BG, padding: "12px 14px 14px" }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: PURPLE, marginBottom: 10, letterSpacing: 0.2 }}>{HYD_PLYWOOD_GROUP_TITLE}</div>
-        <HydParamEditor rows={hydPlywoodParamRows(cfg)} disabled={ro}
-          onChange={(keys, v) => setDraft({ ...draft, plywoodNetworkConfig: setParamPath(cfg, keys, v) })} />
-        </div>
-      </div>
     </div>
   );
 }
