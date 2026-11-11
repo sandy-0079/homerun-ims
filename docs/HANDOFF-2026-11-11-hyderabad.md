@@ -23,8 +23,8 @@ the operator before any prod write, deploy, cron change or push. Respect the TO 
 | Cron for Pati stock | **Staged, NOT applied:** `supabase/staged/stock_sync_5_add_hyds01.sql` (DS08 → DS08 + HYDS01) |
 | Hyderabad data rows | **None written yet.** Hyderabad runs on Bangalore-copied defaults, floors-only, no floors → every Pati target 0/0 until the first real floor upload |
 | `sync-orders` HYDS01 mapping (open POs in Pati's Stock Health) | Not done (optional) |
-| Worktree `../homerun-ims-hyd` + branch `hyderabad-hyds01` | Merged into `main` (fast-forward). Still present for the operator's local testing; **remove both once they're done** (`git worktree remove ../homerun-ims-hyd && git branch -d hyderabad-hyds01`) |
-| This handover doc | Committed locally on `main`, **not pushed** (a docs-only push redeploys identical code; push with the next real change) |
+| Worktree `../homerun-ims-hyd` + branch `hyderabad-hyds01` | **Removed 2026-11-11** after the merge (no other local or remote branches remain) |
+| This handover doc | Committed locally on `main`, **not pushed** (a push triggers a Vercel redeploy of identical code; not done at 14:10 IST, inside the 14:30 TO buffer). Push it outside the TO windows, or with the next real change |
 
 ## 2. Key facts (do not re-derive)
 
