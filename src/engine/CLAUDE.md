@@ -196,7 +196,7 @@ effect: every page load silently reverted attribution to "location" (₹7.95Cr v
 `toTargets` — written from in-memory params at Apply — stayed correct. Symptom was "the radio resets
 on reload"; cause was the engine reverting too. Adding a config row is now a one-line change there.
 
-### Hyderabad rows — filtered out here, computed by remap (branch `hyderabad-hyds01`, 2026-11-10)
+### Hyderabad rows — filtered out here, computed by remap (on `main` since 2026-11-11)
 Spec `docs/superpowers/specs/2026-11-10-hyderabad-hyds01-design.md`; root `CLAUDE.md` has the overview.
 - **`runEngine`'s first line is `inv = dropHydRows(inv)`** (`src/city.js`), BEFORE `applyAttribution`.
   Without it Pati rows reach Bangalore twice over: attribution (a pin mapped to a Bangalore store) and the
