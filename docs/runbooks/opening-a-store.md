@@ -24,7 +24,8 @@ The scripts below derive from live data; add a check to them instead of a number
 2. **Its own stock cron slot, before the untick.** A new store gets a new `stock-sync-N` slot (a
    migration), never a third branch on an existing one (that 429s). **Add it to `SYNC_GROUPS`
    (`StockHealthTab.jsx`) and `PULL_GROUPS` (`homerun-to/src/sync.js`) in the same change, BEFORE
-   the untick.** DS08's slot landed ~20 min after its untick, and for that time the TO tool judged a
+   the untick** (a Bangalore store only: Hyderabad stores never join these; Pati has its own
+   `["HYDS01"]` group in the Hyderabad view). DS08's slot landed ~20 min after its untick, and for that time the TO tool judged a
    store its pull button could not refresh.
 3. **Prove the branch is reachable by its DATA, not a timestamp.** Invoke `sync-stock` for the
    branch: an empty-but-wired store gains thousands of `stockData` keys, all zero. An unreachable

@@ -19,12 +19,12 @@ the operator before any prod write, deploy, cron change or push. Respect the TO 
 | Frontend + `api/run-engine.js` (Hyderabad screens, Bangalore filter) | **LIVE.** Pushed `main` at 13:17 IST; Vercel prod `homerun-ims.vercel.app`, commit `8d4ea27` |
 | Bangalore engine | One change: `runEngine` drops `HYDS01` rows before attribution. Measured 1/29,421 cells moved (**HVS7M DC 7/10 → 8/11**, a DC-only SKU whose Pati sale was skewing it). **Operator approved this 2026-11-11** |
 | Nightly engine (tonight) | Dry run of the deployed endpoint at ~13:30 IST: **Inv Value identical** to this morning's live run (Min ₹98,653,271 / Max ₹122,725,566), **2,831 targets, 0 added / 0 removed** |
-| `sync-stock` with HYDS01 | **Code on `main`, NOT deployed.** `BRANCHES.HYDS01 = 3915979000169622634`, explicit-only (`supabase/functions/_shared/stockBranches.ts`), so the empty-body default stays the old 9 branches |
-| Cron for Pati stock | **Staged, NOT applied:** `supabase/staged/stock_sync_5_add_hyds01.sql` (DS08 → DS08 + HYDS01) |
+| `sync-stock` with HYDS01 | **DEPLOYED 2026-11-12 11:34 IST, v42** (rollback: v41). Explicit-only, so the empty-body default stays the old 9 branches. Manual HYDS01 pull 12:21 IST: 200 in 27.5s, 3,263 SKUs, Bangalore entries byte-identical, `team_data/global` 7.74 → 8.22 MB |
+| Cron for Pati stock | **APPLIED 2026-11-12 12:22 IST** (migration `20261112000001`): `stock-sync-5` = `["DS08","HYDS01"]`. First live run 13:17 IST: 200 in ~37s, DS08 + HYDS01 advanced. Step B is done; only B7 docs remained |
 | Hyderabad data rows | **None written yet.** Hyderabad runs on Bangalore-copied defaults, floors-only, no floors → every Pati target 0/0 until the first real floor upload |
 | `sync-orders` HYDS01 mapping (open POs in Pati's Stock Health) | Not done (optional) |
 | Worktree `../homerun-ims-hyd` + branch `hyderabad-hyds01` | **Removed 2026-11-11** after the merge (no other local or remote branches remain) |
-| This handover doc | Committed locally on `main`, **not pushed** (a push triggers a Vercel redeploy of identical code; not done at 14:10 IST, inside the 14:30 TO buffer). Push it outside the TO windows, or with the next real change |
+| This handover doc | Pushed 2026-11-12 with the Step B docs |
 
 ## 2. Key facts (do not re-derive)
 

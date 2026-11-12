@@ -172,10 +172,10 @@ still gated and empty would have been wasted requests; DS08 got one the day it w
   the day DS08 was ungated). It never joins `stock-sync-4`: three branches in one invocation is
   measured unsafe (6 concurrent chains 429 after a single group). One branch ≈ 28 requests/cycle,
   ~670/day. **The next store gets a slot or the `per_page` work (Open Work 40), never a third branch.**
-- **HYDS01 Pati (Hyderabad, `3915979000169622634`; branch `hyderabad-hyds01`, NOT deployed):** in
-  `sync-stock` `BRANCHES` but **explicit-only** (`_shared/stockBranches.ts` `EXPLICIT_ONLY`), so the
-  empty-body default (#38) is unchanged. Its cron change (`stock-sync-5` → `["DS08","HYDS01"]`, two
-  branches, not three) is staged in `supabase/staged/`, **not** `migrations/`, so no `db push` applies it early.
+- **HYDS01 Pati (Hyderabad, `3915979000169622634`; LIVE 2026-11-12, `sync-stock` v42):** in `BRANCHES`
+  but **explicit-only** (`_shared/stockBranches.ts`), so the empty-body default (#38) is unchanged.
+  `stock-sync-5` = `["DS08","HYDS01"]` (migration `20261112000001`). Pati added ~0.48 MB to
+  `team_data/global` (7.74 → 8.22 MB; #43). Rollback: `cron.alter_job` back to `["DS08"]`.
 - **⚠ `sync-sku-floors`' duplicated `DS_LIST` gained both**, and the ORDER matters: an unrecognised
   DS column is a hard stop, so DS07/DS08 columns had to reach the floor sheet only AFTER that deploy.
   Sheet-first fails the nightly sync with `unknown_ds` and leaves the previous floors live. **Done in
@@ -333,7 +333,7 @@ still gated and empty would have been wasted requests; DS08 got one the day it w
   - `stock-sync-2` at `:38 UTC` (:08 IST) → DS02 + DS03
   - `stock-sync-3` at `:41 UTC` (:11 IST) → DS04 + DS05
   - `stock-sync-4` at `:44 UTC` (:14 IST) → DS06 + DS07 (since 2026-09-18)
-  - `stock-sync-5` at `:47 UTC` (:17 IST) → DS08 (2 calls, since 2026-09-25)
+  - `stock-sync-5` at `:47 UTC` (:17 IST) → DS08 + HYDS01 (since 2026-11-12)
   - `orders-sync-hourly` at `:50 UTC` (:20 IST) → PO + TO (different Zoho endpoints, separate rate limit bucket). Moved from :35 on 2026-07-08 (migration `20260708000001`) — at :35 it collided with stock-sync-1's `team_data/global` write (statement timeout left DC+DS01 74m stale).
   - `catalogue-sync-earlier` at `25,55 16,17 * * *` UTC + `catalogue-sync-nightly` at `25 18 * * *`
     → five attempts, 21:55–23:55 IST (migrations `20260730000001` + `20260729000002`)

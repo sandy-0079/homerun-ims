@@ -296,8 +296,7 @@ operator review → push outside TO windows.
 ### 45. Hyderabad (`HYDS01` Pati) follow-ups — branch `hyderabad-hyds01`, 2026-11-10
 Spec: `docs/superpowers/specs/2026-11-10-hyderabad-hyds01-design.md`.
 - **Rollout (spec §6), each on the operator's go:** Vercel deploy → first Hyderabad floor upload +
-  Apply → `sync-stock` (diff `_shared/` vs deployed, named deploy, one `{"branches":["HYDS01"]}` call,
-  then `supabase/staged/` SQL into `migrations/` with a fresh timestamp) → optional `sync-orders`
+  Apply → `sync-stock` **done 2026-11-12** (v42; `stock-sync-5` = DS08 + HYDS01) → optional `sync-orders`
   `'HYDS01 Pati': 'HYDS01'`.
 - **⚠ Only the `stock-sync-5` cron changes for Pati stock.** Leave `SYNC_GROUPS` (`StockHealthTab`)
   and homerun-to's `PULL_GROUPS` as `["DS08"]`: adding HYDS01 there makes Bangalore Sync Now and the

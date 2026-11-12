@@ -29,7 +29,7 @@ hold. `DS_LIST` in `constants.js` has eight entries and everything iterates it.
 > a third branch on an existing one** (that 429s; `supabase/functions/CLAUDE.md`).
 
 > **Hyderabad: `HYDS01` Pati (Zoho location `3915979000169622634`), a second city with NO DC** —
-> on `main` since 2026-11-11 (frontend + nightly via Vercel; `sync-stock` HYDS01 NOT deployed, cron staged); spec
+> on `main` since 2026-11-11 (frontend + nightly via Vercel; Pati stock in `stock-sync-5` since 2026-11-12); spec
 > `docs/superpowers/specs/2026-11-10-hyderabad-hyds01-design.md`. **`DS_LIST` is unchanged**;
 > `HYD_DS_LIST`/`cityOf`/`dropHydRows` live in `src/city.js`, and a header city switch
 > (`?city=hyd|blr`) picks the shell. **The Bangalore engine drops HYDS01 rows before attribution**

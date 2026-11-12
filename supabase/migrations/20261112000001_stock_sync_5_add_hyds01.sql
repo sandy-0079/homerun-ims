@@ -1,4 +1,4 @@
--- NOT APPLIED. Apply only after sync-stock is deployed and a manual HYDS01 run is verified (spec §6.3).
+-- Applied 2026-11-12 after sync-stock v42 deploy + a verified manual HYDS01 pull (spec §6.3).
 --
 -- stock-sync-5 (:47 UTC) gains HYDS01 Pati alongside DS08: two branches = one normal group, the
 -- same shape as stock-sync-1..4. Command text is copied from 20260925000001_stock_sync_5_ds08.sql
