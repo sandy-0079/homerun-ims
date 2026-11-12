@@ -263,6 +263,8 @@ and was reported as saved; the floors were gone on reload (incident narrative ar
    write a payload holding only the changed key: a whole-row wipe.
 4. **Clear** asks to confirm; an upload already replaces everything.
 Tests first. Later: stock keys in their own row (as #13 did for invoices).
+**Decided 2026-11-12:** browser fix only; retry with backoff (no sync-window gate); on final failure
+alert + revert state to stored; scope = Upload Data writes (`global`, `invoice_data`, `uploadProvenance`).
 **Workaround:** no Clear before upload; avoid sync windows; reload + check before Apply.
 
 ### 44. `sync-invoices` `writeRow` swallows Supabase errors (digest red 2026-11-08)
