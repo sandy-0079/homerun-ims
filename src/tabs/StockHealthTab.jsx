@@ -3,6 +3,7 @@ import { DS_LIST } from "../engine/index.js";
 import { storeColor } from "../dsColors.js";
 import { getHealthTag, applyDCReqCovered } from "../stockHealthTags.js";
 import { supabase, READ_ONLY } from "../supabase.js";
+import { keyIndex, floorAt, ceilingAt, fmtFloor, fmtCeiling, matchesSetupFilter, SETUP_FILTERS } from "../stockHealthFloorCeiling.js";
 
 const SYNC_COOLDOWN_MINS = 15;
 
@@ -223,10 +224,15 @@ export function startOrdersSync(client, syncOrders) {
 //   defaultDS  — the tab selected on load ("DS01")
 //   filePrefix — prepended to both CSV filenames ("")
 //   downloadsDisabled — disables both CSV downloads (false; Hyderabad: a failed read)
+//   floors     — SKU floors {sku:{loc:{min,max}}} for the Floor column + filter
+//                (Bangalore newSKUQty; Hyderabad hyd_inputs.floors). Display only.
+//   ceilings   — SKU ceilings {sku:{loc:cap}} for the Ceiling column (Bangalore
+//                skuCeiling; Hyderabad has none). Display only.
+const NO_BOUNDS = {};
 export default function StockHealthTab({
   results, skuMaster, stockData, stockDataAccounting, uploadedAtPerDS, onSyncComplete, poData, toData,
   dsList = DS_LIST, includeDC = true, syncGroups = SYNC_GROUPS, syncOrders = true, defaultDS = "DS01", filePrefix = "",
-  downloadsDisabled = false,
+  downloadsDisabled = false, floors = NO_BOUNDS, ceilings = NO_BOUNDS,
 }) {
   const [selectedDS,  setSelectedDS]  = useState(defaultDS);
   const [selectedCat, setSelectedCat] = useState(null);
@@ -234,6 +240,7 @@ export default function StockHealthTab({
   const [filterBrand,    setFilterBrand]    = useState("All");
   const [filterPoStatus, setFilterPoStatus] = useState("All");
   const [filterToStatus, setFilterToStatus] = useState("All");
+  const [filterSetup,    setFilterSetup]    = useState("All");
   const [sortCol,        setSortCol]        = useState(null);
   const [sortDir,        setSortDir]        = useState("asc");
   const [search,         setSearch]         = useState("");
@@ -387,6 +394,10 @@ export default function StockHealthTab({
   // ── All SKU rows for selected DS ───────────────────────────────────────────
   // Supplier-inventorised and inactive SKUs are excluded here using res.meta,
   // which is populated from the already-uploaded SKU Master CSV.
+  // Case-insensitive key maps, built once per data change rather than per row.
+  const floorIdx = useMemo(() => keyIndex(floors),   [floors]);
+  const ceilIdx  = useMemo(() => keyIndex(ceilings), [ceilings]);
+
   const allSkuRows = useMemo(() => {
     if (!results) return [];
     const isDC = selectedDS === "DC";
@@ -434,9 +445,13 @@ export default function StockHealthTab({
         movTag:      minMax.mvTag || "",
         invAtLabel:  meta.inventorisedAt || "DS",
         stockOnHand, afs, ecs, min, max, ros, tag, reorderQty,
+        // Manual bounds at THIS location (DC tab reads the "DC" key). Reference
+        // only — the engine already applied both to min/max above.
+        floor:   floorAt(floors, floorIdx, sku, selectedDS),
+        ceiling: ceilingAt(ceilings, ceilIdx, sku, selectedDS),
       }];
     });
-  }, [results, selectedDS, activeStockData, dsList, includeDC]);
+  }, [results, selectedDS, activeStockData, dsList, includeDC, floors, floorIdx, ceilings, ceilIdx]);
 
   allSkuRowsRef.current = allSkuRows;
 
@@ -615,7 +630,7 @@ export default function StockHealthTab({
   useEffect(() => {
     setSortCol(null); setSortDir("asc");
     setFilterTag(null); setFilterBrand("All"); setSelectedCat(null);
-    setFilterPoStatus("All"); setFilterToStatus("All");
+    setFilterPoStatus("All"); setFilterToStatus("All"); setFilterSetup("All");
   }, [selectedDS]);
 
   const handleSort = useCallback((key) => {
@@ -637,6 +652,7 @@ export default function StockHealthTab({
         if (selectedCat && r.category !== selectedCat) return false;
         if (filterTag && r.tag !== filterTag) return false;
         if (filterBrand !== "All" && r.brand !== filterBrand) return false;
+        if (!matchesSetupFilter(r, filterSetup)) return false;
         if (q && !r.sku.toLowerCase().includes(q) && !r.name.toLowerCase().includes(q) && !r.brand.toLowerCase().includes(q)) return false;
         const isDC = selectedDS === "DC";
         const isDCInv = !isDC && r.invAt === "dc";
@@ -719,7 +735,7 @@ export default function StockHealthTab({
         const cmp = (aVal ?? Infinity) - (bVal ?? Infinity);
         return sortDir === "asc" ? cmp : -cmp;
       });
-  }, [allSkuRows, selectedCat, filterTag, filterBrand, filterPoStatus, filterToStatus, search, dsPoData, dsToData, selectedDS, sortCol, sortDir]);
+  }, [allSkuRows, selectedCat, filterTag, filterBrand, filterSetup, filterPoStatus, filterToStatus, search, dsPoData, dsToData, selectedDS, sortCol, sortDir]);
 
   // ── Reset filters on DS switch ─────────────────────────────────────────────
   const hasStock = Object.keys(activeStockData).length > 0;
@@ -961,7 +977,7 @@ export default function StockHealthTab({
             value={search} onChange={e => {
               const val = e.target.value;
               setSearch(val);
-              if (val) { setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); setFilterToStatus("All"); }
+              if (val) { setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); setFilterToStatus("All"); setFilterSetup("All"); }
             }}
             placeholder="Search name, SKU or brand…"
             style={{ ...SEL, flex: 1, minWidth: 180, maxWidth: 260, padding: "6px 10px", fontSize: 12 }}
@@ -977,6 +993,10 @@ export default function StockHealthTab({
           <select value={filterBrand} onChange={e => setFilterBrand(e.target.value)} style={SEL}>
             <option value="All">All Brands</option>
             {brands.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <select value={filterSetup} onChange={e => setFilterSetup(e.target.value)} style={SEL}
+            title="Floor / Ceiling at this location. A ceiling of 0 counts as set; a 0/0 floor does not.">
+            {SETUP_FILTERS.map(f => <option key={f} value={f}>{f === "All" ? "All Floor/Ceiling" : f}</option>)}
           </select>
           <select value={filterPoStatus} onChange={e => setFilterPoStatus(e.target.value)} style={SEL}>
             <option value="All">All PO Status</option>
@@ -1009,9 +1029,9 @@ export default function StockHealthTab({
               color: "#111827", lineHeight: 1, userSelect: "none",
             }}>i</span>
           </Tooltip>
-          {(search || filterTag || filterBrand !== "All" || selectedCat || filterPoStatus !== "All" || filterToStatus !== "All") && (
+          {(search || filterTag || filterBrand !== "All" || selectedCat || filterPoStatus !== "All" || filterToStatus !== "All" || filterSetup !== "All") && (
             <button
-              onClick={() => { setSearch(""); setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); setFilterToStatus("All"); }}
+              onClick={() => { setSearch(""); setFilterTag(null); setFilterBrand("All"); setSelectedCat(null); setFilterPoStatus("All"); setFilterToStatus("All"); setFilterSetup("All"); }}
               style={{
                 border: "none", borderRadius: 6, padding: "5px 12px",
                 fontSize: 11, fontWeight: 700, cursor: "pointer",
@@ -1034,7 +1054,11 @@ export default function StockHealthTab({
                 // `dcFed` === !isDCTab whenever the city has a DC (Bangalore).
                 // Movement Tag + Inventorised At appended at the END so existing
                 // sheets/macros that reference column positions keep working.
-                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "SoH", "AFS", "Min", "Max", "ROS", "Req Qty",
+                // ⚠ Floor (after AFS) and Ceiling (after Max) were INSERTED, not
+                // appended (2026-11-13, operator's call: match the screen order).
+                // Every column from Min onward shifted — sheets reading by position
+                // had to be updated.
+                const headers = ["SKU", "Item Name", "Brand", "Stock Health", "SoH", "AFS", "Floor", "Min", "Max", "Ceiling", "ROS", "Req Qty",
                   ...(dcFed ? ["DC Stock"] : []),
                   "Rep. Qty", "Rec Qty", "Date", "Est. Delivery", "Ref #", "Status",
                   "Movement Tag", "Inventorised At"];
@@ -1059,7 +1083,10 @@ export default function StockHealthTab({
                     r.brand !== "—" ? `"${r.brand.replace(/"/g, '""')}"` : "",
                     TC[r.tag].label,
                     Math.max(0, r.stockOnHand), Math.max(0, r.afs),
+                    // "3 to 5", not "3/5": Google Sheets parses a pasted 3/5 as a date.
+                    r.floor ? `${r.floor.min} to ${r.floor.max}` : "",
                     r.min, r.max,
+                    r.ceiling ?? "",
                     r.ros > 0 ? Math.round(r.ros) : 0,
                     r.reorderQty > 0 ? r.reorderQty : "",
                     ...(dcFed ? [dcStockVal] : []),
@@ -1164,8 +1191,8 @@ export default function StockHealthTab({
           <div style={{ flex: 1, overflowY: "auto", overflowX: "auto", borderTop: `1px solid ${HR.border}` }}>
             <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
               {/* Column widths — order matches the <thead> array below:
-                  SKU · Item Name(flex) · Brand · Stock Health · SoH · AFS · Min ·
-                  Max · ROS · Req Qty · [DC Stock, DS tabs only] · Ordered Qty ·
+                  SKU · Item Name · Brand · Stock Health · SoH · AFS · Floor · Min ·
+                  Max · Ceiling · ROS · Req Qty · [DC Stock, DS tabs only] · Ordered Qty ·
                   Received Qty · PO Date · Est. Delivery · PO Number · PO Status.
                   Bare <col>s only — inline comments/whitespace here trip React's
                   "whitespace text node in <colgroup>" hydration warning.
@@ -1192,16 +1219,21 @@ export default function StockHealthTab({
                   500 was measured to overflow there, and below ~1440 even 440 makes the
                   wrapper scroll horizontally rather than squeezing the name column.
                   So DO NOT raise this without re-measuring at 1440. Re-measure rather
-                  than reason about any of these numbers. */}
+                  than reason about any of these numbers.
+                  ⚠ 2026-11-13: Item Name 440 → 352 to fund Floor + Ceiling (44 each),
+                  keeping the fixed total unchanged. Floor/Ceiling widths are sized
+                  for "12/24" at 10px, NOT yet canvas-measured. */}
               <colgroup>
                 <col style={{ width: 96 }} />
-                <col style={{ width: 440 }} />
+                <col style={{ width: 352 }} />
                 <col style={{ width: 92 }} />
                 <col style={{ width: 76 }} />
                 <col style={{ width: 54 }} />
                 <col style={{ width: 54 }} />
+                <col style={{ width: 44 }} />
                 <col style={{ width: 32 }} />
                 <col style={{ width: 32 }} />
+                <col style={{ width: 44 }} />
                 <col style={{ width: 34 }} />
                 <col style={{ width: 52 }} />
                 {dcFed && <col style={{ width: 44 }} />}
@@ -1221,8 +1253,10 @@ export default function StockHealthTab({
                     ["Stock Health",   "center", "4px 4px", false, null        ],
                     ["SoH",            "center", "4px 4px", false, "ecs"       ],
                     ["AFS",            "center", "4px 4px", false, null        ],
+                    ["Floor",          "center", "4px 4px", false, null        ],
                     ["Min",            "center", "4px 4px", false, null        ],
                     ["Max",            "center", "4px 4px", false, null        ],
+                    ["Ceiling",        "center", "4px 4px", false, null        ],
                     ["ROS",            "center", "4px 4px", false, null        ],
                     ["Req Qty",        "center", "4px 4px", false, "reorderQty"],
                     ...(dcFed ? [["DC Stock", "center", "4px 4px", false, null]] : []),
@@ -1265,7 +1299,7 @@ export default function StockHealthTab({
               <tbody>
                 {filteredRows.length === 0 && (
                   <tr>
-                    <td colSpan={dcFed ? 17 : 16} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
+                    <td colSpan={dcFed ? 19 : 18} style={{ padding: 36, textAlign: "center", color: HR.muted, fontSize: 11 }}>
                       No SKUs match the current filter.
                     </td>
                   </tr>
@@ -1338,11 +1372,23 @@ export default function StockHealthTab({
                         {stockPending ? "—" : Math.max(0, row.afs)}
                       </td>
 
+                      {/* Floor — min/max from the floor sheet at this location; "—" when none */}
+                      <td title={row.floor ? `Floor Min ${row.floor.min} · Floor Max ${row.floor.max}` : "No floor at this location"}
+                        style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                        {fmtFloor(row.floor)}
+                      </td>
+
                       {/* Min */}
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted, fontVariantNumeric: "tabular-nums" }}>{row.min}</td>
 
                       {/* Max */}
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted, fontVariantNumeric: "tabular-nums" }}>{row.max}</td>
+
+                      {/* Ceiling — ops cap at this location; 0 is a real cap, "—" is none */}
+                      <td title={row.ceiling !== null ? `Ceiling ${row.ceiling}` : "No ceiling at this location"}
+                        style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted, fontVariantNumeric: "tabular-nums" }}>
+                        {fmtCeiling(row.ceiling)}
+                      </td>
 
                       {/* ROS — rounded */}
                       <td style={{ padding: NP, borderTop: topBorder, textAlign: "center", fontSize: FS, color: HR.muted, fontVariantNumeric: "tabular-nums" }}>

@@ -83,6 +83,14 @@ excluded by design.
 - KPI card percentages use **`pctFine`** (2dp below 1%, 1dp above) — with a 2,093 denominator
   `Math.round` flattened a handful of Critical SKUs to a flat "0%", which reads as "none".
 
+**Floor + Ceiling columns and the Floor/Ceiling filter (2026-11-13, both cities).** Floor after AFS
+(`min/max`), Ceiling after Max, at the SELECTED location (DC tab reads the `DC` key). Display only:
+`floors`/`ceilings` props (Bangalore `newSKUQty`/`skuCeiling`; Hyderabad `hyd_inputs.floors`, no
+ceilings), helpers in `src/stockHealthFloorCeiling.js`. **A ceiling of 0 counts as set; a 0/0 floor
+does not**, matching what the engine applies. Filter: No Floor · No Ceiling · No Floor or No Ceiling (union) · No Floor & No Ceiling (both). ⚠ The CSV INSERTS both at the screen position (operator's
+call), so every column from Min onward shifted on 2026-11-13. The floor is written `3 to 5` there
+because Sheets parses a pasted `3/5` as a date. Item Name went 440→352 to fund the two 44px columns.
+
 **Order data shown per SKU type (DS tabs):**
 - `Inventorised At = DC` → TO columns (Ref #, Date, Rep. Qty, Rec Qty, Est. Delivery, Status: Picking/In Transit/Received). No PO shown.
 - `Inventorised At = DS` → PO columns (Ref #, Date, Rep. Qty, Rec Qty, Est. Delivery, Status).

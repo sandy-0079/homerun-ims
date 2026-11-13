@@ -44,6 +44,13 @@ Columns: SoH, AFS, DC Stock, Min, Max, ROS, Req Qty, Rep. Qty, Rec Qty, Date, Es
 - **TWO download buttons since 2026-08-07** — `⬇ Download All SKUs` (the file above, unchanged
   behaviour and column order, renamed only) and **`⬇ Download Reverse TO list`** (DS tabs only; a
   reverse TO moves stock DS → DC, so it has no meaning at the DC). See item 26.
+- **Floor + Ceiling columns and a Floor/Ceiling filter (2026-11-13, both cities).** Floor (`min/max`)
+  after AFS, Ceiling after Max, at the selected location; filter No Floor / No Ceiling / No Floor or
+  No Ceiling (union) / No Floor & No Ceiling. Display only — the engine already applied both. A 0
+  ceiling counts as set, a 0/0 floor does not. ⚠ **The `Download All SKUs` CSV INSERTED both at the
+  screen position** (operator's call), unlike the appended Movement Tag / Inventorised At, so every
+  column from Min onward shifted — sheets reading it by position needed updating. Floor is written
+  `3 to 5` in the CSV because Sheets parses a pasted `3/5` as a date. Detail: `src/tabs/CLAUDE.md`.
 
 ### 26. Reverse TO list — a count sheet, not a report ✅ Shipped (2026-08-07)
 `⬇ Download Reverse TO list` on every DS tab. **10 columns, position-stable:**

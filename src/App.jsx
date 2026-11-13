@@ -2734,6 +2734,7 @@ const zeroSaleLists = useMemo(
           <StockHealthTab results={results} skuMaster={skuMaster} stockData={stockData}
             stockDataAccounting={stockDataAccounting}
             uploadedAtPerDS={stockUploadedAtPerDS} poData={poData} toData={toData}
+            floors={newSKUQty} ceilings={skuCeiling}
             onSyncComplete={async () => {
               const sbData = await loadFromSupabase('team_data', 'global');
               if (sbData?.stockData)            setStockData(sbData.stockData);

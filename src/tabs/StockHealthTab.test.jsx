@@ -121,3 +121,50 @@ describe("StockHealthTab — downloadsDisabled (Hyderabad: a failed read)", () =
     }
   });
 });
+
+describe("StockHealthTab — Floor / Ceiling columns and filter", () => {
+  const renderBounds = (extra = {}) => renderToStaticMarkup(
+    <StockHealthTab results={blrResults} skuMaster={{}} stockData={blrStock} stockDataAccounting={{}}
+      uploadedAtPerDS={{ DS01: "2026-11-01T00:00:00Z", DC: "2026-11-01T00:00:00Z" }} poData={{}} toData={{}} {...extra} />,
+  );
+  const cells = (html) => [...html.matchAll(/<td[^>]*>([^<]*)<\/td>/g)].map(m => m[1]);
+
+  it("adds the two headers and the filter in both cities", () => {
+    for (const html of [renderBlr(), renderHyd()]) {
+      expect(html).toContain(">Floor<");
+      expect(html).toContain(">Ceiling<");
+      expect(html).toContain("All Floor/Ceiling");
+      expect(html).toContain("No Floor &amp; No Ceiling");
+    }
+  });
+
+  it("puts Floor right after AFS and Ceiling right after Max", () => {
+    const heads = [...renderBlr().matchAll(/<th[^>]*>(?:<span[^>]*>)?([^<]+)/g)].map(m => m[1]);
+    const i = heads.indexOf("AFS");
+    expect(heads.slice(i, i + 5)).toEqual(["AFS", "Floor", "Min", "Max", "Ceiling"]);
+  });
+
+  it("shows the floor as min/max and a 0 ceiling as 0, at the selected store", () => {
+    const html = renderBounds({
+      floors:   { A: { DS01: { min: 3, max: 5 } } },
+      ceilings: { A: { DS01: 0 }, B: { DS02: 9 } },   // B's cap is at DS02, not DS01
+    });
+    expect(cells(html)).toContain("3/5");
+    expect(html).toContain('title="Ceiling 0"');          // a 0 cap is a cap
+    expect(html).not.toContain('title="Ceiling 9"');      // DS02's cap stays off DS01
+    expect(html).toContain('title="No ceiling at this location"');
+  });
+
+  it("shows a dash when a row has neither (Bangalore without the new props)", () => {
+    expect(cells(renderBlr()).filter(t => t === "—").length).toBeGreaterThan(0);
+  });
+
+  it("Hyderabad shows its own floor", () => {
+    const html = renderToStaticMarkup(
+      <StockHealthTab results={hydResults} skuMaster={{}} stockData={blrStock} stockDataAccounting={{}}
+        uploadedAtPerDS={{}} dsList={HYD_DS_LIST} includeDC={false} floors={{ P: { HYDS01: { min: 3, max: 7 } } }}
+        syncGroups={[["HYDS01"]]} syncOrders={false} defaultDS="HYDS01" filePrefix="Hyderabad_" />,
+    );
+    expect(cells(html)).toContain("3/7");
+  });
+});

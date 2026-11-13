@@ -192,7 +192,7 @@ export default function HydShell(props) {
         // Stock Health only once sync-orders covers HYDS01, so the PO columns read "—".
         <StockHealthTab results={hydRun?.results ?? null} skuMaster={props.skuMaster}
           stockData={props.stockData || {}} stockDataAccounting={props.stockDataAccounting || {}}
-          uploadedAtPerDS={props.uploadedAtPerDS}
+          uploadedAtPerDS={props.uploadedAtPerDS} floors={hydState?.floors}
           dsList={HYD_DS_LIST} includeDC={false} syncGroups={HYD_SYNC_GROUPS} syncOrders={false}
           defaultDS="HYDS01" filePrefix="Hyderabad_" downloadsDisabled={hydReadFailed(hydState)} />
       )}
