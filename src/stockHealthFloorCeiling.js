@@ -55,8 +55,10 @@ export function ceilingAt(ceilings, idx, sku, loc) {
   return capFor(ceilings, key, loc);
 }
 
-/** Cell text. Blank-vs-zero matters for the ceiling, so "—" means none. */
-export const fmtFloor   = (f) => (f ? `${f.min}/${f.max}` : "—");
+/** Cell text. Blank-vs-zero matters for the ceiling, so "—" means none.
+ *  The Floor cell shows the floor MIN only (operator's call, 2026-11-13); the
+ *  cell's tooltip carries both numbers and the CSV keeps "min to max". */
+export const fmtFloor   = (f) => (f ? String(f.min) : "—");
 export const fmtCeiling = (c) => (c === null || c === undefined ? "—" : String(c));
 
 export const SETUP_FILTERS = ["All", "No Floor", "No Ceiling", "No Floor or No Ceiling", "No Floor & No Ceiling"];

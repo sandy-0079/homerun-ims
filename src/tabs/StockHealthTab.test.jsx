@@ -144,12 +144,13 @@ describe("StockHealthTab — Floor / Ceiling columns and filter", () => {
     expect(heads.slice(i, i + 5)).toEqual(["AFS", "Floor", "Min", "Max", "Ceiling"]);
   });
 
-  it("shows the floor as min/max and a 0 ceiling as 0, at the selected store", () => {
+  it("shows the floor Min and a 0 ceiling as 0, at the selected store", () => {
     const html = renderBounds({
       floors:   { A: { DS01: { min: 3, max: 5 } } },
       ceilings: { A: { DS01: 0 }, B: { DS02: 9 } },   // B's cap is at DS02, not DS01
     });
-    expect(cells(html)).toContain("3/5");
+    expect(cells(html)).not.toContain("3/5");
+    expect(html).toContain('title="Floor Min 3 · Floor Max 5"');
     expect(html).toContain('title="Ceiling 0"');          // a 0 cap is a cap
     expect(html).not.toContain('title="Ceiling 9"');      // DS02's cap stays off DS01
     expect(html).toContain('title="No ceiling at this location"');
@@ -165,6 +166,7 @@ describe("StockHealthTab — Floor / Ceiling columns and filter", () => {
         uploadedAtPerDS={{}} dsList={HYD_DS_LIST} includeDC={false} floors={{ P: { HYDS01: { min: 3, max: 7 } } }}
         syncGroups={[["HYDS01"]]} syncOrders={false} defaultDS="HYDS01" filePrefix="Hyderabad_" />,
     );
-    expect(cells(html)).toContain("3/7");
+    expect(html).toContain('title="Floor Min 3 · Floor Max 7"');
+    expect(cells(html)).not.toContain("3/7");
   });
 });

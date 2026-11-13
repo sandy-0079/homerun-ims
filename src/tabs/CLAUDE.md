@@ -84,7 +84,7 @@ excluded by design.
   `Math.round` flattened a handful of Critical SKUs to a flat "0%", which reads as "none".
 
 **Floor + Ceiling columns and the Floor/Ceiling filter (2026-11-13, both cities).** Floor after AFS
-(`min/max`), Ceiling after Max, at the SELECTED location (DC tab reads the `DC` key). Display only:
+(floor **Min** only on screen, both in its tooltip; CSV keeps `min to max`), Ceiling after Max, at the SELECTED location (DC tab reads the `DC` key). Display only:
 `floors`/`ceilings` props (Bangalore `newSKUQty`/`skuCeiling`; Hyderabad `hyd_inputs.floors`, no
 ceilings), helpers in `src/stockHealthFloorCeiling.js`. **A ceiling of 0 counts as set; a 0/0 floor
 does not**, matching what the engine applies. Filter: No Floor · No Ceiling · No Floor or No Ceiling (union) · No Floor & No Ceiling (both). ⚠ The CSV INSERTS both at the screen position (operator's

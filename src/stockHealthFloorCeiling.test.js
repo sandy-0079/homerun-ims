@@ -56,8 +56,8 @@ describe("ceilingAt", () => {
 });
 
 describe("formatting", () => {
-  it("formats floors as min/max and none as a dash", () => {
-    expect(fmtFloor({ min: 3, max: 5 })).toBe("3/5");
+  it("shows the floor Min only, and none as a dash", () => {
+    expect(fmtFloor({ min: 3, max: 5 })).toBe("3");
     expect(fmtFloor(null)).toBe("—");
   });
   it("prints a 0 ceiling as 0, not a dash", () => {
